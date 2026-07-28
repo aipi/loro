@@ -3,6 +3,6 @@
 <plist version="1.0">
 <dict>
     <key>NSMicrophoneUsageDescription</key>
-    <string>O Live STT usa o microfone para transcrever sua fala localmente. Nenhum áudio é enviado para a internet.</string>
+    <string>O Loro usa o microfone para transcrever sua fala localmente. Nenhum áudio é enviado para a internet.</string>
 </dict>
 </plist>
