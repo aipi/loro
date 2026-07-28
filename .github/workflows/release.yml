@@ -4,8 +4,10 @@
 # publishes a GitHub Release with the .dmg attached.
 #
 # The bundle is NOT signed with an Apple Developer ID (owner decision,
-# 2026-07-28): installers must right-click → Open on first launch (or
-# `xattr -d com.apple.quarantine`). The release notes carry that instruction.
+# 2026-07-28). On macOS 15+ Gatekeeper blocks unsigned quarantined apps
+# outright — misreporting them as "damaged" — and right-click → Open no
+# longer bypasses it; the only reliable path is removing the quarantine
+# attribute. The release notes carry that instruction.
 #
 # Gates (loro-release-checklist §1): tests, clippy and fmt must pass, and the
 # tag must match the version in tauri.conf.json — no drift between git and app.
@@ -71,4 +73,4 @@ jobs:
           gh release create "$GITHUB_REF_NAME" "$DMG" \
             --title "Loro $GITHUB_REF_NAME" \
             --generate-notes \
-            --notes "**Instalação (macOS, Apple Silicon):** baixe o \`.dmg\`, arraste o Loro para Aplicativos e, no primeiro uso, clique com o botão direito → Abrir (o app não é assinado com Developer ID). O whisper é dependência de sistema — rode \`./loro.sh setup\` antes do primeiro uso."
+            --notes "**Instalação (macOS, Apple Silicon):** baixe o \`.dmg\` e arraste o Loro para Aplicativos. O app não é assinado com Developer ID; no macOS 15+ o Gatekeeper bloqueia a abertura (podendo alegar que o app \"está danificado\" — não está). Libere com: \`xattr -d com.apple.quarantine /Applications/Loro.app\` e abra normalmente. O whisper é dependência de sistema — rode \`./loro.sh setup\` antes do primeiro uso."
