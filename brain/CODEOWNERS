@@ -1,0 +1,9 @@
+# CODEOWNERS — quem aprova mudanças em cada contexto (domínio) do brain.
+# Cada linha mapeia uma pasta de contexto ao(s) seu(s) dono(s) no GitHub; só eles
+# podem aprovar PRs (RFCs) que tocam aquela pasta. Descomente e defina @usuario ou @org/time.
+#
+# NOTA (dogfooding): este brain vive DENTRO do repo do app, então o GitHub não lê
+# este arquivo (CODEOWNERS é lido em raiz/.github/docs do repo). Ele é ilustrativo
+# até o brain virar um repositório próprio — ver o hotspot em contexts/loro/context.md.
+
+# /contexts/loro/    @owner

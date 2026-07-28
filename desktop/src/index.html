@@ -1,0 +1,393 @@
+<!doctype html>
+<html lang="pt-br">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="stylesheet" href="vendor/xterm.css" />
+    <link rel="stylesheet" href="vendor/cm6.css" />
+    <link rel="stylesheet" href="style.css" />
+    <title>Loro</title>
+  </head>
+  <body>
+    <div id="app">
+      <!-- faixa de status -->
+      <header class="status">
+        <div class="cluster">
+          <span class="brand mono">loro<span id="dot" class="dot" aria-hidden="true"></span></span>
+        </div>
+        <div class="cluster">
+          <button id="cfgBtn" class="iconbtn" title="Configurações" aria-label="Configurações">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 00.12-.61l-1.92-3.32a.49.49 0 00-.59-.22l-2.39.96a7.03 7.03 0 00-1.62-.94l-.36-2.54a.48.48 0 00-.48-.41h-3.84a.48.48 0 00-.48.41l-.36 2.54c-.59.24-1.13.56-1.62.94l-2.39-.96a.49.49 0 00-.59.22L2.74 8.87a.49.49 0 00.12.61l2.03 1.58c-.05.3-.07.62-.07.94 0 .33.02.64.07.94l-2.03 1.58a.49.49 0 00-.12.61l1.92 3.32c.13.22.39.3.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.48-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.49.49 0 00-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1112 8.4a3.6 3.6 0 010 7.2z"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <!-- ============ acervo + terminal (empilhado ou lado a lado) ============ -->
+      <div id="mainRow" class="mainrow">
+      <main id="brain" class="bwrap">
+        <!-- setup / criar acervo (novo projeto) -->
+        <section id="brainSetup" class="wizard" hidden>
+          <img src="parrot.png" width="56" height="56" alt="" class="wizard-icon" />
+          <h1 id="wizTitle">Criar seu acervo de contextos</h1>
+          <p class="lead">Um acervo é um projeto-cérebro (ex.: Company, pessoal…).
+            O Loro estrutura o que você fala/escreve em contextos.</p>
+          <label class="wfield"><span class="mono">nome do projeto</span>
+            <input id="brainNameInput" type="text" placeholder="ex.: Company, Pessoal" />
+          </label>
+          <label class="wfield"><span class="mono">idioma do projeto</span>
+            <select id="brainLang">
+              <option value="pt">português</option>
+              <option value="en">english</option>
+            </select>
+          </label>
+          <label class="wfield"><span class="mono">onde gerar</span>
+            <button id="brainDirBtn" class="link mono dirbtn">…</button>
+          </label>
+          <label class="wfield"><span class="mono">contextos</span>
+            <input id="brainCtxInput" type="text"
+              placeholder="ex.: produto-a, plataforma, engenharia/frontend" />
+          </label>
+          <label class="wtoggle"><input type="checkbox" id="brainAuto" />
+            <span>modo automático — deixar o loop criar e organizar os contextos</span></label>
+          <label class="wtoggle"><input type="checkbox" id="brainGit" checked />
+            <span>versionar com git (git init nesta pasta)</span></label>
+          <label class="wfield"><span class="mono">cor do projeto</span>
+            <div id="wizColors" class="swatches"></div>
+          </label>
+          <p class="hint">cada contexto vira uma pasta com <span class="mono">context.md</span>
+            (a fonte da verdade) e <span class="mono">CHANGELOG.md</span>; a colaboração usa
+            <span class="mono">.github/CODEOWNERS</span>. Se já houver estrutura, ela é respeitada.</p>
+          <div class="cluster">
+            <button id="brainCreateBtn" class="primary">criar acervo</button>
+            <button id="brainCancelBtn" class="link mono muted" hidden>cancelar</button>
+          </div>
+          <p id="brainSetupErr" class="hint err" hidden></p>
+        </section>
+
+        <!-- shell: árvore lateral + conteúdo -->
+        <div id="brainShell" class="bshell" hidden>
+          <aside class="bside">
+            <div id="acervoSwitch" class="switch">
+              <button id="acervoBtn" class="switchbtn">
+                <span class="swico">◆</span><span id="acervoName" class="swname">acervo</span><span class="swcaret">⌄</span>
+              </button>
+              <div id="acervoMenu" class="switchmenu" hidden></div>
+            </div>
+
+            <div id="navHome" class="bitem on">⌂ visão geral</div>
+
+            <!-- Fluxo sequencial (ADR-0013): Brainstorming → Fila → Contexto. A
+                 ordem dos grupos espelha os passos, para o usuário entender o caminho. -->
+            <!-- 1 · Brainstorming — mundo não versionado (âmbar) -->
+            <div class="bgroup pessoal"><span>1 · brainstorming <button class="ghelp" data-tip="Passo 1 — construa a ideia em reuniões e notas. Privado, não versionado. Selecione partes e envie para a fila." aria-label="O que é o brainstorming?">ⓘ</button></span></div>
+            <div id="navPessoal" class="btree pessoal"></div>
+
+            <!-- 2 · Fila de geração de contexto -->
+            <div class="bgroup"><span>2 · fila → contexto <button class="ghelp" data-tip="Passo 2 — a fila de geração de contexto. Relatórios do brainstorming e arquivos enviados esperam aqui até você clicar em 'gerar contexto' (o Claude processa com /brain-context)." aria-label="O que é a fila?">ⓘ</button></span><span id="navQueueCount" class="pill" hidden>0</span></div>
+            <div id="navQueue" class="btree"></div>
+
+            <!-- 3 · Contextos versionados -->
+            <div class="bgroup"><span>3 · contextos <button class="ghelp" data-tip="Passo 3 — o conhecimento oficial do negócio: versionado, revisado (RFC = PR) e compartilhado com o time." aria-label="O que são contextos?">ⓘ</button></span></div>
+            <div id="navCtx" class="btree"></div>
+
+            <div class="bgroup"><span>fontes</span></div>
+            <div id="navSources" class="btree"></div>
+          </aside>
+
+          <section class="bmain" id="bMain">
+            <!-- faixa de abas (studio) — não rola; ADR-0008 -->
+            <nav id="wsTabs" class="wstabs" aria-label="abas abertas"></nav>
+            <!-- corpo rolável: visão geral + documento aberto -->
+            <div id="wsBody" class="wsbody">
+            <!-- visão geral -->
+            <div id="bHome">
+              <div id="setupBanner" class="setupbanner" hidden>
+                <span id="setupMsg">faltam dependências</span>
+                <button id="setupRun" class="abtn">configurar agora no terminal</button>
+              </div>
+              <div class="bhero">
+                <img src="parrot.png" width="46" height="46" alt="" class="bhero-icon" />
+                <div class="bhero-txt">
+                  <h1>acervo</h1>
+                  <p id="bSub" class="mono">—</p>
+                </div>
+                <span class="cluster">
+                  <button id="askBtn" class="abtn" title="Responde qualquer dúvida a partir dos contextos do acervo (e MCP, se preciso)">perguntar ao acervo</button>
+                  <button id="gitBtn" class="pulse mono gitbtn" hidden>versionar</button>
+                  <button id="proposeBtn" class="pulse mono gitbtn" hidden title="Publicar a mudança como um Pull Request (RFC) para revisão">propor mudança</button>
+                </span>
+              </div>
+
+              <!-- ADR-0013: o fluxo sequencial, sempre visível -->
+              <div class="stageflow" aria-label="fluxo brainstorming, fila, contexto">
+                <div class="stage"><b>Brainstorming</b><span>construa a ideia: reuniões e notas</span></div>
+                <span class="stagearrow">→</span>
+                <div class="stage"><b>Fila</b><span>selecione partes → um relatório entra na fila</span></div>
+                <span class="stagearrow">→</span>
+                <div class="stage"><b>Contexto</b><span>gere o contexto versionado a partir da fila</span></div>
+              </div>
+
+              <div id="ghCard" class="ghcard" hidden>
+                <div class="ghrow">
+                  <span class="ghtitle mono">conexão GitHub</span>
+                  <span id="ghState" class="mono badge">local</span>
+                  <button id="ghCheck" class="mini act" title="Verificar o ambiente (git, gh, autenticação, repositório)">verificar</button>
+                </div>
+                <ul id="ghChecks" class="ghchecks"></ul>
+                <div id="ghNotif" class="ghnotif mono" hidden></div>
+              </div>
+
+              <div class="stats">
+                <div class="stat"><b id="stInbox">0</b><span class="mono">na fila</span></div>
+                <div class="stat"><b id="stDone">0</b><span class="mono">processadas</span></div>
+                <div class="stat"><b id="stCtx">0</b><span class="mono">contextos</span></div>
+                <div class="stat"><b id="stSrc">0</b><span class="mono">fontes</span></div>
+              </div>
+
+              <div class="hgrid">
+                <div class="hcard qcard" id="queueCard">
+                  <h2 class="sect mono qhead">
+                    <span>fila de geração de contexto <button class="ghelp" data-tip="O que está aqui vira contexto quando você clicar em 'gerar contexto'. Envie relatórios do brainstorming, ou arraste arquivos. O Claude processa a fila com /brain-context." aria-label="Como funciona a fila?">ⓘ</button></span>
+                    <span id="bPulse" class="pulse mono">—</span>
+                  </h2>
+                  <div id="homeQueue"></div>
+                  <button id="brainImport" class="abtn ghost dropfull" title="Adicionar arquivos à fila de geração de contexto">
+                    ＋ arraste arquivos aqui ou clique para adicionar à fila
+                  </button>
+                  <div class="hfoot rowsplit">
+                    <select id="importCtx" class="mini-select">
+                      <option value="">contexto: automático</option>
+                    </select>
+                    <button id="queueGenCtx" class="abtn cta" title="Processa a fila com o Claude (/brain-context): cada item vira/atualiza um contexto versionado">gerar contexto →</button>
+                  </div>
+                  <div class="hfoot qfoot">
+                    <button id="guideBtn" class="link mono muted" title="Instruções que o loop segue antes de processar a fila">✎ instruções do loop</button>
+                  </div>
+                </div>
+                <div class="hcard">
+                  <h2 class="sect mono">contextos mais ativos</h2>
+                  <div id="homeBars"></div>
+                </div>
+              </div>
+
+              <h2 class="sect mono">atividade do loop</h2>
+              <div id="brainActivity" class="feed"></div>
+            </div>
+
+            <!-- documento (visualizar / editar) -->
+            <div id="bDocWrap" hidden>
+              <div class="dochead">
+                <span id="bCrumb" class="mono crumbpath"></span>
+                <span id="bBadge" class="mono badge ro"></span>
+                <span id="bGit" class="mono badge" hidden></span>
+                <span id="bPromoted" class="mono badge ok promoted" hidden></span>
+                <span id="bDocActs" class="cluster" hidden>
+                  <button id="bMoveDoc" class="mini act" title="mover para outro contexto ou projeto">⇢ mover</button>
+                  <button id="bDelDoc" class="mini act danger" title="apagar da fila">apagar</button>
+                </span>
+                <nav id="bModes" class="tabs small" hidden>
+                  <button id="bViewBtn" class="tab mono on">visualizar</button>
+                  <button id="bEditBtn" class="tab mono">editar</button>
+                </nav>
+              </div>
+              <!-- nota única de primeiro rascunho pessoal (ADR-0008/0009) -->
+              <div id="bDraftNote" class="draftnote" hidden>
+                <span>rascunho pessoal — não é versionado; promova para um contexto para preservar</span>
+                <button id="bDraftClose" class="glyph" aria-label="Fechar">×</button>
+              </div>
+              <!-- barra de busca no documento (Ctrl/⌘+F) -->
+              <div id="bFind" class="findbar" hidden>
+                <input id="bFindInput" type="text" placeholder="buscar no documento…" spellcheck="false" />
+                <span id="bFindCount" class="mono">0/0</span>
+                <button id="bFindPrev" class="glyph" title="Anterior (Shift+Enter)">‹</button>
+                <button id="bFindNext" class="glyph" title="Próximo (Enter)">›</button>
+                <button id="bFindClose" class="glyph" title="Fechar (Esc)">×</button>
+              </div>
+              <div id="brainDoc" class="doc reader"></div>
+              <!-- editor fiel CodeMirror 6 (ADR-0008); um handle por aba, montado aqui -->
+              <div id="bEditHost" class="edithost" hidden></div>
+            </div>
+            </div><!-- /wsBody -->
+            <!-- pill "novas linhas" da reunião ao vivo (ADR-0010) -->
+            <button id="mtgPill" class="mtgpill" hidden>novas linhas ↓</button>
+          </section>
+        </div>
+
+        <!-- menu flutuante (mover para acervo/contexto) -->
+        <div id="bMenu" class="floatmenu" hidden></div>
+
+        <!-- editor (editar não-processado / prompt-guia) -->
+        <div id="editWrap" class="sheet-wrap" hidden>
+          <div class="sheet editor">
+            <div class="sheet-head">
+              <span id="editTitle" class="mono sheet-title">editar</span>
+              <button id="editClose" class="glyph" aria-label="Fechar">×</button>
+            </div>
+            <textarea id="editArea" class="editarea" spellcheck="false"></textarea>
+            <div class="editbar">
+              <button id="editSave" class="primary">salvar</button>
+              <button id="editCancel" class="link mono muted">cancelar</button>
+            </div>
+          </div>
+        </div>
+        <!-- produção: promover para contexto · migrar acervo (ADR-0009) -->
+        <div id="pmWrap" class="sheet-wrap" hidden>
+          <div class="sheet">
+            <div class="sheet-head">
+              <span id="pmTitle" class="mono sheet-title">promover</span>
+              <button id="pmClose" class="glyph" aria-label="Fechar">×</button>
+            </div>
+            <div id="pmBody" class="pmbody"></div>
+            <div class="editbar">
+              <button id="pmConfirm" class="primary">confirmar</button>
+              <button id="pmCancel" class="link mono muted">cancelar</button>
+            </div>
+          </div>
+        </div>
+      </main>
+
+      <!-- painel ao vivo: sobe do player quando gravando / expandido -->
+      <section id="surface" class="livepanel" hidden>
+        <div class="livehead">
+          <span class="mono live-title">transcrição ao vivo</span>
+          <div id="savebar" class="cluster" hidden>
+            <button id="saveBtn" class="link mono strong">salvar no acervo</button>
+            <button id="discardBtn" class="link mono muted">descartar</button>
+          </div>
+          <button id="liveCollapse" class="glyph" aria-label="Recolher">⌄</button>
+        </div>
+        <div class="livescroll">
+          <div id="empty" class="empty">
+            <img class="empty-parrot" src="parrot.png" width="56" height="56" alt="" aria-hidden="true" />
+            <p>A transcrição aparece aqui durante a gravação.</p>
+          </div>
+          <div id="doc" class="doc" hidden></div>
+        </div>
+      </section>
+
+      <!-- terminal embutido (PTY): embaixo ou na lateral (o usuário escolhe) -->
+      <section id="termPanel" class="termpanel" hidden>
+        <div class="livehead">
+          <span class="mono live-title">terminal</span>
+          <button id="termClear" class="link mono muted" title="Reiniciar terminal">reiniciar</button>
+          <button id="termSide" class="glyph" title="Alternar embaixo / lateral">⇆</button>
+          <button id="termCollapse" class="glyph" aria-label="Recolher">⌄</button>
+        </div>
+        <div id="termView" class="termview"></div>
+      </section>
+      </div><!-- /mainRow -->
+
+      <!-- player (dock inferior): gravar · timer · onda · captura -->
+      <footer class="player">
+        <button id="toggleBtn" class="rec" aria-label="Gravar / Parar" title="Gravar">
+          <span class="rec-glyph"></span>
+        </button>
+        <span id="timer" class="mono timer">00:00</span>
+        <canvas id="wave" class="wave" width="640" height="36"></canvas>
+        <span id="privacy" class="mono badge" title="Modo sem armazenamento">sem gravar</span>
+        <button id="termBtn" class="iconbtn" title="Terminal" aria-label="Terminal">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V8h16v10zM6.5 10l3 3-3 3L8 17l4-4-4-4-1.5 1zM13 16h5v-1.5h-5V16z"/></svg>
+        </button>
+      </footer>
+
+      <!-- configurações (folha) -->
+      <div id="cfgWrap" class="sheet-wrap" hidden>
+        <div id="cfgPop" class="sheet">
+          <div class="sheet-head">
+            <span class="mono sheet-title" data-i18n="settings">configurações</span>
+            <button id="cfgClose" class="glyph" aria-label="Fechar">×</button>
+          </div>
+
+          <p id="cfgSummary" class="cfgsummary mono">—</p>
+
+          <h3 class="sect mono" data-i18n="project">projeto</h3>
+          <div class="field"><span class="mono" data-i18n="active">ativo</span>
+            <span id="cfgProj" class="mono dirinfo">—</span>
+          </div>
+          <div class="field"><span class="mono" data-i18n="color">cor</span>
+            <div id="projColors" class="swatches"></div>
+          </div>
+          <label class="field"><span class="mono" data-i18n="uiLang">idioma da interface</span>
+            <select id="uiLang">
+              <option value="pt">português</option>
+              <option value="en">english</option>
+            </select>
+          </label>
+
+          <h3 class="sect mono" data-i18n="transcription">transcrição</h3>
+          <label class="field"><span class="mono">modo</span>
+            <select id="mode">
+              <option value="live">ao vivo</option>
+              <option value="file">gravar tudo e transcrever no final</option>
+            </select>
+          </label>
+          <p class="hint">"gravar tudo" grava o áudio inteiro e só transcreve ao parar (whisper-cli, sem VAD) — mais fiel, mas o texto só aparece no final</p>
+          <label class="field"><span class="mono">fonte</span>
+            <select id="source">
+              <option value="mic">microfone</option>
+              <option value="system">áudio do sistema</option>
+              <option value="meeting">reunião · minha voz + áudio do sistema</option>
+            </select>
+          </label>
+          <label class="field"><span class="mono">modelo</span>
+            <select id="model">
+              <option value="large-v3-turbo">large-v3-turbo · preciso</option>
+              <option value="small">small · rápido</option>
+            </select>
+          </label>
+          <label class="field"><span class="mono">idioma</span>
+            <select id="lang">
+              <option value="pt">português</option>
+              <option value="en">inglês</option>
+              <option value="auto">automático</option>
+            </select>
+          </label>
+          <label class="opt"><input type="checkbox" id="translate" /> <span>traduzir para inglês</span></label>
+
+          <h3 class="sect mono">captura</h3>
+          <label class="opt"><input type="checkbox" id="optScroll" checked /> <span>auto-scroll</span></label>
+          <label class="opt"><input type="checkbox" id="optTop" /> <span>sempre no topo</span></label>
+          <label class="opt"><input type="checkbox" id="optOverlay" /> <span>modo legenda flutuante</span></label>
+          <label class="opt"><input type="checkbox" id="optDiar" /> <span>gravar áudio p/ diarizar</span></label>
+          <button class="opt as-btn" id="clearBtn">limpar transcrição</button>
+
+          <h3 class="sect mono" data-i18n="storage">armazenamento</h3>
+          <label class="opt"><input type="checkbox" id="autosave" /> <span>salvar automaticamente ao parar</span></label>
+          <div class="field"><span class="mono">pasta</span>
+            <button id="pickDir" class="link mono dirbtn" title="Escolher pasta de armazenamento">…</button>
+          </div>
+          <p class="hint">aponte para o <span class="mono">inbox/</span> do acervo para o loop processar</p>
+
+          <h3 class="sect mono" data-i18n="acervo">acervo</h3>
+          <div class="field"><span class="mono">pasta</span>
+            <span id="acervoDir" class="mono dirinfo">—</span>
+          </div>
+          <p class="hint">contextos regenerados pelo loop em <span class="mono">contextos/&lt;c&gt;/index.html</span></p>
+        </div>
+      </div>
+
+      <div id="toast" class="toast" hidden></div>
+
+      <!-- paleta de comandos (⌘P arquivos · ⌘⇧P ou "›" comandos) — ADR-0008 -->
+      <div id="cmdk" class="cmdk" hidden>
+        <div class="cmdk-box">
+          <input id="cmdkInput" class="cmdk-input" type="text" spellcheck="false"
+            placeholder="buscar arquivo…  (digite › para comandos)" />
+          <ul id="cmdkList" class="cmdk-list"></ul>
+        </div>
+      </div>
+    </div>
+    <script src="vendor/xterm.js"></script>
+    <script src="vendor/addon-fit.js"></script>
+    <script src="vendor/cm6.js"></script>
+    <script src="text.js"></script>
+    <script src="workspace.js"></script>
+    <script src="fuzzy.js"></script>
+    <script src="world.js"></script>
+    <script src="refs.js"></script>
+    <script src="meeting.js"></script>
+    <script src="brainstorm.js"></script>
+    <script src="audio.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
