@@ -1,0 +1,1 @@
+/* ADR-0008 — CM6 injects its own base styles at runtime via StyleModule; this file is a stable placeholder so index.html can load it unconditionally. */

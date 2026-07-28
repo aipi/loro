@@ -1,0 +1,58 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Loro",
+  "version": "0.1.0",
+  "identifier": "com.oaipi.loro",
+  "build": {
+    "frontendDist": "../src"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "macOSPrivateApi": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Loro",
+        "width": 560,
+        "height": 520,
+        "minWidth": 380,
+        "minHeight": 320,
+        "resizable": true
+      },
+      {
+        "label": "overlay",
+        "url": "overlay.html",
+        "title": "Legenda",
+        "width": 560,
+        "height": 104,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "visible": false,
+        "skipTaskbar": true,
+        "shadow": false,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:; media-src 'self' blob: mediastream:; connect-src 'self' ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app", "dmg"],
+    "resources": {
+      "syscap/loro-syscap": "loro-syscap"
+    },
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "13.0"
+    }
+  }
+}

@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#22C1AE"/>
+      <stop offset="1" stop-color="#0E7C9B"/>
+    </linearGradient>
+  </defs>
+
+  <!-- fundo arredondado -->
+  <rect x="0" y="0" width="1024" height="1024" rx="232" fill="url(#bg)"/>
+
+  <!-- crista (penas) -->
+  <g fill="#F7B500">
+    <path d="M470 150 C 405 205, 405 300, 470 330 C 470 260, 500 205, 540 175 Z"/>
+    <path d="M545 128 C 500 195, 512 300, 585 320 C 585 250, 605 195, 620 168 Z"/>
+    <path d="M628 140 C 605 210, 625 300, 690 315 C 690 250, 690 195, 675 170 Z"/>
+  </g>
+
+  <!-- asa (traço verde) -->
+  <path d="M250 690 C 210 820, 300 905, 470 875 C 405 800, 388 705, 430 630 C 360 620, 295 640, 250 690 Z" fill="#17A05F"/>
+
+  <!-- cabeça -->
+  <circle cx="520" cy="540" r="300" fill="#E5484D"/>
+
+  <!-- face clara -->
+  <ellipse cx="640" cy="520" rx="150" ry="175" fill="#FBF6EC"/>
+
+  <!-- olho -->
+  <circle cx="640" cy="486" r="54" fill="#1A1A1A"/>
+  <circle cx="659" cy="470" r="17" fill="#FFFFFF"/>
+
+  <!-- bico superior (com gancho) -->
+  <path d="M735 470
+           C 900 458, 940 560, 890 645
+           C 862 692, 792 700, 762 660
+           C 812 648, 820 596, 792 572
+           C 756 542, 705 548, 690 578 Z"
+        fill="#F7B500"/>
+  <!-- bico inferior -->
+  <path d="M720 628 C 780 672, 852 668, 884 642 C 856 704, 772 716, 720 672 Z"
+        fill="#D98A00"/>
+</svg>

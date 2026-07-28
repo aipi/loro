@@ -1,0 +1,17 @@
+# Loro — test stack.
+#
+# Single service that builds Dockerfile.test and runs the full suite (Rust + JS)
+# in a reproducible Linux environment:
+#
+#   docker compose -f docker-compose.test.yml run --rm test
+#
+# The repo is mounted over the copied source so local edits are picked up without
+# rebuilding the image. This is a test-only stack — it does not build the GUI.
+
+services:
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    volumes:
+      - .:/app

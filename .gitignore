@@ -1,0 +1,32 @@
+# Vendored whisper fork — being removed; whisper is provided by the system.
+whisper.cpp/
+
+# Rust build output (Tauri backend)
+desktop/src-tauri/target/
+
+# Tauri generated files (capability schemas, etc.)
+desktop/src-tauri/gen/
+
+# Node dependencies
+desktop/node_modules/
+
+# Python virtualenv (diarize_to_md.py)
+.venv/
+
+# Runtime output
+transcripts/
+
+# Logs
+*.log
+loro-client.log
+loro-engine.log
+
+# Build / bundle artifacts
+build/
+dist/
+
+# macOS
+.DS_Store
+
+# compiled system-audio capturer (built from syscap/loro-syscap.swift)
+desktop/src-tauri/syscap/loro-syscap

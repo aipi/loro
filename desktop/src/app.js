@@ -1,0 +1,3343 @@
+// Loro — lógica da janela principal.
+// Usa só o global window.__TAURI__ (core.invoke + event.listen + window),
+// sem pacotes npm de plugin. O áudio/texto nunca sai da máquina.
+
+const TAURI = window.__TAURI__ || {};
+const invoke = TAURI.core ? TAURI.core.invoke : async () => { throw new Error("Tauri indisponível"); };
+const listen = TAURI.event ? TAURI.event.listen : async () => {};
+const getWin = TAURI.window ? TAURI.window.getCurrentWindow : null;
+const { esc, mdInline, mdRender, mergeSettings } = window.LoroText;
+// ADR-0009 — reference/front-matter helpers (pure, dependency-free, no bundler).
+const R = window.LoroRefs || {};
+// ADR-0010 — pure meeting-path helpers (id parsing, marker strip, base join).
+const LM = window.LoroMeeting || {};
+
+// log de diagnóstico (vai para loro-client.log via backend) + console
+const winLabel = getWin ? (getWin().label || "?") : "?";
+function clog(m) { try { invoke("client_log", { msg: `[ui:${winLabel}] ${m}` }); } catch (_) {} console.log(m); }
+window.addEventListener("error", (e) => clog(`ERRO ${e.message} @ ${e.filename}:${e.lineno}`));
+window.addEventListener("unhandledrejection", (e) => clog(`REJEIÇÃO ${e.reason}`));
+
+const $ = (id) => document.getElementById(id);
+const el = {
+  dot: $("dot"), timer: $("timer"), cfgBtn: $("cfgBtn"), privacy: $("privacy"),
+  surface: $("surface"), empty: $("empty"), doc: $("doc"),
+  wave: $("wave"), toggle: $("toggleBtn"), savebar: $("savebar"),
+  saveBtn: $("saveBtn"), discardBtn: $("discardBtn"),
+  cfgPop: $("cfgPop"), toast: $("toast"),
+  optScroll: $("optScroll"), optTop: $("optTop"), optOverlay: $("optOverlay"),
+  optDiar: $("optDiar"), clearBtn: $("clearBtn"),
+  model: $("model"), lang: $("lang"), translate: $("translate"),
+  autosave: $("autosave"), pickDir: $("pickDir"), source: $("source"), mode: $("mode"),
+  liveExpand: $("liveExpand"), liveCollapse: $("liveCollapse"), uiLang: $("uiLang"),
+};
+
+// ---- i18n da interface (pt/en) ----
+const I18N = {
+  pt: { settings: "configurações", project: "projeto", active: "ativo", color: "cor",
+    uiLang: "idioma da interface", transcription: "transcrição", storage: "armazenamento", acervo: "acervo" },
+  en: { settings: "settings", project: "project", active: "active", color: "color",
+    uiLang: "interface language", transcription: "transcription", storage: "storage", acervo: "knowledge base" },
+};
+function t(key) { return (I18N[settings.uiLang] || I18N.pt)[key] || (I18N.pt[key] || key); }
+function applyI18n() {
+  document.documentElement.setAttribute("lang", settings.uiLang === "en" ? "en" : "pt-br");
+  document.querySelectorAll("[data-i18n]").forEach((n) => { n.textContent = t(n.dataset.i18n); });
+}
+
+// painel ao vivo (dock): abre/fecha; abre sozinho ao começar a gravar
+function setLivePanel(open) {
+  el.surface.hidden = !open;
+  if (el.liveExpand) el.liveExpand.textContent = open ? "⌄" : "⌃";
+  if (open) requestAnimationFrame(() => resizeWave());
+}
+
+const state = {
+  running: false, autoscroll: true, recordForDiarize: false, fileMode: false,
+  meetingMode: false,
+  lines: [], startTime: 0, timerId: null,
+};
+
+// ADR-0010 — the meeting lifecycle (record-then-transcribe). Distinct from the
+// flat-file/live state: `active` gates the meeting-aware transcript-line and
+// transcribe-state handlers, `phase` mirrors manifest.status, and transcript
+// lines are accumulated then persisted below the marker via brain_meeting_append.
+const meeting = {
+  active: false, id: null, dir: null, livingRel: null, tema: null,
+  phase: null, pendingLines: [], flushTimer: null,
+  // ADR-0012 pseudo-stream: a best-effort tail-transcription interval fills the
+  // living surface WHILE recording. `tailFrom` is the next window offset (ms).
+  tailTimer: null, tailFrom: 0, tailBusy: false, tailStatus: "",
+  // ADR-0012 model A: a rotating mic recorder — each ~N s segment is transcribed
+  // and appended live, so the OPERATOR's speech shows in the stream (the system
+  // tail above only covers the other participants). Audio is transient.
+  previewRec: null, previewChunks: [], previewTimer: null,
+};
+
+// ---- configurações persistidas (localStorage) ----
+const SETTINGS_KEY = "loro-settings";
+const DEFAULTS = {
+  model: "large-v3-turbo", lang: "pt", translate: false,
+  autoscroll: true, autosave: false, saveDir: "", source: "mic", mode: "live", uiLang: "pt", termSide: false,
+};
+let settings = { ...DEFAULTS };
+function loadSettings() {
+  try { settings = mergeSettings(DEFAULTS, JSON.parse(localStorage.getItem(SETTINGS_KEY))); }
+  catch (_) { settings = { ...DEFAULTS }; }
+}
+function persistSettings() {
+  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (_) {}
+}
+function applySettings() {
+  el.model.value = settings.model;
+  el.lang.value = settings.lang;
+  el.translate.checked = settings.translate;
+  el.optScroll.checked = settings.autoscroll;
+  el.autosave.checked = settings.autosave;
+  el.source.value = settings.source;
+  el.mode.value = settings.mode;
+  state.autoscroll = settings.autoscroll;
+  el.pickDir.textContent = settings.saveDir || "…";
+  el.pickDir.title = settings.saveDir || "Escolher pasta de armazenamento";
+  if (el.uiLang) el.uiLang.value = settings.uiLang;
+  applyI18n();
+}
+
+// ---- render ----
+function render() {
+  el.doc.innerHTML = state.lines.map((t) => `<p>${mdInline(esc(t))}</p>`).join("");
+  const last = el.doc.lastElementChild;
+  if (last) last.classList.add("new");
+  const has = state.lines.length > 0;
+  el.doc.hidden = !has;
+  el.empty.hidden = has;
+  if (state.autoscroll) el.surface.scrollTop = el.surface.scrollHeight;
+}
+function appendLine(text) { state.lines.push(text); render(); }
+
+function toast(msg, ms = 2600) {
+  el.toast.textContent = msg;
+  el.toast.hidden = false;
+  clearTimeout(toast._t);
+  if (ms) toast._t = setTimeout(() => (el.toast.hidden = true), ms);
+}
+
+// ---- timer ----
+function fmt(s) {
+  const m = Math.floor(s / 60), r = s % 60;
+  return `${String(m).padStart(2, "0")}:${String(r).padStart(2, "0")}`;
+}
+function startTimer() {
+  state.startTime = Date.now();
+  el.timer.textContent = "00:00";
+  state.timerId = setInterval(() => {
+    el.timer.textContent = fmt(Math.floor((Date.now() - state.startTime) / 1000));
+  }, 1000);
+}
+function stopTimer() { clearInterval(state.timerId); state.timerId = null; }
+
+// ---- indicador de áudio (onda) — best-effort, nunca bloqueia o start ----
+let audio = { stream: null, ctx: null, analyser: null, raf: null, recorder: null, chunks: [], mime: "" };
+const wctx = el.wave.getContext("2d");
+const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+function resizeWave() {
+  // oculto (aba acervo): medir agora zeraria o bitmap — ignora;
+  // o switchTab re-mede ao voltar pra "ao vivo"
+  if (el.wave.clientWidth === 0) return;
+  const dpr = window.devicePixelRatio || 1;
+  el.wave.width = el.wave.clientWidth * dpr;
+  el.wave.height = el.wave.clientHeight * dpr;
+  wctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  // mudar o bitmap limpa o canvas: redesenha o estado parado
+  // (gravando, o próximo frame do drawLoop repinta sozinho)
+  if (!audio.analyser) drawIdle();
+}
+window.addEventListener("resize", resizeWave);
+
+function drawIdle() {
+  const w = el.wave.clientWidth, h = el.wave.clientHeight;
+  wctx.clearRect(0, 0, w, h);
+  wctx.strokeStyle = cssVar("--line"); wctx.lineWidth = 1; wctx.setLineDash([2, 4]);
+  wctx.beginPath(); wctx.moveTo(0, h / 2); wctx.lineTo(w, h / 2); wctx.stroke();
+  wctx.setLineDash([]);
+}
+
+// gradiente de "plumagem" (teal -> amarelo -> vermelho): o Loro se acende ao ouvir
+function featherGradient(w) {
+  const g = wctx.createLinearGradient(0, 0, w, 0);
+  g.addColorStop(0, cssVar("--teal"));
+  g.addColorStop(0.55, cssVar("--yellow"));
+  g.addColorStop(1, cssVar("--red"));
+  return g;
+}
+
+function drawLoop() {
+  const buf = new Uint8Array(audio.analyser.fftSize);
+  const tick = () => {
+    if (!audio.analyser) return;
+    const w = el.wave.clientWidth, h = el.wave.clientHeight;
+    audio.analyser.getByteTimeDomainData(buf);
+    let peak = 0;
+    for (let i = 0; i < buf.length; i++) peak = Math.max(peak, Math.abs(buf[i] - 128));
+    const level = Math.min(1, peak / 90);
+    const speaking = level > 0.12;
+    wctx.clearRect(0, 0, w, h);
+    wctx.lineWidth = speaking ? 1.8 : 1.4;
+    // onda colorida (plumagem) ao detectar fala; cinza enquanto só ouve
+    wctx.strokeStyle = speaking ? featherGradient(w) : cssVar("--muted");
+    wctx.globalAlpha = speaking ? Math.max(0.65, level) : 0.45;
+    wctx.beginPath();
+    for (let i = 0; i < buf.length; i++) {
+      const x = (i / buf.length) * w, y = (buf[i] / 255) * h;
+      i === 0 ? wctx.moveTo(x, y) : wctx.lineTo(x, y);
+    }
+    wctx.stroke(); wctx.globalAlpha = 1;
+    audio.raf = requestAnimationFrame(tick);
+  };
+  tick();
+}
+
+// deviceLabel: p/ áudio do sistema, casa o dispositivo de entrada BlackHole
+async function startAudio(deviceLabel) {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    clog("getUserMedia indisponível — sem medidor de áudio"); setMeter("off"); return;
+  }
+  let constraints = { audio: true };
+  if (deviceLabel) {
+    try {
+      // os labels de enumerateDevices só aparecem após uma permissão de áudio:
+      // fazemos um "priming" e paramos o stream antes de casar o dispositivo certo
+      let devs = await navigator.mediaDevices.enumerateDevices();
+      if (!devs.some((x) => x.kind === "audioinput" && x.label)) {
+        const prime = await navigator.mediaDevices.getUserMedia({ audio: true });
+        prime.getTracks().forEach((t) => t.stop());
+        devs = await navigator.mediaDevices.enumerateDevices();
+      }
+      const d = devs.find((x) => x.kind === "audioinput" && new RegExp(deviceLabel, "i").test(x.label));
+      if (d && d.deviceId) constraints = { audio: { deviceId: { exact: d.deviceId } } };
+      else {
+        clog("medidor: entrada '" + deviceLabel + "' não encontrada — sem onda");
+        setMeter("nosignal"); return;
+      }
+    } catch (e) { clog("enumerateDevices erro: " + e); setMeter("off"); return; }
+  }
+  audio.stream = await navigator.mediaDevices.getUserMedia(constraints);
+  setMeter(settings.source === "meeting" ? "meeting" : (deviceLabel ? "system" : "mic"));
+  audio.ctx = new (window.AudioContext || window.webkitAudioContext)();
+  audio.analyser = audio.ctx.createAnalyser();
+  audio.analyser.fftSize = 1024;
+  audio.ctx.createMediaStreamSource(audio.stream).connect(audio.analyser);
+  // ADR-0012 model A: a MEETING does NOT use the continuous mic recorder — the
+  // transcript is built live from the rotating preview segments + the system tail,
+  // and audio is transient. Running a second continuous MediaRecorder on the same
+  // stream made WKWebView fire the main recorder's onstop when a preview segment
+  // rotated, finalizing the meeting on its own. So only diarize/file modes record.
+  if (state.recordForDiarize || state.fileMode) {
+    audio.chunks = [];
+    audio.recorder = new MediaRecorder(audio.stream);
+    audio.mime = audio.recorder.mimeType || "audio/webm";
+    audio.recorder.ondataavailable = (e) => { if (e.data.size) audio.chunks.push(e.data); };
+    audio.recorder.onstop = state.fileMode ? finalizeFileTranscription : finalizeRecording;
+    audio.recorder.start();
+  }
+  drawLoop();
+  clog("medidor de áudio ativo");
+}
+// indicador funcional da captura: mic / sistema / sem sinal / desligado
+function setMeter(kind) {
+  if (!el.privacy) return;
+  const map = {
+    mic: ["● mic", "captando microfone"],
+    system: ["● sistema", "captando áudio do computador (BlackHole)"],
+    meeting: ["● reunião", "captando sua voz + áudio do computador (Loro Reunião)"],
+    nosignal: ["sem sinal", "não achei o dispositivo de captura — rode ./loro.sh sysaudio-setup"],
+    off: ["gravando", "gravando"],
+  };
+  const [txt, title] = map[kind] || map.off;
+  el.privacy.textContent = txt;
+  el.privacy.title = title;
+  el.privacy.dataset.meter = kind;
+}
+function stopAudio() {
+  if (audio.raf) cancelAnimationFrame(audio.raf);
+  audio.raf = null;
+  if (audio.recorder && audio.recorder.state !== "inactive") audio.recorder.stop();
+  else audio.recorder = null;
+  if (audio.ctx) audio.ctx.close();
+  if (audio.stream) audio.stream.getTracks().forEach((t) => t.stop());
+  audio.stream = audio.ctx = audio.analyser = null;
+  drawIdle();
+}
+
+async function finalizeRecording() {
+  const chunks = audio.chunks; audio.chunks = []; audio.recorder = null;
+  if (!chunks.length) return;
+  const blob = new Blob(chunks, { type: audio.mime });
+  const buf = new Uint8Array(await blob.arrayBuffer());
+  const ext = (audio.mime.includes("mp4") || audio.mime.includes("aac")) ? "mp4" : "webm";
+  const filename = `rec-${stamp()}.${ext}`;
+  try {
+    const path = await invoke("save_recording", { data: Array.from(buf), filename });
+    toast("diarizando… (pode levar alguns minutos)", 0);
+    const md = await invoke("diarize", { audioPath: path });
+    state.lines = md.split(/\n{2,}/).map((s) => s.trim()).filter(Boolean);
+    render();
+    toast("diarização concluída");
+  } catch (e) {
+    toast("diarização falhou: " + String(e).slice(0, 80));
+    clog("diarize erro: " + e);
+  }
+}
+function stamp() {
+  const d = new Date(), p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+}
+
+// modo "gravar tudo": salva o áudio bruto e manda transcrever de uma vez com
+// whisper-cli (sem VAD/streaming) — as linhas voltam pelo mesmo evento
+// transcript-line do modo ao vivo (ver listen() lá embaixo).
+async function finalizeFileTranscription() {
+  const chunks = audio.chunks; audio.chunks = []; audio.recorder = null;
+  state.fileMode = false;
+  if (!chunks.length) { toast("nada gravado"); return; }
+  const blob = new Blob(chunks, { type: audio.mime });
+  const buf = new Uint8Array(await blob.arrayBuffer());
+  const ext = (audio.mime.includes("mp4") || audio.mime.includes("aac")) ? "mp4" : "webm";
+  const filename = `loro-file-${stamp()}.${ext}`;
+  try {
+    const path = await invoke("save_recording", { data: Array.from(buf), filename });
+    await invoke("transcribe_file", { path, cfg: currentCfg() });
+  } catch (e) {
+    toast("transcrição falhou: " + String(e).slice(0, 80));
+    clog("transcribe_file erro: " + e);
+  }
+}
+
+// rótulo do dispositivo p/ o medidor/onda (regex de enumerateDevices):
+// sistema => BlackHole; mic/reunião => padrão (a onda usa o microfone).
+function meterLabelFor(source) {
+  if (source === "system") return "blackhole";
+  return undefined;
+}
+
+// ---- start / stop ----
+function currentCfg() {
+  return { model: el.model.value, lang: el.lang.value, translate: el.translate.checked, threads: 8 };
+}
+async function startSession() {
+  if (state.running) return;
+  // reunião: grava sua voz (mic) + o áudio do sistema (ScreenCaptureKit) e
+  // transcreve ao parar — independe do seletor ao vivo/gravar tudo (ADR-0005).
+  if (settings.source === "meeting") return startMeetingSession();
+  if (settings.mode === "file") return startFileSession();
+  const cfg = currentCfg();
+  // fonte = áudio do sistema: resolve o dispositivo BlackHole (flag -c) a partir
+  // da lista enumerada. mic => padrão do sistema (sem -c).
+  if (settings.source === "system") {
+    let devs;
+    try {
+      devs = await invoke("list_capture_devices");
+    } catch (e) {
+      toast("falha ao listar dispositivos");
+      clog("list_capture_devices erro: " + e);
+      return;
+    }
+    const pick = LoroAudio.pickCaptureDevice(devs, settings.source);
+    if (pick.missing === "system") {
+      openBlackholeSetup();
+      clog("system source: BlackHole ausente; dispositivos=" + JSON.stringify(devs));
+      return;
+    }
+    cfg.capture = pick.capture;
+    clog("fonte sistema via #" + pick.capture);
+  }
+  clog("start: " + JSON.stringify(cfg));
+  // 1) inicia a transcrição PRIMEIRO — não depende do microfone do webview
+  try {
+    await invoke("start", { cfg });
+  } catch (e) {
+    toast("não iniciou: " + String(e).slice(0, 120));
+    clog("invoke start erro: " + e);
+    return;
+  }
+  // 2) medidor/onda (best-effort, nunca bloqueia): mic direto, ou o BlackHole no modo sistema
+  const meterLabel = meterLabelFor(settings.source);
+  startAudio(meterLabel).catch((e) => clog("startAudio falhou (segue sem onda): " + e));
+}
+async function stopSession() {
+  if (!state.running) return;
+  if (meeting.active) return stopMeeting();
+  if (settings.mode === "file") { clog("stop (modo arquivo)"); onStopped(); return; }
+  clog("stop solicitado");
+  try { await invoke("stop"); } catch (e) { clog("invoke stop erro: " + e); }
+}
+
+// ADR-0010 — a meeting is a living file under a tema. START picks/creates a tema
+// and calls brain_meeting_start, which scaffolds the meeting home + manifest +
+// reuniao.md AND spawns the ScreenCaptureKit sidecar into audio/system.wav
+// (REUSING ADR-0005 system_capture_start — the frontend does NOT start capture
+// itself). The mic keeps recording via the existing MediaRecorder (the onda +
+// audio/mic.webm). The reuniao.md tab is opened as THE live surface (the footer
+// live panel is retired for meetings), and the transcript only shows after stop.
+async function startMeetingSession() {
+  if (state.running || meeting.active) { toast("já há uma gravação em andamento"); return; }
+  let temas = [];
+  try { temas = (await invoke("brain_list_brainstorms")) || []; } catch (_) {}
+  const choice = await pickMeeting(temas);
+  if (!choice) return;
+  const cfg = currentCfg();
+  clog("start (reunião ADR-0010): tema=" + choice.tema);
+  let res;
+  try {
+    res = await invoke("brain_meeting_start", { input: { tema: choice.tema, titulo: choice.titulo, cfg } });
+  } catch (e) {
+    const msg = String(e);
+    if (/permiss|tcc|grava|screen/i.test(msg)) toast("permita a Gravação de Tela nas Configurações e tente de novo", 0);
+    else toast("não iniciei a reunião: " + msg.slice(0, 100));
+    clog("brain_meeting_start erro: " + e);
+    return;
+  }
+  meeting.active = true; meeting.id = res.id; meeting.dir = res.dir;
+  meeting.livingRel = res.livingRel; meeting.tema = choice.tema;
+  meeting.phase = "recording"; meeting.pendingLines = [];
+  state.meetingMode = true;
+  await openDoc(res.livingRel, { preview: false }); // a aba é a superfície ao vivo
+  // microfone via MediaRecorder (onda + audio/mic.webm); degrada p/ só-sistema se falhar
+  try { await startAudio(undefined); }
+  catch (e) { clog("startAudio (reunião) erro — seguindo só com áudio do sistema: " + e); }
+  onStarted();
+  startMeetingTail(); // ADR-0012: sistema (outros participantes) ao vivo
+  startMeetingPreview(); // ADR-0012 modelo A: microfone (operador) ao vivo
+  pessoalSig = ""; refreshPessoal();
+  toast("reunião iniciada — a transcrição aparece durante a reunião");
+}
+
+// ADR-0012 pseudo-stream: while recording, poll the system-audio tail every ~18s
+// and append any new text below the marker (append-only, read-only contract).
+// Each tick transcribes the window [tailFrom, end] via brain_meeting_transcribe_tail
+// and advances tailFrom to the returned nextMs so windows never overlap. This is a
+// BEST-EFFORT preview — the authoritative mix+transcription at stop stays the
+// source of truth — so every error is swallowed (clog) and never crashes the
+// meeting. The meeting-appended event repaints the living surface in place.
+const MEETING_TAIL_MS = 18000;
+function startMeetingTail() {
+  stopMeetingTail();
+  meeting.tailFrom = 0; meeting.tailBusy = false;
+  meeting.tailStatus = "preview: iniciando…";
+  meeting.tailTimer = setInterval(tickMeetingTail, MEETING_TAIL_MS);
+}
+function stopMeetingTail() {
+  if (meeting.tailTimer) { clearInterval(meeting.tailTimer); meeting.tailTimer = null; }
+  meeting.tailBusy = false;
+}
+
+// ADR-0012 model A: rotate a dedicated mic MediaRecorder (separate from the main
+// one, on the same stream) so the operator's speech reaches the LIVE transcript.
+// Each interval stops the current segment (its onstop transcribes it) and the
+// next is spawned in onstop, giving continuous ~N s segments. Audio is transient.
+function blobToBytes(blob) {
+  return blob.arrayBuffer().then((b) => Array.from(new Uint8Array(b)));
+}
+// ms elapsed since the meeting/recording started (the shared session clock).
+function meetingElapsedMs() {
+  return state.startTime ? Math.max(0, Date.now() - state.startTime) : 0;
+}
+function spawnPreviewRec() {
+  if (!audio.stream) return;
+  const segStart = meetingElapsedMs(); // ADR-0013: this segment's start on the timeline
+  let rec;
+  try { rec = new MediaRecorder(audio.stream); }
+  catch (e) { clog("preview rec erro: " + e); return; }
+  meeting.previewRec = rec;
+  meeting.previewChunks = [];
+  rec.ondataavailable = (e) => { if (e.data && e.data.size) meeting.previewChunks.push(e.data); };
+  rec.onstop = () => {
+    const chunks = meeting.previewChunks; meeting.previewChunks = [];
+    // Only respawn while the rotation is live (previewTimer set); stopMeetingPreview
+    // clears it first, so the final stop flushes the last segment without respawning.
+    if (meeting.active && meeting.phase === "recording" && meeting.previewTimer) spawnPreviewRec();
+    onPreviewSegment(chunks, rec.mimeType || "audio/webm", segStart);
+  };
+  try { rec.start(); } catch (e) { clog("preview start erro: " + e); }
+}
+function startMeetingPreview() {
+  stopMeetingPreview();
+  spawnPreviewRec();
+  meeting.previewTimer = setInterval(() => {
+    const rec = meeting.previewRec;
+    if (rec && rec.state !== "inactive") rec.stop(); // onstop → transcribe + respawn
+  }, MEETING_TAIL_MS);
+}
+function stopMeetingPreview() {
+  if (meeting.previewTimer) { clearInterval(meeting.previewTimer); meeting.previewTimer = null; }
+  const rec = meeting.previewRec; meeting.previewRec = null;
+  if (rec && rec.state !== "inactive") { try { rec.stop(); } catch (_) {} } // flush the last segment
+}
+async function onPreviewSegment(chunks, mime, tMs) {
+  if (!chunks || !chunks.length || !meeting.id) return;
+  const id = meeting.id;
+  try {
+    const data = await blobToBytes(new Blob(chunks, { type: mime }));
+    const res = await invoke("brain_meeting_transcribe_segment", { input: { id, data } });
+    const text = LM.filterHallucinations((res && res.text) || "");
+    if (text.trim() && meeting.id === id) {
+      // ADR-0013: the operator's mic segment, timecoded so it interleaves with the
+      // system windows in chronological order.
+      try { await invoke("brain_meeting_append", { input: { id, chunk: text, tMs: tMs || 0, source: "mic" } }); setTailStatus(id, "preview ao vivo ativo"); }
+      catch (e) { clog("brain_meeting_append (mic) erro: " + e); }
+    } else {
+      setTailStatus(id, "preview: microfone sem fala substantiva ainda");
+    }
+  } catch (e) {
+    clog("brain_meeting_transcribe_segment erro: " + e);
+    setTailStatus(id, "preview indisponível: " + String(e).slice(0, 80));
+  }
+}
+async function tickMeetingTail() {
+  if (!meeting.active || meeting.phase !== "recording" || !meeting.id) return;
+  if (meeting.tailBusy) return; // never overlap a still-running window
+  meeting.tailBusy = true;
+  const id = meeting.id;
+  const winStart = meeting.tailFrom; // ADR-0013: this system window's start on the timeline
+  try {
+    const res = await invoke("brain_meeting_transcribe_tail", { input: { id, fromMs: meeting.tailFrom } });
+    if (!res) { setTailStatus(id, "preview: sem resposta do backend"); return; }
+    if (typeof res.nextMs === "number" && res.nextMs > meeting.tailFrom) meeting.tailFrom = res.nextMs;
+    const raw = res.text || "";
+    const text = LM.filterHallucinations(raw); // drop whisper silence-artifacts
+    if (text.trim() && meeting.active && meeting.id === id) {
+      // the other participants (system audio), timecoded by the window start.
+      try { await invoke("brain_meeting_append", { input: { id, chunk: text, tMs: winStart || 0, source: "system" } }); setTailStatus(id, "preview ao vivo ativo"); }
+      catch (e) { clog("brain_meeting_append (tail) erro: " + e); }
+    } else if (raw.trim()) {
+      // Houve áudio transcrito, mas só silêncio/ruído (alucinação de legenda) —
+      // sinaliza captura OK porém sem fala; diferente de "sem áudio".
+      setTailStatus(id, "preview: só silêncio/ruído até agora (fale para testar a captura)");
+    } else {
+      // Nenhum texto do backend: janela vazia ou áudio ainda não legível.
+      setTailStatus(id, "preview: aguardando áudio (sem novo trecho ainda)");
+    }
+  } catch (e) {
+    clog("brain_meeting_transcribe_tail erro: " + e);
+    setTailStatus(id, "preview indisponível: " + String(e).slice(0, 80));
+  } finally {
+    meeting.tailBusy = false;
+  }
+}
+// Surface the pseudo-stream status in the meeting panel (repaint on change only).
+function setTailStatus(id, msg) {
+  if (meeting.tailStatus === msg) return;
+  meeting.tailStatus = msg;
+  renderIfLiving(id);
+}
+
+// Encerrar: para captura/onda; o MediaRecorder dispara finalizeMeeting no onstop.
+// Se o microfone falhou (sem recorder), conduzimos o encerramento diretamente.
+function stopMeeting() {
+  clog("stop (reunião ADR-0010)");
+  stopMeetingTail();     // encerra o preview de sistema
+  stopMeetingPreview();  // encerra o preview de mic (faz o flush do último segmento)
+  const hadRecorder = !!(audio.recorder && audio.recorder.state !== "inactive");
+  onStopped();
+  if (!hadRecorder) finalizeMeeting();
+}
+
+// STOP (ADR-0012 modelo A): a transcrição JÁ foi montada ao vivo pelos segmentos
+// de mic + janelas de sistema — NÃO há passe completo separado (duplicaria tudo).
+// Aqui apenas encerramos os loops, paramos o sidecar de sistema e concluímos
+// (monta o relatório + apaga todo o áudio; áudio é transiente).
+async function finalizeMeeting() {
+  stopMeetingTail();
+  stopMeetingPreview(); // faz o flush do último segmento de mic (append assíncrono)
+  audio.chunks = []; audio.recorder = null;
+  state.meetingMode = false;
+  const id = meeting.id;
+  if (!id) return;
+  meeting.phase = "transcribing";
+  el.toggle.disabled = true;
+  renderIfLiving(id);
+  // encerra o sidecar de áudio do sistema (o mix é ignorado — áudio é transiente)
+  try { await invoke("brain_meeting_stop", { input: { id } }); }
+  catch (e) { clog("brain_meeting_stop erro: " + e); }
+  await finishMeetingAfterTranscription(); // monta o relatório + purga o áudio
+}
+
+// Acumula as linhas do transcript-line e as persiste em lote abaixo do marcador
+// via brain_meeting_append (append-only). O flush é debounced para não gravar o
+// manifest por linha; um flush final ocorre ao concluir a transcrição.
+function meetingAccumulate(line) {
+  if (line == null || line === "") return;
+  const clean = LM.filterHallucinations(line); // drop whisper silence-artifacts
+  if (!clean) return;
+  meeting.pendingLines.push(clean);
+  if (meeting.flushTimer) return;
+  meeting.flushTimer = setTimeout(flushMeetingLines, 900);
+}
+async function flushMeetingLines() {
+  meeting.flushTimer = null;
+  if (!meeting.id || !meeting.pendingLines.length) return;
+  const chunk = meeting.pendingLines.join("\n\n");
+  meeting.pendingLines = [];
+  try { await invoke("brain_meeting_append", { input: { id: meeting.id, chunk } }); }
+  catch (e) { clog("brain_meeting_append erro: " + e); }
+}
+
+// Conclusão: garante o flush final, monta o relatório (brain_meeting_build_notebook)
+// e abre relatorio.md como aba. Reentrância protegida por meeting.active.
+async function finishMeetingAfterTranscription() {
+  if (!meeting.active) return;
+  meeting.active = false; meeting.phase = "done"; // reentrancy guard set synchronously
+  const id = meeting.id;
+  if (meeting.flushTimer) { clearTimeout(meeting.flushTimer); meeting.flushTimer = null; }
+  await flushMeetingLines();
+  el.toggle.disabled = false;
+  el.privacy.classList.remove("warn");
+  updatePrivacy();
+  let rel = null;
+  if (id) {
+    try { const r = await invoke("brain_meeting_build_notebook", { id }); rel = r && r.rel; }
+    catch (e) { toast("não montei o relatório: " + String(e).slice(0, 80)); clog("build_notebook erro: " + e); }
+    // Áudio é transiente (decisão do dono): apaga após a transcrição autoritativa.
+    try { await invoke("brain_meeting_purge_audio", { input: { id } }); }
+    catch (e) { clog("brain_meeting_purge_audio erro: " + e); }
+  }
+  pessoalSig = ""; refreshPessoal();
+  renderIfLiving(id);
+  if (rel) { toast("relatório pronto"); openDoc(rel, { preview: false }); }
+  else if (id) toast("reunião encerrada");
+}
+
+// Resolve o completoRel (relativo ao acervo) num caminho de arquivo para a
+// transcrição existente (ADR-0010: stop devolve rel e não transcreve).
+async function acervoFsPath(rel) {
+  const cfg = await invoke("brain_get_config");
+  const base = (cfg && cfg.brainDir) || "";
+  return LM.acervoJoin(base, rel);
+}
+
+// Marcadores PII-free (BR-8): tipo + timecode a partir do relógio da sessão.
+async function markMeeting(tipo) {
+  if (!meeting.active || !meeting.id) { toast("nenhuma reunião em andamento"); return; }
+  const tMs = state.startTime ? Math.max(0, Date.now() - state.startTime) : 0;
+  try { await invoke("brain_meeting_marker", { input: { id: meeting.id, tipo, tMs } }); toast("marcado: " + tipo); }
+  catch (e) { toast(String(e).slice(0, 80)); clog("brain_meeting_marker erro: " + e); }
+}
+
+// paleta: "nova reunião" (independe do seletor de fonte) · "abrir relatório"
+function startMeetingFlow() {
+  if (state.running || meeting.active) { toast("já há uma gravação em andamento"); return; }
+  startMeetingSession();
+}
+// ADR-0013: general Q&A over the acervo. Any question is answered from the
+// versioned contexts (local base) first, MCP/external only after (the /brain-ask
+// skill enforces the order). Injects into the terminal Claude, like the meeting
+// skills — the answer appears in the terminal. Not meeting-scoped.
+function askAcervo() {
+  openModal(
+    "Perguntar ao acervo",
+    `<p class="pmnote mono">A resposta vem primeiro dos contextos (a base de conhecimento) e, se preciso, de conectores MCP. Roda no Claude do terminal.</p>` +
+      `<label class="wfield"><span class="mono">pergunta</span>` +
+      `<input id="askInput" type="text" placeholder="ex.: qual a política de multas da frota?" spellcheck="false"></label>`,
+    "perguntar",
+    () => {
+      const q = (($("askInput") && $("askInput").value) || "").trim();
+      const cmd = LoroBrainstorm.brainAskCmd(q);
+      if (!cmd) { toast("digite uma pergunta"); return; }
+      termRun(cmd);
+      toast("pergunta enviada ao Claude do terminal — a resposta aparece abaixo", 4000);
+    }
+  );
+  const inp = $("askInput"); if (inp) inp.focus();
+}
+
+async function buildAndOpenReport() {
+  let id = meeting.id;
+  if (!id) { const rel = currentRel(); id = rel ? (LM.livingId(rel) || LM.reportId(rel)) : null; }
+  if (!id) { toast("abra uma reunião para gerar o relatório"); return; }
+  try { const r = await invoke("brain_meeting_build_notebook", { id }); if (r && r.rel) openDoc(r.rel, { preview: false }); toast("relatório pronto"); }
+  catch (e) { toast("não montei o relatório: " + String(e).slice(0, 80)); clog("build_notebook erro: " + e); }
+}
+
+// modo "gravar tudo": não há processo do whisper-stream — apenas grava o áudio
+// local (mesmo mecanismo do checkbox de diarização); a transcrição roda inteira
+// só ao parar, em finalizeFileTranscription().
+async function startFileSession() {
+  clog("start (modo arquivo): gravando para transcrever ao final");
+  state.fileMode = true;
+  const meterLabel = meterLabelFor(settings.source);
+  try {
+    await startAudio(meterLabel);
+  } catch (e) {
+    state.fileMode = false;
+    toast("não consegui gravar: " + String(e).slice(0, 120));
+    clog("startAudio (modo arquivo) erro: " + e);
+    return;
+  }
+  onStarted();
+}
+
+function onStarted() {
+  state.running = true;
+  requestAnimationFrame(() => resizeWave());
+  el.dot.classList.add("on");
+  el.toggle.classList.add("on", "recording");
+  // reunião: a transcrição vive na aba reuniao.md, não no painel do rodapé (ADR-0010)
+  if (!meeting.active) setLivePanel(true);
+  el.savebar.hidden = true;
+  startTimer();
+}
+function onStopped() {
+  if (!state.running) return;
+  state.running = false;
+  el.dot.classList.remove("on");
+  el.toggle.classList.remove("on", "recording");
+  stopTimer();
+  // ADR-0013: clear the elapsed clock so a NEW recording never looks like it
+  // resumes from the last session's time.
+  state.startTime = 0;
+  el.timer.textContent = "00:00";
+  stopAudio();
+  updatePrivacy();
+  if (!state.lines.length) return;
+  if (settings.autosave) autoSaveNow();
+  else { el.savebar.hidden = false; setLivePanel(true); }
+}
+
+// auto-save silencioso na pasta configurada
+async function autoSaveNow() {
+  const content = state.lines.join("\n\n") + "\n";
+  try {
+    let dir = settings.saveDir;
+    if (!dir) {
+      dir = await invoke("default_save_dir");
+      settings.saveDir = dir; persistSettings(); applySettings();
+    }
+    const path = await invoke("auto_save", { content, dir, filename: `loro-${stamp()}.md` });
+    toast("salvo: " + path.split("/").pop());
+    clearDoc();   // buffer limpo: a próxima sessão começa zerada
+  } catch (e) {
+    clog("auto_save erro: " + e);
+    toast("auto-save falhou — salve manualmente");
+    el.savebar.hidden = false;
+  }
+}
+// debounce defensivo: ignora acionamentos < 500ms (clique duplo / evento repetido)
+let lastToggle = 0;
+function toggle() {
+  const now = Date.now();
+  if (now - lastToggle < 500) return;
+  lastToggle = now;
+  state.running ? stopSession() : startSession();
+}
+
+// ---- salvar / descartar / limpar ----
+async function save() {
+  const content = state.lines.join("\n\n") + "\n";
+  try {
+    const path = await invoke("save_transcript", { content });
+    if (path) { toast("salvo"); el.savebar.hidden = true; clearDoc(); }
+  } catch (e) { toast("falha ao salvar"); clog("save erro: " + e); }
+}
+function discard() { el.savebar.hidden = true; }
+// limpa buffer de transcrição E o timer (sessão salva começa do zero)
+function clearDoc() { state.lines = []; render(); el.savebar.hidden = true; el.timer.textContent = "00:00"; }
+
+// ---- popover do menu + folha de configurações ----
+const cfgWrap = $("cfgWrap"), cfgClose = $("cfgClose"), acervoDir = $("acervoDir");
+async function openCfg() {
+  cfgWrap.hidden = false;
+  try {
+    const cfg = await invoke("brain_get_config");
+    acervoDir.textContent = cfg ? cfg.brainDir : "não configurado — crie um projeto";
+    acervoDir.title = cfg ? cfg.brainDir : "";
+  } catch (_) { acervoDir.textContent = "—"; }
+  // seção projeto: nome ativo + paleta de cores
+  const cur = acervos.find((a) => a.id === activeAcervo);
+  $("cfgProj").textContent = cur ? cur.name : "—";
+  drawProjColors(cur);
+  // sem pasta escolhida: mostra o destino padrão real (inbox do acervo)
+  if (!settings.saveDir) {
+    try { el.pickDir.textContent = await invoke("default_save_dir"); } catch (_) {}
+  }
+}
+function drawProjColors(cur) {
+  renderSwatches($("projColors"), cur ? cur.color : "", async (hex) => {
+    applyAccent(hex);
+    if (!cur) return;
+    try {
+      const av = await invoke("brain_set_color", { id: cur.id, color: hex });
+      acervos = av.acervos || [];
+      const updated = acervos.find((a) => a.id === cur.id);
+      drawProjColors(updated);
+    } catch (e) { toast(String(e).slice(0, 80)); }
+  });
+}
+function closeCfg() { cfgWrap.hidden = true; }
+cfgClose.addEventListener("click", closeCfg);
+cfgWrap.addEventListener("click", (e) => { if (e.target === cfgWrap) closeCfg(); });
+window.addEventListener("keydown", (e) => { if (e.key === "Escape" && !cfgWrap.hidden) closeCfg(); });
+
+function updateCfgLabel() {
+  const m = el.model.value === "large-v3-turbo" ? "turbo" : "small";
+  const src = { system: "áudio do sistema", meeting: "reunião" }[el.source.value] || "microfone";
+  const modeLabel = el.mode.value === "file" ? "gravar tudo" : "ao vivo";
+  const sum = $("cfgSummary");
+  if (sum) sum.textContent = `${el.lang.value} · ${m} · ${src} · ${modeLabel}`;
+  el.cfgBtn.title = `Configurações — ${el.lang.value} · ${m} · ${modeLabel}`;
+}
+function updatePrivacy() {
+  el.privacy.classList.remove("warn");
+  delete el.privacy.dataset.meter;
+  if (state.recordForDiarize || state.fileMode || state.meetingMode) { el.privacy.textContent = "grava áudio"; el.privacy.classList.add("warn"); }
+  else if (settings.autosave) { el.privacy.textContent = "auto-save"; }
+  else { el.privacy.textContent = "sem gravar"; }
+}
+
+// ---- wiring ----
+el.toggle.addEventListener("click", toggle);
+el.cfgBtn.addEventListener("click", openCfg);
+if (el.uiLang) el.uiLang.addEventListener("change", (e) => {
+  settings.uiLang = e.target.value; persistSettings(); applyI18n();
+  if ($("brainLang")) $("brainLang").value = settings.uiLang; // default do idioma de novos projetos
+});
+el.saveBtn.addEventListener("click", save);
+el.discardBtn.addEventListener("click", discard);
+el.clearBtn.addEventListener("click", clearDoc);
+el.optScroll.addEventListener("change", (e) => {
+  state.autoscroll = e.target.checked;
+  settings.autoscroll = e.target.checked; persistSettings();
+});
+el.optTop.addEventListener("change", (e) => { if (getWin) getWin().setAlwaysOnTop(e.target.checked); });
+el.optOverlay.addEventListener("change", (e) => invoke("toggle_overlay", { show: e.target.checked }));
+el.optDiar.addEventListener("change", (e) => { state.recordForDiarize = e.target.checked; updatePrivacy(); });
+el.source.addEventListener("change", () => { settings.source = el.source.value; persistSettings(); updateCfgLabel(); });
+el.mode.addEventListener("change", () => { settings.mode = el.mode.value; persistSettings(); updateCfgLabel(); });
+el.model.addEventListener("change", () => { settings.model = el.model.value; persistSettings(); updateCfgLabel(); });
+el.lang.addEventListener("change", () => { settings.lang = el.lang.value; persistSettings(); updateCfgLabel(); });
+el.translate.addEventListener("change", () => { settings.translate = el.translate.checked; persistSettings(); });
+el.autosave.addEventListener("change", async (e) => {
+  settings.autosave = e.target.checked; persistSettings(); updatePrivacy();
+  if (settings.autosave && !settings.saveDir) {
+    try { settings.saveDir = await invoke("default_save_dir"); persistSettings(); applySettings(); } catch (_) {}
+  }
+});
+el.pickDir.addEventListener("click", async () => {
+  try {
+    const dir = await invoke("pick_folder");
+    if (dir) { settings.saveDir = dir; persistSettings(); applySettings(); }
+  } catch (e) { clog("pick_folder erro: " + e); }
+});
+
+// ============================ acervo (brain) ============================
+// Layout tipo site de docs: árvore lateral (fila, contextos, fontes) + conteúdo.
+const B = {
+  main: $("brain"),
+  setup: $("brainSetup"), shell: $("brainShell"),
+  dirBtn: $("brainDirBtn"), ctxInput: $("brainCtxInput"), createBtn: $("brainCreateBtn"),
+  nameInput: $("brainNameInput"), autoInput: $("brainAuto"), gitInput: $("brainGit"),
+  cancelBtn: $("brainCancelBtn"), wizTitle: $("wizTitle"), setupErr: $("brainSetupErr"),
+  acervoBtn: $("acervoBtn"), acervoName: $("acervoName"), acervoMenu: $("acervoMenu"),
+  gitBtn: $("gitBtn"), proposeBtn: $("proposeBtn"), bMenu: $("bMenu"),
+  ghCard: $("ghCard"), ghState: $("ghState"), ghChecks: $("ghChecks"),
+  ghNotif: $("ghNotif"), ghCheck: $("ghCheck"),
+  navHome: $("navHome"), navQueue: $("navQueue"), navCtx: $("navCtx"),
+  navSources: $("navSources"), navPessoal: $("navPessoal"), queueCount: $("navQueueCount"),
+  home: $("bHome"), docWrap: $("bDocWrap"), doc: $("brainDoc"),
+  crumb: $("bCrumb"), badge: $("bBadge"), modes: $("bModes"),
+  viewBtn: $("bViewBtn"), editBtn2: $("bEditBtn"), editHost: $("bEditHost"),
+  gitBadge: $("bGit"),
+  wsTabs: $("wsTabs"), wsBody: $("wsBody"),
+  cmdk: $("cmdk"), cmdkInput: $("cmdkInput"), cmdkList: $("cmdkList"),
+  find: $("bFind"), findInput: $("bFindInput"), findCount: $("bFindCount"),
+  findPrev: $("bFindPrev"), findNext: $("bFindNext"), findClose: $("bFindClose"),
+  stInbox: $("stInbox"), stDone: $("stDone"), stCtx: $("stCtx"), stSrc: $("stSrc"),
+  activity: $("brainActivity"),
+  editWrap: $("editWrap"), editArea: $("editArea"), editTitle: $("editTitle"),
+  editSave: $("editSave"), editCancel: $("editCancel"), editClose: $("editClose"),
+};
+let brainTab = false, brainPoll = null, brainDir = "", lastSt = null;
+// ADR-0008 — the Knowledge Studio workspace. `ws` is plain and serializable;
+// live CM6 handles and last-saved buffers live in side Maps keyed by tab id.
+const HOME_REL = "__home__";          // sentinel rel for the pinned Home tab
+const GUIDE_REL = "inbox/_prompt.md"; // the loop instructions, read/written via brain_*_guide
+let ws = LoroWorkspace.empty();
+const cmById = new Map();     // tab id -> live CM6 handle
+const savedById = new Map();  // tab id -> last-saved text (drives the ● dirty dot)
+// ADR-0009 — per-tab parsed front-matter (ref resolution + promovido badge);
+// null when a doc has no (or malformed) front-matter.
+const fmById = new Map();
+const bOpen = new Set();   // nós expandidos da lateral
+let sideSig = "";          // assinatura p/ não re-renderizar a lateral sem mudança
+let acervos = [], activeAcervo = "", creatingNew = false, gitFiles = {}, wizColor = "";
+let lastEnvAcervo = null;
+
+// paleta curada (funciona no claro e no escuro); "" = padrão (teal do tema)
+const PALETTE = [
+  { name: "teal", hex: "" }, { name: "azul", hex: "#2f6feb" },
+  { name: "roxo", hex: "#8957e5" }, { name: "âmbar", hex: "#bf8700" },
+  { name: "verde", hex: "#2da44e" }, { name: "rosa", hex: "#cf4b8f" },
+];
+// aplica a cor de acento do projeto ativo (var --accent; "" volta ao teal)
+function applyAccent(hex) {
+  const root = document.documentElement.style;
+  if (hex) root.setProperty("--accent", hex); else root.removeProperty("--accent");
+}
+function renderSwatches(container, current, onPick) {
+  if (!container) return;
+  container.innerHTML = PALETTE.map((c) =>
+    `<button class="swatch${(current || "") === c.hex ? " on" : ""}" title="${c.name}"
+      data-hex="${c.hex}" style="--sw:${c.hex || "var(--teal)"}"></button>`).join("");
+  container.querySelectorAll("[data-hex]").forEach((b) => (b.onclick = () => onPick(b.dataset.hex, b)));
+}
+
+function closeFloat() { B.bMenu.hidden = true; B.acervoMenu.hidden = true; }
+// cliques DENTRO do menu nunca chegam ao clique-fora (mesmo com innerHTML trocado)
+B.bMenu.addEventListener("click", (e) => e.stopPropagation());
+document.addEventListener("click", (e) => {
+  if (!e.target.closest("#bMenu") && !e.target.closest("[data-qmenu]") && !e.target.closest("[data-cmenu]")) B.bMenu.hidden = true;
+  if (!e.target.closest("#acervoSwitch")) B.acervoMenu.hidden = true;
+});
+
+// ---- (i) ajuda: tooltip clicável --------------------------------------------
+// Todo ".ghelp" abre um popover com o texto de data-tip; clicar de novo, clicar
+// fora ou Esc fecha. Um único elemento reutilizado — o title nativo era
+// invisível demais para cumprir o papel de explicar o fluxo.
+const tipBox = document.createElement("div");
+tipBox.className = "tipbox mono";
+tipBox.hidden = true;
+document.body.appendChild(tipBox);
+function hideTip() { tipBox.hidden = true; tipBox._for = null; }
+document.addEventListener("click", (e) => {
+  const g = e.target.closest(".ghelp");
+  if (!g) { hideTip(); return; }
+  if (tipBox._for === g && !tipBox.hidden) { hideTip(); return; }
+  const txt = g.dataset.tip || g.title || "";
+  if (!txt) { hideTip(); return; }
+  tipBox.textContent = txt;
+  tipBox._for = g;
+  tipBox.hidden = false;
+  const r = g.getBoundingClientRect();
+  const w = Math.min(300, window.innerWidth - 20);
+  tipBox.style.maxWidth = w + "px";
+  tipBox.style.left = Math.max(10, Math.min(r.left, window.innerWidth - w - 10)) + "px";
+  tipBox.style.top = r.bottom + 6 + "px";
+});
+window.addEventListener("keydown", (e) => { if (e.key === "Escape") hideTip(); });
+
+// o acervo é a tela principal (sempre ativo); a transcrição vive no player (dock)
+function initBrain() {
+  brainTab = true;
+  brainRefresh();
+  if (!brainPoll) brainPoll = setInterval(brainRefresh, 10000);
+}
+if (el.liveExpand) el.liveExpand.addEventListener("click", () => setLivePanel(el.surface.hidden));
+el.liveCollapse.addEventListener("click", () => setLivePanel(false));
+
+// ---- editor reutilizável (pendentes da fila / instruções do loop) ----
+let editOnSave = null;
+function openEditor(title, content, onSave) {
+  B.editTitle.textContent = title;
+  B.editArea.value = content || "";
+  editOnSave = onSave;
+  B.editWrap.hidden = false;
+  B.editArea.focus();
+}
+function closeEditor() { B.editWrap.hidden = true; editOnSave = null; }
+B.editClose.addEventListener("click", closeEditor);
+B.editCancel.addEventListener("click", closeEditor);
+B.editWrap.addEventListener("click", (e) => { if (e.target === B.editWrap) closeEditor(); });
+B.editSave.addEventListener("click", async () => {
+  if (!editOnSave) return closeEditor();
+  try { await editOnSave(B.editArea.value); closeEditor(); sideSig = ""; brainRefresh(); }
+  catch (e) { toast(String(e).slice(0, 90)); clog("editor save erro: " + e); }
+});
+$("guideBtn").addEventListener("click", () => openGuideDoc());
+{ const ab = $("askBtn"); if (ab) ab.addEventListener("click", askAcervo); }
+// ADR-0013: "gerar contexto" — the fila → contexto step. Injects /brain-context
+// into the terminal Claude (the renamed /brain loop), which processes the whole
+// queue into versioned contexts. Same terminal-skill pattern as analisar/responder.
+// One function, two entry points: the home card CTA and the sidebar quick action.
+function genContextNow() {
+  termRun(LoroBrainstorm.brainContextCmd());
+  toast("gerando contexto no Claude do terminal — acompanhe abaixo", 4000);
+}
+{
+  const gen = $("queueGenCtx");
+  if (gen) gen.addEventListener("click", genContextNow);
+}
+
+const fmtWhen = (ms) => new Date(ms).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+// editável no app = só pendentes de texto na fila; o resto é gerado pelo loop
+const isEditable = (p) => p.startsWith("inbox/") && /\.(md|txt)$/i.test(p);
+const shortName = (n) => n.replace(/\.(md|txt)$/i, "").replace(/^\d{4}-\d{2}-\d{2}--?/, "");
+
+function groupMonths(files) {
+  const m = new Map();
+  for (const f of files) {
+    const k = /^\d{4}-\d{2}/.test(f.name) ? f.name.slice(0, 7) : "outros";
+    if (!m.has(k)) m.set(k, []);
+    m.get(k).push(f);
+  }
+  return new Map([...m.entries()].sort((a, b) => b[0].localeCompare(a[0])));
+}
+
+async function brainRefresh() {
+  if (!brainTab) return;
+  // lista de acervos (projetos) para o seletor
+  try {
+    const av = await invoke("brain_list_acervos");
+    acervos = av.acervos || []; activeAcervo = av.active || "";
+  } catch (_) {}
+  let st;
+  try { st = await invoke("brain_status"); }
+  catch (e) { clog("brain_status erro: " + e); return; }
+  lastSt = st;
+  // se não há acervo configurado E não estamos criando um novo → wizard
+  const showWizard = (!st.configured || creatingNew);
+  B.setup.hidden = !showWizard;
+  B.shell.hidden = showWizard;
+  renderSwitch();
+  if (showWizard) return;
+  renderHome(st);
+  // git: estado geral + status por arquivo (cores estilo VSCode na árvore)
+  invoke("brain_git_files").then((gf) => {
+    const next = gf.files || {};
+    if (JSON.stringify(next) !== JSON.stringify(gitFiles)) { gitFiles = next; sideSig = ""; }
+  }).catch(() => {});
+  invoke("brain_git_state").then((g) => {
+    B.gitBtn.hidden = !g.available;
+    if (g.available) {
+      B.gitBtn.textContent = g.repo ? (g.pending ? `versionar (${g.pending})` : "versionado ✓") : "iniciar git";
+      B.gitBtn.classList.toggle("warm", g.repo && g.pending > 0);
+    }
+  }).catch(() => { B.gitBtn.hidden = true; });
+  // GitHub: re-verifica o ambiente ao trocar de acervo (rede — só uma vez por acervo)
+  if (activeAcervo !== lastEnvAcervo) { lastEnvAcervo = activeAcervo; envChecked = false; }
+  refreshEnv();
+  // seletor de contexto do envio (preserva escolha)
+  const sel = $("importCtx"), chosen = sel.value;
+  sel.innerHTML = '<option value="">contexto: automático</option>' +
+    st.contexts.map((c) => `<option value="${esc(c.name)}">contexto: ${esc(c.name)}</option>`).join("");
+  sel.value = chosen && st.contexts.some((c) => c.name === chosen) ? chosen : "";
+  // lateral: só re-renderiza quando os dados mudam (preserva expansões profundas)
+  const sig = JSON.stringify([st.inbox.map((f) => f.name), st.contexts, st.reunioes.length, st.notas.length]);
+  if (sig !== sideSig) { sideSig = sig; renderSidebar(st); }
+  refreshPessoal();   // ADR-0009: produção (mundo pessoal) — self-gated por assinatura
+  markSel();
+}
+
+// ---- visão geral (home) ----
+function renderHome(st) {
+  B.stInbox.textContent = st.inbox.length;
+  B.stDone.textContent = st.processed;
+  B.stCtx.textContent = st.contexts.length;
+  B.stSrc.textContent = st.reunioes.length + st.notas.length;
+  // subtítulo (pasta) + frase-pulso
+  $("bSub").textContent = st.dir;
+  const lastAct = (st.activity || "").split("\n")[0].match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2})/);
+  const n = st.inbox.length;
+  $("bPulse").textContent = n
+    ? `${n} ite${n > 1 ? "ns" : "m"} na fila`
+    : (lastAct ? `em dia · último processamento ${lastAct[1].slice(5)}` : "em dia — envie um relatório do brainstorming ou arquivos");
+  $("bPulse").classList.toggle("warm", n > 0);
+  // card da fila: o CTA só chama quando HÁ o que processar; o card "acende"
+  // (borda quente) para o próximo passo ficar evidente sem ler nada.
+  const gen = $("queueGenCtx");
+  if (gen) {
+    gen.disabled = !n;
+    gen.title = n
+      ? "Processa a fila com o Claude (/brain-context): cada item vira/atualiza um contexto versionado"
+      : "a fila está vazia — selecione partes no brainstorming ou envie arquivos";
+  }
+  const qc = $("queueCard");
+  if (qc) qc.classList.toggle("warm", n > 0);
+  // fila (top 4, acionável)
+  const q = $("homeQueue");
+  q.innerHTML = st.inbox.length
+    ? st.inbox.slice(0, 4).map((f) => {
+        const ed = /\.(md|txt)$/i.test(f.name);
+        return `<div class="qrow unsynced" title="não sincronizado (aguardando o loop)"><span class="qname mono" ${ed ? `data-doc="inbox/${esc(f.name)}"` : ""}>${ed ? "✎ " : ""}${esc(f.name)}</span>
+          <button class="rowmenu" data-qmenu="${esc(f.name)}" title="ações">⋯</button></div>`;
+      }).join("") + (st.inbox.length > 4 ? `<div class="bempty">+ ${st.inbox.length - 4} na lateral</div>` : "")
+    : `<div class="bempty">vazia — selecione partes no brainstorming ou arraste arquivos abaixo</div>`;
+  q.querySelectorAll("[data-doc]").forEach((el2) => (el2.onclick = () => openDoc(el2.dataset.doc)));
+  q.querySelectorAll("[data-qmenu]").forEach((el2) => (el2.onclick = (e) => { e.stopPropagation(); openQueueMenu(el2, el2.dataset.qmenu); }));
+  // contextos mais ativos (barras)
+  const top = [...st.contexts].sort((a, b) => (b.entries + b.ideas) - (a.entries + a.ideas)).slice(0, 5);
+  const max = Math.max(1, ...top.map((c) => c.entries + c.ideas));
+  $("homeBars").innerHTML = top.some((c) => c.entries + c.ideas)
+    ? top.map((c) => `<div class="hbar" data-hctx="${esc(c.name)}">
+        <span class="hname mono">${esc(c.name)}</span>
+        <span class="htrack"><span class="hfill" style="width:${Math.round(((c.entries + c.ideas) / max) * 100)}%"></span></span>
+        <span class="hval mono">${c.entries}${c.ideas ? ` <i>+${c.ideas}🌱</i>` : ""}</span>
+      </div>`).join("")
+    : `<div class="bempty">os guias crescem conforme o loop processa</div>`;
+  $("homeBars").querySelectorAll("[data-hctx]").forEach((el2) =>
+    (el2.onclick = () => openDoc(`contextos/${el2.dataset.hctx}/context.md`)));
+  // atividade como feed
+  const feed = (st.activity || "").split("\n").filter(Boolean);
+  B.activity.innerHTML = feed.length
+    ? feed.map((l) => {
+        const m = l.match(/^(\d{4}-\d{2}-\d{2} )?(\d{2}:\d{2})?\s*·?\s*(.*)$/);
+        const time = m && m[2] ? m[2] : "";
+        const txt = m ? m[3] : l;
+        return `<div class="fitem"><span class="fdot"></span><span class="ftime mono">${esc(time)}</span><span class="ftxt">${esc(txt)}</span></div>`;
+      }).join("")
+    : `<div class="bempty">o loop ainda não rodou — use /loop 1h /brain no Claude Code</div>`;
+}
+
+// ---- ícones Material (SVG inline, monocromático via currentColor) ----
+const ICONS = {
+  folder: "M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z",
+  context: "M12 3L1 9l4 2.18v6L12 21l7-3.82v-6l2-1.09V17h2V9L12 3zm6.82 6L12 12.72 5.18 9 12 5.28 18.82 9zM17 15.99l-5 2.73-5-2.73v-3.72L12 15l5-2.73v3.72z",
+  guide: "M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z",
+  history: "M13 3c-4.97 0-9 4.03-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42C8.27 19.99 10.51 21 13 21c4.97 0 9-4.03 9-9s-4.03-9-9-9zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z",
+  idea: "M9 21c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-1H9v1zm3-19C8.14 2 5 5.14 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-2.26c1.81-1.27 3-3.36 3-5.74 0-3.86-3.14-7-7-7z",
+  ref: "M17 3H7c-1.1 0-1.99.9-1.99 2L5 21l7-3 7 3V5c0-1.1-.9-2-2-2z",
+  meeting: "M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z",
+  note: "M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h10l6-6V5c0-1.1-.9-2-2-2zm-5 14v-4h4l-4 4z",
+  file: "M6 2c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6H6zm7 7V3.5L18.5 9H13z",
+  archive: "M20.54 5.23l-1.39-1.68C18.88 3.21 18.47 3 18 3H6c-.47 0-.88.21-1.16.55L3.46 5.23C3.17 5.57 3 6.02 3 6.5V19c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V6.5c0-.48-.17-.93-.46-1.27zM12 17.5L6.5 12H10v-2h4v2h3.5L12 17.5zM5.12 5l.81-1h12l.94 1H5.12z",
+};
+function ico(name, extra = "") {
+  const d = ICONS[name] || ICONS.file;
+  return `<span class="nico ${extra}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="${d}"/></svg></span>`;
+}
+// classe de status git (estilo VSCode) para um caminho do acervo
+// há mudança não commitada em algum arquivo sob este contexto/subárvore?
+function ctxDirty(path) {
+  const pre = "contextos/" + path + "/";
+  return Object.keys(gitFiles).some((p) => p.startsWith(pre));
+}
+function gitClass(path) {
+  const code = gitFiles[path];
+  if (!code) return "";
+  if (code === "??" || code.startsWith("A")) return "g-new";
+  if (code.startsWith("M") || code.endsWith("M") || code.startsWith("R")) return "g-mod";
+  if (code.startsWith("D")) return "g-del";
+  return "";
+}
+// ícone conforme o nome do arquivo/pasta dentro de um contexto
+function fileIcon(name, isDir) {
+  if (isDir) return name === "brainstorming" || name === "incubadora" ? "idea"
+    : name === "referencias" ? "ref" : "folder";
+  if (name === "context.md" || name === "guia.md") return "guide";
+  if (name === "CHANGELOG.md") return "history";
+  if (name === "CODEOWNERS") return "ref";
+  return "file";
+}
+
+// monta a árvore a partir da lista plana de contextos ("engenharia/frontend" …)
+function buildCtxTree(contexts) {
+  const root = { children: new Map() };
+  for (const c of contexts) {
+    let node = root, path = "";
+    const segs = c.name.split("/");
+    segs.forEach((seg, i) => {
+      path = path ? path + "/" + seg : seg;
+      if (!node.children.has(seg))
+        node.children.set(seg, { seg, path, children: new Map(), isCtx: false, entries: 0, ideas: 0 });
+      node = node.children.get(seg);
+      if (i === segs.length - 1) { node.isCtx = true; node.entries = c.entries; node.ideas = c.ideas; }
+    });
+  }
+  return root;
+}
+function renderCtxForest(root) {
+  return [...root.children.values()].sort((a, b) => a.seg.localeCompare(b.seg)).map(renderCtxNode).join("");
+}
+function renderCtxNode(node) {
+  const key = "ctx:" + node.path, open = bOpen.has(key);
+  const tw = ""; // sem setas laterais: expansão pelo clique; hierarquia pela indentação
+  const icon = node.isCtx ? ico("context", "ac") : ico("folder", "ac");
+  const nctx = node.isCtx ? (lastSt ? lastSt.contexts : []).find((c) => c.name === node.path) : null;
+  // em vez da contagem de entradas do CHANGELOG (confundia), um ponto quando há
+  // mudança não commitada na subárvore deste contexto (ADR-0007).
+  const dot = ctxDirty(node.path) ? `<span class="gdot" title="mudanças não commitadas">●</span>` : "";
+  const pills = (node.isCtx && nctx && nctx.seeded === false
+    ? `<span class="pill soft" title="pasta nova — clique para estruturar">novo</span>` : "") + dot;
+  const attr = node.isCtx ? `data-ctx="${esc(node.path)}"` : `data-fold="${esc(node.path)}"`;
+  const kids = [...node.children.values()].sort((x, y) => x.seg.localeCompare(y.seg)).map(renderCtxNode).join("");
+  const holder = node.isCtx ? `<div class="bchild" data-ctxchild="${esc(node.path)}" ${open ? "" : "hidden"}></div>` : "";
+  const arch = `<button class="rowmenu" data-cmenu="${esc(node.path)}" data-isctx="${node.isCtx ? 1 : 0}"
+      title="ações (${node.isCtx ? "contexto" : "pasta"}: renomear, mover, deletar)">⋯</button>`;
+  return `<div class="bitem ${node.isCtx ? "ctx" : "grp"}${open ? " open" : ""}" ${attr} title="${esc(node.path)}">
+      <span class="tw">${tw}</span>${icon}<span class="bn">${esc(node.seg)}</span>${pills}${arch}
+    </div>
+    <div class="bchild" ${open ? "" : "hidden"}>${kids}${holder}</div>`;
+}
+
+function renderSidebar(st) {
+  // fila (editável)
+  B.queueCount.textContent = st.inbox.length;
+  B.queueCount.hidden = st.inbox.length === 0;
+  B.navQueue.innerHTML = st.inbox.length
+    ? st.inbox.map((f) => {
+        const ed = /\.(md|txt)$/i.test(f.name);
+        return `<div class="bitem file unsynced${ed ? " ed" : ""}" data-doc="inbox/${esc(f.name)}"
+          title="${ed ? "não sincronizado — clique para editar" : "não sincronizado (aguardando o loop)"}">${ico("file")}<span class="bn">${esc(f.name)}</span>
+          <button class="rowmenu" data-qmenu="${esc(f.name)}" data-move="${esc(f.name)}" title="ações">⋯</button></div>`;
+      }).join("") +
+      `<div class="bitem addctx" data-genctx title="Processa a fila com o Claude (/brain-context)">▶ gerar contexto</div>`
+    : `<div class="bempty">vazia — envie um relatório ou arquivos para gerar contexto</div>`;
+  // contextos como ÁRVORE: pastas/áreas agrupam; contextos reais abrem o guia.
+  // A criação lidera a lista (creation-first UX, 2026-07-28).
+  B.navCtx.innerHTML =
+    `<div class="bitem addctx" data-addctx title="Criar um novo contexto">＋ novo contexto</div>` +
+    (st.contexts.length
+      ? renderCtxForest(buildCtxTree(st.contexts))
+      : `<div class="bempty">nenhum contexto ainda — crie o primeiro para organizar o conhecimento</div>`);
+  // fontes agrupadas por mês (escala p/ listas grandes)
+  B.navSources.innerHTML = [["reunioes", st.reunioes], ["notas", st.notas]].map(([kind, files]) => {
+    if (!files.length) return "";
+    const kKey = "src:" + kind, kOpen = bOpen.has(kKey);
+    const groups = groupMonths(files);
+    const inner = [...groups.entries()].map(([m, fs]) => {
+      const gKey = kKey + ":" + m, gOpen = bOpen.has(gKey);
+      return `<div class="bitem grp${gOpen ? " open" : ""}" data-toggle="${gKey}">
+          ${ico("folder")}<span class="bn">${esc(m)}</span><span class="pill">${fs.length}</span></div>
+        <div class="bchild" ${gOpen ? "" : "hidden"}>` +
+        fs.map((f) => `<div class="bitem file ${gitClass(f.path)}" data-doc="${esc(f.path)}" title="${esc(f.name)}">${ico("file")}<span class="bn">${esc(shortName(f.name))}</span></div>`).join("") +
+        `</div>`;
+    }).join("");
+    return `<div class="bitem ctx${kOpen ? " open" : ""}" data-toggle="${kKey}">
+        ${ico(kind === "reunioes" ? "meeting" : "note", "ac")}<span class="bn">${kind === "reunioes" ? "reuniões" : "notas"}</span><span class="pill">${files.length}</span></div>
+      <div class="bchild" ${kOpen ? "" : "hidden"}>${inner}</div>`;
+  }).join("") || `<div class="bempty">reuniões e notas aparecem aqui quando o loop processar a fila</div>`;
+  wireSidebar();
+  // re-carrega filhos dos contextos abertos
+  for (const c of st.contexts) if (bOpen.has("ctx:" + c.name)) loadCtxChildren(c.name);
+}
+
+function wireSidebar() {
+  B.main.querySelectorAll("[data-doc]").forEach((el2) => {
+    // single-click opens an ephemeral preview tab; double-click promotes it (ADR-0008)
+    el2.onclick = (e) => { if (e.target.closest("[data-qmenu]")) return; openDoc(el2.dataset.doc, { preview: true }); };
+    el2.ondblclick = (e) => { if (e.target.closest("[data-qmenu]")) return; openDoc(el2.dataset.doc, { preview: false }); };
+  });
+  B.main.querySelectorAll("[data-qmenu]").forEach((el2) => (el2.onclick = (e) => {
+    e.stopPropagation(); openQueueMenu(el2, el2.dataset.qmenu);
+  }));
+  B.main.querySelectorAll("[data-ctx]").forEach((el2) => (el2.onclick = async (e) => {
+    if (e.target.closest("[data-cmenu]")) return;
+    const name = el2.dataset.ctx, key = "ctx:" + name;
+    const ctx = (lastSt ? lastSt.contexts : []).find((c) => c.name === name);
+    if (bOpen.has(key)) { bOpen.delete(key); }
+    else {
+      bOpen.add(key);
+      // pasta criada à mão (sem guia): completa a estrutura antes de abrir
+      if (ctx && ctx.seeded === false) {
+        try { await invoke("brain_add_context", { name }); } catch (_) {}
+      }
+      openDoc(`contextos/${name}/context.md`);
+    }
+    sideSig = ""; renderSidebar(lastSt); markSel();
+  }));
+  B.main.querySelectorAll("[data-cmenu]").forEach((el2) => (el2.onclick = (e) => {
+    e.stopPropagation(); openCtxMenu(el2, el2.dataset.cmenu, el2.dataset.isctx !== "1");
+  }));
+
+  B.main.querySelectorAll("[data-addctx]").forEach((el2) => (el2.onclick = promptNewContext));
+  B.main.querySelectorAll("[data-genctx]").forEach((el2) => (el2.onclick = genContextNow));
+  // pasta/área (não é contexto): só expande/recolhe
+  B.main.querySelectorAll("[data-fold]").forEach((el2) => (el2.onclick = (e) => {
+    if (e.target.closest("[data-cmenu]")) return;
+    const key = "ctx:" + el2.dataset.fold;
+    if (bOpen.has(key)) bOpen.delete(key); else bOpen.add(key);
+    sideSig = ""; renderSidebar(lastSt); markSel();
+  }));
+  B.main.querySelectorAll("[data-toggle]").forEach((el2) => (el2.onclick = () => {
+    const key = el2.dataset.toggle;
+    if (bOpen.has(key)) bOpen.delete(key); else bOpen.add(key);
+    sideSig = ""; renderSidebar(lastSt); markSel();
+  }));
+  wireDrag();
+}
+
+// arrastar item da fila → soltar em um contexto (roteia neste acervo)
+function wireDrag() {
+  B.navQueue.querySelectorAll("[data-move]").forEach((btn) => {
+    const row = btn.closest(".bitem");
+    if (!row) return;
+    row.draggable = true;
+    row.addEventListener("dragstart", (e) => {
+      e.dataTransfer.setData("text/loro", btn.dataset.move);
+      e.dataTransfer.effectAllowed = "move";
+    });
+    // os botões dentro de uma linha draggable engoliam o clique no WebView:
+    // impedimos que o mousedown neles inicie o arraste da linha
+    row.querySelectorAll("button").forEach((b) => {
+      b.draggable = false;
+      b.addEventListener("mousedown", (e) => e.stopPropagation());
+    });
+  });
+  B.navCtx.querySelectorAll("[data-ctx]").forEach((el2) => {
+    el2.addEventListener("dragover", (e) => { e.preventDefault(); el2.classList.add("drop"); });
+    el2.addEventListener("dragleave", () => el2.classList.remove("drop"));
+    el2.addEventListener("drop", async (e) => {
+      e.preventDefault(); el2.classList.remove("drop");
+      const name = e.dataTransfer.getData("text/loro");
+      if (!name) return;
+      try { await invoke("brain_move_to_acervo", { name, targetId: activeAcervo, context: el2.dataset.ctx }); toast(`→ ${el2.dataset.ctx}`); sideSig = ""; brainRefresh(); }
+      catch (err) { toast(String(err).slice(0, 90)); }
+    });
+  });
+}
+
+// filhos de um contexto: guia, histórico, brainstorming (1 nível, sob demanda)
+async function loadCtxChildren(name) {
+  const holder = [...B.navCtx.querySelectorAll("[data-ctxchild]")].find((h) => h.dataset.ctxchild === name);
+  if (!holder) return;
+  let entries = [];
+  try { entries = await invoke("brain_list_dir", { rel: "contextos/" + name }); } catch (_) { return; }
+  // subpastas que já são subdomínios (contextos) aparecem na ÁRVORE de contextos;
+  // não as repetimos aqui como "pasta" — visualização única (ADR-0007).
+  const ctxSet = new Set((lastSt && lastSt.contexts ? lastSt.contexts : []).map((c) => c.name));
+  const pretty = { "context.md": "contexto do domínio", "guia.md": "guia do domínio", "CHANGELOG.md": "histórico", CODEOWNERS: "donos", brainstorming: "brainstorming", incubadora: "brainstorming", referencias: "referências" };
+  const order = (n) => n === "context.md" ? 0 : n === "guia.md" ? 0 : n === "CHANGELOG.md" ? 1 : n === "referencias" ? 2 : 3;
+  entries.sort((a, b) => order(a.name) - order(b.name) || a.name.localeCompare(b.name));
+  let html = "";
+  for (const en of entries) {
+    if (en.dir) {
+      if (ctxSet.has(name + "/" + en.name)) continue; // subdomínio: já está na árvore
+      let files = [];
+      try { files = await invoke("brain_list_dir", { rel: en.path }); } catch (_) {}
+      files = files.filter((f) => !f.dir);
+      if (!files.length) continue;
+      html += `<div class="bitem grp open"><span class="tw">▾</span>${ico(fileIcon(en.name, true), "ac")}<span class="bn">${esc(pretty[en.name] || en.name)}</span><span class="pill">${files.length}</span></div><div class="bchild">` +
+        files.map((f) => `<div class="bitem file ${gitClass(f.path)}" data-doc="${esc(f.path)}">${ico("file")}<span class="bn">${esc(shortName(f.name))}</span></div>`).join("") + `</div>`;
+    } else {
+      html += `<div class="bitem file ${gitClass(en.path)}" data-doc="${esc(en.path)}">${ico(fileIcon(en.name, false))}<span class="bn">${esc(pretty[en.name] || en.name)}</span></div>`;
+    }
+  }
+  holder.innerHTML = html || `<div class="bempty">vazio</div>`;
+  wireSidebar();
+  markSel();
+}
+
+// ============================ produção (mundo pessoal — ADR-0009) ============================
+// A árvore da produção espelha pessoal/temas/<slug>/{reunioes,investigacoes,perguntas,notas}
+// + pessoal/avulso. É o mundo NÃO versionado (âmbar); clicar abre uma aba de preview.
+// Só re-renderiza quando os dados mudam (assinatura) — a expansão é preservada em bOpen.
+let pessoalSig = "";
+// ADR-0013: the non-versioned world is "Brainstorming" (disk: brainstorming/).
+// A brainstorming groups reuniões/investigações/perguntas/notas; it can carry an
+// optional categoria (UI-only grouping). Selection of parts -> one consolidated
+// report -> the fila (see bsSelection / sendSelectionToQueue).
+async function refreshPessoal() {
+  if (!brainTab) return;
+  let temas = [], avulso = [];
+  try { temas = (await invoke("brain_list_brainstorms")) || []; } catch (_) {}
+  try { avulso = ((await invoke("brain_list_dir", { rel: "brainstorming/avulso" })) || []).filter((f) => !f.dir); }
+  catch (_) {}
+  const sig = JSON.stringify([temas, avulso.map((f) => f.name)]);
+  if (sig === pessoalSig) return;
+  pessoalSig = sig;
+  renderPessoal(temas, avulso);
+}
+function renderPessoal(temas, avulso) {
+  // criação em primeiro lugar: a ação primária do grupo fica no topo, não
+  // escondida depois da lista (decisão de UX, 2026-07-28)
+  let html = `<div class="bitem addctx" data-addtema title="Criar um novo brainstorming">＋ novo brainstorming</div>`;
+  if (temas.length || avulso.length) {
+    // group brainstormings by their optional categoria (uncategorized last)
+    for (const grp of LoroBrainstorm.groupByCategoria(temas)) {
+      if (grp.categoria !== "Sem categoria" || LoroBrainstorm.groupByCategoria(temas).length > 1) {
+        html += `<div class="bcat">${esc(grp.categoria)}</div>`;
+      }
+      html += grp.items.map(renderTemaNode).join("");
+    }
+    if (avulso.length) {
+      const key = "pes:avulso", open = bOpen.has(key);
+      html += `<div class="bitem ctx${open ? " open" : ""}" data-pestoggle="${key}">${ico("note", "ac")}<span class="bn">avulso</span><span class="pill">${avulso.length}</span></div>` +
+        `<div class="bchild" ${open ? "" : "hidden"}>` +
+        avulso.map((f) => `<div class="bitem file" data-doc="${esc(f.path)}" title="${esc(f.name)}">${ico("file")}<span class="bn">${esc(shortName(f.name))}</span></div>`).join("") +
+        `</div>`;
+    }
+  } else {
+    html += `<div class="bempty">nenhum brainstorming ainda — crie o primeiro para reunir reuniões e notas</div>`;
+  }
+  B.navPessoal.innerHTML = html;
+  wirePessoal();
+  for (const t of temas) if (bOpen.has("pes:tema:" + t.slug)) loadTemaChildren(t.slug);
+}
+function renderTemaNode(t) {
+  const key = "pes:tema:" + t.slug, open = bOpen.has(key);
+  const holder = `<div class="bchild" data-temachild="${esc(t.slug)}" ${open ? "" : "hidden"}></div>`;
+  const pill = t.reunioes ? `<span class="pill">${t.reunioes}</span>` : "";
+  return `<div class="bitem ctx${open ? " open" : ""}" data-tema="${esc(t.slug)}" title="${esc(t.nome || t.slug)}">` +
+    `${ico("idea", "ac")}<span class="bn">${esc(t.nome || t.slug)}</span>${pill}` +
+    `<button class="rowmenu" data-bsmenu="${esc(t.slug)}" title="ações do brainstorming">⋯</button></div>${holder}`;
+}
+// Dentro de um brainstorming a árvore é PLANA (revisão de UX sobre o ADR-0013):
+// as reuniões aparecem direto no nível do brainstorming — com os artefatos de
+// análise (investigações/respostas) logo abaixo de cada uma — e as notas como
+// subitem ao final. As pastas investigacoes/ e perguntas/ continuam no disco (o
+// relatório "tudo" ainda as lê), mas deixam de ser um nível de navegação: a
+// segmentação em quatro pastas era atrito, não estrutura.
+// A selectable part row: a checkbox (data-bssel/data-bskind) + the open target.
+// A meeting row carries a ⋯ menu (renomear/apagar); files keep the plain ×.
+function bsPartRow(kind, openRel, selRel, label, title, indent, meetingId) {
+  const act = meetingId
+    ? `<button class="rowmenu" data-mtgmenu="${esc(selRel)}" data-mtgid="${esc(meetingId)}" data-mtgtitle="${esc(label)}" title="ações da reunião (renomear, apagar)">⋯</button>`
+    : `<button class="rowmenu danger" data-delpessoal="${esc(selRel)}" title="apagar">×</button>`;
+  const icon = kind === "reuniao" ? "meeting" : kind === "nota" ? "note" : "file";
+  return `<div class="bitem file${indent ? " bsub" : ""}" data-doc="${esc(openRel)}" title="${esc(title)}">` +
+    `<input type="checkbox" class="bschk" data-bssel="${esc(selRel)}" data-bskind="${kind}" title="selecionar para a fila">` +
+    `${ico(icon)}<span class="bn">${esc(label)}</span>` + act + `</div>`;
+}
+async function loadTemaChildren(slug) {
+  const holder = [...B.navPessoal.querySelectorAll("[data-temachild]")].find((h) => h.dataset.temachild === slug);
+  if (!holder) return;
+  let meetings = [];
+  try { meetings = (await invoke("brain_list_meetings", { slug })) || []; } catch (_) {}
+  let inner = "";
+  for (const m of meetings) {
+    // título do manifest (renomeável); cai para o id humanizado quando ausente
+    const t = LM.meetingTitleFromManifest({ titulo: m.titulo }, m.id);
+    const label = t === m.id ? LM.meetingLabel(m.id) : t;
+    inner += bsPartRow("reuniao", `${m.rel}/reuniao.md`, m.rel, label, m.id, false, m.id);
+    for (const [asub, akind] of [["investigacoes", "investigacao"], ["respostas", "nota"]]) {
+      let arts = [];
+      try { arts = ((await invoke("brain_list_dir", { rel: `${m.rel}/artefatos/${asub}` })) || []).filter((a) => !a.dir); }
+      catch (_) {}
+      for (const a of arts) inner += bsPartRow(akind, a.path, a.path, shortName(a.name), a.name, true);
+    }
+  }
+  let notas = [];
+  try { notas = ((await invoke("brain_list_dir", { rel: `brainstorming/${slug}/notas` })) || []).filter((f) => !f.dir); }
+  catch (_) {}
+  if (!meetings.length && !notas.length) {
+    inner += `<div class="bempty">vazio — grave uma reunião (●) ou escreva uma nota</div>`;
+  }
+  if (notas.length) inner += `<div class="bcat">notas</div>`;
+  // A criação lidera a lista (creation-first UX, 2026-07-28).
+  inner += `<div class="bitem addctx" data-addnota="${esc(slug)}" title="Escrever uma nota neste brainstorming">＋ nova nota</div>`;
+  for (const f of notas) inner += bsPartRow("nota", f.path, f.path, shortName(f.name), f.name, false);
+  holder.innerHTML = inner;
+  wirePessoal();
+  markSel();
+}
+// Selection of brainstorming parts to send to the fila (ADR-0013). A plain Set of
+// acervo-relative rels; the parts' kinds are read back from the checkbox dataset.
+let bsSelection = new Set();
+function wirePessoal() {
+  B.navPessoal.querySelectorAll("[data-doc]").forEach((el2) => {
+    el2.onclick = (e) => {
+      if (e.target.closest("[data-delpessoal]") || e.target.closest("[data-bssel]")) return;
+      openDoc(el2.dataset.doc, { preview: true });
+    };
+    el2.ondblclick = () => openDoc(el2.dataset.doc, { preview: false });
+  });
+  B.navPessoal.querySelectorAll("[data-bssel]").forEach((chk) => {
+    chk.checked = bsSelection.has(chk.dataset.bssel);
+    chk.onclick = (e) => e.stopPropagation();
+    chk.onchange = () => {
+      bsSelection = LoroBrainstorm.toggleSelection(bsSelection, chk.dataset.bssel);
+      renderSelectionBar();
+    };
+  });
+  B.navPessoal.querySelectorAll("[data-delpessoal]").forEach((el2) => (el2.onclick = (e) => {
+    e.stopPropagation(); delPessoal(el2.dataset.delpessoal);
+  }));
+  B.navPessoal.querySelectorAll("[data-bsmenu]").forEach((el2) => (el2.onclick = (e) => {
+    e.stopPropagation(); openBsMenu(el2.dataset.bsmenu, el2);
+  }));
+  B.navPessoal.querySelectorAll("[data-mtgmenu]").forEach((el2) => (el2.onclick = (e) => {
+    e.stopPropagation();
+    openMeetingMenu(el2.dataset.mtgmenu, el2.dataset.mtgid, el2.dataset.mtgtitle, el2);
+  }));
+  B.navPessoal.querySelectorAll("[data-tema]").forEach((el2) => (el2.onclick = (e) => {
+    if (e.target.closest("[data-bsmenu]")) return;
+    const slug = el2.dataset.tema, key = "pes:tema:" + slug;
+    const holder = [...B.navPessoal.querySelectorAll("[data-temachild]")].find((h) => h.dataset.temachild === slug);
+    if (bOpen.has(key)) { bOpen.delete(key); el2.classList.remove("open"); if (holder) holder.hidden = true; }
+    else {
+      bOpen.add(key); el2.classList.add("open"); if (holder) holder.hidden = false;
+      loadTemaChildren(slug);
+      openDoc(`brainstorming/${slug}/indice.md`, { preview: true });
+    }
+    markSel();
+  }));
+  B.navPessoal.querySelectorAll("[data-pestoggle]").forEach((el2) => (el2.onclick = () => {
+    const key = el2.dataset.pestoggle, child = el2.nextElementSibling;
+    if (bOpen.has(key)) { bOpen.delete(key); el2.classList.remove("open"); if (child) child.hidden = true; }
+    else { bOpen.add(key); el2.classList.add("open"); if (child) child.hidden = false; }
+  }));
+  B.navPessoal.querySelectorAll("[data-addtema]").forEach((el2) => (el2.onclick = promptNewTema));
+  B.navPessoal.querySelectorAll("[data-addnota]").forEach((el2) => (el2.onclick = (e) => {
+    e.stopPropagation(); promptNewNota(el2.dataset.addnota, el2);
+  }));
+}
+
+// Inline "nova nota" inside a brainstorming (mirrors promptNewContext/promptNewTema).
+// Writes brainstorming/<slug>/notas/<slug>.md via brain_new_notebook and opens it.
+let notaEditing = false;
+function promptNewNota(slug, anchor) {
+  if (notaEditing) return;
+  notaEditing = true;
+  const inp = document.createElement("input");
+  inp.className = "bnewctx";
+  inp.placeholder = "título da nota (Enter)";
+  anchor.before(inp); inp.focus();
+  const done = () => { inp.remove(); notaEditing = false; };
+  inp.addEventListener("keydown", async (e) => {
+    if (e.key === "Escape") return done();
+    if (e.key !== "Enter") return;
+    const titulo = inp.value.trim();
+    if (!titulo) return done();
+    try {
+      const rel = await invoke("brain_new_notebook", { tema: slug, titulo });
+      done(); pessoalSig = ""; refreshPessoal();
+      if (rel) openDoc(rel, { preview: false });
+    } catch (err) { toast(String(err).slice(0, 80)); }
+  });
+  inp.addEventListener("blur", done);
+}
+
+// The ⋯ menu of a brainstorming — renomear / enviar tudo à fila / apagar. Mirrors
+// the contextos action menu so create/edit/delete feel identical across worlds.
+function openBsMenu(slug, anchor) {
+  B.acervoMenu.hidden = true;
+  B.bMenu.innerHTML =
+    `<div class="fhead">${esc(slug)}</div>` +
+    `<div class="fitem2" data-ren><span class="fn">renomear</span></div>` +
+    `<div class="fitem2" data-toqueue><span class="fn">gerar relatório de tudo → fila</span></div>` +
+    `<div class="fitem2 danger" data-del><span class="fn">apagar brainstorming</span></div>`;
+  B.bMenu.querySelector("[data-ren]").onclick = () => { closeFloat(); promptRenameBs(slug); };
+  B.bMenu.querySelector("[data-toqueue]").onclick = () => { closeFloat(); sendBrainstormToQueue(slug, []); };
+  B.bMenu.querySelector("[data-del]").onclick = () => { closeFloat(); delPessoal("brainstorming/" + slug, "tema"); };
+  const r = anchor.getBoundingClientRect();
+  B.bMenu.style.left = Math.max(10, r.left - 120) + "px";
+  B.bMenu.style.top = (r.bottom + 4) + "px";
+  B.bMenu.hidden = false;
+}
+
+// Rename via the shared modal — window.prompt is unreliable in the webview
+// (same reason pickMeeting/askMeetingAnswer use openModal).
+function promptRenameBs(slug) {
+  openModal(
+    "Renomear brainstorming",
+    `<label class="wfield"><span class="mono">nome</span>` +
+      `<input id="bsRenInput" type="text" value="${esc(slug)}" spellcheck="false"></label>`,
+    "renomear",
+    async () => {
+      const nome = (($("bsRenInput") && $("bsRenInput").value) || "").trim();
+      if (!nome) { toast("informe um nome"); return; }
+      try {
+        const r = await invoke("brain_rename_brainstorm", { slug, nome });
+        pessoalSig = ""; refreshPessoal();
+        if (r && r.rel) openDoc(`${r.rel}/indice.md`, { preview: false });
+        toast("renomeado");
+      } catch (e) { toast("não renomeei: " + String(e).slice(0, 80)); }
+    }
+  );
+  const inp = $("bsRenInput"); if (inp) { inp.focus(); inp.select(); }
+}
+
+// O menu ⋯ de uma reunião na árvore — renomear (só o título; o id/pasta é
+// estável, então abas e artefatos continuam válidos) / apagar.
+function openMeetingMenu(rel, id, title, anchor) {
+  B.acervoMenu.hidden = true;
+  B.bMenu.innerHTML =
+    `<div class="fhead">${esc(title)}</div>` +
+    `<div class="fitem2" data-ren><span class="fn">✎ renomear</span></div>` +
+    `<div class="fitem2 danger" data-del><span class="fn">apagar reunião</span></div>`;
+  B.bMenu.querySelector("[data-ren]").onclick = () => { closeFloat(); promptRenameMeeting(id, title); };
+  B.bMenu.querySelector("[data-del]").onclick = () => { closeFloat(); delPessoal(rel, "reuniao"); };
+  placeMenu(anchor);
+}
+
+function promptRenameMeeting(id, current) {
+  openModal(
+    "Renomear reunião",
+    `<label class="wfield"><span class="mono">título</span>` +
+      `<input id="mtgRenInput" type="text" value="${esc(current)}" spellcheck="false"></label>`,
+    "renomear",
+    async () => {
+      const titulo = (($("mtgRenInput") && $("mtgRenInput").value) || "").trim();
+      if (!titulo) { toast("informe um título"); return; }
+      try {
+        await invoke("brain_meeting_rename", { input: { id, titulo } });
+        toast("reunião renomeada");
+        pessoalSig = ""; refreshPessoal();
+        const t = activeTab();
+        if (t && LM.meetingDir(t.rel)) renderActive(); // heading da aba aberta
+      } catch (e) { toast("não renomeei: " + String(e).slice(0, 80)); }
+    }
+  );
+  const inp = $("mtgRenInput"); if (inp) { inp.focus(); inp.select(); }
+}
+
+// Build ONE consolidated report from the given selection (empty = all parts) and
+// send it to the fila. The report is opened as a tab first (it must be visible).
+async function sendBrainstormToQueue(slug, selection) {
+  try {
+    const out = await invoke("brain_brainstorm_build_report", { slug, selection });
+    if (out && out.rel) {
+      openDoc(out.rel, { preview: false });                 // the report is visible
+      await invoke("brain_send_report_to_queue", { reportRel: out.rel, destContext: null });
+      pessoalSig = ""; refreshPessoal(); sideSig = ""; brainRefresh();
+      toast("relatório na fila de geração de contexto");
+    }
+  } catch (e) { toast("não enviei: " + String(e).slice(0, 80)); clog("build_report/send erro: " + e); }
+}
+
+// The selected parts across the tree -> their SelItem list (kind read from the
+// checkbox dataset). Sends them as ONE consolidated report to the fila.
+async function sendSelectionToQueue() {
+  const sel = [];
+  B.navPessoal.querySelectorAll("[data-bssel]").forEach((chk) => {
+    if (bsSelection.has(chk.dataset.bssel)) sel.push({ kind: chk.dataset.bskind, rel: chk.dataset.bssel });
+  });
+  if (!sel.length) return;
+  // all selected parts belong to the open brainstorming; derive its slug
+  const m = /^brainstorming\/([^/]+)\//.exec(sel[0].rel);
+  if (!m) { toast("seleção inválida"); return; }
+  await sendBrainstormToQueue(m[1], sel);
+  bsSelection = new Set(); renderSelectionBar();
+}
+
+// A sticky action bar shown while any part is selected — the evident, explicit
+// "enviar seleção para a fila" action (ADR-0013 flow step brainstorming → fila).
+function renderSelectionBar() {
+  let bar = $("bsSelBar");
+  if (!bsSelection.size) { if (bar) bar.remove(); return; }
+  if (!bar) {
+    bar = document.createElement("div");
+    bar.id = "bsSelBar"; bar.className = "bsselbar";
+    B.navPessoal.after(bar);
+  }
+  bar.innerHTML = `<span>${bsSelection.size} selecionado(s)</span>` +
+    `<button class="abtn" id="bsSelSend" title="Gera um relatório consolidado das partes escolhidas e o envia para a fila de geração de contexto">enviar para a fila →</button>` +
+    `<button class="abtn ghost" id="bsSelClear">limpar</button>`;
+  $("bsSelSend").onclick = sendSelectionToQueue;
+  $("bsSelClear").onclick = () => { bsSelection = new Set(); wirePessoal(); renderSelectionBar(); };
+}
+
+// Apaga um item do mundo brainstorming (arquivo, reunião ou brainstorming inteiro).
+// Confinado a brainstorming/ no backend (nunca toca contextos/ versionado).
+async function delPessoal(rel, kind) {
+  const what = kind === "tema" ? "o brainstorming e TODO o seu conteúdo"
+    : kind === "reuniao" ? "a reunião e todos os seus arquivos (transcrição, relatório, artefatos)"
+    : "este item";
+  if (!confirm(`Apagar ${what}? Não pode ser desfeito.`)) return;
+  try {
+    await invoke("brain_brainstorm_delete", { input: { rel } });
+    closeTabsUnder(rel);
+    toast("apagado");
+    pessoalSig = ""; refreshPessoal();
+  } catch (e) { toast("não apaguei: " + String(e).slice(0, 80)); clog("brain_brainstorm_delete erro: " + e); }
+}
+
+// ---- workspace selectors (ADR-0008) ----
+function activeTab() { return LoroWorkspace.activeTab(ws); }
+function homeTab() { return ws.tabs.find((t) => t.rel === HOME_REL) || null; }
+function isHomeActive() { const t = activeTab(); return !t || t.rel === HOME_REL; }
+// null when Home/empty (preserves the old `currentDoc === null` semantics),
+// the document rel otherwise.
+function currentRel() { const t = activeTab(); return !t || t.rel === HOME_REL ? null : t.rel; }
+
+function markSel() {
+  B.navHome.classList.toggle("on", isHomeActive());
+  const rel = currentRel();
+  B.main.querySelectorAll("[data-doc]").forEach((el2) =>
+    el2.classList.toggle("on", el2.dataset.doc === rel));
+}
+
+// ---- tab strip ----
+function renderTabs() {
+  const active = ws.activeId;
+  B.wsTabs.innerHTML = ws.tabs.map((tab) => {
+    const home = tab.rel === HOME_REL;
+    const cls = ["wstab"];
+    if (tab.kind === "context") cls.push("wstab--context");
+    else if (tab.kind === "personal") cls.push("wstab--personal");
+    if (tab.id === active) cls.push("on");
+    if (tab.preview) cls.push("preview");
+    if (home) cls.push("home");
+    const title = home ? "visão geral" : esc(tab.title);
+    const dot = tab.dirty ? `<span class="wsdot" title="alterações não salvas">●</span>` : "";
+    const close = home ? "" : `<button class="wsclose" data-close="${tab.id}" title="fechar (⌘/Ctrl+W)" aria-label="fechar">×</button>`;
+    const glyph = home ? "⌂ " : "";
+    return `<div class="${cls.join(" ")}" data-tab="${tab.id}" draggable="${home ? "false" : "true"}"
+        title="${esc(tab.rel === HOME_REL ? "visão geral" : tab.rel)}"><span class="wsn">${glyph}${title}</span>${dot}${close}</div>`;
+  }).join("");
+  wireTabs();
+}
+function wireTabs() {
+  B.wsTabs.querySelectorAll("[data-tab]").forEach((elx) => {
+    const id = elx.dataset.tab;
+    elx.onclick = (e) => { if (e.target.closest("[data-close]")) return; activateTab(id); };
+    // middle-click closes (VS Code parity)
+    elx.onauxclick = (e) => { if (e.button === 1) { e.preventDefault(); closeTabById(id); } };
+    elx.addEventListener("dragstart", (e) => { e.dataTransfer.setData("text/wstab", id); e.dataTransfer.effectAllowed = "move"; });
+    elx.addEventListener("dragover", (e) => e.preventDefault());
+    elx.addEventListener("drop", (e) => {
+      e.preventDefault();
+      const dragId = e.dataTransfer.getData("text/wstab");
+      if (dragId) reorderTab(dragId, id);
+    });
+  });
+  B.wsTabs.querySelectorAll("[data-close]").forEach((b) =>
+    (b.onclick = (e) => { e.stopPropagation(); closeTabById(b.dataset.close); }));
+}
+function activateTab(id) { ws = LoroWorkspace.setActive(ws, id); renderTabs(); renderActive(); }
+function reorderTab(dragId, overId) {
+  const idx = ws.tabs.findIndex((t) => t.id === overId);
+  if (idx < 0) return;
+  ws = LoroWorkspace.moveTab(ws, dragId, idx);
+  // keep Home first (it is pinned/non-closable)
+  const h = homeTab();
+  if (h && ws.tabs[0] && ws.tabs[0].id !== h.id) ws = LoroWorkspace.moveTab(ws, h.id, 0);
+  renderTabs();
+}
+function closeTabById(id) {
+  const tab = ws.tabs.find((t) => t.id === id);
+  if (!tab || tab.rel === HOME_REL) return; // Home is non-closable
+  if (tab.dirty && !window.confirm(`Descartar alterações não salvas de "${tab.title}"?`)) return;
+  const h = cmById.get(id);
+  if (h) { try { h.destroy(); } catch (_) {} }
+  cmById.delete(id); savedById.delete(id); fmById.delete(id);
+  ws = LoroWorkspace.closeTab(ws, id);
+  renderTabs(); renderActive();
+}
+function closeActiveTab() { const t = activeTab(); if (t) closeTabById(t.id); }
+function reopenClosedTab() { ws = LoroWorkspace.reopenClosed(ws); renderTabs(); renderActive(); }
+function cycleTab(back) {
+  if (ws.tabs.length < 2) return;
+  if (!back) {
+    const id = LoroWorkspace.nextMru(ws);
+    if (id) return activateTab(id);
+  }
+  const i = ws.tabs.findIndex((t) => t.id === ws.activeId);
+  const n = ws.tabs.length;
+  activateTab(ws.tabs[(((i + (back ? -1 : 1)) % n) + n) % n].id);
+}
+// close any open tab whose rel matches / lives under a (deleted/moved) path
+function closeTabsUnder(prefixOrRel, exact) {
+  const doomed = ws.tabs.filter((t) => t.rel !== HOME_REL &&
+    (exact ? t.rel === prefixOrRel : t.rel.startsWith(prefixOrRel)));
+  doomed.forEach((t) => {
+    const h = cmById.get(t.id);
+    if (h) { try { h.destroy(); } catch (_) {} }
+    cmById.delete(t.id); savedById.delete(t.id); fmById.delete(t.id);
+    ws = LoroWorkspace.closeTab(ws, t.id);
+  });
+  if (doomed.length) { renderTabs(); renderActive(); }
+}
+
+function showHome() { B.docWrap.hidden = true; B.home.hidden = false; B.wsBody.classList.remove("editing"); markSel(); }
+function openHome() {
+  const h = homeTab();
+  if (h) { ws = LoroWorkspace.setActive(ws, h.id); renderTabs(); }
+  closeFind();
+  showHome();
+}
+// (re)initialize the workspace to a single pinned, non-closable Home tab
+function setupWorkspace() {
+  cmById.forEach((h) => { try { h.destroy(); } catch (_) {} });
+  cmById.clear(); savedById.clear(); fmById.clear();
+  ws = LoroWorkspace.empty();
+  ws = LoroWorkspace.openTab(ws, HOME_REL, { preview: false });
+  ws = LoroWorkspace.pin(ws, LoroWorkspace.activeTab(ws).id);
+  renderTabs(); showHome();
+}
+B.navHome.addEventListener("click", openHome);
+
+function docBadge(p, isGuide) {
+  if (isGuide) return ["instruções do loop — aplicadas antes de processar", "ok"];
+  if (p.startsWith("inbox/")) return ["pendente — será processado pelo loop", "ok"];
+  if (p.endsWith("guia.md")) return ["formato antigo — migre para context.md", "warn2"];
+  if (p.endsWith("CHANGELOG.md")) return ["histórico (append-only)", "ro"];
+  return ["documento do acervo", "ro"];
+}
+// Versioning (git) badge — only on context tabs; a pessoal/ tab never surfaces
+// any git state (ADR-0008, LoroWorld.gitVisible).
+function setDocGit(p, kind, isGuide) {
+  if (isGuide || !LoroWorld.gitVisible(kind)) { B.gitBadge.hidden = true; return; }
+  const cls = gitClass(p);
+  const map = { "g-new": "novo (não versionado)", "g-mod": "modificado", "g-del": "apagado" };
+  if (cls && map[cls]) { B.gitBadge.hidden = false; B.gitBadge.textContent = map[cls]; B.gitBadge.className = "mono badge " + cls; }
+  else B.gitBadge.hidden = true;
+}
+
+const cmTheme = () => (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+// read a document's raw text (guide-aware; falls back from context.md to guia.md)
+async function readDoc(rel) {
+  if (rel === GUIDE_REL) { try { return await invoke("brain_read_guide"); } catch (_) { return ""; } }
+  try { return await invoke("brain_read", { rel }); }
+  catch (err) {
+    if (rel.endsWith("/context.md")) return await invoke("brain_read", { rel: rel.replace(/\/context\.md$/, "/guia.md") });
+    throw err;
+  }
+}
+
+// ---- editor fiel (CodeMirror 6, ADR-0008): um handle por aba em cmById ----
+// dirty is the unsaved-buffer dot: cleared by save, set on divergence from disk.
+function onEditorChange(id, value) {
+  const dirty = value !== savedById.get(id);
+  const tab = ws.tabs.find((t) => t.id === id);
+  if (tab && dirty) maybeFirstEditNote(tab);
+  if (tab && tab.dirty !== dirty) { ws = LoroWorkspace.markDirty(ws, id, dirty); renderTabs(); }
+}
+
+// ADR-0008/0009: the first time a pessoal/ (personal) draft is edited, surface a
+// one-time inline note that it is not versioned. "Shown once" persists locally.
+const FIRST_EDIT_KEY = "loro-firstedit-personal";
+function maybeFirstEditNote(tab) {
+  if (!tab || tab.kind !== "personal") return;
+  try { if (localStorage.getItem(FIRST_EDIT_KEY)) return; } catch (_) { return; }
+  const note = $("bDraftNote");
+  if (note) note.hidden = false;
+  try { localStorage.setItem(FIRST_EDIT_KEY, "1"); } catch (_) {}
+}
+async function saveTab(id, value) {
+  const tab = ws.tabs.find((t) => t.id === id);
+  if (!tab) return;
+  try {
+    if (tab.rel === GUIDE_REL) await invoke("brain_write_guide", { content: value });
+    else await invoke("brain_write", { rel: tab.rel, content: value });
+    savedById.set(id, value);
+    ws = LoroWorkspace.markDirty(ws, id, false);
+    renderTabs();
+    toast("salvo");
+    sideSig = ""; brainRefresh();
+  } catch (e) { toast(String(e).slice(0, 90)); clog("save doc erro: " + e); }
+}
+function saveActive() {
+  const t = activeTab();
+  if (!t || t.rel === HOME_REL) return;
+  const h = cmById.get(t.id);
+  if (h) saveTab(t.id, h.getValue());
+}
+async function mountEditor(tab) {
+  let h = cmById.get(tab.id);
+  if (!h) {
+    let raw;
+    try { raw = await readDoc(tab.rel); } catch (e) { toast("não foi possível abrir"); clog("readDoc erro: " + e); return; }
+    if (ws.activeId !== tab.id) return; // a faster switch won the race
+    savedById.set(tab.id, raw);
+    h = window.LoroCM6.create({
+      parent: B.editHost,
+      doc: raw,
+      theme: cmTheme(),
+      onChange: (v) => onEditorChange(tab.id, v),
+      onSave: (v) => saveTab(tab.id, v),
+    });
+    cmById.set(tab.id, h);
+  }
+  B.doc.hidden = true;
+  B.editHost.hidden = false;
+  B.wsBody.classList.add("editing"); // ADR-0008: editor ocupa o painel inteiro
+  // show only the active tab's editor within the shared host
+  cmById.forEach((hh, id) => { hh.view.dom.style.display = id === tab.id ? "" : "none"; });
+  requestAnimationFrame(() => h.focus());
+}
+async function renderView(tab) {
+  const h = cmById.get(tab.id);
+  let raw;
+  if (h) raw = h.getValue(); // an edited-but-not-saved buffer wins over disk
+  else {
+    try { raw = await readDoc(tab.rel); }
+    catch (e) { toast("não foi possível abrir"); clog("brain_read erro: " + e); return; }
+    if (ws.activeId !== tab.id) return; // a faster switch won the race
+    savedById.set(tab.id, raw);
+  }
+  const fallback = tab.rel === GUIDE_REL
+    ? "_Sem instruções ainda. Escreva orientações que o loop seguirá antes de processar a fila._"
+    : "";
+  B.editHost.hidden = true;
+  B.doc.hidden = false;
+  B.wsBody.classList.remove("editing");
+  // ADR-0009: strip the leading YAML front-matter and surface it as a collapsible
+  // "Referências" panel; a malformed/unterminated block degrades to plain body
+  // (splitFrontMatter returns frontMatter:null), never throwing.
+  let fm = null, body = raw || "";
+  try {
+    const split = R.splitFrontMatter(raw || "");
+    body = split.body;
+    if (split.frontMatter != null) fm = R.parseFrontMatter(split.frontMatter);
+  } catch (_) { fm = null; body = raw || ""; }
+  fmById.set(tab.id, fm);
+  const panel = fm ? renderRefsPanel(fm) : "";
+  B.doc.innerHTML = panel + mdRender(body || fallback);
+  wireDocLinks();
+}
+
+// ADR-0009: front-matter refs (+ audio) as a collapsible panel; each row is a
+// click target dispatched exactly like an inline ref: link.
+function renderRefsPanel(fm) {
+  const refs = Array.isArray(fm.refs) ? fm.refs : [];
+  const audio = Array.isArray(fm.audio) ? fm.audio : [];
+  const all = refs.concat(audio);
+  const rows = all.map((r) => {
+    if (!r || typeof r !== "object") return "";
+    const tipo = r.tipo || (R.tipoFromExt ? R.tipoFromExt(r.caminho || "") : "other");
+    const name = (String(r.caminho || "").split("/").pop()) || String(r.caminho || r.id || "");
+    return `<li class="refrow"><a class="refitem" data-ref="${esc(String(r.id == null ? "" : r.id))}">` +
+      `<span class="reftipo mono">${esc(tipo)}</span><span class="refname">${esc(name)}</span></a></li>`;
+  }).join("");
+  if (!rows) return "";
+  return `<details class="refspanel" open><summary>Referências <span class="mono">(${all.length})</span></summary>` +
+    `<ul class="reflist">${rows}</ul></details>`;
+}
+
+// ============================ reunião: superfície viva (ADR-0010) ============================
+// The living reuniao.md tab renders the transcript (append-only, read-only) plus
+// an in-tab side rail (audio + artefatos from the manifest) and a DISABLED
+// análise section with the per-meeting consent toggle (default OFF; ADR-0011).
+// It stays under pessoal/ (kind "personal"), so LoroWorld hides any Git state and
+// nothing here ever writes into contextos/.
+async function renderMeetingLiving(tab) {
+  const id = LM.livingId(tab.rel);
+  B.editHost.hidden = true;
+  B.doc.hidden = false;
+  B.wsBody.classList.remove("editing");
+  fmById.set(tab.id, null);
+  let raw = "", manifest = null;
+  try { raw = await readDoc(tab.rel); } catch (_) {}
+  try { manifest = await invoke("brain_meeting_manifest", { id }); } catch (_) {}
+  if (ws.activeId !== tab.id) return; // a faster switch won the race
+  const artefatos = await listArtefatos(LM.meetingDir(tab.rel));
+  if (ws.activeId !== tab.id) return;
+  const status = manifest ? manifest.status : (meeting.id === id ? meeting.phase : "done");
+  paintMeetingSurface(id, raw, manifest, status, artefatos);
+}
+
+// Lista os ARQUIVOS reais sob <reunião>/artefatos/<kind>/ — o skill grava direto
+// em disco (não no manifest), então o rail precisa escanear para mostrá-los.
+async function listArtefatos(dirRel) {
+  const kinds = ["respostas", "investigacoes", "graficos", "consultas", "prompts", "documentos", "tabelas", "mcp"];
+  const out = [];
+  for (const k of kinds) {
+    let files = [];
+    try { files = (await invoke("brain_list_dir", { rel: `${dirRel}/artefatos/${k}` })) || []; }
+    catch (_) {}
+    for (const f of files) if (!f.dir) out.push({ kind: k, name: f.name, rel: f.path });
+  }
+  return out;
+}
+
+// Re-render the living surface in place on meeting-appended, preserving the
+// reader scroll: only follow the tail when the user is already at the bottom;
+// otherwise keep position and reveal the "novas linhas ↓" pill (ADR-0010 — no
+// forced auto-scroll).
+async function refreshLivingInPlace(id) {
+  const tab = activeTab();
+  if (!tab || LM.livingId(tab.rel) !== id) return;
+  const wasBottom = nearBottom(B.wsBody);
+  const prevTop = B.wsBody.scrollTop;
+  let raw = "", manifest = null;
+  try { raw = await readDoc(tab.rel); } catch (_) { return; }
+  try { manifest = await invoke("brain_meeting_manifest", { id }); } catch (_) {}
+  if (ws.activeId !== tab.id) return;
+  const artefatos = await listArtefatos(LM.meetingDir(tab.rel));
+  if (ws.activeId !== tab.id) return;
+  const status = manifest ? manifest.status : (meeting.id === id ? meeting.phase : "done");
+  paintMeetingSurface(id, raw, manifest, status, artefatos);
+  if (wasBottom) scrollMeetingBottom();
+  else { B.wsBody.scrollTop = prevTop; showPill(); }
+}
+
+function renderIfLiving(id) {
+  const t = activeTab();
+  if (t && LM.livingId(t.rel) === id) renderActive();
+}
+
+function paintMeetingSurface(id, raw, manifest, status, artefatos) {
+  const body = LM.stripMarker(R.splitFrontMatter ? R.splitFrontMatter(raw || "").body : (raw || ""));
+  // ADR-0012: mostra o status do pseudo-stream enquanto grava (preview ao vivo),
+  // para o problema "não aparece nada" ser diagnosticável sem olhar logs.
+  const preview = status === "recording" && meeting.id === id && meeting.tailStatus
+    ? `<p class="mtg-preview mono">${esc(meeting.tailStatus)}</p>` : "";
+  const emptyMsg = status === "recording"
+    ? `<p class="bempty">gravando — o preview ao vivo aparece a cada ~18s conforme houver fala.</p>`
+    : `<p class="bempty">sem transcrição — não houve fala capturada nesta reunião.</p>`;
+  B.doc.innerHTML =
+    `<div class="mtg-surface">` +
+      `<div class="mtg-doc">${meetingStatusBar(status)}${preview}` +
+        (body.trim() ? mdRender(body) : emptyMsg) +
+      `</div>` +
+      `<aside class="mtg-rail">${meetingRailHtml(id)}</aside>` +
+    `</div>`;
+  wireMeetingSurface(id);
+  wireDocLinks();
+}
+
+function meetingStatusBar(status) {
+  const map = { recording: ["gravando", "rec"], transcribing: ["transcrevendo…", "warn"], done: ["concluída", "ok"] };
+  const [txt, cls] = map[status] || ["concluída", "ok"];
+  return `<div class="mtg-status ${cls}"><span class="mtg-statusdot"></span><span class="mono">${esc(txt)}</span></div>`;
+}
+
+// ADR-0013: the meeting rail is trimmed to the actions that matter, each made
+// evident and EXPLAINED — no audio (transient/deleted), no artefatos clutter, no
+// cloud/MCP consent, no audit. "analisar" and "responder" run the Claude skill in
+// the terminal (local-first: it reads the context before the internet); "ver
+// relatório" shows the built report; "enviar para a fila" turns this meeting into
+// a consolidated report and puts it in the fila de geração de contexto.
+function meetingRailHtml(id) {
+  const action = (btnCls, btnId, label, note) =>
+    `<div class="mtg-action">` +
+      `<button class="abtn ${btnCls}" id="${btnId}">${label}</button>` +
+      `<p class="mtg-note mono">${note}</p>` +
+    `</div>`;
+  return `<div class="mtg-railsec mtg-analise">` +
+    `<div class="mtg-railhead mono">o que fazer com esta reunião</div>` +
+    action("", "mtgAnalyseBtn", "analisar",
+      "O Claude lê a transcrição e o contexto local primeiro, aponta tema, decisões, riscos e dúvidas, e escreve o relatório.") +
+    action("", "mtgAnswerBtn", "responder…",
+      "Faça uma pergunta sobre a reunião — a resposta é ancorada no que foi dito e no contexto local.") +
+    action("ghost", "mtgReportBtn", "ver relatório",
+      "Abre o relatório desta reunião (resumo, decisões, dúvidas, investigações).") +
+    action("cta", "mtgQueueBtn", "enviar para a fila →",
+      "Gera um relatório consolidado desta reunião e o coloca na fila de geração de contexto (próximo passo do fluxo).") +
+    `</div>`;
+}
+
+function wireMeetingSurface(id) {
+  const analyseBtn = B.doc.querySelector("#mtgAnalyseBtn");
+  if (analyseBtn) analyseBtn.onclick = () => runMeetingSkill("analyse", id);
+  const answerBtn = B.doc.querySelector("#mtgAnswerBtn");
+  if (answerBtn) answerBtn.onclick = () => askMeetingAnswer(id);
+  const reportBtn = B.doc.querySelector("#mtgReportBtn");
+  if (reportBtn) reportBtn.onclick = () => buildAndOpenReport();
+  const queueBtn = B.doc.querySelector("#mtgQueueBtn");
+  if (queueBtn) queueBtn.onclick = () => {
+    const dir = currentMeetingDir(id);
+    const m = dir && /^brainstorming\/([^/]+)\//.exec(dir);
+    if (!m) { toast("abra a reunião para enviar"); return; }
+    sendBrainstormToQueue(m[1], [{ kind: "reuniao", rel: dir }]);
+  };
+}
+
+// Resolve the acervo-relative meeting dir for a skill run: the active living/
+// report tab is the source of truth; fall back to the recording meeting's dir.
+function currentMeetingDir(id) {
+  const t = activeTab();
+  if (t) { const d = LM.meetingDir(t.rel); if (d) return d; }
+  if (meeting.id === id && meeting.dir) return meeting.dir;
+  return null;
+}
+
+// ADR-0012: inject the skill slash command into the terminal Claude. We reuse
+// termRun (opens the panel + types the command via term_input) — no in-app model
+// call. Results appear in the terminal AND, as the skill writes them, under the
+// meeting's artefatos/ + relatorio.md; we refresh the tree afterwards so the new
+// files surface (the skill never touches manifest.json, so the rail's artefatos
+// list only reflects app-written artifacts).
+function runMeetingSkill(kind, id, question) {
+  const dir = currentMeetingDir(id);
+  if (!dir) { toast("abra a reunião para analisar"); return; }
+  const cmd = LM.meetingSkillCmd(kind, dir, question);
+  if (!cmd) { toast("digite uma pergunta"); return; }
+  termRun(cmd);
+  toast(kind === "answer" ? "pergunta enviada ao Claude do terminal" : "análise enviada ao Claude do terminal", 4000);
+  // A skill write is async and IPC-free (no pessoal-changed event), so nudge a
+  // couple of tree/surface refreshes to reveal the artefatos it produces.
+  scheduleMeetingSkillRefresh(id);
+}
+function scheduleMeetingSkillRefresh(id) {
+  [6000, 20000].forEach((ms) => setTimeout(() => {
+    pessoalSig = ""; refreshPessoal(); renderIfLiving(id);
+  }, ms));
+}
+
+// "responder…": prompt for a free-text question, then inject /answer. Uses the
+// shared modal (window.prompt is unreliable in the webview) mirroring pickMeeting.
+function askMeetingAnswer(id) {
+  const dir = currentMeetingDir(id);
+  if (!dir) { toast("abra a reunião para responder"); return; }
+  openModal(
+    "Perguntar sobre a reunião",
+    `<p class="pmnote mono">a pergunta roda no Claude do terminal (ADR-0012); a resposta aparece lá e em artefatos/respostas.</p>` +
+      `<label class="wfield"><span class="mono">pergunta</span>` +
+      `<input id="mtgQuestion" type="text" placeholder="ex.: quais decisões ficaram em aberto?" spellcheck="false"></label>`,
+    "perguntar",
+    () => {
+      const q = (($("mtgQuestion") && $("mtgQuestion").value) || "").trim();
+      if (!q) { toast("digite uma pergunta"); return; }
+      runMeetingSkill("answer", id, q);
+    }
+  );
+  const inp = $("mtgQuestion"); if (inp) inp.focus();
+}
+
+// Fill the análise rail with the honest ai_doctor posture and wire the local
+// "ver auditoria" read (ADR-0011). No AI action is wired here: the analisar
+// button stays disabled and nothing leaves the machine — this only reads
+// booleans (ai_doctor) and the meeting-local audit (brain_meeting_audit).
+async function wireMeetingAi(id) {
+  const statusEl = B.doc.querySelector("#mtgAiStatus");
+  const sink = B.doc.querySelector("#mtgAiSink");
+  try {
+    const d = await invoke("ai_doctor");
+    if (statusEl) statusEl.textContent = LM.aiStatusLine(d);
+    // The disclosure text comes from the backend (ADR-0011 constant); its
+    // visibility is driven by the cloud toggle in wireMeetingSurface.
+    if (sink) sink.textContent = (d && d.ambientBinarySink) || "";
+  } catch (e) {
+    if (statusEl) statusEl.textContent = "status indisponível";
+    clog("ai_doctor erro: " + e);
+  }
+  const auditBtn = B.doc.querySelector("#mtgAuditBtn");
+  const list = B.doc.querySelector("#mtgAuditList");
+  if (auditBtn && list) auditBtn.onclick = () => showMeetingAudit(id, list);
+}
+
+// Render the meeting-local audit — the user-facing "what left the machine"
+// list (ADR-0011). In v1 no external call happens, so it is empty and shows the
+// honest reassurance. Content read here stays local (the file is quarantined
+// under pessoal/ by git.rs); it is never shared or PR'd.
+async function showMeetingAudit(id, list) {
+  if (!list.hidden) { list.hidden = true; return; }
+  list.hidden = false;
+  list.innerHTML = `<li class="bempty">carregando…</li>`;
+  let events = [];
+  try { events = await invoke("brain_meeting_audit", { id }); }
+  catch (e) { list.innerHTML = `<li class="bempty">não li a auditoria</li>`; clog("meeting_audit erro: " + e); return; }
+  if (!events || !events.length) {
+    list.innerHTML = `<li class="bempty">nada saiu desta máquina</li>`;
+    return;
+  }
+  list.innerHTML = events.map((ev) =>
+    `<li class="mtg-auditrow"><span class="mtg-audittarget">${esc(ev.target || "?")}</span>` +
+    `<span class="mtg-auditmeta">${esc(ev.kind || "")} · ${esc(String(ev.tokens || 0))} tokens · ${esc(ev.when || "")}</span></li>`
+  ).join("");
+}
+
+// Artifact click: docs open as a tab; charts/images embed via brain_read_asset
+// (CSP-safe data: URI); anything else opens in the OS default app — all guarded
+// to the acervo root in Rust (ADR-0009/0010).
+async function mtgOpenArtifact(rel, name) {
+  const key = name || rel;
+  if (/\.(md|txt)$/i.test(key)) { openDoc(rel, { preview: true }); return; }
+  if (/\.(svg|png|jpe?g|gif|webp)$/i.test(key)) {
+    try { const a = await invoke("brain_read_asset", { rel }); mtgShowImage(rel, a.mime, a.base64); }
+    catch (e) { toast("não abri a imagem"); clog("read_asset erro: " + e); }
+    return;
+  }
+  mtgOpenExternal(rel);
+}
+async function mtgOpenExternal(rel) {
+  try { await invoke("brain_open_external", { rel }); }
+  catch (e) { toast("não abri o arquivo"); clog("open_external erro: " + e); }
+}
+
+// ADR-0010: delete one audio track (mic/system/completo). Guarded by a confirm
+// (destructive, and BR-1 makes it local-only — there is no copy elsewhere), then
+// repaints the living surface from the manifest the backend returns.
+async function mtgDeleteAudio(id, which) {
+  const label = { completo: "áudio completo", mic: "microfone", system: "sistema" }[which] || "áudio";
+  if (!window.confirm(`Apagar o ${label} desta reunião? Esta ação não pode ser desfeita.`)) return;
+  try {
+    await invoke("brain_meeting_delete_audio", { input: { id, which } });
+    toast(`${label} apagado`);
+    refreshLivingInPlace(id); // repinta a partir do manifest atualizado
+  } catch (e) { toast("não apaguei o áudio: " + String(e).slice(0, 80)); clog("delete_audio erro: " + e); }
+}
+function mtgShowImage(rel, mime, base64) {
+  openModal(String(rel).split("/").pop(), `<div class="mtg-imgwrap"><img alt="" src="data:${mime};base64,${base64}"></div>`, null, null);
+}
+
+// "novas linhas ↓" pill + tail-follow (no forced auto-scroll; ADR-0010).
+function nearBottom(elm) { return elm.scrollHeight - elm.scrollTop - elm.clientHeight < 48; }
+function scrollMeetingBottom() { B.wsBody.scrollTop = B.wsBody.scrollHeight; hidePill(); }
+function showPill() { const p = $("mtgPill"); if (p) p.hidden = false; }
+function hidePill() { const p = $("mtgPill"); if (p) p.hidden = true; }
+
+// START picker: choose an existing tema or type a new one (+ optional title).
+// Resolves to {tema,titulo} on confirm or null on cancel/close.
+function pickMeeting(temas) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (v) => { if (settled) return; settled = true; resolve(v); };
+    const opts = (temas || []).map((t) => `<option value="${esc(t.slug)}">${esc(t.nome || t.slug)}</option>`).join("");
+    // ADR-0013: the brainstorming comes from the select (created elsewhere — no
+    // "novo tema" field here). With none yet, a single name field bootstraps one.
+    // Fields use the app's canonical `.wfield` pattern (same as the setup wizard).
+    const temaField = (temas && temas.length)
+      ? `<label class="wfield"><span class="mono">brainstorming</span>` +
+          `<select id="mtgTema">${opts}</select></label>`
+      : `<label class="wfield"><span class="mono">brainstorming</span>` +
+          `<input id="mtgNovoTema" type="text" placeholder="ex.: frota 2026" spellcheck="false"></label>`;
+    const html =
+      `<p class="pmnote mono">a reunião é gravada 100% na sua máquina — o áudio nunca sai do computador.</p>` +
+      temaField +
+      `<label class="wfield"><span class="mono">título</span>` +
+        `<input id="mtgTitulo" type="text" placeholder="opcional — ex.: semanal de custos" spellcheck="false"></label>`;
+    openModal("Nova reunião", html, "começar", () => {
+      const selEl = $("mtgTema");
+      const novo = (($("mtgNovoTema") && $("mtgNovoTema").value) || "").trim();
+      const tema = selEl ? selEl.value : novo;
+      const titulo = (($("mtgTitulo") && $("mtgTitulo").value) || "").trim();
+      // the modal closes on confirm regardless; abort (never hang) if no brainstorming
+      if (!tema) { toast("escolha ou nomeie um brainstorming"); finish(null); return; }
+      finish({ tema, titulo: titulo || null });
+    });
+    PM.cancel.addEventListener("click", () => finish(null), { once: true });
+    PM.close.addEventListener("click", () => finish(null), { once: true });
+  });
+}
+
+// contextual header actions (move/delete) for the active document
+function applyDocActions(rel) {
+  const isQueue = rel.startsWith("inbox/") && !rel.endsWith("_prompt.md");
+  const movable = isQueue || /^(reunioes|notas)\//.test(rel) ||
+    /^contextos\/.+\/(referencias|brainstorming)\//.test(rel);
+  $("bDocActs").hidden = !movable;
+  $("bDelDoc").hidden = !isQueue;
+  if (isQueue) {
+    const qname = rel.slice(6);
+    $("bMoveDoc").onclick = (e) => { e.stopPropagation(); openMoveMenu($("bMoveDoc"), qname); };
+    $("bDelDoc").onclick = (e) => { e.stopPropagation(); openConfirmDelete($("bDelDoc"), qname); };
+  } else if (movable) {
+    $("bMoveDoc").onclick = (e) => { e.stopPropagation(); openMoveFileMenu($("bMoveDoc"), rel); };
+  }
+}
+
+// render the active tab's content into the document pane (view or edit)
+async function renderActive() {
+  hidePill();
+  const tab = activeTab();
+  if (!tab || tab.rel === HOME_REL) { showHome(); return; }
+  const isGuide = tab.rel === GUIDE_REL;
+  B.home.hidden = true;
+  B.docWrap.hidden = false;
+  $("bDraftNote").hidden = true;   // the first-edit note is one-time; reset per render
+  closeFind();
+  B.crumb.textContent = isGuide ? "instruções do loop" : tab.rel;
+  // permanent world badge (versionado / rascunho), else document-specific badge
+  const world = LoroWorld.crumbBadge(tab.kind);
+  const [label, cls] = world && !isGuide ? [world.label, world.cls] : docBadge(tab.rel, isGuide);
+  B.badge.textContent = label; B.badge.className = "mono badge " + cls;
+  setDocGit(tab.rel, tab.kind, isGuide);
+  if (isGuide) $("bDocActs").hidden = true; else applyDocActions(tab.rel);
+  // ADR-0010: a meeting living file (reuniao.md) is its own append-only surface —
+  // transcript + artefatos rail + análise/consent; no free-form CM6 editing.
+  if (LM.isLiving(tab.rel)) {
+    B.modes.hidden = true;
+    $("bPromoted").hidden = true;
+    $("bDocActs").hidden = true;
+    await renderMeetingLiving(tab);
+    B.wsBody.scrollTop = 0;
+    markSel();
+    return;
+  }
+  const textFile = isGuide || /\.(md|txt)$/i.test(tab.rel);
+  B.modes.hidden = !textFile;
+  B.viewBtn.classList.toggle("on", tab.mode !== "edit");
+  B.editBtn2.classList.toggle("on", tab.mode === "edit");
+  if (textFile && tab.mode === "edit") await mountEditor(tab);
+  else await renderView(tab);
+  updatePromotedBadge(tab);
+  B.wsBody.scrollTop = 0;
+  markSel();
+}
+
+// ADR-0009: a persistent "promovido → <contexto>" badge, read from the source
+// file's front-matter (stamped non-destructively by brain_promote).
+function updatePromotedBadge(tab) {
+  const badge = $("bPromoted");
+  if (!badge) return;
+  let raw = null;
+  const h = cmById.get(tab.id);
+  if (h) { try { raw = h.getValue(); } catch (_) {} }
+  if (raw == null) raw = savedById.get(tab.id);
+  let promo = null;
+  if (raw != null) {
+    try {
+      const split = R.splitFrontMatter(raw);
+      if (split.frontMatter != null) promo = R.parseFrontMatter(split.frontMatter).promovido;
+    } catch (_) { promo = null; }
+  }
+  const para = promo && (promo.para || (typeof promo === "string" ? promo : ""));
+  if (para) { badge.hidden = false; badge.textContent = "promovido → " + para; }
+  else badge.hidden = true;
+}
+
+// per-active-tab view/edit toggle (Cmd/Ctrl-E)
+async function setActiveMode(mode) {
+  const t = activeTab();
+  if (!t || t.rel === HOME_REL) return;
+  ws = LoroWorkspace.setMode(ws, t.id, mode);
+  renderTabs();
+  await renderActive();
+}
+function toggleActiveMode() {
+  const t = activeTab();
+  if (!t || t.rel === HOME_REL) return;
+  setActiveMode(t.mode === "edit" ? "view" : "edit");
+}
+B.viewBtn.addEventListener("click", () => setActiveMode("view"));
+B.editBtn2.addEventListener("click", () => setActiveMode("edit"));
+
+// abre as "instruções do loop" (inbox/_prompt.md) como uma aba em modo edição
+async function openGuideDoc() {
+  ws = LoroWorkspace.openTab(ws, GUIDE_REL, { preview: false });
+  ws = LoroWorkspace.setMode(ws, LoroWorkspace.activeTab(ws).id, "edit");
+  renderTabs();
+  await renderActive();
+}
+
+// ---- busca no documento (Ctrl/⌘+F) ----
+let findMarks = [], findIdx = -1;
+function clearMarks() {
+  findMarks.forEach((m) => { const t = document.createTextNode(m.textContent); m.replaceWith(t); });
+  findMarks = []; findIdx = -1;
+  B.doc.normalize();
+}
+function runFind(q) {
+  clearMarks();
+  if (!q) { B.findCount.textContent = "0/0"; return; }
+  const rx = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
+  const walker = document.createTreeWalker(B.doc, NodeFilter.SHOW_TEXT, null);
+  const targets = [];
+  let node;
+  while ((node = walker.nextNode())) if (rx.test(node.nodeValue)) targets.push(node);
+  for (const t of targets) {
+    const frag = document.createDocumentFragment();
+    let last = 0; const s = t.nodeValue; rx.lastIndex = 0; let m;
+    while ((m = rx.exec(s))) {
+      if (m.index > last) frag.appendChild(document.createTextNode(s.slice(last, m.index)));
+      const mark = document.createElement("mark"); mark.className = "hl"; mark.textContent = m[0];
+      frag.appendChild(mark); findMarks.push(mark); last = m.index + m[0].length;
+      if (m.index === rx.lastIndex) rx.lastIndex++;
+    }
+    if (last < s.length) frag.appendChild(document.createTextNode(s.slice(last)));
+    t.replaceWith(frag);
+  }
+  if (findMarks.length) gotoMark(0); else B.findCount.textContent = "0/0";
+}
+function gotoMark(i) {
+  if (!findMarks.length) return;
+  findIdx = (i + findMarks.length) % findMarks.length;
+  findMarks.forEach((m, k) => m.classList.toggle("cur", k === findIdx));
+  findMarks[findIdx].scrollIntoView({ block: "center" });
+  B.findCount.textContent = `${findIdx + 1}/${findMarks.length}`;
+}
+function openFind() {
+  if (B.docWrap.hidden) return;   // só quando um documento está aberto
+  const t = activeTab();
+  if (t && t.mode === "edit") return; // no modo editar, o CM6 é dono da busca (⌘/Ctrl+F)
+  B.find.hidden = false; B.findInput.focus(); B.findInput.select();
+  if (B.findInput.value) runFind(B.findInput.value);
+}
+function closeFind() { B.find.hidden = true; clearMarks(); B.findCount.textContent = "0/0"; }
+B.findInput.addEventListener("input", () => runFind(B.findInput.value));
+B.findInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); gotoMark(findIdx + (e.shiftKey ? -1 : 1)); }
+  else if (e.key === "Escape") closeFind();
+});
+B.findNext.addEventListener("click", () => gotoMark(findIdx + 1));
+B.findPrev.addEventListener("click", () => gotoMark(findIdx - 1));
+B.findClose.addEventListener("click", () => { closeFind(); });
+// ADR-0009: reference dispatch. A clicked link is either a front-matter ref
+// (`ref:<id>` — inline, or a panel row's data-ref) or a bare relative/anchored
+// local path. Both resolve through brain_resolve_ref (canonicalize + starts_with
+// guard live in Rust) and dispatch by tipo: doc opens a tab; image renders inline
+// as a CSP-safe data: URI; audio/other open in the OS default app.
+function wireDocLinks() {
+  const tab = activeTab();
+  const rel = currentRel();
+  if (!rel || !tab) return;
+  const fm = fmById.get(tab.id) || null;
+  B.doc.querySelectorAll("a[data-path]").forEach((a) =>
+    (a.onclick = (e) => { e.preventDefault(); onRefClick(rel, fm, a.dataset.path, a); }));
+  B.doc.querySelectorAll("a[data-ref]").forEach((a) =>
+    (a.onclick = (e) => { e.preventDefault(); onRefClick(rel, fm, "ref:" + a.dataset.ref, a); }));
+}
+async function onRefClick(sourceRel, fm, token, anchorEl) {
+  let caminho = token;
+  const m = /^ref:(.+)$/.exec(token || "");
+  if (m) {
+    const found = R.findRef ? R.findRef(fm, m[1].trim()) : null;
+    if (!found || !found.caminho) { toast("referência não encontrada"); return; }
+    caminho = found.caminho;
+  }
+  let res;
+  try { res = await invoke("brain_resolve_ref", { sourceRel, ref: caminho }); }
+  catch (e) { toast("não resolvi a referência"); clog("resolve_ref erro: " + e); return; }
+  if (!res || !res.exists) { toast("arquivo não encontrado" + (res && res.rel ? ": " + res.rel : "")); return; }
+  if (res.tipo === "doc") { openDoc(res.rel, { preview: true }); return; }
+  if (res.tipo === "image") {
+    try {
+      const asset = await invoke("brain_read_asset", { rel: res.rel });
+      toggleInlineImage(anchorEl, asset.mime, asset.base64, res.rel);
+    } catch (e) { toast("não abri a imagem"); clog("read_asset erro: " + e); }
+    return;
+  }
+  // audio / other → OS default app (guarded to the acervo root in Rust)
+  try { await invoke("brain_open_external", { rel: res.rel }); }
+  catch (e) { toast("não abri o arquivo"); clog("open_external erro: " + e); }
+}
+// CSP-safe inline image: a base64 data: URI (img-src 'self' data:). Toggles off
+// on a second click so a reference does not permanently occupy the reader.
+function toggleInlineImage(anchorEl, mime, base64, rel) {
+  const next = anchorEl.nextElementSibling;
+  if (next && next.classList && next.classList.contains("refimg")) { next.remove(); return; }
+  const fig = document.createElement("span");
+  fig.className = "refimg";
+  const img = document.createElement("img");
+  img.src = `data:${mime};base64,${base64}`;
+  img.alt = String(rel).split("/").pop();
+  fig.appendChild(img);
+  anchorEl.insertAdjacentElement("afterend", fig);
+}
+
+// Open (or focus) a document as a workspace tab. Single-click = ephemeral
+// preview (default); pass {preview:false} for double-click / palette / permanent.
+async function openDoc(relPath, opts) {
+  ws = LoroWorkspace.openTab(ws, relPath, opts || { preview: true });
+  renderTabs();
+  await renderActive();
+}
+
+// ============================ paleta de comandos (⌘P / ⌘⇧P) ============================
+// pt-BR command registry (ADR-0008). `run` wires to existing handlers/buttons.
+const COMMANDS = [
+  { label: "ir para início", run: () => openHome() },
+  { label: "alternar visualizar/editar", run: () => toggleActiveMode() },
+  { label: "fechar aba", run: () => closeActiveTab() },
+  { label: "reabrir aba", run: () => reopenClosedTab() },
+  { label: "perguntar ao acervo", run: () => askAcervo() },
+  { label: "novo contexto", run: () => promptNewContext() },
+  { label: "novo brainstorming", run: () => promptNewTema() },
+  { label: "novo caderno", run: () => promptNewNotebook() },
+  { label: "nova reunião", run: () => startMeetingFlow() },
+  { label: "encerrar reunião", run: () => { if (meeting.active) stopSession(); else toast("nenhuma reunião em andamento"); } },
+  { label: "abrir relatório", run: () => buildAndOpenReport() },
+  { label: "marcar dúvida", run: () => markMeeting("duvida") },
+  { label: "marcar decisão", run: () => markMeeting("decisao") },
+  { label: "marcar investigação", run: () => markMeeting("investigacao") },
+  { label: "migrar acervo", run: () => runMigration() },
+  { label: "instruções do loop", run: () => openGuideDoc() },
+  { label: "versionar", run: () => B.gitBtn.click() },
+  { label: "propor mudança", run: () => B.proposeBtn.click() },
+];
+let cmdkMode = "file";     // "file" | "command"
+let cmdkIndex = 0;         // highlighted row
+let cmdkRows = [];         // current result rows (file hits or commands)
+let paletteIndex = [];     // cached brain_list_all result
+
+function paletteOpen() { return !B.cmdk.hidden; }
+function openPalette(mode) {
+  cmdkMode = mode;
+  B.cmdk.hidden = false;
+  B.cmdkInput.value = mode === "command" ? ">" : "";
+  if (mode === "file") {
+    // refresh the quick-open index each open (cheap; keeps it current)
+    invoke("brain_list_all").then((idx) => { paletteIndex = idx || []; renderPalette(); })
+      .catch((e) => { paletteIndex = []; renderPalette(); clog("brain_list_all erro: " + e); });
+  }
+  renderPalette();
+  B.cmdkInput.focus(); B.cmdkInput.select();
+}
+function closePalette() { B.cmdk.hidden = true; cmdkRows = []; cmdkIndex = 0; }
+
+// most-recently-used doc rels from ws.mru (empty query in file mode)
+function mruRecents() {
+  const seen = new Set();
+  const out = [];
+  for (const id of ws.mru) {
+    const tab = ws.tabs.find((t) => t.id === id);
+    if (!tab || tab.rel === HOME_REL || seen.has(tab.rel)) continue;
+    seen.add(tab.rel);
+    out.push({ rel: tab.rel, title: tab.title, kind: tab.kind });
+  }
+  return out;
+}
+function renderPalette() {
+  const raw = B.cmdkInput.value;
+  const isCmd = cmdkMode === "command" || raw.startsWith(">");
+  const query = isCmd ? raw.replace(/^>\s*/, "") : raw;
+  if (isCmd) {
+    cmdkRows = LoroFuzzy.filter(query, COMMANDS, (c) => c.label)
+      .map((c) => ({ kind: "cmd", label: c.label, run: c.run }));
+  } else {
+    const src = query ? paletteIndex : mruRecents();
+    cmdkRows = LoroFuzzy.filter(query, src, (it) => it.rel)
+      .map((it) => ({ kind: "file", rel: it.rel, label: it.title || it.rel, sub: it.rel, world: it.kind }));
+  }
+  cmdkIndex = 0;
+  B.cmdkList.innerHTML = cmdkRows.length
+    ? cmdkRows.map((r, i) => {
+        const world = r.kind === "file" && r.world === "context" ? "versionado"
+          : r.kind === "file" && r.world === "personal" ? "rascunho" : "";
+        const badge = world ? `<span class="cmdk-w ${r.world}">${world}</span>` : "";
+        const sub = r.sub ? `<span class="cmdk-sub mono">${esc(r.sub)}</span>` : "";
+        return `<li class="cmdk-item${i === 0 ? " on" : ""}" data-i="${i}"><span class="cmdk-l">${esc(r.label)}</span>${sub}${badge}</li>`;
+      }).join("")
+    : `<li class="cmdk-empty mono">nada encontrado</li>`;
+  B.cmdkList.querySelectorAll("[data-i]").forEach((li) => {
+    li.onmousemove = () => setCmdkIndex(Number(li.dataset.i));
+    li.onclick = () => { setCmdkIndex(Number(li.dataset.i)); runPalette(); };
+  });
+}
+function setCmdkIndex(i) {
+  cmdkIndex = i;
+  B.cmdkList.querySelectorAll(".cmdk-item").forEach((li, k) => li.classList.toggle("on", k === i));
+}
+function runPalette() {
+  const row = cmdkRows[cmdkIndex];
+  if (!row) return;
+  closePalette();
+  if (row.kind === "file") openDoc(row.rel, { preview: true });
+  else row.run();
+}
+B.cmdkInput.addEventListener("input", renderPalette);
+B.cmdkInput.addEventListener("keydown", (e) => {
+  if (e.key === "ArrowDown") { e.preventDefault(); setCmdkIndex(Math.min(cmdkIndex + 1, cmdkRows.length - 1)); }
+  else if (e.key === "ArrowUp") { e.preventDefault(); setCmdkIndex(Math.max(cmdkIndex - 1, 0)); }
+  else if (e.key === "Enter") { e.preventDefault(); runPalette(); }
+  else if (e.key === "Escape") { e.preventDefault(); closePalette(); }
+});
+B.cmdk.addEventListener("click", (e) => { if (e.target === B.cmdk) closePalette(); });
+
+// ---- one central capture-phase keyboard handler (ADR-0008) ----
+function termHasFocus() {
+  const p = $("termPanel");
+  return p && !p.hidden && p.contains(document.activeElement);
+}
+window.addEventListener("keydown", (e) => {
+  const mod = e.metaKey || e.ctrlKey;
+  const key = e.key.toLowerCase();
+  // keys we fully own are also stopped in the capture phase so they never reach
+  // CM6 / other listeners and double-fire.
+  const own = () => { e.preventDefault(); e.stopPropagation(); };
+  // palette + Esc win even when the terminal has focus
+  if (mod && !e.shiftKey && key === "p") { own(); openPalette("file"); return; }
+  if (mod && e.shiftKey && key === "p") { own(); openPalette("command"); return; }
+  if (key === "escape") {
+    if (paletteOpen()) { own(); closePalette(); return; }
+    if (!B.find.hidden) { own(); closeFind(); return; }
+  }
+  if (paletteOpen()) return;   // the palette input owns the rest of its keys
+  if (termHasFocus()) return;  // route everything else to the shell
+  if (e.ctrlKey && key === "tab") { own(); cycleTab(e.shiftKey); return; }
+  // ⌘/Ctrl+W MUST preventDefault or the WebView closes the window (ADR-0008)
+  if (mod && key === "w") { own(); closeActiveTab(); return; }
+  if (mod && key === "s") { own(); saveActive(); return; }
+  if (mod && key === "e") { own(); toggleActiveMode(); return; }
+  if (mod && key === "f" && !B.docWrap.hidden) {
+    const t = activeTab();
+    if (t && t.mode === "edit") return; // CM6 owns find in edit mode (don't stop it)
+    own(); openFind(); return;
+  }
+}, true);
+
+// ---- seletor de acervo (projetos) ----
+function renderSwitch() {
+  const cur = acervos.find((a) => a.id === activeAcervo);
+  B.acervoName.textContent = cur ? cur.name : "acervo";
+  applyAccent(cur ? cur.color : "");
+}
+B.acervoBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  if (!B.acervoMenu.hidden) return closeFloat();
+  B.acervoMenu.innerHTML =
+    acervos.map((a) => `<div class="fitem2${a.id === activeAcervo ? " on" : ""}" data-acervo="${esc(a.id)}">
+        <span class="fn">${esc(a.name)}</span>${a.autoContext ? '<span class="pill">auto</span>' : ""}
+        <button class="rowmenu" data-rmacervo="${esc(a.id)}" title="remover projeto do Loro (a pasta é preservada)">×</button></div>`).join("") +
+    `<div class="fsep"></div><div class="fitem2 add" data-newacervo="1">＋ novo projeto</div>`;
+  B.acervoMenu.querySelectorAll("[data-acervo]").forEach((el2) => (el2.onclick = async (e) => {
+    if (e.target.closest("[data-rmacervo]")) return;
+    closeFloat();
+    if (el2.dataset.acervo === activeAcervo) return;
+    try { await invoke("brain_set_active", { id: el2.dataset.acervo }); setupWorkspace(); sideSig = ""; brainRefresh(); }
+    catch (err) { toast(String(err).slice(0, 80)); }
+  }));
+  B.acervoMenu.querySelectorAll("[data-rmacervo]").forEach((el2) => (el2.onclick = (e) => {
+    e.stopPropagation(); openConfirmRemoveAcervo(el2, el2.dataset.rmacervo);
+  }));
+  B.acervoMenu.querySelector("[data-newacervo]").onclick = () => { closeFloat(); openNewAcervo(); };
+  B.acervoMenu.hidden = false;
+});
+
+// remover projeto: tira o acervo do Loro (a pasta no disco é preservada)
+function openConfirmRemoveAcervo(anchor, id) {
+  const a = acervos.find((x) => x.id === id);
+  const name = a ? a.name : id;
+  B.acervoMenu.hidden = true;
+  B.bMenu.innerHTML =
+    `<div class="fhead">remover projeto</div>
+     <div class="fitem2 muted fstatic">“${esc(name)}” sai do Loro — a pasta em ${esc(a ? a.dir : "")} é preservada no disco</div>
+     <div class="confirm-actions">
+       <button class="btn-danger" data-yes>remover</button>
+       <button class="link mono muted" data-no>cancelar</button>
+     </div>`;
+  B.bMenu.querySelector("[data-yes]").onclick = async () => {
+    closeFloat();
+    try {
+      const av = await invoke("brain_remove_acervo", { id });
+      acervos = av.acervos || []; activeAcervo = av.active || "";
+      toast("projeto removido (pasta preservada)");
+      setupWorkspace(); sideSig = ""; brainRefresh();
+    } catch (e) { toast(String(e).slice(0, 90)); }
+  };
+  B.bMenu.querySelector("[data-no]").onclick = closeFloat;
+  const r = anchor.getBoundingClientRect();
+  B.bMenu.style.left = Math.min(r.left, window.innerWidth - 260) + "px";
+  B.bMenu.style.top = r.bottom + 4 + "px";
+  B.bMenu.hidden = false;
+}
+
+function openNewAcervo() {
+  creatingNew = true;
+  B.wizTitle.textContent = "Novo projeto (acervo)";
+  B.nameInput.value = ""; B.ctxInput.value = ""; brainDir = ""; B.dirBtn.textContent = "…";
+  B.autoInput.checked = false; B.gitInput.checked = true;
+  wizColor = "";
+  drawWizColors();
+  B.cancelBtn.hidden = false; B.setupErr.hidden = true;
+  B.setup.hidden = false; B.shell.hidden = true;
+  B.nameInput.focus();
+}
+function drawWizColors() {
+  renderSwatches($("wizColors"), wizColor, (hex) => { wizColor = hex; drawWizColors(); applyAccent(hex); });
+}
+B.cancelBtn.addEventListener("click", () => { creatingNew = false; applyAccent(activeColor()); brainRefresh(); });
+function activeColor() { const a = acervos.find((x) => x.id === activeAcervo); return a ? a.color : ""; }
+
+// setup / criar acervo
+B.dirBtn.addEventListener("click", async () => {
+  try { const d = await invoke("pick_folder"); if (d) { brainDir = d; B.dirBtn.textContent = d; } }
+  catch (e) { clog("pick_folder erro: " + e); }
+});
+B.createBtn.addEventListener("click", async () => {
+  const contexts = B.ctxInput.value.split(",").map((s) => s.trim()).filter(Boolean);
+  B.setupErr.hidden = true;
+  try {
+    const av = await invoke("brain_setup", {
+      dir: brainDir, contexts,
+      name: B.nameInput.value.trim() || null,
+      autoContext: B.autoInput.checked,
+      gitInit: B.gitInput.checked,
+      color: wizColor || null,
+      lang: ($("brainLang") && $("brainLang").value) || "pt",
+    });
+    acervos = av.acervos || []; activeAcervo = av.active || "";
+    creatingNew = false;
+    toast("projeto criado");
+    settings.saveDir = ""; persistSettings();
+    setupWorkspace(); sideSig = ""; brainRefresh();
+  } catch (e) {
+    B.setupErr.textContent = String(e); B.setupErr.hidden = false;
+  }
+});
+
+// ---- versionar (branch + commit local) → propor mudança (push + PR/RFC) ----
+// O Git fica escondido: o usuário só "versiona" e depois "propõe a mudança".
+B.gitBtn.addEventListener("click", () => {
+  openEditor(
+    "Versionar mudança — descreva em uma linha",
+    "",
+    async (desc) => {
+      const message = (desc || "").trim();
+      if (!message) throw "descreva a mudança";
+      const r = await invoke("brain_versionar", { slug: message, message });
+      toast(`versionado em ${r.branch}`);
+    }
+  );
+});
+
+B.proposeBtn.addEventListener("click", () => {
+  openEditor(
+    "Propor mudança (RFC) — corpo do Pull Request",
+    "## Resumo da mudança\n\n\n## Contexto afetado\n\n\n## Riscos e pendências\n",
+    async (body) => {
+      const title = (body || "").split("\n").map((l) => l.replace(/^#+\s*/, "").trim()).find(Boolean) || "RFC";
+      const pr = await invoke("brain_propor_mudanca", { title, body });
+      toast(pr.number ? `PR #${pr.number} aberto` : "mudança proposta");
+    }
+  );
+});
+
+// ============================ produção: modal genérico (ADR-0009) ============================
+// One reusable confirm sheet drives the promotion picker and the migration
+// preview: a title, an HTML body the caller may wire, and a confirm handler.
+const PM = {
+  wrap: $("pmWrap"), title: $("pmTitle"), body: $("pmBody"),
+  confirm: $("pmConfirm"), cancel: $("pmCancel"), close: $("pmClose"),
+};
+let pmOnConfirm = null;
+function openModal(title, bodyHtml, confirmLabel, onConfirm) {
+  PM.title.textContent = title;
+  PM.body.innerHTML = bodyHtml;
+  PM.confirm.textContent = confirmLabel || "confirmar";
+  PM.confirm.hidden = !onConfirm;
+  pmOnConfirm = onConfirm || null;
+  PM.wrap.hidden = false;
+  return PM.body;
+}
+function closeModal() { PM.wrap.hidden = true; pmOnConfirm = null; }
+PM.close.addEventListener("click", closeModal);
+PM.cancel.addEventListener("click", closeModal);
+PM.wrap.addEventListener("click", (e) => { if (e.target === PM.wrap) closeModal(); });
+PM.confirm.addEventListener("click", async () => {
+  if (!pmOnConfirm) return closeModal();
+  try { const fn = pmOnConfirm; closeModal(); await fn(); }
+  catch (e) { toast(String(e).slice(0, 100)); clog("modal confirm erro: " + e); }
+});
+window.addEventListener("keydown", (e) => { if (e.key === "Escape" && !PM.wrap.hidden) closeModal(); });
+
+// drop a tab's cached editor/buffer so the next render re-reads it from disk
+// (brain_promote stamps the source file's front-matter without moving it).
+function refreshTabFromDisk(rel) {
+  const tab = ws.tabs.find((t) => t.rel === rel);
+  if (!tab) return;
+  const h = cmById.get(tab.id);
+  if (h) { try { h.destroy(); } catch (_) {} cmById.delete(tab.id); }
+  savedById.delete(tab.id); fmById.delete(tab.id);
+  if (ws.activeId === tab.id) renderActive();
+}
+
+// ---- novo tema / novo caderno ----
+// Inline create, mirroring promptNewContext (the contextos "system pattern").
+let bsEditing = false;
+function promptNewTema() {
+  if (bsEditing) return;
+  bsEditing = true;
+  const inp = document.createElement("input");
+  inp.className = "bnewctx";
+  inp.placeholder = "nome do brainstorming (Enter) · ex.: frota 2026";
+  B.navPessoal.before(inp); inp.focus();
+  const done = () => { inp.remove(); bsEditing = false; };
+  inp.addEventListener("keydown", async (e) => {
+    if (e.key === "Escape") return done();
+    if (e.key !== "Enter") return;
+    const nome = inp.value.trim();
+    if (!nome) return done();
+    try {
+      const r = await invoke("brain_create_brainstorm", { input: { nome } });
+      done(); pessoalSig = ""; refreshPessoal();
+      if (r && r.rel) openDoc(`${r.rel}/indice.md`, { preview: false });
+    } catch (err) { toast(String(err).slice(0, 80)); }
+  });
+  inp.addEventListener("blur", done);
+}
+function promptNewNotebook() {
+  openEditor("Novo caderno — título (linha 1) · tema opcional (linha 2)", "", async (v) => {
+    const [titulo, tema] = (v || "").split("\n").map((s) => s.trim());
+    if (!titulo) throw "informe um título";
+    const rel = await invoke("brain_new_notebook", { tema: tema || null, titulo });
+    toast("caderno criado");
+    pessoalSig = ""; refreshPessoal();
+    if (rel) openDoc(rel, { preview: false });
+  });
+}
+
+// ---- promoção guiada (não destrutiva): destino + prévia → promover → propor ----
+// The preview is derived from the source's front-matter refs (deny-list applied
+// client-side for display only); the actual copy/rewrite/merge runs in Rust.
+function promotionPreview(fm) {
+  const refs = (fm && Array.isArray(fm.refs)) ? fm.refs : [];
+  const audio = (fm && Array.isArray(fm.audio)) ? fm.audio : [];
+  const out = [];
+  for (const r of refs) {
+    if (!r || typeof r !== "object") continue;
+    const tipo = r.tipo || (R.tipoFromExt ? R.tipoFromExt(r.caminho || "") : "other");
+    const name = String(r.caminho || "").split("/").pop() || String(r.caminho || "");
+    out.push(tipo === "audio" ? `áudio: ${name} → referência em texto (stub)` : `${tipo}: ${name} → referencias/${name}`);
+  }
+  for (const a of audio) {
+    if (!a || typeof a !== "object") continue;
+    out.push(`áudio: ${String(a.caminho || "").split("/").pop() || a.caminho} → referência em texto (stub)`);
+  }
+  return out;
+}
+async function startPromotion(sourceRel) {
+  if (!sourceRel) { toast("abra um caderno pessoal para promover"); return; }
+  if (!sourceRel.startsWith("pessoal/")) { toast("apenas itens pessoais podem ser promovidos"); return; }
+  const ctxs = lastSt ? lastSt.contexts.map((c) => c.name) : [];
+  if (!ctxs.length) { toast("crie um contexto antes de promover"); return; }
+  // pre-read the source front-matter for the preview (best-effort)
+  let fm = null;
+  try {
+    const raw = await readDoc(sourceRel);
+    const split = R.splitFrontMatter(raw);
+    if (split.frontMatter != null) fm = R.parseFrontMatter(split.frontMatter);
+  } catch (_) { fm = null; }
+  const previewItems = promotionPreview(fm);
+  const preview = previewItems.length
+    ? previewItems.map((l) => "• " + esc(l)).join("<br>")
+    : "sem anexos — apenas o texto será mesclado no context.md";
+  const opts = ctxs.map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join("");
+  const html =
+    `<p class="pmnote mono">não destrutivo — o original permanece no seu espaço pessoal (rascunho). Áudio nunca é copiado; vira referência em texto.</p>` +
+    `<label class="pmfield"><span class="mono">de</span><span class="mono pmsrc">${esc(sourceRel)}</span></label>` +
+    `<label class="pmfield"><span class="mono">destino</span><select id="pmDest" class="mini-select">${opts}</select></label>` +
+    `<div class="pmphead mono">será preparado (staged) em referencias/ e mesclado no context.md:</div>` +
+    `<div class="pmpreview mono">${preview}</div>`;
+  openModal("Promover para contexto", html, "promover", async () => {
+    const destContext = $("pmDest").value;
+    const r = await invoke("brain_promote", { sourceRel, destContext, mode: "merge" });
+    toast(`promovido → ${destContext}`);
+    refreshTabFromDisk(sourceRel);
+    sideSig = ""; pessoalSig = ""; brainRefresh(); refreshPessoal();
+    offerPropose(r, destContext);
+  });
+}
+// after a promotion, offer to version+propose right away (existing ADR-0004 flow)
+function offerPropose(r, destContext) {
+  const files = (r && r.stagedFiles) || [];
+  const entry = r && r.changelogEntry ? `<div class="pmphead mono">CHANGELOG: ${esc(String(r.changelogEntry))}</div>` : "";
+  const html =
+    `<p class="pmnote mono">promovido para <b>${esc(destContext)}</b> — nada foi versionado ainda (não destrutivo).</p>` +
+    `<div class="pmpreview mono">${files.length ? files.map((f) => "• " + esc(f)).join("<br>") : "context.md atualizado"}</div>${entry}`;
+  openModal("Mudança pronta", html, "propor mudança agora", async () => { B.gitBtn.click(); });
+}
+
+// ---- migrar acervo (simulação → aplicar) — estende brain_migrate (ADR-0004/0009) ----
+function migrationBodyHtml(rep) {
+  const moves = rep && (rep.moves || rep.planned || rep.movimentos);
+  let lines = [];
+  if (Array.isArray(moves)) {
+    lines = moves.map((m) => typeof m === "string" ? m : `${m.from || m.de || "?"} → ${m.to || m.para || "?"}`);
+  }
+  const preview = lines.length ? lines.map((l) => "• " + esc(l)).join("<br>") : "nada a migrar";
+  return `<p class="pmnote mono">simulação — nada é movido ainda · notas/ permanece versionado · incubadora/ vira tema pessoal</p>` +
+    `<div class="pmpreview mono">${preview}</div>`;
+}
+async function runMigration() {
+  let rep;
+  try { rep = await invoke("brain_migrate", { apply: false }); }
+  catch (e) { toast("falha ao planejar migração"); clog("migrate erro: " + e); return; }
+  openModal("Migrar acervo (simulação)", migrationBodyHtml(rep), "aplicar migração", async () => {
+    await invoke("brain_migrate", { apply: true });
+    toast("migração aplicada");
+    sideSig = ""; pessoalSig = ""; brainRefresh(); refreshPessoal();
+  });
+}
+
+// first-edit note dismiss
+$("bDraftClose").addEventListener("click", () => { $("bDraftNote").hidden = true; });
+
+// ---- eventos da produção (ADR-0009) ----
+listen("brainstorming-changed", () => { pessoalSig = ""; refreshPessoal(); });
+listen("pessoal-changed", () => { pessoalSig = ""; refreshPessoal(); });
+listen("tema-changed", () => { pessoalSig = ""; refreshPessoal(); });
+listen("promotion-done", (e) => {
+  const p = (e && e.payload) || {};
+  toast(p.destContext ? `promovido → ${p.destContext}` : "promoção concluída");
+  sideSig = ""; pessoalSig = ""; brainRefresh(); refreshPessoal();
+  const t = activeTab(); if (t && t.rel !== HOME_REL) renderActive();
+});
+
+// GitHub environment doctor: checked once per acervo (network); the wizard card
+// and the "propor" button are gated by versioningEnabled. Nothing is stored.
+let envDoctor = null, envChecked = false;
+async function refreshEnv(force) {
+  if (envChecked && !force) return;
+  envChecked = true;
+  try { envDoctor = await invoke("env_doctor"); }
+  catch (_) { envDoctor = null; }
+  renderGhCard();
+  refreshNotifications();
+}
+function renderGhCard() {
+  const d = envDoctor;
+  B.proposeBtn.hidden = !(d && d.versioningEnabled);
+  // opt-in: só mostra o card quando o usuário caminha p/ colaboração (gh instalado
+  // ou já há um remoto). Sem isso, o fluxo segue 100% local, sem ruído.
+  const heading = d && (d.gh.detail || d.remote.detail);
+  if (!heading) { B.ghCard.hidden = true; return; }
+  B.ghCard.hidden = false;
+  B.ghState.textContent = d.versioningEnabled ? `conectado${d.account ? " · @" + d.account : ""}` : "local";
+  B.ghState.className = "mono badge " + (d.versioningEnabled ? "ok" : "ro");
+  const rows = [
+    ["git", d.git], ["gh (GitHub CLI)", d.gh], ["autenticação", d.ghAuth],
+    ["identidade git", d.gitIdentity], ["repositório remoto", d.remote],
+  ];
+  B.ghChecks.innerHTML = rows.map(([label, c]) => {
+    const fix = c.fixable && !c.ok ? ` <button class="mini act" data-fix="identity">corrigir</button>` : "";
+    return `<li class="ghchk ${c.ok ? "on" : "off"}"><span>${c.ok ? "✓" : "•"} ${esc(label)}</span>` +
+      `<span class="ghhint mono">${esc(c.detail || c.hint || "")}</span>${fix}</li>`;
+  }).join("");
+  B.ghChecks.querySelectorAll("[data-fix]").forEach((b) => (b.onclick = fixIdentity));
+}
+async function fixIdentity() {
+  openEditor("Identidade do git — nome e e-mail (uma linha cada)", "Seu Nome\nseu@email", async (v) => {
+    const [name, email] = (v || "").split("\n").map((s) => s.trim());
+    if (!name || !email) throw "informe nome e e-mail";
+    await invoke("env_set_identity", { name, email });
+    refreshEnv(true);
+  });
+}
+B.ghCheck.addEventListener("click", () => refreshEnv(true));
+
+// Notificações (colaboração): derivadas dos PRs abertos. Sem GitHub → oculto.
+async function refreshNotifications() {
+  if (!envDoctor || !envDoctor.versioningEnabled) { B.ghNotif.hidden = true; return; }
+  let n;
+  try { n = await invoke("brain_notifications"); } catch (_) { B.ghNotif.hidden = true; return; }
+  if (!n.connected) { B.ghNotif.hidden = true; return; }
+  const parts = [];
+  if (n.reviewRequestedToMe.length) parts.push(`⌛ ${n.reviewRequestedToMe.length} aguardam sua revisão`);
+  if (n.awaitingApproval.length) parts.push(`${n.awaitingApproval.length} aguardando aprovação`);
+  if (n.changesPending.length) parts.push(`${n.changesPending.length} com ajustes pedidos`);
+  if (n.recentlyApproved.length) parts.push(`✓ ${n.recentlyApproved.length} aprovadas`);
+  B.ghNotif.hidden = parts.length === 0;
+  B.ghNotif.textContent = parts.join(" · ");
+}
+
+// Timeline: navegar versões do conhecimento sem expor commits/hashes/branches.
+// Acionada pelo selo de versionamento do documento aberto.
+function showTimeline(rel) {
+  invoke("brain_timeline", { rel }).then((items) => {
+    const body = items.length
+      ? items.map((c) => {
+          const when = c.when ? new Date(c.when).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
+          return `• ${when} — ${c.label}${c.author ? ` (${c.author})` : ""}`;
+        }).join("\n")
+      : "(sem versões anteriores ainda)";
+    openEditor(`Histórico — ${rel}`, body, null);
+  }).catch((e) => { toast("sem histórico"); clog("timeline erro: " + e); });
+}
+B.gitBadge.addEventListener("click", () => { const rel = currentRel(); if (rel) showTimeline(rel); });
+
+// ---- confirmação destrutiva EXPLÍCITA (nada de "confirmar?" escondido) ----
+function openConfirmDelete(anchor, name) {
+  B.acervoMenu.hidden = true;
+  B.bMenu.innerHTML =
+    `<div class="fhead">apagar da fila</div>
+     <div class="fitem2 muted fstatic">“${esc(name)}” não será processado pelo loop</div>
+     <div class="confirm-actions">
+       <button class="btn-danger" data-yes>apagar</button>
+       <button class="link mono muted" data-no>cancelar</button>
+     </div>`;
+  B.bMenu.querySelector("[data-yes]").onclick = async () => {
+    closeFloat();
+    try {
+      await invoke("brain_delete_inbox", { name });
+      toast("apagado — não será processado");
+      closeTabsUnder("inbox/" + name, true);
+      sideSig = ""; brainRefresh();
+    } catch (e) { toast(String(e).slice(0, 80)); }
+  };
+  B.bMenu.querySelector("[data-no]").onclick = closeFloat;
+  const r = anchor.getBoundingClientRect();
+  B.bMenu.style.left = Math.min(r.left, window.innerWidth - 240) + "px";
+  B.bMenu.style.top = r.bottom + 4 + "px";
+  B.bMenu.hidden = false;
+}
+
+// ---- menu agrupado do item da fila: mover / apagar ----
+function openQueueMenu(anchorEl, name) {
+  B.acervoMenu.hidden = true;
+  B.bMenu.innerHTML =
+    `<div class="fhead">${esc(name)}</div>
+     <div class="fitem2" data-a="mv"><span class="fn">⇢ mover para…</span></div>
+     <div class="fitem2 ditem" data-a="del"><span class="fn">apagar…</span></div>`;
+  B.bMenu.querySelector('[data-a="mv"]').onclick = () => openMoveMenu(anchorEl, name);
+  B.bMenu.querySelector('[data-a="del"]').onclick = () => openConfirmDelete(anchorEl, name);
+  placeMenu(anchorEl);
+}
+
+// ---- menu de ações do contexto/pasta: renomear/mover, deletar ----
+function placeMenu(anchor) {
+  const r = anchor.getBoundingClientRect();
+  B.bMenu.style.left = Math.min(r.left, window.innerWidth - 250) + "px";
+  B.bMenu.style.top = r.bottom + 4 + "px";
+  B.bMenu.hidden = false;
+}
+
+// áreas/pastas do projeto (prefixos-pai dos contextos existentes)
+function ctxFolders() {
+  const set = new Set();
+  (lastSt ? lastSt.contexts : []).forEach((c) => {
+    const parts = c.name.split("/");
+    for (let i = 1; i < parts.length; i++) set.add(parts.slice(0, i).join("/"));
+  });
+  return [...set].sort();
+}
+async function ctxMoved(name, newPath) {
+  closeFloat(); toast(`movido → ${newPath}`);
+  bOpen.delete("ctx:" + name);
+  closeTabsUnder("contextos/" + name + "/", false);
+  sideSig = ""; brainRefresh();
+}
+function openCtxMenu(anchor, name, isFolder) {
+  B.acervoMenu.hidden = true;
+  B.bMenu.innerHTML =
+    `<div class="fhead">${esc(name)}${isFolder ? " (pasta)" : ""}</div>
+     <div class="fitem2" data-a="ren"><span class="fn">✎ renomear</span></div>
+     <div class="fitem2" data-a="mv"><span class="fn">⇢ mover para…</span></div>
+     <div class="fitem2 ditem" data-a="del"><span class="fn">deletar…</span></div>`;
+  B.bMenu.querySelector('[data-a="ren"]').onclick = () => openRenameCtx(anchor, name);
+  B.bMenu.querySelector('[data-a="mv"]').onclick = () => openMoveCtxMenu(anchor, name, isFolder);
+  B.bMenu.querySelector('[data-a="del"]').onclick = () => openConfirmDeleteCtx(anchor, name, isFolder);
+  placeMenu(anchor);
+}
+
+// RENOMEAR: muda só o nome, mantendo a pasta-pai atual
+function openRenameCtx(anchor, name) {
+  const leaf = name.split("/").pop();
+  const parent = name.includes("/") ? name.slice(0, name.lastIndexOf("/") + 1) : "";
+  B.bMenu.innerHTML =
+    `<div class="fhead">renomear</div>
+     <input id="renInput" class="bnewctx menuinput" value="${esc(leaf)}" spellcheck="false" />
+     <div class="fitem2 muted fstatic">novo nome (mantém a pasta atual)</div>`;
+  const inp = B.bMenu.querySelector("#renInput");
+  inp.focus(); inp.select();
+  inp.addEventListener("keydown", async (e) => {
+    if (e.key === "Escape") return closeFloat();
+    if (e.key !== "Enter") return;
+    const to = parent + inp.value.trim();
+    try { await invoke("brain_rename_context", { from: name, to }); await ctxMoved(name, to); }
+    catch (err) { toast(String(err).slice(0, 90)); }
+  });
+}
+
+// MOVER: para outra pasta do projeto, pasta nova, ou OUTRO projeto
+function openMoveCtxMenu(anchor, name, isFolder) {
+  const leaf = name.split("/").pop();
+  const parent = name.includes("/") ? name.slice(0, name.lastIndexOf("/")) : "";
+  const folders = ctxFolders().filter((f) => f !== parent && f !== name && !f.startsWith(name + "/"));
+  const others = acervos.filter((a) => a.id !== activeAcervo);
+  B.bMenu.innerHTML =
+    `<div class="fhead">mover “${esc(leaf)}”</div>
+     <div class="fhead">neste projeto</div>` +
+    (parent !== "" ? `<div class="fitem2" data-to=""><span class="fn">↥ raiz</span></div>` : "") +
+    folders.map((f) => `<div class="fitem2" data-to="${esc(f)}"><span class="fn">→ ${esc(f)}/</span></div>`).join("") +
+    `<div class="fitem2" data-newfolder><span class="fn">＋ nova pasta…</span></div>` +
+    (others.length ? `<div class="fhead">outro projeto</div>` +
+      others.map((a) => `<div class="fitem2" data-ac="${esc(a.id)}"><span class="fn">⇢ ${esc(a.name)}</span></div>`).join("") : "");
+  const moveTo = async (dest) => {
+    const to = dest === "" ? leaf : dest + "/" + leaf;
+    try { await invoke("brain_rename_context", { from: name, to }); await ctxMoved(name, to); }
+    catch (err) { toast(String(err).slice(0, 90)); }
+  };
+  B.bMenu.querySelectorAll("[data-to]").forEach((el2) => (el2.onclick = () => moveTo(el2.dataset.to)));
+  B.bMenu.querySelectorAll("[data-ac]").forEach((el2) => (el2.onclick = async () => {
+    void isFolder;
+    try { await invoke("brain_move_context_to_acervo", { name, targetId: el2.dataset.ac }); await ctxMoved(name, "outro projeto"); }
+    catch (err) { toast(String(err).slice(0, 90)); }
+  }));
+  const nf = B.bMenu.querySelector("[data-newfolder]");
+  if (nf) nf.onclick = () => {
+    B.bMenu.innerHTML = `<div class="fhead">mover para nova pasta</div>
+       <input id="nfInput" class="bnewctx menuinput" placeholder="nome-da-pasta (ex.: operacoes)" spellcheck="false" />
+       <div class="fitem2 muted fstatic">Enter confirma · vira <pasta>/${esc(leaf)}</div>`;
+    const inp = B.bMenu.querySelector("#nfInput");
+    inp.focus();
+    inp.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") return closeFloat();
+      if (e.key === "Enter" && inp.value.trim()) moveTo(inp.value.trim());
+    });
+  };
+  placeMenu(anchor);
+}
+
+// deletar contexto/pasta: destrutivo, com confirmação explícita
+function openConfirmDeleteCtx(anchor, name, isFolder) {
+  B.bMenu.innerHTML =
+    `<div class="fhead">deletar ${isFolder ? "pasta" : "contexto"}</div>
+     <div class="fitem2 muted fstatic">“${esc(name)}”${isFolder ? " e todos os subcontextos serão apagados" : " será apagado"} do disco
+       (se o projeto é versionado, o histórico git preserva)</div>
+     <div class="confirm-actions">
+       <button class="btn-danger" data-yes>deletar</button>
+       <button class="link mono muted" data-no>cancelar</button>
+     </div>`;
+  B.bMenu.querySelector("[data-yes]").onclick = async () => {
+    closeFloat();
+    try {
+      await invoke("brain_delete_context", { name });
+      toast("deletado");
+      closeTabsUnder("contextos/" + name + "/", false);
+      bOpen.delete("ctx:" + name);
+      sideSig = ""; brainRefresh();
+    } catch (e) { toast(String(e).slice(0, 80)); }
+  };
+  B.bMenu.querySelector("[data-no]").onclick = closeFloat;
+  placeMenu(anchor);
+}
+
+// ---- mover ARQUIVO do acervo (reunião/nota/referência) p/ referências de um contexto ----
+function openMoveFileMenu(anchorEl, rel) {
+  B.acervoMenu.hidden = true;
+  const ctxs = lastSt ? lastSt.contexts.map((c) => c.name) : [];
+  B.bMenu.innerHTML =
+    `<div class="fhead">mover para referências de</div>` +
+    (ctxs.length ? ctxs.map((c) => `<div class="fitem2" data-ref="${esc(c)}"><span class="fn">→ ${esc(c)}</span></div>`).join("")
+                 : `<div class="fitem2 muted fstatic">sem contextos</div>`) +
+    `<div class="fsep"></div><div class="fitem2" data-ref=""><span class="fn">→ notas (sem contexto)</span></div>`;
+  B.bMenu.querySelectorAll("[data-ref]").forEach((el2) => (el2.onclick = async () => {
+    closeFloat();
+    try {
+      const newRel = await invoke("brain_move", { rel, destContext: el2.dataset.ref });
+      toast("movido");
+      sideSig = ""; brainRefresh();
+      if (ws.tabs.some((t) => t.rel === rel)) { closeTabsUnder(rel, true); openDoc(newRel, { preview: false }); }
+    } catch (e) { toast(String(e).slice(0, 90)); clog("brain_move erro: " + e); }
+  }));
+  placeMenu(anchorEl);
+}
+
+// ---- mover item da fila (menu "mover para →") ----
+function openMoveMenu(anchor, fileName) {
+  B.acervoMenu.hidden = true;
+  const cur = lastSt ? lastSt.contexts.map((c) => c.name) : [];
+  const others = acervos.filter((a) => a.id !== activeAcervo);
+  B.bMenu.innerHTML =
+    `<div class="fhead">rotear neste projeto</div>` +
+    (cur.length ? cur.map((c) => `<div class="fitem2" data-ctx="${esc(c)}"><span class="fn">→ ${esc(c)}</span></div>`).join("")
+                : `<div class="fitem2 muted">sem contextos</div>`) +
+    (others.length ? `<div class="fhead">mover para outro projeto</div>` +
+      others.map((a) => `<div class="fitem2" data-to="${esc(a.id)}"><span class="fn">⇢ ${esc(a.name)}</span></div>`).join("")
+      : "");
+  const doMove = async (payload) => {
+    closeFloat();
+    try {
+      await invoke("brain_move_to_acervo", { name: fileName, ...payload });
+      toast("movido");
+      closeTabsUnder("inbox/" + fileName, true);
+      sideSig = ""; brainRefresh();
+    } catch (e) { toast(String(e).slice(0, 90)); clog("move erro: " + e); }
+  };
+  B.bMenu.querySelectorAll("[data-ctx]").forEach((el2) =>
+    (el2.onclick = () => doMove({ targetId: activeAcervo, context: el2.dataset.ctx })));
+  B.bMenu.querySelectorAll("[data-to]").forEach((el2) =>
+    (el2.onclick = () => doMove({ targetId: el2.dataset.to, context: null })));
+  const r = anchor.getBoundingClientRect();
+  B.bMenu.style.left = Math.min(r.left, window.innerWidth - 230) + "px";
+  B.bMenu.style.top = r.bottom + 4 + "px";
+  B.bMenu.hidden = false;
+}
+// enviar arquivos p/ a fila (com direcionamento opcional)
+$("brainImport").addEventListener("click", async () => {
+  const ctx = $("importCtx").value || null;
+  try {
+    const n = await invoke("brain_import", { context: ctx });
+    if (n > 0) { toast(`${n} arquivo${n > 1 ? "s" : ""} na fila`); sideSig = ""; brainRefresh(); }
+  } catch (e) { toast(String(e).slice(0, 90)); clog("brain_import erro: " + e); }
+});
+// novo contexto (input inline no cabeçalho da lateral)
+// input inline p/ criar contexto (usado pelo header e pelo item "+ novo contexto")
+let ctxEditing = false;
+function promptNewContext() {
+  if (ctxEditing) return;
+  ctxEditing = true;
+  const inp = document.createElement("input");
+  inp.className = "bnewctx";
+  inp.placeholder = "nome-do-contexto (Enter) · ex.: engenharia/qa";
+  B.navCtx.before(inp); inp.focus();
+  const done = () => { inp.remove(); ctxEditing = false; };
+  inp.addEventListener("keydown", async (e) => {
+    if (e.key === "Escape") return done();
+    if (e.key !== "Enter") return;
+    try { await invoke("brain_add_context", { name: inp.value }); done(); sideSig = ""; brainRefresh(); }
+    catch (err) { toast(String(err).slice(0, 80)); }
+  });
+  inp.addEventListener("blur", done);
+}
+
+// ============================ terminal embutido (PTY) ============================
+// xterm.js (vendorizado) na frente + portable-pty no backend — a pilha do VSCode.
+let term = null, fit = null, termReady = false;
+function setTermPanel(open) {
+  $("termPanel").hidden = !open;
+  if (open) { if (!term) initTerm(); requestAnimationFrame(fitTerm); if (term) term.focus(); }
+}
+function fitTerm() {
+  if (!fit || $("termPanel").hidden) return;
+  try {
+    fit.fit();
+    invoke("term_resize", { cols: term.cols, rows: term.rows }).catch(() => {});
+  } catch (_) {}
+}
+function initTerm() {
+  const Term = window.Terminal, Fit = window.FitAddon && window.FitAddon.FitAddon;
+  if (!Term) { toast("terminal indisponível"); clog("xterm ausente"); return; }
+  const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+  term = new Term({
+    fontFamily: "ui-monospace, SF Mono, Menlo, monospace", fontSize: 12.5,
+    cursorBlink: true, scrollback: 4000,
+    theme: dark
+      ? { background: "#121719", foreground: "#ece9e2", cursor: "#2bc5b4" }
+      : { background: "#fbfaf6", foreground: "#201d18", cursor: "#0e8c86" },
+  });
+  if (Fit) { fit = new Fit(); term.loadAddon(fit); }
+  term.open($("termView"));
+  fitTerm();
+  term.onData((d) => invoke("term_input", { data: d }).catch(() => {}));
+  invoke("term_open", { cols: term.cols || 80, rows: term.rows || 24 })
+    .then(() => { termReady = true; })
+    .catch((e) => { toast(String(e).slice(0, 90)); clog("term_open erro: " + e); });
+}
+async function restartTerm() {
+  try { await invoke("term_close"); } catch (_) {}
+  if (term) { term.dispose(); term = null; fit = null; termReady = false; }
+  initTerm();
+}
+listen("term-output", (e) => { if (term) term.write(e.payload); });
+listen("term-exit", () => { if (term) term.write("\r\n\x1b[2m[processo encerrado — 'reiniciar' para abrir de novo]\x1b[0m\r\n"); termReady = false; });
+$("termBtn").addEventListener("click", () => setTermPanel($("termPanel").hidden));
+$("termCollapse").addEventListener("click", () => setTermPanel(false));
+$("termClear").addEventListener("click", restartTerm);
+window.addEventListener("resize", fitTerm);
+// orientação: embaixo (padrão) ou lateral direita — escolha do usuário, persistida
+function applyTermLayout() {
+  $("mainRow").classList.toggle("side", !!settings.termSide);
+  requestAnimationFrame(fitTerm);
+}
+$("termSide").addEventListener("click", () => {
+  settings.termSide = !settings.termSide; persistSettings(); applyTermLayout();
+});
+
+// roda um comando no terminal embutido (abre o painel e digita)
+function termRun(cmd) {
+  setTermPanel(true);
+  let tries = 0;
+  const send = () => {
+    if (termReady) { invoke("term_input", { data: cmd + "\n" }).catch(() => {}); return; }
+    if (++tries < 40) setTimeout(send, 250);
+  };
+  send();
+}
+
+// ---- setup guiado: o Loro verifica dependências e resolve pelo terminal ----
+const MODEL_URL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin";
+async function checkSetup() {
+  try {
+    const d = await invoke("doctor");
+    const missing = [];
+    if (!d.whisper_stream) missing.push("whisper (motor de transcrição)");
+    if (!d.models || d.models.length === 0) missing.push("modelo de voz");
+    const banner = $("setupBanner");
+    if (!missing.length) { banner.hidden = true; return; }
+    $("setupMsg").textContent = "faltam dependências: " + missing.join(" · ");
+    banner.hidden = false;
+    $("setupRun").onclick = () => {
+      const parts = [];
+      if (!d.whisper_stream) parts.push("brew install whisper-cpp");
+      if (!d.models || d.models.length === 0)
+        parts.push(`mkdir -p ~/.loro/models && curl -L --progress-bar -o ~/.loro/models/ggml-large-v3-turbo.bin ${MODEL_URL}`);
+      termRun(parts.join(" && "));
+      toast("instalando no terminal — acompanhe abaixo", 4000);
+    };
+  } catch (_) {}
+}
+
+// fluxo guiado do áudio do sistema: instala BlackHole e abre o Áudio MIDI
+function openBlackholeSetup() {
+  B.acervoMenu.hidden = true;
+  B.bMenu.innerHTML =
+    `<div class="fhead">áudio do sistema — configurar</div>
+     <div class="fitem2 muted fstatic">1 · instale o driver BlackHole · 2 · crie um dispositivo
+       multi-saída (saída padrão) no Áudio MIDI incluindo o BlackHole</div>
+     <div class="fitem2" data-bh><span class="fn">1 · instalar BlackHole no terminal</span></div>
+     <div class="fitem2" data-am><span class="fn">2 · abrir Áudio MIDI</span></div>`;
+  B.bMenu.querySelector("[data-bh]").onclick = () => { closeFloat(); termRun("brew install blackhole-2ch"); };
+  B.bMenu.querySelector("[data-am]").onclick = () => { closeFloat(); invoke("open_audio_midi").catch(() => {}); };
+  const r = el.privacy.getBoundingClientRect();
+  B.bMenu.style.left = Math.max(10, r.left - 200) + "px";
+  B.bMenu.style.top = (r.top - 150) + "px";
+  B.bMenu.hidden = false;
+}
+
+// ---- arrastar arquivos do SISTEMA para a fila (Tauri drag-drop) ----
+// um ou mais arquivos soltos na janela (na aba acervo) entram na fila do acervo ativo
+listen("tauri://drag-drop", async (e) => {
+  if (!brainTab) return;
+  const paths = (e.payload && e.payload.paths) || [];
+  if (!paths.length) return;
+  document.getElementById("app").classList.remove("dropping");
+  try {
+    const n = await invoke("brain_import_paths", { paths, context: null });
+    if (n > 0) { toast(`${n} arquivo${n > 1 ? "s" : ""} na fila`); sideSig = ""; brainRefresh(); }
+  } catch (err) { toast(String(err).slice(0, 90)); clog("import_paths erro: " + err); }
+});
+listen("tauri://drag-enter", () => { if (brainTab) document.getElementById("app").classList.add("dropping"); });
+listen("tauri://drag-leave", () => document.getElementById("app").classList.remove("dropping"));
+
+// ---- eventos do backend ----
+// reunião em transcrição: acumula as linhas e persiste abaixo do marcador
+// (brain_meeting_append); fora de reunião, mesmo destino de sempre (rodapé).
+listen("transcript-line", (e) => {
+  if (meeting.active && meeting.phase === "transcribing") { meetingAccumulate(e.payload); return; }
+  appendLine(e.payload);
+});
+listen("rec-state", (e) => (e.payload ? onStarted() : onStopped()));
+listen("hotkey-toggle", () => toggle());
+
+// ADR-0010: reuniao.md cresceu — atualiza a aba viva no lugar (segue o rodapé só
+// se o usuário já estava no fim; senão, mostra o pill "novas linhas ↓").
+listen("meeting-appended", (e) => {
+  const p = (e && e.payload) || {};
+  const id = LM.livingId(p.meetingRel || "");
+  if (id) refreshLivingInPlace(id);
+});
+
+// modo "gravar tudo": transcribe_file roda em segundo plano e sinaliza por
+// evento (a UI nunca fica travada esperando) — mesmo destino do modo ao vivo
+// (savebar / auto-save) uma vez que as linhas chegaram.
+listen("transcribe-state", (e) => {
+  const running = !!e.payload;
+  // reunião: a transcrição de completo.wav alimenta a aba viva; a conclusão
+  // dispara o relatório (ADR-0010). Não usa a savebar/auto-save do modo plano.
+  if (meeting.active && meeting.phase === "transcribing") {
+    el.toggle.disabled = running;
+    if (running) {
+      el.privacy.textContent = "transcrevendo…";
+      el.privacy.classList.add("warn");
+      toast("transcrevendo a reunião… pode levar alguns minutos", 0);
+    } else {
+      finishMeetingAfterTranscription();
+    }
+    return;
+  }
+  el.toggle.disabled = running;
+  if (running) {
+    el.privacy.textContent = "transcrevendo…";
+    el.privacy.classList.add("warn");
+    toast("transcrevendo o áudio gravado… pode levar alguns minutos", 0);
+    return;
+  }
+  updatePrivacy();
+  if (!state.lines.length) { toast("transcrição vazia"); return; }
+  if (settings.autosave) autoSaveNow();
+  else { el.savebar.hidden = false; setLivePanel(true); toast("transcrição concluída"); }
+});
+listen("transcribe-error", (e) => {
+  toast("transcrição falhou: " + String(e.payload).slice(0, 100));
+  clog("transcribe-error: " + e.payload);
+});
+
+// ADR-0010: "novas linhas ↓" pill (meeting living surface) — click jumps to the
+// tail; scrolling to the bottom dismisses it.
+if ($("mtgPill")) $("mtgPill").addEventListener("click", scrollMeetingBottom);
+B.wsBody.addEventListener("scroll", () => { if (nearBottom(B.wsBody)) hidePill(); });
+
+// ---- init ----
+loadSettings();
+applySettings();
+B.dirBtn.textContent = "escolher pasta…";
+resizeWave();
+drawIdle();
+updateCfgLabel();
+updatePrivacy();
+setupWorkspace();   // ADR-0008: Home é a primeira aba fixa (não fechável)
+initBrain();   // acervo é a tela principal (sem abas)
+applyTermLayout();
+checkSetup();
+clog("init ok · TAURI=[" + Object.keys(TAURI).join(",") + "] · gUM=" + !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia));
+
+// auto-teste headless (só com LORO_SELFTEST=1): exercita start -> espera -> stop
+invoke("selftest_enabled").then((on) => {
+  if (!on) return;
+  invoke("list_capture_devices").then((d) => clog("selftest: devices=" + JSON.stringify(d)))
+    .catch((e) => clog("selftest: list_capture_devices erro: " + e));
+  invoke("brain_status").then((s) => clog(`selftest: brain configured=${s.configured} ctx=${s.contexts.length} inbox=${s.inbox.length} processed=${s.processed}`))
+    .catch((e) => clog("selftest: brain_status erro: " + e));
+  clog("selftest: iniciando");
+  startSession().then(() => {
+    setTimeout(async () => {
+      clog(`selftest: running=${state.running} linhas=${state.lines.length}`);
+      await stopSession();
+      clog("selftest: parado");
+    }, 7000);
+  });
+}).catch((e) => clog("selftest_enabled erro: " + e));

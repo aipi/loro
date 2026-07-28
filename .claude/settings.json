@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(make:*)",
+      "Bash(cargo test:*)",
+      "Bash(cargo build:*)",
+      "Bash(cargo clippy:*)",
+      "Bash(cargo fmt:*)",
+      "Bash(node --test:*)",
+      "Bash(node --check:*)",
+      "Bash(npm test:*)",
+      "Bash(npm run tauri:*)",
+      "Bash(npm install)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(docker compose:*)"
+    ]
+  }
+}
