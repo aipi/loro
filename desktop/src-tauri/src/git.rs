@@ -457,11 +457,15 @@ pub fn git_available() -> bool {
 // this single entry — one gitignore line disjoints it from the versioned tree.
 // The legacy `pessoal/` line stays as a safety belt for acervos not yet migrated
 // (ADR-0009 named that world `pessoal/`); either line alone quarantines its world.
-pub const GIT_IGNORED: [&str; 7] = [
+// Owner decision (2026-07-28): root `notas/` is personal too — the `/notas/`
+// pattern is anchored so only the acervo-root folder is ignored, never a
+// `notas/` that a context might legitimately version.
+pub const GIT_IGNORED: [&str; 8] = [
     ".DS_Store",
     "inbox/",
     "processed/",
     "reunioes/",
+    "/notas/",
     ".brain/prompt-history/",
     "brainstorming/",
     "pessoal/",
@@ -632,6 +636,7 @@ pub fn stage_and_commit(base: &Path, message: String) -> Result<String, String> 
             "inbox",
             "processed",
             "reunioes",
+            "notas",
             ".brain/prompt-history",
             "brainstorming",
             "pessoal",
