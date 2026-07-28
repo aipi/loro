@@ -1718,13 +1718,19 @@ function reorderTab(dragId, overId) {
   if (h && ws.tabs[0] && ws.tabs[0].id !== h.id) ws = LoroWorkspace.moveTab(ws, h.id, 0);
   renderTabs();
 }
+// Single point of truth for dropping a tab's live editor state (ADR-0002 §3):
+// the CM6 handle is destroyed BEFORE the maps forget it, so no stale buffer
+// can keep answering for a reused/closed tab id.
+function disposeTabState(id) {
+  const h = cmById.get(id);
+  if (h) { try { h.destroy(); } catch (_) {} }
+  cmById.delete(id); savedById.delete(id); fmById.delete(id);
+}
 function closeTabById(id) {
   const tab = ws.tabs.find((t) => t.id === id);
   if (!tab || tab.rel === HOME_REL) return; // Home is non-closable
   if (tab.dirty && !window.confirm(`${t("Descartar alterações não salvas de")} "${tab.title}"?`)) return;
-  const h = cmById.get(id);
-  if (h) { try { h.destroy(); } catch (_) {} }
-  cmById.delete(id); savedById.delete(id); fmById.delete(id);
+  disposeTabState(id);
   ws = LoroWorkspace.closeTab(ws, id);
   renderTabs(); renderActive();
 }
@@ -1745,9 +1751,7 @@ function closeTabsUnder(prefixOrRel, exact) {
   const doomed = ws.tabs.filter((t) => t.rel !== HOME_REL &&
     (exact ? t.rel === prefixOrRel : t.rel.startsWith(prefixOrRel)));
   doomed.forEach((t) => {
-    const h = cmById.get(t.id);
-    if (h) { try { h.destroy(); } catch (_) {} }
-    cmById.delete(t.id); savedById.delete(t.id); fmById.delete(t.id);
+    disposeTabState(t.id);
     ws = LoroWorkspace.closeTab(ws, t.id);
   });
   if (doomed.length) { renderTabs(); renderActive(); }
@@ -1765,7 +1769,7 @@ function setupWorkspace() {
   cmById.forEach((h) => { try { h.destroy(); } catch (_) {} });
   cmById.clear(); savedById.clear(); fmById.clear();
   ws = LoroWorkspace.empty();
-  ws = LoroWorkspace.openTab(ws, HOME_REL, { preview: false });
+  ws = LoroWorkspace.openTab(ws, HOME_REL, { preview: false }).ws;
   ws = LoroWorkspace.pin(ws, LoroWorkspace.activeTab(ws).id);
   renderTabs(); showHome();
 }
@@ -1837,12 +1841,12 @@ function saveActive() {
   const h = cmById.get(t.id);
   if (h) saveTab(t.id, h.getValue());
 }
-async function mountEditor(tab) {
+async function mountEditor(tab, stale) {
   let h = cmById.get(tab.id);
   if (!h) {
     let raw;
     try { raw = await readDoc(tab.rel); } catch (e) { toast(t("não foi possível abrir")); clog("readDoc error: " + e); return; }
-    if (ws.activeId !== tab.id) return; // a faster switch won the race
+    if (stale && stale()) return; // a newer render won the race
     savedById.set(tab.id, raw);
     h = window.LoroCM6.create({
       parent: B.editHost,
@@ -1860,14 +1864,14 @@ async function mountEditor(tab) {
   cmById.forEach((hh, id) => { hh.view.dom.style.display = id === tab.id ? "" : "none"; });
   requestAnimationFrame(() => h.focus());
 }
-async function renderView(tab) {
+async function renderView(tab, stale) {
   const h = cmById.get(tab.id);
   let raw;
   if (h) raw = h.getValue(); // an edited-but-not-saved buffer wins over disk
   else {
     try { raw = await readDoc(tab.rel); }
     catch (e) { toast(t("não foi possível abrir")); clog("brain_read error: " + e); return; }
-    if (ws.activeId !== tab.id) return; // a faster switch won the race
+    if (stale && stale()) return; // a newer render won the race
     savedById.set(tab.id, raw);
   }
   const fallback = tab.rel === GUIDE_REL
@@ -1915,7 +1919,7 @@ function renderRefsPanel(fm) {
 // análise section with the per-meeting consent toggle (default OFF; ADR-0011).
 // It stays under pessoal/ (kind "personal"), so LoroWorld hides any Git state and
 // nothing here ever writes into contextos/.
-async function renderMeetingLiving(tab) {
+async function renderMeetingLiving(tab, stale) {
   const id = LM.livingId(tab.rel);
   B.editHost.hidden = true;
   B.doc.hidden = false;
@@ -1924,9 +1928,9 @@ async function renderMeetingLiving(tab) {
   let raw = "", manifest = null;
   try { raw = await readDoc(tab.rel); } catch (_) {}
   try { manifest = await invoke("brain_meeting_manifest", { id }); } catch (_) {}
-  if (ws.activeId !== tab.id) return; // a faster switch won the race
+  if (stale && stale()) return; // a newer render won the race
   const artefatos = await listArtefatos(LM.meetingDir(tab.rel));
-  if (ws.activeId !== tab.id) return;
+  if (stale && stale()) return;
   const status = manifest ? manifest.status : (meeting.id === id ? meeting.phase : "done");
   paintMeetingSurface(id, raw, manifest, status, artefatos);
 }
@@ -2224,7 +2228,15 @@ function applyDocActions(rel) {
 }
 
 // render the active tab's content into the document pane (view or edit)
+// renderActive is serialized by a generation token (ADR-0002 §3): concurrent
+// calls (rapid tab switches, view/edit toggles) can interleave awaits, so only
+// the LATEST generation may keep going after any await — the winner alone
+// touches editor/doc visibility. Cheaper and stricter than the old per-id
+// guard (covers same-tab re-renders too).
+let renderGen = 0;
 async function renderActive() {
+  const gen = ++renderGen;
+  const stale = () => gen !== renderGen;
   hidePill();
   const tab = activeTab();
   if (!tab || tab.rel === HOME_REL) { showHome(); return; }
@@ -2246,7 +2258,8 @@ async function renderActive() {
     B.modes.hidden = true;
     $("bPromoted").hidden = true;
     $("bDocActs").hidden = true;
-    await renderMeetingLiving(tab);
+    await renderMeetingLiving(tab, stale);
+    if (stale()) return;
     B.wsBody.scrollTop = 0;
     markSel();
     return;
@@ -2255,8 +2268,9 @@ async function renderActive() {
   B.modes.hidden = !textFile;
   B.viewBtn.classList.toggle("on", tab.mode !== "edit");
   B.editBtn2.classList.toggle("on", tab.mode === "edit");
-  if (textFile && tab.mode === "edit") await mountEditor(tab);
-  else await renderView(tab);
+  if (textFile && tab.mode === "edit") await mountEditor(tab, stale);
+  else await renderView(tab, stale);
+  if (stale()) return;
   updatePromotedBadge(tab);
   B.wsBody.scrollTop = 0;
   markSel();
@@ -2301,7 +2315,7 @@ B.editBtn2.addEventListener("click", () => setActiveMode("edit"));
 
 // abre as "instruções do loop" (inbox/_prompt.md) como uma aba em modo edição
 async function openGuideDoc() {
-  ws = LoroWorkspace.openTab(ws, GUIDE_REL, { preview: false });
+  ws = LoroWorkspace.openTab(ws, GUIDE_REL, { preview: false }).ws;
   ws = LoroWorkspace.setMode(ws, LoroWorkspace.activeTab(ws).id, "edit");
   renderTabs();
   await renderActive();
@@ -2415,7 +2429,11 @@ function toggleInlineImage(anchorEl, mime, base64, rel) {
 // Open (or focus) a document as a workspace tab. Single-click = ephemeral
 // preview (default); pass {preview:false} for double-click / palette / permanent.
 async function openDoc(relPath, opts) {
-  ws = LoroWorkspace.openTab(ws, relPath, opts || { preview: true });
+  const r = LoroWorkspace.openTab(ws, relPath, opts || { preview: true });
+  ws = r.ws;
+  // preview slot reused in place: the old document's live editor state must
+  // die with it, or it keeps answering for the new rel (ADR-0002 §3)
+  if (r.evictedId) disposeTabState(r.evictedId);
   renderTabs();
   await renderActive();
 }
@@ -2714,9 +2732,7 @@ window.addEventListener("keydown", (e) => { if (e.key === "Escape" && !PM.wrap.h
 function refreshTabFromDisk(rel) {
   const tab = ws.tabs.find((t) => t.rel === rel);
   if (!tab) return;
-  const h = cmById.get(tab.id);
-  if (h) { try { h.destroy(); } catch (_) {} cmById.delete(tab.id); }
-  savedById.delete(tab.id); fmById.delete(tab.id);
+  disposeTabState(tab.id);
   if (ws.activeId === tab.id) renderActive();
 }
 
