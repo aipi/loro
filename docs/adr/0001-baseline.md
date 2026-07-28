@@ -63,7 +63,11 @@ the repository (2026-07-28). The owner asked for exactly one authoritative ADR.
   files under `~/.loro/models`.
 - The one native binary that IS ours: `syscap/loro-syscap.swift`, a small
   ScreenCaptureKit sidecar built by `make syscap` and bundled as a Tauri resource
-  (§2, meeting capture).
+  (§2, meeting capture). The resource is declared in `tauri.macos.conf.json`
+  (platform-specific overlay), not the base config: syscap is macOS-only and the
+  compiled binary is gitignored, so declaring it in the base config broke every
+  Linux build and any macOS build that had not run `make syscap` first (CI
+  compiles it explicitly before testing on macOS).
 - Backend split by concern (`paths`, `config`, `templates`, `acervo`, `meeting`,
   `git`, `ai`, core `lib`); TDD, `clippy -D warnings`, per-BR test coverage.
 

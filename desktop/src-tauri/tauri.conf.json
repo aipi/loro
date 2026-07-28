@@ -41,9 +41,6 @@
   "bundle": {
     "active": true,
     "targets": ["app", "dmg"],
-    "resources": {
-      "syscap/loro-syscap": "loro-syscap"
-    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

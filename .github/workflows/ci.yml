@@ -49,6 +49,13 @@ jobs:
         with:
           node-version: 20
 
+      # The macOS bundle declares syscap/loro-syscap as a resource
+      # (tauri.macos.conf.json), so the Tauri build script requires the
+      # binary to exist before any cargo build/test on macOS (ADR-0005).
+      - name: Compile syscap (macOS)
+        if: matrix.os == 'macos-latest'
+        run: make syscap
+
       - name: Rust backend tests
         working-directory: desktop/src-tauri
         run: cargo test
