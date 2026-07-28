@@ -1,0 +1,74 @@
+# Loro — Release
+#
+# Pushing a tag `v*` (e.g. v0.1.0) on main builds the macOS app bundle and
+# publishes a GitHub Release with the .dmg attached.
+#
+# The bundle is NOT signed with an Apple Developer ID (owner decision,
+# 2026-07-28): installers must right-click → Open on first launch (or
+# `xattr -d com.apple.quarantine`). The release notes carry that instruction.
+#
+# Gates (loro-release-checklist §1): tests, clippy and fmt must pass, and the
+# tag must match the version in tauri.conf.json — no drift between git and app.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Check tag matches app version
+        run: |
+          APP_VERSION=$(python3 -c "import json; print(json.load(open('desktop/src-tauri/tauri.conf.json'))['version'])")
+          TAG="${GITHUB_REF_NAME#v}"
+          if [ "$APP_VERSION" != "$TAG" ]; then
+            echo "::error::tag v$TAG does not match tauri.conf.json version $APP_VERSION"
+            exit 1
+          fi
+
+      - name: Compile syscap (macOS system-audio capturer)
+        run: make syscap
+
+      - name: Test gate
+        run: |
+          cargo test --manifest-path desktop/src-tauri/Cargo.toml
+          node --test desktop/tests/*.test.js
+          cargo clippy --manifest-path desktop/src-tauri/Cargo.toml -- -D warnings
+          cargo fmt --manifest-path desktop/src-tauri/Cargo.toml --check
+
+      - name: Install frontend dependencies
+        working-directory: desktop
+        run: npm ci
+
+      - name: Build app bundle (.app + .dmg)
+        working-directory: desktop
+        run: npm run tauri build
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          DMG=$(ls desktop/src-tauri/target/release/bundle/dmg/*.dmg)
+          gh release create "$GITHUB_REF_NAME" "$DMG" \
+            --title "Loro $GITHUB_REF_NAME" \
+            --generate-notes \
+            --notes "**Instalação (macOS, Apple Silicon):** baixe o \`.dmg\`, arraste o Loro para Aplicativos e, no primeiro uso, clique com o botão direito → Abrir (o app não é assinado com Developer ID). O whisper é dependência de sistema — rode \`./loro.sh setup\` antes do primeiro uso."

@@ -68,6 +68,12 @@ the repository (2026-07-28). The owner asked for exactly one authoritative ADR.
   compiled binary is gitignored, so declaring it in the base config broke every
   Linux build and any macOS build that had not run `make syscap` first (CI
   compiles it explicitly before testing on macOS).
+- **Releases are tag-driven** (`v*` on main → `.github/workflows/release.yml`
+  builds the `.dmg` on a macOS runner and publishes a GitHub Release). The
+  workflow gates on the full test/lint suite and on the tag matching
+  `tauri.conf.json`'s version. The bundle is **not** Developer-ID signed
+  (owner decision, 2026-07-28 — no Apple Developer account): first launch
+  requires right-click → Open; the release notes state this.
 - Backend split by concern (`paths`, `config`, `templates`, `acervo`, `meeting`,
   `git`, `ai`, core `lib`); TDD, `clippy -D warnings`, per-BR test coverage.
 
