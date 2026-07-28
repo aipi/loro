@@ -45,8 +45,43 @@ pub(crate) struct AppState {
     // system-audio capturer (ScreenCaptureKit sidecar) for meeting mode, ADR-0005
     syscap: Mutex<Option<Child>>,
     tray: Mutex<Option<tauri::tray::TrayIcon>>,
+    tray_menu: Mutex<Option<TrayMenuItems>>,
     recording: AtomicBool,
     term: Mutex<Option<TermSession>>,
+}
+
+// Handles to the tray menu items, kept so ui_set_lang can relabel them live.
+struct TrayMenuItems {
+    show: MenuItem<tauri::Wry>,
+    toggle: MenuItem<tauri::Wry>,
+    quit: MenuItem<tauri::Wry>,
+}
+
+// Tray chrome per UI language. The webview translates itself (frontend I18N);
+// the tray lives outside the webview, so the backend owns these few strings.
+struct TrayLabels {
+    show: &'static str,
+    toggle: &'static str,
+    quit: &'static str,
+    tooltip_recording: &'static str,
+}
+
+fn tray_labels(lang: &str) -> TrayLabels {
+    if lang == "en" {
+        TrayLabels {
+            show: "Open Loro",
+            toggle: "Start / Stop transcription",
+            quit: "Quit",
+            tooltip_recording: "Loro — transcribing",
+        }
+    } else {
+        TrayLabels {
+            show: "Abrir Loro",
+            toggle: "Iniciar / Parar transcrição",
+            quit: "Sair",
+            tooltip_recording: "Loro — transcrevendo",
+        }
+    }
 }
 
 // an embedded interactive terminal (PTY) session — the VSCode-style backend half
@@ -122,8 +157,8 @@ fn doctor() -> Doctor {
     d
 }
 
-// monta os argumentos do whisper-stream (isolado p/ ser testável)
-// capture: índice do dispositivo de captura (-c); None = dispositivo padrão (mic)
+// builds the whisper-stream arguments (isolated so it is testable)
+// capture: capture-device index (-c); None = default device (mic)
 fn stream_args(
     model_path: &str,
     lang: &str,
@@ -155,7 +190,7 @@ fn stream_args(
     a
 }
 
-// monta os argumentos do whisper-cli (transcrição de arquivo, sem streaming/VAD)
+// builds the whisper-cli arguments (file transcription, no streaming/VAD)
 fn cli_args(
     model_path: &str,
     lang: &str,
@@ -179,8 +214,8 @@ fn cli_args(
     a
 }
 
-// nome do WAV 16kHz convertido: mesmo diretório do arquivo de origem, sufixo
-// ".16k.wav" (mesma convenção do loro.sh cmd_file)
+// name of the converted 16kHz WAV: same directory as the source file, suffix
+// ".16k.wav" (same convention as loro.sh cmd_file)
 fn wav_path_for(src: &Path) -> PathBuf {
     let stem = src.file_stem().and_then(|s| s.to_str()).unwrap_or("audio");
     src.with_file_name(format!("{stem}.16k.wav"))
@@ -195,7 +230,7 @@ pub(crate) struct StartCfg {
     #[serde(default)]
     threads: Option<u32>,
     #[serde(default)]
-    capture: Option<i32>, // índice do dispositivo (áudio do sistema); None = mic
+    capture: Option<i32>, // device index (system audio); None = mic
 }
 
 #[derive(serde::Serialize)]
@@ -204,17 +239,14 @@ struct CaptureDevice {
     name: String,
 }
 
-// lista os dispositivos de captura exatamente como o whisper-stream os enumera
-// (mesma indexação usada pela flag -c). Faz spawn e lê o stderr até a lista.
+// lists the capture devices exactly as whisper-stream enumerates them
+// (same indexing the -c flag uses). Spawns and reads stderr up to the list.
 fn capture_devices() -> Result<Vec<CaptureDevice>, String> {
     let bin = whisper_bin();
     if !bin.exists() {
-        return Err(format!(
-            "whisper-stream não encontrado em {}",
-            bin.display()
-        ));
+        return Err(format!("err.whisper_stream_not_found:{}", bin.display()));
     }
-    // um modelo qualquer só p/ o binário iniciar; matamos assim que listar
+    // any model just so the binary starts; killed as soon as the list is read
     let model = model_path("small");
     let model = if model.exists() {
         model
@@ -222,7 +254,7 @@ fn capture_devices() -> Result<Vec<CaptureDevice>, String> {
         model_path("large-v3-turbo")
     };
     let mut child = Command::new(&bin)
-        .args(["-m", &model.to_string_lossy(), "-c", "999"]) // -c inválido: lista e sai
+        .args(["-m", &model.to_string_lossy(), "-c", "999"]) // invalid -c: lists devices and exits
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -233,7 +265,7 @@ fn capture_devices() -> Result<Vec<CaptureDevice>, String> {
     if let Some(err) = child.stderr.take() {
         let reader = BufReader::new(err);
         for line in reader.lines().map_while(Result::ok) {
-            // formato: "init:    - Capture device #0: 'Microfone (MacBook Pro)'"
+            // format: "init:    - Capture device #0: 'Microfone (MacBook Pro)'"
             if let Some(rest) = line.split("Capture device #").nth(1) {
                 if let Some((num, name)) = rest.split_once(':') {
                     if let Ok(index) = num.trim().parse::<i32>() {
@@ -242,7 +274,7 @@ fn capture_devices() -> Result<Vec<CaptureDevice>, String> {
                     }
                 }
             }
-            // já listou tudo: para de ler
+            // everything listed: stop reading
             if line.contains("attempt to open") || devices.len() > 32 {
                 break;
             }
@@ -258,7 +290,7 @@ fn list_capture_devices() -> Result<Vec<CaptureDevice>, String> {
     capture_devices()
 }
 
-// extrai o texto de linhas do whisper-stream: "[hh:mm --> hh:mm]   texto"
+// extracts the text from whisper-stream lines: "[hh:mm --> hh:mm]   text"
 fn extract_text(line: &str) -> Option<String> {
     if !line.contains("-->") {
         return None;
@@ -271,15 +303,20 @@ fn extract_text(line: &str) -> Option<String> {
     Some(t.to_string())
 }
 
-// marca o estado de gravação; o piscar do ícone fica com a thread do tray
+// marks the recording state; icon blinking is owned by the tray thread
 fn set_tray_recording(state: &AppState, on: bool) {
     state.recording.store(on, Ordering::Relaxed);
     if let Some(tray) = state.tray.lock().unwrap().as_ref() {
-        let _ = tray.set_tooltip(Some(if on { "Loro — transcrevendo" } else { "Loro" }));
+        let tooltip = if on {
+            tray_labels(&ui_lang()).tooltip_recording
+        } else {
+            "Loro"
+        };
+        let _ = tray.set_tooltip(Some(tooltip));
     }
 }
 
-// nome de arquivo sem separadores/travessia (auto-save)
+// filename with no separators/traversal (auto-save)
 fn is_safe_filename(name: &str) -> bool {
     !name.is_empty()
         && !name.starts_with('.')
@@ -288,10 +325,10 @@ fn is_safe_filename(name: &str) -> bool {
             .all(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.' | ' '))
 }
 
-// ---- comandos ---------------------------------------------------------------
+// ---- commands ---------------------------------------------------------------
 #[tauri::command]
 fn start(app: AppHandle, state: State<AppState>, cfg: StartCfg) -> Result<(), String> {
-    // encerra processo anterior, se houver
+    // kill the previous process, if any
     {
         let mut guard = state.child.lock().unwrap();
         if let Some(mut child) = guard.take() {
@@ -312,7 +349,7 @@ fn start(app: AppHandle, state: State<AppState>, cfg: StartCfg) -> Result<(), St
     let model = model_path(&cfg.model);
     if !model.exists() {
         error!(model = %model.display(), "model not found");
-        return Err(format!("model not found: {}", model.display()));
+        return Err(format!("err.model_not_found:{}", model.display()));
     }
     let threads = cfg.threads.unwrap_or(8).to_string();
 
@@ -336,7 +373,7 @@ fn start(app: AppHandle, state: State<AppState>, cfg: StartCfg) -> Result<(), St
     })?;
     info!(model = %cfg.model, lang = %cfg.lang, system_audio = cfg.capture.is_some(), "transcription started");
 
-    // stdout -> eventos de transcrição
+    // stdout -> transcription events
     if let Some(out) = child.stdout.take() {
         let app2 = app.clone();
         std::thread::spawn(move || {
@@ -346,11 +383,11 @@ fn start(app: AppHandle, state: State<AppState>, cfg: StartCfg) -> Result<(), St
                     let _ = app2.emit("transcript-line", text);
                 }
             }
-            // EOF do stdout => engine parou
+            // stdout EOF => the engine stopped
             let _ = app2.emit("rec-state", false);
         });
     }
-    // stderr -> loro-engine.log (diagnóstico do whisper-stream)
+    // stderr -> loro-engine.log (whisper-stream diagnostics)
     if let Some(err) = child.stderr.take() {
         std::thread::spawn(move || {
             use std::io::Write;
@@ -413,10 +450,10 @@ async fn transcribe_file(app: AppHandle, path: String, cfg: StartCfg) -> Result<
     let model = model_path(&cfg.model);
     if !model.exists() {
         error!(model = %model.display(), "model not found");
-        return Err(format!("model not found: {}", model.display()));
+        return Err(format!("err.model_not_found:{}", model.display()));
     }
     let Some(ffmpeg) = which("ffmpeg") else {
-        return Err("ffmpeg não encontrado. Instale (macOS: brew install ffmpeg).".into());
+        return Err("err.ffmpeg_not_found".into());
     };
     let ffmpeg = PathBuf::from(ffmpeg);
     let threads = cfg.threads.unwrap_or(8).to_string();
@@ -516,7 +553,7 @@ fn transcribe_wav(
     }
     let status = child.wait().map_err(|e| e.to_string())?;
     if !status.success() {
-        return Err("whisper-cli terminou com erro".into());
+        return Err("err.whisper_cli_failed".into());
     }
     Ok(())
 }
@@ -642,7 +679,7 @@ pub(crate) fn transcribe_wav_window(
     let _ = std::fs::remove_file(&dst);
     let out = out?;
     if !out.status.success() {
-        return Err("whisper-cli terminou com erro".into());
+        return Err("err.whisper_cli_failed".into());
     }
     Ok(parse_whisper_lines(&String::from_utf8_lossy(&out.stdout)))
 }
@@ -670,7 +707,7 @@ pub(crate) fn mix_to_wav(
         (Some(only), None) | (None, Some(only)) => {
             cmd.arg("-i").arg(only);
         }
-        (None, None) => return Err("no audio to transcribe".into()),
+        (None, None) => return Err("err.no_audio_to_transcribe".into()),
     }
     let out = cmd
         .args(["-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le"])
@@ -738,10 +775,7 @@ pub(crate) fn system_capture_start(app: &AppHandle, state: &AppState) -> Result<
         .spawn()
         .map_err(|e| {
             error!(bin = %bin.display(), error = %e, "failed to spawn syscap");
-            format!(
-                "capturador de áudio do sistema não encontrado ({}): {e}",
-                bin.display()
-            )
+            format!("err.syscap_not_found:{} ({e})", bin.display())
         })?;
 
     if let Some(errpipe) = child.stderr.take() {
@@ -771,11 +805,9 @@ pub(crate) fn system_capture_start(app: &AppHandle, state: &AppState) -> Result<
             Ok(Some(status)) => {
                 let code = status.code().unwrap_or(-1);
                 return Err(if code == 4 {
-                    "permissão de Gravação de Tela negada — permita em Configurações > \
-                     Privacidade e Segurança > Gravação de Tela e tente de novo"
-                        .into()
+                    "err.screen_recording_denied".into()
                 } else {
-                    format!("o capturador de áudio encerrou (código {code})")
+                    format!("err.capture_exited:{code}")
                 });
             }
             Ok(None) => {}
@@ -829,16 +861,16 @@ async fn transcribe_meeting(
     let model = model_path(&cfg.model);
     if !model.exists() {
         error!(model = %model.display(), "model not found");
-        return Err(format!("model not found: {}", model.display()));
+        return Err(format!("err.model_not_found:{}", model.display()));
     }
     let Some(ffmpeg) = which("ffmpeg") else {
-        return Err("ffmpeg não encontrado. Instale (macOS: brew install ffmpeg).".into());
+        return Err("err.ffmpeg_not_found".into());
     };
     let ffmpeg = PathBuf::from(ffmpeg);
     let mic = mic_path.map(PathBuf::from);
     let sys = sys_path.map(PathBuf::from);
     let Some(base) = sys.clone().or_else(|| mic.clone()) else {
-        return Err("nada gravado".into());
+        return Err("err.nothing_recorded".into());
     };
     let wav = wav_path_for(&base);
     let threads = cfg.threads.unwrap_or(8).to_string();
@@ -892,7 +924,7 @@ async fn save_transcript(app: AppHandle, content: String) -> Result<Option<Strin
     }
 }
 
-// seletor nativo de pasta (config: local de armazenamento padrão)
+// native folder picker (config: default storage location)
 #[tauri::command]
 async fn pick_folder(app: AppHandle) -> Result<Option<String>, String> {
     let dialog = app.dialog().clone();
@@ -918,8 +950,8 @@ fn default_brain_dir() -> PathBuf {
 }
 
 // ============================ brain (acervo) ==================================
-// O brain é genérico: contextos definidos pelo usuário no setup do Loro.
-// Config global em ~/.loro/config.json (lida também pelo comando /brain).
+// The brain is generic: contexts are defined by the user in Loro's setup.
+// Global config in ~/.loro/config.json (also read by the /brain command).
 
 // a single context path segment: lowercase slug
 fn valid_segment(s: &str) -> bool {
@@ -943,9 +975,9 @@ pub(crate) fn valid_context(name: &str) -> bool {
     !parts.is_empty() && parts.len() <= MAX_CONTEXT_DEPTH && parts.iter().all(|p| valid_segment(p))
 }
 
-// contexto do domínio (fonte oficial da verdade, MARKDOWN); {{CONTEXT}} = nome.
-// 6 seções de negócio; a seção 6 (Hotspots) guarda o não-consolidado. As lentes
-// fatos/pensamentos/emoções/ações são como o loop INTERPRETA (ver AGENTS.md).
+// domain context (the official source of truth, MARKDOWN); {{CONTEXT}} = name.
+// 6 business sections; section 6 (Hotspots) holds the unconsolidated. The lenses
+// facts/thoughts/emotions/actions are how the loop INTERPRETS (see AGENTS.md).
 fn context_md(name: &str, lang: &str) -> String {
     context_template(lang).replace("{{CONTEXT}}", name)
 }
@@ -1138,6 +1170,28 @@ fn ensure_acervo_structure(base: &Path, ctxs: &[String], lang: &str) -> Result<(
 // Create (or complete) an acervo and add it to the global config, making it
 // active. Existing structure is respected (see ADR-0022). With auto_context and
 // no contexts given, the loop is free to create/organize contexts itself.
+// UI language preference (global, config.json). The frontend reads it on boot
+// and re-renders on change; the backend applies it to the tray immediately.
+#[tauri::command]
+fn ui_get_lang() -> String {
+    ui_lang()
+}
+
+#[tauri::command]
+fn ui_set_lang(lang: String, state: State<AppState>) -> Result<String, String> {
+    let lang = normalize_lang(&lang);
+    let mut cfg = read_loro_config();
+    cfg.ui_lang = lang.clone();
+    write_loro_config(&cfg)?;
+    let labels = tray_labels(&lang);
+    if let Some(items) = state.tray_menu.lock().unwrap().as_ref() {
+        let _ = items.show.set_text(labels.show);
+        let _ = items.toggle.set_text(labels.toggle);
+        let _ = items.quit.set_text(labels.quit);
+    }
+    Ok(lang)
+}
+
 #[tauri::command]
 fn brain_setup(
     dir: String,
@@ -1160,13 +1214,11 @@ fn brain_setup(
         .filter(|c| !c.is_empty())
         .collect();
     if ctxs.is_empty() && !auto {
-        return Err("defina ao menos um contexto (ou ative o modo automático)".into());
+        return Err("err.context_required".into());
     }
     for c in &ctxs {
         if !valid_context(c) {
-            return Err(format!(
-                "contexto inválido: '{c}' (use minúsculas, números e hífen)"
-            ));
+            return Err(format!("err.invalid_context:{c}"));
         }
     }
     let lang = match lang.as_deref() {
@@ -1231,7 +1283,7 @@ fn brain_set_color(id: String, color: String) -> Result<AcervosView, String> {
         .acervos
         .iter_mut()
         .find(|a| a.id == id)
-        .ok_or("acervo não encontrado")?;
+        .ok_or("err.acervo_not_found")?;
     a.color = color;
     write_loro_config(&cfg)?;
     Ok(acervos_view())
@@ -1241,7 +1293,7 @@ fn brain_set_color(id: String, color: String) -> Result<AcervosView, String> {
 fn brain_set_active(id: String) -> Result<AcervosView, String> {
     let mut cfg = read_loro_config();
     if !cfg.acervos.iter().any(|a| a.id == id) {
-        return Err("acervo não encontrado".into());
+        return Err("err.acervo_not_found".into());
     }
     cfg.active = id;
     write_loro_config(&cfg)?;
@@ -1268,20 +1320,20 @@ fn brain_remove_acervo(id: String) -> Result<AcervosView, String> {
 fn brain_add_context(name: String) -> Result<(), String> {
     let slug = name.trim().to_lowercase().replace(' ', "-");
     if !valid_context(&slug) {
-        return Err(format!("contexto inválido: '{slug}'"));
+        return Err(format!("err.invalid_context:{slug}"));
     }
-    let cfg = read_brain_config().ok_or("acervo não configurado")?;
+    let cfg = read_brain_config().ok_or("err.acervo_not_configured")?;
     seed_context(Path::new(&cfg.brain_dir), &slug, &active_lang())
 }
 
 // Pure, testable core: delete a context/folder dir under contextos/.
 fn delete_context_dir(base: &Path, name: &str) -> Result<(), String> {
     if !valid_context(name) {
-        return Err("nome inválido".into());
+        return Err("err.invalid_name".into());
     }
     let src = base.join("contextos").join(name);
     if !src.is_dir() {
-        return Err("contexto não encontrado".into());
+        return Err("err.context_not_found".into());
     }
     std::fs::remove_dir_all(&src).map_err(|e| e.to_string())
 }
@@ -1290,7 +1342,7 @@ fn delete_context_dir(base: &Path, name: &str) -> Result<(), String> {
 // with an explicit confirmation and git history covers versioned acervos).
 #[tauri::command]
 fn brain_delete_context(name: String) -> Result<(), String> {
-    let cfg = read_brain_config().ok_or("acervo não configurado")?;
+    let cfg = read_brain_config().ok_or("err.acervo_not_configured")?;
     delete_context_dir(Path::new(&cfg.brain_dir), &name)
 }
 
@@ -1298,7 +1350,7 @@ fn brain_delete_context(name: String) -> Result<(), String> {
 fn rename_context_dir(base: &Path, from: &str, to: &str) -> Result<(), String> {
     let to = to.trim().to_lowercase().replace(' ', "-");
     if !valid_context(from) || !valid_context(&to) {
-        return Err("nome inválido (use minúsculas, números, hífen e '/')".into());
+        return Err("err.invalid_context_name".into());
     }
     if from == to {
         return Ok(());
@@ -1306,11 +1358,11 @@ fn rename_context_dir(base: &Path, from: &str, to: &str) -> Result<(), String> {
     let root = base.join("contextos");
     let src = root.join(from);
     if !src.is_dir() {
-        return Err("contexto não encontrado".into());
+        return Err("err.context_not_found".into());
     }
     let dest = root.join(&to);
     if dest.exists() {
-        return Err("já existe um contexto nesse caminho".into());
+        return Err("err.context_exists".into());
     }
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -1321,7 +1373,7 @@ fn rename_context_dir(base: &Path, from: &str, to: &str) -> Result<(), String> {
 // Rename/move a context within the tree (e.g. `frota` -> `operacoes/frota`).
 #[tauri::command]
 fn brain_rename_context(from: String, to: String) -> Result<(), String> {
-    let cfg = read_brain_config().ok_or("acervo não configurado")?;
+    let cfg = read_brain_config().ok_or("err.acervo_not_configured")?;
     rename_context_dir(Path::new(&cfg.brain_dir), &from, &to)
 }
 
@@ -1329,31 +1381,31 @@ fn brain_rename_context(from: String, to: String) -> Result<(), String> {
 #[tauri::command]
 fn brain_move_context_to_acervo(name: String, target_id: String) -> Result<(), String> {
     if !valid_context(&name) {
-        return Err("nome inválido".into());
+        return Err("err.invalid_name".into());
     }
     let cfg = read_loro_config();
     let active = active_acervo(&cfg)
-        .ok_or("acervo não configurado")?
+        .ok_or("err.acervo_not_configured")?
         .dir
         .clone();
     let target = cfg
         .acervos
         .iter()
         .find(|a| a.id == target_id)
-        .ok_or("projeto de destino não encontrado")?
+        .ok_or("err.target_acervo_not_found")?
         .dir
         .clone();
     if target == active {
-        return Err("já está neste projeto".into());
+        return Err("err.already_in_acervo".into());
     }
     let src = PathBuf::from(&active).join("contextos").join(&name);
     if !src.is_dir() {
-        return Err("contexto não encontrado".into());
+        return Err("err.context_not_found".into());
     }
     let leaf = name.rsplit('/').next().unwrap_or(&name);
     let dest = PathBuf::from(&target).join("contextos").join(leaf);
     if dest.exists() {
-        return Err("já existe um contexto com esse nome no destino".into());
+        return Err("err.context_exists_in_target".into());
     }
     std::fs::create_dir_all(dest.parent().unwrap()).map_err(|e| e.to_string())?;
     std::fs::rename(&src, &dest).map_err(|e| e.to_string())
@@ -1477,9 +1529,9 @@ fn env_doctor() -> EnvDoctor {
         ok: remote_url.is_some() && access,
         detail: remote_url.clone().unwrap_or_default(),
         hint: if remote_url.is_none() {
-            "conecte um repositório remoto (origin)".into()
+            "err.git_remote_required".into()
         } else if !access {
-            "verifique o acesso ao repositório".into()
+            "err.check_repo_access".into()
         } else {
             String::new()
         },
@@ -1509,19 +1561,19 @@ fn env_doctor() -> EnvDoctor {
 // (scoped to the acervo repo). No secret involved.
 #[tauri::command]
 fn env_set_identity(name: String, email: String) -> Result<(), String> {
-    let cfg = read_brain_config().ok_or("acervo não configurado")?;
+    let cfg = read_brain_config().ok_or("err.acervo_not_configured")?;
     set_identity(&PathBuf::from(&cfg.brain_dir), &name, &email)
 }
 
 #[tauri::command]
 fn gh_pr_list() -> Result<Vec<PrInfo>, String> {
-    let cfg = read_brain_config().ok_or("acervo não configurado")?;
+    let cfg = read_brain_config().ok_or("err.acervo_not_configured")?;
     pr_list(&PathBuf::from(&cfg.brain_dir))
 }
 
 #[tauri::command]
 fn gh_pr_status(number: u64) -> Result<PrInfo, String> {
-    let cfg = read_brain_config().ok_or("acervo não configurado")?;
+    let cfg = read_brain_config().ok_or("err.acervo_not_configured")?;
     pr_status(&PathBuf::from(&cfg.brain_dir), number)
 }
 
@@ -1622,8 +1674,8 @@ struct VersionOutcome {
 // "Versionar": create rfc/<slug> off the default branch and commit the working
 // changes there. Local only — needs git, never the network.
 #[tauri::command]
-fn brain_versionar(slug: String, message: String) -> Result<VersionOutcome, String> {
-    let cfg = read_brain_config().ok_or("acervo não configurado")?;
+fn brain_version(slug: String, message: String) -> Result<VersionOutcome, String> {
+    let cfg = read_brain_config().ok_or("err.acervo_not_configured")?;
     let base = PathBuf::from(&cfg.brain_dir);
     let slug = sanitize_slug(&slug)?;
     let branch = create_branch(&base, &slug)?;
@@ -1634,21 +1686,21 @@ fn brain_versionar(slug: String, message: String) -> Result<VersionOutcome, Stri
 // "Propor mudança": push the current rfc/ branch and open the PR (the RFC).
 // Opt-in gate: requires gh + auth + a remote. Never runs from the default branch.
 #[tauri::command]
-fn brain_propor_mudanca(title: String, body: String) -> Result<PrRef, String> {
-    let cfg = read_brain_config().ok_or("acervo não configurado")?;
+fn brain_propose_change(title: String, body: String) -> Result<PrRef, String> {
+    let cfg = read_brain_config().ok_or("err.acervo_not_configured")?;
     let base = PathBuf::from(&cfg.brain_dir);
     if !gh_available() {
-        return Err("GitHub CLI (gh) não encontrado".into());
+        return Err("err.gh_not_found".into());
     }
     if !gh_authed() {
-        return Err("autentique no GitHub (gh auth login) para propor".into());
+        return Err("err.gh_auth_required".into());
     }
     if git_remote_url(&base).is_none() {
-        return Err("conecte um repositório remoto (origin)".into());
+        return Err("err.git_remote_required".into());
     }
-    let branch = current_branch(&base).ok_or("nada para propor: clique em Versionar primeiro")?;
+    let branch = current_branch(&base).ok_or("err.nothing_to_propose")?;
     if branch == default_branch(&base) {
-        return Err("você está na branch principal: clique em Versionar primeiro".into());
+        return Err("err.on_main_branch".into());
     }
     push_branch(&base, &branch)?;
     let title = if title.trim().is_empty() {
@@ -1704,7 +1756,7 @@ fn migrate_rename(base: &Path, rel_from: &str, rel_to: &str) -> Result<(), Strin
 // only reports what would change.
 #[tauri::command]
 fn brain_migrate(apply: Option<bool>) -> Result<MigrationReport, String> {
-    let cfg = read_brain_config().ok_or("acervo não configurado")?;
+    let cfg = read_brain_config().ok_or("err.acervo_not_configured")?;
     migrate_acervo(
         &PathBuf::from(&cfg.brain_dir),
         apply.unwrap_or(false),
@@ -2005,35 +2057,35 @@ fn brain_move_to_acervo(
     context: Option<String>,
 ) -> Result<(), String> {
     if !valid_inbox_name(&name) {
-        return Err("nome inválido".into());
+        return Err("err.invalid_name".into());
     }
     let cfg = read_loro_config();
     let active = active_acervo(&cfg)
-        .ok_or("acervo não configurado")?
+        .ok_or("err.acervo_not_configured")?
         .dir
         .clone();
     let target = cfg
         .acervos
         .iter()
         .find(|a| a.id == target_id)
-        .ok_or("acervo de destino não encontrado")?
+        .ok_or("err.target_acervo_not_found")?
         .dir
         .clone();
     let ctx = context
         .map(|c| c.trim().to_string())
         .filter(|c| !c.is_empty());
     if target == active && ctx.is_none() {
-        return Err("escolha um contexto ou outro acervo".into());
+        return Err("err.choose_destination".into());
     }
     let src = PathBuf::from(&active).join("inbox").join(&name);
     if !src.is_file() {
-        return Err("não encontrado na fila".into());
+        return Err("err.not_in_queue".into());
     }
     let tdir = PathBuf::from(&target).join("inbox");
     std::fs::create_dir_all(&tdir).map_err(|e| e.to_string())?;
     let fname = match ctx {
         Some(c) if valid_context(&c) => format!("{}--{}", c.replace('/', "-"), name),
-        Some(_) => return Err("contexto inválido".into()),
+        Some(_) => return Err("err.invalid_context".into()),
         None => name.clone(),
     };
     std::fs::rename(&src, tdir.join(fname)).map_err(|e| e.to_string())
@@ -2043,28 +2095,28 @@ fn brain_move_to_acervo(
 // context is given) — lets the user remanage documents/notes across contexts.
 #[tauri::command]
 fn brain_move(rel: String, dest_context: String) -> Result<String, String> {
-    let cfg = read_brain_config().ok_or("acervo não configurado")?;
+    let cfg = read_brain_config().ok_or("err.acervo_not_configured")?;
     let base = PathBuf::from(&cfg.brain_dir)
         .canonicalize()
         .map_err(|e| e.to_string())?;
     let src = base
         .join(&rel)
         .canonicalize()
-        .map_err(|_| "não encontrado".to_string())?;
+        .map_err(|_| "err.not_found".to_string())?;
     if !src.starts_with(&base) || !src.is_file() {
-        return Err("origem inválida".into());
+        return Err("err.invalid_origin".into());
     }
     let fname = src
         .file_name()
         .and_then(|s| s.to_str())
-        .ok_or("nome inválido")?
+        .ok_or("err.invalid_name")?
         .to_string();
     let dc = dest_context.trim();
     let destdir = if dc.is_empty() {
         base.join("notas")
     } else {
         if !valid_context(dc) {
-            return Err("contexto inválido".into());
+            return Err("err.invalid_context".into());
         }
         base.join("contextos").join(dc).join("referencias")
     };
@@ -2074,7 +2126,7 @@ fn brain_move(rel: String, dest_context: String) -> Result<String, String> {
         return Ok(rel);
     }
     if target.exists() {
-        return Err("já existe um arquivo com esse nome no destino".into());
+        return Err("err.file_exists_in_target".into());
     }
     std::fs::rename(&src, &target).map_err(|e| e.to_string())?;
     Ok(target
@@ -2083,16 +2135,16 @@ fn brain_move(rel: String, dest_context: String) -> Result<String, String> {
         .unwrap_or(rel))
 }
 
-// apaga um arquivo AINDA NÃO PROCESSADO da inbox (para que nunca seja processado)
+// deletes a NOT-YET-PROCESSED inbox file (so it is never processed)
 #[tauri::command]
 fn brain_delete_inbox(name: String) -> Result<(), String> {
     if name.contains('/') || name.contains("..") || name.starts_with('.') || name.is_empty() {
-        return Err("nome inválido".into());
+        return Err("err.invalid_name".into());
     }
-    let cfg = read_brain_config().ok_or("acervo não configurado")?;
+    let cfg = read_brain_config().ok_or("err.acervo_not_configured")?;
     let p = PathBuf::from(&cfg.brain_dir).join("inbox").join(&name);
     if !p.is_file() {
-        return Err("not found in the queue".into());
+        return Err("err.not_in_queue".into());
     }
     std::fs::remove_file(&p).map_err(|e| e.to_string())
 }
@@ -2119,11 +2171,11 @@ fn valid_inbox_name(name: &str) -> bool {
         && (name.ends_with(".md") || name.ends_with(".txt"))
 }
 
-// Fase 2.3 — edit an unprocessed inbox file (text only). Creates it if new.
+// Phase 2.3 — edit an unprocessed inbox file (text only). Creates it if new.
 #[tauri::command]
 fn brain_write_inbox(name: String, content: String) -> Result<(), String> {
     if !valid_inbox_name(&name) {
-        return Err("invalid name (use a .md/.txt file, no path separators)".into());
+        return Err("err.invalid_report_name".into());
     }
     let cfg = read_brain_config().ok_or("acervo not configured")?;
     let dir = PathBuf::from(&cfg.brain_dir).join("inbox");
@@ -2143,23 +2195,23 @@ fn brain_send_report_to_queue(
 ) -> Result<String, String> {
     let rel = report_rel.replace('\\', "/");
     if !(rel.ends_with(".md") || rel.ends_with(".txt")) {
-        return Err("só relatórios de texto podem ir para a fila".into());
+        return Err("err.queue_text_only".into());
     }
     if let Some(c) = dest_context.as_deref() {
         if !c.is_empty() && !valid_context(c) {
-            return Err(format!("contexto inválido: {c}"));
+            return Err(format!("err.invalid_context:{c}"));
         }
     }
-    let cfg = read_brain_config().ok_or("acervo não configurado")?;
+    let cfg = read_brain_config().ok_or("err.acervo_not_configured")?;
     let base = PathBuf::from(&cfg.brain_dir)
         .canonicalize()
         .map_err(|e| e.to_string())?;
     let src = base
         .join(&rel)
         .canonicalize()
-        .map_err(|_| "relatório não encontrado".to_string())?;
+        .map_err(|_| "err.report_not_found".to_string())?;
     if !src.starts_with(&base) || !src.is_file() {
-        return Err("relatório fora do acervo".into());
+        return Err("err.report_outside_acervo".into());
     }
     let content = std::fs::read_to_string(&src).map_err(|e| e.to_string())?;
     let basename = src
@@ -2172,7 +2224,7 @@ fn brain_send_report_to_queue(
         .map(|c| c.replace('/', "-"));
     let name = import_name(ctx.as_deref(), basename);
     if !valid_inbox_name(&name) {
-        return Err("nome de fila inválido".into());
+        return Err("err.invalid_queue_name".into());
     }
     let inbox = base.join("inbox");
     std::fs::create_dir_all(&inbox).map_err(|e| e.to_string())?;
@@ -2192,11 +2244,11 @@ struct TreeEntry {
 #[tauri::command]
 fn brain_write(rel: String, content: String) -> Result<(), String> {
     if !(rel.ends_with(".md") || rel.ends_with(".txt")) {
-        return Err("only text files can be edited".into());
+        return Err("err.text_files_only".into());
     }
     // ADR-0009 write guard: meeting transcript/audit/audio never enters contextos/.
     if is_versioning_denied(&rel) {
-        return Err("meeting content cannot be written into a versioned context".into());
+        return Err("err.meeting_into_versioned".into());
     }
     let cfg = read_brain_config().ok_or("acervo not configured")?;
     let base = PathBuf::from(&cfg.brain_dir)
@@ -2207,12 +2259,12 @@ fn brain_write(rel: String, content: String) -> Result<(), String> {
         .canonicalize()
         .map_err(|_| "not found".to_string())?;
     if !p.starts_with(&base) {
-        return Err("outside the acervo".into());
+        return Err("err.outside_acervo".into());
     }
     std::fs::write(&p, content).map_err(|e| e.to_string())
 }
 
-// Fase 2.4 — list one directory level inside the acervo (for a file tree).
+// Phase 2.4 — list one directory level inside the acervo (for a file tree).
 #[tauri::command]
 fn brain_list_dir(rel: String) -> Result<Vec<TreeEntry>, String> {
     let cfg = read_brain_config().ok_or("acervo not configured")?;
@@ -2224,7 +2276,7 @@ fn brain_list_dir(rel: String) -> Result<Vec<TreeEntry>, String> {
         .canonicalize()
         .map_err(|_| "not found".to_string())?;
     if !target.starts_with(&base) {
-        return Err("outside the acervo".into());
+        return Err("err.outside_acervo".into());
     }
     let mut out = Vec::new();
     if let Ok(rd) = std::fs::read_dir(&target) {
@@ -2334,7 +2386,7 @@ fn walk_quickopen(base: &Path, dir: &Path, out: &mut Vec<FileHit>) {
 
 #[tauri::command]
 fn brain_list_all() -> Result<Vec<FileHit>, String> {
-    let cfg = read_brain_config().ok_or("acervo não configurado")?;
+    let cfg = read_brain_config().ok_or("err.acervo_not_configured")?;
     // same canonicalize + starts_with(base) guard the other brain_* commands use
     let base = PathBuf::from(&cfg.brain_dir)
         .canonicalize()
@@ -2342,7 +2394,7 @@ fn brain_list_all() -> Result<Vec<FileHit>, String> {
     Ok(list_all_in(&base))
 }
 
-// Fase 2.2 — optional guide prompt the loop runs BEFORE standard processing.
+// Phase 2.2 — optional guide prompt the loop runs BEFORE standard processing.
 // Stored at inbox/_prompt.md (only affects pending items).
 #[tauri::command]
 fn brain_read_guide() -> String {
@@ -2396,7 +2448,7 @@ fn list_files(base: &Path, sub: &str) -> Vec<BrainFile> {
     list_files_filtered(base, sub, true)
 }
 
-// only_text=false lista qualquer arquivo não-oculto (inbox aceita pdf/docs etc.)
+// only_text=false lists any non-hidden file (the inbox accepts pdf/docs etc.)
 fn list_files_filtered(base: &Path, sub: &str, only_text: bool) -> Vec<BrainFile> {
     let dir = base.join(sub);
     let mut out = Vec::new();
@@ -2464,7 +2516,7 @@ fn brain_status() -> BrainStatus {
             }
         })
         .collect();
-    // incubadora: um .md por iniciativa (subpastas)
+    // incubadora: one .md per initiative (subfolders)
     let mut incub = Vec::new();
     if let Ok(rd) = std::fs::read_dir(base.join("incubadora")) {
         for e in rd.flatten() {
@@ -2503,7 +2555,7 @@ fn brain_status() -> BrainStatus {
     }
 }
 
-// nome do arquivo importado: prefixo "<contexto>--" direciona o loop
+// imported filename: the "<contexto>--" prefix steers the loop
 fn import_name(context: Option<&str>, filename: &str) -> String {
     match context {
         Some(c) if !c.is_empty() => format!("{c}--{filename}"),
@@ -2511,14 +2563,14 @@ fn import_name(context: Option<&str>, filename: &str) -> String {
     }
 }
 
-// importa arquivos para a inbox do acervo (seletor nativo, multi),
-// opcionalmente direcionados a um contexto
+// imports files into the acervo inbox (native picker, multi-select),
+// optionally steered to a context
 #[tauri::command]
 async fn brain_import(app: AppHandle, context: Option<String>) -> Result<usize, String> {
-    let cfg = read_brain_config().ok_or("acervo não configurado")?;
+    let cfg = read_brain_config().ok_or("err.acervo_not_configured")?;
     if let Some(c) = context.as_deref() {
         if !c.is_empty() && !valid_context(c) {
-            return Err(format!("contexto inválido: {c}"));
+            return Err(format!("err.invalid_context:{c}"));
         }
     }
     let dialog = app.dialog().clone();
@@ -2545,10 +2597,10 @@ async fn brain_import(app: AppHandle, context: Option<String>) -> Result<usize, 
 // drag-and-drop of one or more files onto the queue).
 #[tauri::command]
 fn brain_import_paths(paths: Vec<String>, context: Option<String>) -> Result<usize, String> {
-    let cfg = read_brain_config().ok_or("acervo não configurado")?;
+    let cfg = read_brain_config().ok_or("err.acervo_not_configured")?;
     if let Some(c) = context.as_deref() {
         if !c.is_empty() && !valid_context(c) {
-            return Err(format!("contexto inválido: {c}"));
+            return Err(format!("err.invalid_context:{c}"));
         }
     }
     let inbox = PathBuf::from(&cfg.brain_dir).join("inbox");
@@ -2569,28 +2621,28 @@ fn brain_import_paths(paths: Vec<String>, context: Option<String>) -> Result<usi
     Ok(n)
 }
 
-// lê um arquivo DENTRO do acervo (proteção contra path traversal)
+// reads a file INSIDE the acervo (path-traversal protection)
 #[tauri::command]
 fn brain_read(rel: String) -> Result<String, String> {
-    let cfg = read_brain_config().ok_or("acervo não configurado")?;
+    let cfg = read_brain_config().ok_or("err.acervo_not_configured")?;
     let base = PathBuf::from(&cfg.brain_dir)
         .canonicalize()
         .map_err(|e| e.to_string())?;
     let p = base
         .join(&rel)
         .canonicalize()
-        .map_err(|_| "não encontrado".to_string())?;
+        .map_err(|_| "err.not_found".to_string())?;
     if !p.starts_with(&base) {
-        return Err("fora do acervo".into());
+        return Err("err.outside_acervo".into());
     }
     std::fs::read_to_string(&p).map_err(|e| e.to_string())
 }
 
-// auto-save silencioso (sem diálogo) na pasta configurada
+// silent auto-save (no dialog) into the configured folder
 #[tauri::command]
 fn auto_save(content: String, dir: String, filename: String) -> Result<String, String> {
     if !is_safe_filename(&filename) {
-        return Err("nome de arquivo inválido".into());
+        return Err("err.invalid_file_name".into());
     }
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let path = Path::new(&dir).join(filename);
@@ -2649,7 +2701,7 @@ fn toggle_overlay(app: AppHandle, show: bool) -> Result<(), String> {
     Ok(())
 }
 
-// auto-teste headless: ativo só quando LORO_SELFTEST está no ambiente
+// headless self-test: active only when LORO_SELFTEST is in the environment
 #[tauri::command]
 fn selftest_enabled() -> bool {
     std::env::var("LORO_SELFTEST").is_ok()
@@ -2669,7 +2721,7 @@ fn client_log(msg: String) {
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
-// ---- terminal embutido (PTY interativo) — roda o CLI do agente no dock ----
+// ---- embedded terminal (interactive PTY) — runs the agent CLI in the dock ----
 // ADR-0012: guarantee the meeting-AI skills exist in the acervo so
 // `/brain-context`, `/brain-analyse` and `/brain-answer` are discoverable by the
 // terminal Claude even for acervos created before this change — no explicit
@@ -2699,7 +2751,7 @@ fn ensure_meeting_skills(base: &Path, lang: &str) {
 
 #[tauri::command]
 fn term_open(app: AppHandle, state: State<AppState>, cols: u16, rows: u16) -> Result<(), String> {
-    // encerra sessão anterior, se houver
+    // kill the previous session, if any
     if let Some(mut s) = state.term.lock().unwrap().take() {
         let _ = s.child.kill();
     }
@@ -2817,17 +2869,21 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(AppState::default())
         .setup(|app| {
-            // --- tray: silhueta do papagaio (template = adapta claro/escuro) ---
-            let show = MenuItem::with_id(app, "show", "Abrir Loro", true, None::<&str>)?;
-            let toggle = MenuItem::with_id(
-                app,
-                "toggle",
-                "Iniciar / Parar transcrição",
-                true,
-                None::<&str>,
-            )?;
-            let quit = MenuItem::with_id(app, "quit", "Sair", true, Some("Cmd+Q"))?;
+            // --- tray: parrot silhouette (template = adapts to light/dark) ---
+            let labels = tray_labels(&ui_lang());
+            let show = MenuItem::with_id(app, "show", labels.show, true, None::<&str>)?;
+            let toggle = MenuItem::with_id(app, "toggle", labels.toggle, true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, "quit", labels.quit, true, Some("Cmd+Q"))?;
             let menu = Menu::with_items(app, &[&show, &toggle, &quit])?;
+            app.state::<AppState>()
+                .tray_menu
+                .lock()
+                .unwrap()
+                .replace(TrayMenuItems {
+                    show: show.clone(),
+                    toggle: toggle.clone(),
+                    quit: quit.clone(),
+                });
             let tray = TrayIconBuilder::with_id(TRAY_ID)
                 .icon(Image::from_bytes(TRAY_ON)?)
                 .icon_as_template(true)
@@ -2849,7 +2905,7 @@ pub fn run() {
                 .build(app)?;
             app.state::<AppState>().tray.lock().unwrap().replace(tray);
 
-            // --- pisca o papagaio enquanto grava ---
+            // --- blink the parrot while recording ---
             let handle = app.handle().clone();
             std::thread::spawn(move || {
                 let mut dimmed = false;
@@ -2875,7 +2931,7 @@ pub fn run() {
                 }
             });
 
-            // --- atalho global: Cmd/Ctrl + Alt + Space ---
+            // --- global shortcut: Cmd/Ctrl + Alt + Space ---
             let shortcut = Shortcut::new(Some(Modifiers::SUPER | Modifiers::ALT), Code::Space);
             app.global_shortcut()
                 .on_shortcut(shortcut, |app, _sc, event| {
@@ -2886,7 +2942,7 @@ pub fn run() {
 
             Ok(())
         })
-        // fechar a janela NÃO encerra: esconde e segue em segundo plano
+        // closing the window does NOT quit: hide and keep running in the background
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
@@ -2911,6 +2967,8 @@ pub fn run() {
             default_save_dir,
             auto_save,
             list_capture_devices,
+            ui_get_lang,
+            ui_set_lang,
             brain_get_config,
             brain_setup,
             brain_list_acervos,
@@ -2934,8 +2992,8 @@ pub fn run() {
             gh_pr_status,
             brain_timeline,
             brain_notifications,
-            brain_versionar,
-            brain_propor_mudanca,
+            brain_version,
+            brain_propose_change,
             brain_migrate,
             term_open,
             term_input,
@@ -2955,7 +3013,7 @@ pub fn run() {
             brain_read,
             brain_create_brainstorm,
             brain_rename_brainstorm,
-            brain_set_brainstorm_categoria,
+            brain_set_brainstorm_category,
             brain_brainstorm_delete,
             brain_list_brainstorms,
             brain_list_meetings,
@@ -2982,10 +3040,10 @@ pub fn run() {
             ai_doctor
         ])
         .build(tauri::generate_context!())
-        .expect("erro ao iniciar o app Loro");
+        .expect("failed to start the Loro app");
 
     app.run(|app_handle, event| {
-        // clique no ícone do Dock reabre a janela (macOS)
+        // clicking the Dock icon reopens the window (macOS)
         #[cfg(target_os = "macos")]
         if let tauri::RunEvent::Reopen { .. } = event {
             if let Some(w) = app_handle.get_webview_window("main") {
@@ -3005,7 +3063,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn extract_text_pega_transcricao() {
+    fn tray_labels_follow_ui_lang() {
+        let pt = tray_labels("pt");
+        assert_eq!(pt.show, "Abrir Loro");
+        assert_eq!(pt.toggle, "Iniciar / Parar transcrição");
+        assert_eq!(pt.quit, "Sair");
+        assert_eq!(pt.tooltip_recording, "Loro — transcrevendo");
+        let en = tray_labels("en");
+        assert_eq!(en.show, "Open Loro");
+        assert_eq!(en.toggle, "Start / Stop transcription");
+        assert_eq!(en.quit, "Quit");
+        assert_eq!(en.tooltip_recording, "Loro — transcribing");
+        // unknown languages fall back to pt
+        assert_eq!(tray_labels("fr").show, "Abrir Loro");
+    }
+
+    #[test]
+    fn extract_text_extracts_transcription() {
         assert_eq!(
             extract_text("[00:00:00.000 --> 00:00:05.000]   Olá mundo"),
             Some("Olá mundo".to_string())
@@ -3013,7 +3087,7 @@ mod tests {
     }
 
     #[test]
-    fn extract_text_mantem_anotacao_entre_colchetes() {
+    fn extract_text_keeps_bracketed_annotation() {
         assert_eq!(
             extract_text("[00:00:00.000 --> 00:00:05.000]   [SOM DE FUNDO]"),
             Some("[SOM DE FUNDO]".to_string())
@@ -3021,7 +3095,7 @@ mod tests {
     }
 
     #[test]
-    fn extract_text_ignora_marcadores_e_vazios() {
+    fn extract_text_ignores_markers_and_empty_lines() {
         assert_eq!(extract_text("### Transcription 0 START | t0 = 77 ms"), None);
         assert_eq!(extract_text("[Start speaking]"), None);
         assert_eq!(extract_text("[00:00:00.000 --> 00:00:05.000]    "), None);
@@ -3029,7 +3103,7 @@ mod tests {
     }
 
     #[test]
-    fn stream_args_inclui_traducao_quando_ligada() {
+    fn stream_args_includes_translation_when_enabled() {
         let a = stream_args("/m.bin", "pt", true, "8", None);
         assert!(a.contains(&"-tr".to_string()));
         assert!(a.windows(2).any(|w| w[0] == "-l" && w[1] == "pt"));
@@ -3037,64 +3111,64 @@ mod tests {
     }
 
     #[test]
-    fn stream_args_sem_traducao_por_padrao() {
+    fn stream_args_has_no_translation_by_default() {
         let a = stream_args("/m.bin", "pt", false, "4", None);
         assert!(!a.contains(&"-tr".to_string()));
         assert!(a.windows(2).any(|w| w[0] == "-t" && w[1] == "4"));
     }
 
     #[test]
-    fn stream_args_mic_padrao_sem_flag_c() {
+    fn stream_args_default_mic_has_no_c_flag() {
         let a = stream_args("/m.bin", "pt", false, "8", None);
         assert!(!a.contains(&"-c".to_string()));
     }
 
     #[test]
-    fn stream_args_audio_do_sistema_usa_c() {
+    fn stream_args_system_audio_uses_c() {
         let a = stream_args("/m.bin", "pt", false, "8", Some(2));
         assert!(a.windows(2).any(|w| w[0] == "-c" && w[1] == "2"));
     }
 
     #[test]
-    fn contextos_validos() {
+    fn valid_contexts() {
         assert!(valid_context("frota"));
         assert!(valid_context("produto-a2"));
-        assert!(!valid_context("Frota")); // maiúscula
-        assert!(!valid_context("a b")); // espaço
+        assert!(!valid_context("Frota")); // uppercase
+        assert!(!valid_context("a b")); // space
         assert!(!valid_context("-x"));
         assert!(!valid_context(""));
         assert!(!valid_context("../etc"));
     }
 
     #[test]
-    fn template_claude_inclui_contextos() {
+    fn claude_template_includes_contexts() {
         let t = brain_claude_template(&["alpha".into(), "beta".into()]);
         assert!(t.contains("- `alpha`"));
         assert!(t.contains("- `beta`"));
-        assert!(t.contains("context.md")); // fonte oficial da verdade em markdown
-        assert!(t.contains("CHANGELOG.md")); // histórico à parte em md
-        assert!(t.contains("CODEOWNERS")); // colaboração por dono de contexto
-        assert!(!t.contains("index.html")); // sem produto HTML
-        assert!(t.contains("hotspot")); // ideias viram hotspots, não arquivos de ideia
-        assert!(t.contains("/brain-context")); // ADR-0013: skill renomeada
+        assert!(t.contains("context.md")); // official source of truth in markdown
+        assert!(t.contains("CHANGELOG.md")); // separate history in md
+        assert!(t.contains("CODEOWNERS")); // collaboration per context owner
+        assert!(!t.contains("index.html")); // no HTML product
+        assert!(t.contains("hotspot")); // ideas become hotspots, not idea files
+        assert!(t.contains("/brain-context")); // ADR-0013: renamed skill
     }
 
     #[test]
-    fn context_markdown_substitui_contexto() {
+    fn context_markdown_replaces_context_placeholder() {
         assert!(CONTEXT_TEMPLATE.contains("{{CONTEXT}}"));
         let g = context_md("frota", "pt");
         assert!(g.starts_with("# frota — contexto do domínio"));
         assert!(!g.contains("{{CONTEXT}}"));
-        assert!(!g.contains("<html")); // markdown puro, sem HTML
-        assert!(g.contains("Hotspots")); // seção 6 é o backlog de evolução
-                                         // idioma en usa o template inglês
+        assert!(!g.contains("<html")); // pure markdown, no HTML
+        assert!(g.contains("Hotspots")); // section 6 is the evolution backlog
+                                         // the en language uses the English template
         assert!(context_md("fleet", "en").contains("domain context"));
     }
 
     #[test]
-    fn pty_abre_spawna_e_encerra() {
-        // exercita o mesmo caminho de term_open (openpty + spawn + reader + writer)
-        // sem leitura bloqueante: prova que a pilha portable-pty funciona na máquina.
+    fn pty_opens_spawns_and_exits() {
+        // exercises the same path as term_open (openpty + spawn + reader + writer)
+        // without a blocking read: proves the portable-pty stack works on this machine.
         let sys = portable_pty::native_pty_system();
         let pair = sys
             .openpty(portable_pty::PtySize {
@@ -3115,7 +3189,7 @@ mod tests {
     }
 
     #[test]
-    fn list_all_indexa_texto_e_pula_git_e_grande() {
+    fn list_all_indexes_text_and_skips_git_and_large() {
         // ADR-0008 flat quick-open index: every text-ish file by full rel path,
         // skipping hidden dirs (.git) and oversized/binary files.
         let root = std::env::temp_dir().join(format!("loro-la-{}", std::process::id()));
@@ -3133,7 +3207,11 @@ mod tests {
         let rels: Vec<&str> = hits.iter().map(|h| h.rel.as_str()).collect();
         assert!(rels.contains(&"contextos/a/context.md"));
         assert!(rels.contains(&"pessoal/temas/x/nota.md"));
-        assert_eq!(hits.len(), 2, "só os dois .md; sem .git, sem imagem grande");
+        assert_eq!(
+            hits.len(),
+            2,
+            "only the two .md files; no .git, no large image"
+        );
 
         let ctx = hits
             .iter()
@@ -3151,23 +3229,23 @@ mod tests {
     }
 
     #[test]
-    fn gitignore_garante_fila_fora_do_versionamento() {
+    fn gitignore_keeps_queue_out_of_versioning() {
         let root = std::env::temp_dir().join(format!("loro-gi-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
-        // repo antigo: .gitignore existente sem as regras
+        // old repo: an existing .gitignore without the rules
         std::fs::write(root.join(".gitignore"), "node_modules/\n").unwrap();
         ensure_gitignore(&root).unwrap();
         let gi = std::fs::read_to_string(root.join(".gitignore")).unwrap();
-        assert!(gi.contains("node_modules/")); // preserva o que havia
+        assert!(gi.contains("node_modules/")); // preserves what was there
         for e in GIT_IGNORED {
-            assert!(gi.lines().any(|l| l.trim() == e), "faltou {e}");
+            assert!(gi.lines().any(|l| l.trim() == e), "missing {e}");
         }
         // ADR-0013: a single line quarantines the whole Brainstorming world;
         // the legacy pessoal/ line stays for un-migrated acervos.
         assert!(gi.lines().any(|l| l.trim() == "brainstorming/"));
         assert!(gi.lines().any(|l| l.trim() == "pessoal/"));
-        // idempotente: rodar de novo não duplica
+        // idempotent: running again does not duplicate
         ensure_gitignore(&root).unwrap();
         let gi2 = std::fs::read_to_string(root.join(".gitignore")).unwrap();
         assert_eq!(gi2.matches("inbox/").count(), 1);
@@ -3186,15 +3264,15 @@ mod tests {
     }
 
     #[test]
-    fn list_contexts_e_recursivo_e_alem_de_tres_niveis() {
-        // ADR-0006: domínio recursivo — pai com context.md + subdomínios aninhados
+    fn list_contexts_is_recursive_and_beyond_three_levels() {
+        // ADR-0006: recursive domain — parent with context.md + nested subdomains
         let root = std::env::temp_dir().join(format!("loro-rec-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let with_ctx = [
-            "frota",                      // pai (tem context.md E filhos) -> listado
-            "frota/multas",               // subdomínio -> listado
-            "frota/eletrica/piloto",      // nível 3 -> listado
-            "frota/eletrica/piloto/pods", // nível 4 (além do antigo teto 3) -> listado
+            "frota",                      // parent (has context.md AND children) -> listed
+            "frota/multas",               // subdomain -> listed
+            "frota/eletrica/piloto",      // level 3 -> listed
+            "frota/eletrica/piloto/pods", // level 4 (beyond the old cap of 3) -> listed
         ];
         for c in with_ctx {
             let d = root.join("contextos").join(c);
@@ -3203,48 +3281,48 @@ mod tests {
         }
         let got = list_contexts(&root);
         for c in with_ctx {
-            assert!(got.contains(&c.to_string()), "faltou {c} em {got:?}");
+            assert!(got.contains(&c.to_string()), "missing {c} in {got:?}");
         }
-        // "frota/eletrica" só agrupa (sem context.md, tem filho) -> NÃO é contexto
+        // "frota/eletrica" only groups (no context.md, has a child) -> NOT a context
         assert!(!got.contains(&"frota/eletrica".to_string()));
         let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
-    fn renomear_move_contexto_na_arvore() {
+    fn rename_moves_context_within_the_tree() {
         let root = ctx_fixture("mv");
-        // move p/ dentro de uma área nova (cria o pai)
+        // move into a new area (creates the parent)
         rename_context_dir(&root, "frota", "operacoes/frota").unwrap();
         assert!(!root.join("contextos/frota").exists());
         assert!(root.join("contextos/operacoes/frota/guia.md").is_file());
-        // renomeia uma PASTA inteira (subárvore acompanha)
+        // renames a whole FOLDER (the subtree follows)
         rename_context_dir(&root, "engenharia", "eng").unwrap();
         assert!(root.join("contextos/eng/frontend/guia.md").is_file());
-        // colisão é recusada
+        // a collision is refused
         std::fs::create_dir_all(root.join("contextos/frota2")).unwrap();
         let err = rename_context_dir(&root, "operacoes/frota", "frota2").unwrap_err();
-        assert!(err.contains("já existe"));
-        // nome inválido é recusado
+        assert_eq!(err, "err.context_exists");
+        // an invalid name is refused
         assert!(rename_context_dir(&root, "eng", "Eng Inválido!").is_err());
         let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
-    fn deletar_remove_contexto_e_pasta() {
+    fn delete_removes_context_and_folder() {
         let root = ctx_fixture("del");
         delete_context_dir(&root, "frota").unwrap();
         assert!(!root.join("contextos/frota").exists());
-        // pasta inteira (com subcontextos)
+        // whole folder (with subcontexts)
         delete_context_dir(&root, "engenharia").unwrap();
         assert!(!root.join("contextos/engenharia").exists());
-        // inexistente e inválido são recusados
+        // missing and invalid names are refused
         assert!(delete_context_dir(&root, "nada").is_err());
         assert!(delete_context_dir(&root, "../fora").is_err());
         let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
-    fn templates_por_idioma() {
+    fn templates_per_language() {
         let cx = ["risco".to_string()];
         assert!(agents_template(&cx, "pt").contains("Acervo de contextos"));
         assert!(agents_template(&cx, "en").contains("Knowledge base"));
@@ -3253,58 +3331,58 @@ mod tests {
     }
 
     #[test]
-    fn import_name_prefixa_contexto() {
+    fn import_name_prefixes_context() {
         assert_eq!(import_name(Some("frota"), "doc.pdf"), "frota--doc.pdf");
         assert_eq!(import_name(None, "doc.pdf"), "doc.pdf");
         assert_eq!(import_name(Some(""), "doc.pdf"), "doc.pdf");
     }
 
     #[test]
-    fn context_e_acessivel_a_negocio() {
+    fn context_is_business_readable() {
         assert!(CONTEXT_TEMPLATE.contains("Visão geral"));
         assert!(CONTEXT_TEMPLATE.contains("Fluxos principais"));
-        assert!(CONTEXT_TEMPLATE.contains("Hotspots")); // seção 6 substitui dúvidas/ideias soltas
-        assert!(CONTEXT_TEMPLATE.contains("[!HOTSPOT]")); // marcador parseável de hotspot
+        assert!(CONTEXT_TEMPLATE.contains("Hotspots")); // section 6 replaces loose questions/ideas
+        assert!(CONTEXT_TEMPLATE.contains("[!HOTSPOT]")); // parseable hotspot marker
         assert!(!CONTEXT_TEMPLATE.contains("Bounded"));
     }
 
     #[test]
-    fn codeowners_gera_linha_comentada_por_contexto() {
+    fn codeowners_generates_commented_line_per_context() {
         let co = codeowners_template(&["frota".into(), "engenharia/frontend".into()], "pt");
-        // linhas comentadas: um CODEOWNERS não preenchido nunca bloqueia o GitHub
+        // commented lines: an unfilled CODEOWNERS never blocks GitHub
         assert!(co.contains("# /contextos/frota/    @owner"));
         assert!(co.contains("# /contextos/engenharia/frontend/    @owner"));
         assert!(co.contains("CODEOWNERS"));
     }
 
     #[test]
-    fn seeding_usa_context_md_e_colaboracao_sem_brainstorming() {
+    fn seeding_uses_context_md_and_collaboration_without_brainstorming() {
         let root = std::env::temp_dir().join(format!("loro-seed-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         ensure_acervo_structure(&root, &["frota".into()], "pt").unwrap();
-        // fonte oficial da verdade é context.md; sem guia.md nem brainstorming/
+        // the official source of truth is context.md; no guia.md nor brainstorming/
         assert!(root.join("contextos/frota/context.md").is_file());
         assert!(!root.join("contextos/frota/guia.md").exists());
         assert!(!root.join("contextos/frota/brainstorming").exists());
-        // andaime de colaboração
+        // collaboration scaffolding
         assert!(root.join(".github/CODEOWNERS").is_file());
         assert!(root.join(".github/pull_request_template.md").is_file());
-        // idempotente e não-destrutivo: rodar de novo não quebra
+        // idempotent and non-destructive: running again does not break
         ensure_acervo_structure(&root, &["frota".into()], "pt").unwrap();
         let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
-    fn migracao_e_nao_destrutiva_e_idempotente() {
+    fn migration_is_non_destructive_and_idempotent() {
         let root = std::env::temp_dir().join(format!("loro-mig-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        // acervo legado: guia.md + uma ideia solta em brainstorming/
+        // legacy acervo: guia.md + one loose idea in brainstorming/
         let d = root.join("contextos/frota");
         std::fs::create_dir_all(d.join("brainstorming")).unwrap();
         std::fs::write(d.join("guia.md"), "conhecimento").unwrap();
         std::fs::write(d.join("brainstorming/x.md"), "ideia").unwrap();
 
-        // dry-run: reporta mas não muda nada
+        // dry-run: reports but changes nothing
         let r = migrate_acervo(&root, false, "pt").unwrap();
         assert!(r.dry_run);
         assert_eq!(r.renamed, vec!["frota".to_string()]);
@@ -3316,7 +3394,7 @@ mod tests {
         assert!(!d.join("context.md").exists());
         assert!(!root.join(".github/CODEOWNERS").exists());
 
-        // apply: renomeia e cria scaffolding; ideias preservadas (nunca apagadas)
+        // apply: renames and creates scaffolding; ideas preserved (never deleted)
         let r = migrate_acervo(&root, true, "pt").unwrap();
         assert!(!r.dry_run);
         assert!(d.join("context.md").is_file());
@@ -3325,11 +3403,11 @@ mod tests {
             std::fs::read_to_string(d.join("context.md")).unwrap(),
             "conhecimento"
         );
-        assert!(d.join("brainstorming/x.md").is_file()); // não-destrutivo
+        assert!(d.join("brainstorming/x.md").is_file()); // non-destructive
         assert!(root.join(".github/CODEOWNERS").is_file());
         assert!(root.join(".github/pull_request_template.md").is_file());
 
-        // idempotente: segunda passada não tem mais nada a renomear
+        // idempotent: a second pass has nothing left to rename
         let r = migrate_acervo(&root, true, "pt").unwrap();
         assert!(r.renamed.is_empty());
         assert!(r.conflicts.is_empty());
@@ -3337,7 +3415,7 @@ mod tests {
     }
 
     #[test]
-    fn migracao_dobra_incubadora_legada_em_brainstorming_nao_destrutivo() {
+    fn migration_folds_legacy_incubadora_into_brainstorming_non_destructively() {
         // ADR-0013: legacy top-level incubadora/ folds into brainstorming/;
         // notas/ stays versioned; nothing is ever deleted.
         let root = std::env::temp_dir().join(format!("loro-inc-{}", std::process::id()));
@@ -3363,17 +3441,17 @@ mod tests {
         assert!(root
             .join("brainstorming/incubadora/ideia-a/nota.md")
             .is_file());
-        assert!(root.join("incubadora/ideia-a/nota.md").is_file()); // não-destrutivo
-        assert!(root.join("notas/mantida.md").is_file()); // notas/ permanece
+        assert!(root.join("incubadora/ideia-a/nota.md").is_file()); // non-destructive
+        assert!(root.join("notas/mantida.md").is_file()); // notas/ stays
 
-        // idempotente: destino já existe → nada a dobrar
+        // idempotent: the destination already exists → nothing to fold
         let r = migrate_acervo(&root, true, "pt").unwrap();
         assert!(r.incubated.is_empty());
         let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
-    fn migracao_renomeia_pessoal_para_brainstorming_nao_destrutivo() {
+    fn migration_renames_pessoal_to_brainstorming_non_destructively() {
         // ADR-0013: pessoal/temas/<slug> -> brainstorming/<slug>, tema.md -> indice.md;
         // dry-run changes nothing; a conflict (both worlds) moves nothing.
         let root = std::env::temp_dir().join(format!("loro-rw-{}", std::process::id()));
@@ -3416,7 +3494,7 @@ mod tests {
     }
 
     #[test]
-    fn migracao_conflito_quando_os_dois_mundos_coexistem() {
+    fn migration_conflicts_when_both_worlds_coexist() {
         // ADR-0013 R2: if both pessoal/ and brainstorming/ exist, report a conflict
         // and DO NOT clobber the new world.
         let root = std::env::temp_dir().join(format!("loro-rwc-{}", std::process::id()));
@@ -3437,14 +3515,14 @@ mod tests {
     }
 
     #[test]
-    fn seed_context_nao_sobrescreve_guia_legado() {
+    fn seed_context_never_overwrites_legacy_guia() {
         let root = std::env::temp_dir().join(format!("loro-legacy-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let d = root.join("contextos/frota");
         std::fs::create_dir_all(&d).unwrap();
         std::fs::write(d.join("guia.md"), "conhecimento legado").unwrap();
         seed_context(&root, "frota", "pt").unwrap();
-        // guia legado preservado; nenhum context.md criado por cima
+        // legacy guia preserved; no context.md created over it
         assert_eq!(
             std::fs::read_to_string(d.join("guia.md")).unwrap(),
             "conhecimento legado"
@@ -3455,7 +3533,7 @@ mod tests {
     }
 
     #[test]
-    fn contextos_hierarquicos_validos() {
+    fn valid_hierarchical_contexts() {
         assert!(valid_context("frota"));
         assert!(valid_context("engineering/frontend"));
         assert!(valid_context("engineering/sre/platform"));
@@ -3467,7 +3545,7 @@ mod tests {
     }
 
     #[test]
-    fn nome_de_inbox_seguro() {
+    fn safe_inbox_name() {
         assert!(valid_inbox_name("note.md"));
         assert!(valid_inbox_name("session-1.txt"));
         assert!(!valid_inbox_name("a/b.md")); // separator
@@ -3477,7 +3555,7 @@ mod tests {
     }
 
     #[test]
-    fn nomes_de_arquivo_seguros() {
+    fn safe_filenames() {
         assert!(is_safe_filename("loro-20260723-231455.md"));
         assert!(is_safe_filename("sessao 1.txt"));
         assert!(!is_safe_filename("../../etc/passwd"));
@@ -3510,14 +3588,14 @@ mod tests {
     }
 
     #[test]
-    fn slugify_id_normaliza_nomes() {
+    fn slugify_id_normalizes_names() {
         assert_eq!(slugify_id("Meu Acervo Pessoal!"), "meu-acervo-pessoal");
         assert_eq!(slugify_id("Acme Corp"), "acme-corp");
         assert_eq!(slugify_id("   "), "acervo");
     }
 
     #[test]
-    fn list_contexts_deriva_do_disco_e_hierarquico() {
+    fn list_contexts_derives_from_disk_and_is_hierarchical() {
         let root = std::env::temp_dir().join(format!("loro-ctx-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         for c in ["frota", "engenharia/frontend", "engenharia/backend"] {
@@ -3525,11 +3603,11 @@ mod tests {
             std::fs::create_dir_all(&d).unwrap();
             std::fs::write(d.join("guia.md"), "x").unwrap();
         }
-        // pasta CRIADA À MÃO, sem guia.md: deve ser mapeada como contexto (folha)
+        // HAND-MADE folder without guia.md: must be mapped as a (leaf) context
         std::fs::create_dir_all(root.join("contextos/vendas")).unwrap();
-        // subpasta utilitária NÃO vira contexto
+        // a utility subfolder does NOT become a context
         std::fs::create_dir_all(root.join("contextos/frota/brainstorming")).unwrap();
-        // pasta oculta/reservada ignorada
+        // hidden/reserved folder is ignored
         let arch = root.join("contextos/_arquivados/velho");
         std::fs::create_dir_all(&arch).unwrap();
         std::fs::write(arch.join("guia.md"), "x").unwrap();
@@ -3539,11 +3617,11 @@ mod tests {
         assert!(ctxs.contains(&"engenharia/backend".to_string()));
         assert!(
             ctxs.contains(&"vendas".to_string()),
-            "pasta manual deve ser mapeada"
+            "a hand-made folder must be mapped"
         );
         assert!(
             !ctxs.contains(&"engenharia".to_string()),
-            "grupo não é contexto"
+            "a group is not a context"
         );
         assert!(!ctxs.iter().any(|c| c.contains("brainstorming")));
         assert!(!ctxs.iter().any(|c| c.contains("arquivados")));
@@ -3576,7 +3654,7 @@ mod tests {
     }
 
     #[test]
-    fn cli_args_inclui_traducao_quando_ligada() {
+    fn cli_args_includes_translation_when_enabled() {
         let a = cli_args("/m.bin", "pt", true, "8", "/tmp/x.16k.wav");
         assert!(a.contains(&"-tr".to_string()));
         assert!(a.windows(2).any(|w| w[0] == "-l" && w[1] == "pt"));
@@ -3587,15 +3665,15 @@ mod tests {
     }
 
     #[test]
-    fn cli_args_sem_traducao_por_padrao() {
+    fn cli_args_has_no_translation_by_default() {
         let a = cli_args("/m.bin", "pt", false, "4", "/tmp/x.16k.wav");
         assert!(!a.contains(&"-tr".to_string()));
         assert!(a.windows(2).any(|w| w[0] == "-t" && w[1] == "4"));
     }
 
     #[test]
-    fn cli_args_nao_usa_flags_de_streaming() {
-        // whisper-cli não é o whisper-stream: sem --step/--length/-vth/-c
+    fn cli_args_uses_no_streaming_flags() {
+        // whisper-cli is not whisper-stream: no --step/--length/-vth/-c
         let a = cli_args("/m.bin", "pt", false, "8", "/tmp/x.16k.wav");
         assert!(!a.contains(&"--step".to_string()));
         assert!(!a.contains(&"--length".to_string()));
@@ -3604,7 +3682,7 @@ mod tests {
     }
 
     #[test]
-    fn wav_path_for_deriva_nome_16k_no_mesmo_diretorio() {
+    fn wav_path_for_derives_16k_name_in_same_directory() {
         assert_eq!(
             wav_path_for(Path::new("/tmp/rec-1.webm")),
             PathBuf::from("/tmp/rec-1.16k.wav")

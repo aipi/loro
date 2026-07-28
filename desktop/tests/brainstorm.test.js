@@ -16,18 +16,33 @@ test("STAGES is the sequential brainstorming -> fila -> contexto flow", () => {
   }
 });
 
-test("groupByCategoria buckets by categoria, uncategorized last", () => {
+test("stages(lang) localizes the flow copy; default stays pt-BR", () => {
+  // pt (default) is exactly the legacy STAGES constant
+  assert.deepStrictEqual(B.stages(), B.STAGES);
+  assert.deepStrictEqual(B.stages("pt"), B.STAGES);
+  assert.deepStrictEqual(B.STAGES.map((s) => s.label), ["Brainstorming", "Fila", "Contexto"]);
+  // en keeps the same keys/order, translates labels + hints
+  const en = B.stages("en");
+  assert.deepStrictEqual(en.map((s) => s.key), ["brainstorming", "fila", "contexto"]);
+  assert.deepStrictEqual(en.map((s) => s.label), ["Brainstorming", "Queue", "Context"]);
+  for (const s of en) assert.ok(s.label && s.hint, "en stage needs label + hint");
+  assert.strictEqual(en[0].hint, "build the idea: meetings and notes");
+  assert.strictEqual(en[1].hint, "elect parts → a report enters the context generation queue");
+  assert.strictEqual(en[2].hint, "generate the versioned context from the queue (/brain-context)");
+});
+
+test("groupByCategory buckets by categoria, uncategorized last", () => {
   const list = [
     { slug: "a", categoria: "Produto" },
     { slug: "b" },
     { slug: "c", categoria: "Pessoal" },
     { slug: "d", categoria: "Produto" },
   ];
-  const groups = B.groupByCategoria(list);
+  const groups = B.groupByCategory(list);
   assert.deepStrictEqual(groups.map((g) => g.categoria), ["Pessoal", "Produto", "Sem categoria"]);
   assert.deepStrictEqual(groups.find((g) => g.categoria === "Produto").items.map((i) => i.slug), ["a", "d"]);
   assert.strictEqual(groups.find((g) => g.categoria === "Sem categoria").items[0].slug, "b");
-  assert.deepStrictEqual(B.groupByCategoria(null), []);
+  assert.deepStrictEqual(B.groupByCategory(null), []);
 });
 
 test("selection model toggles rels and maps to backend SelItems in parts order", () => {

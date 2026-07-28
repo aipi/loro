@@ -29,7 +29,7 @@ const ASSET_MAX_BYTES: u64 = 5 * 1024 * 1024; // 5 MiB cap (reject larger)
 // The active acervo root, canonicalized (the single trust boundary for every FS
 // path below). None-configured surfaces the same error as the other commands.
 fn acervo_base() -> Result<PathBuf, String> {
-    let cfg = read_brain_config().ok_or("acervo não configurado")?;
+    let cfg = read_brain_config().ok_or("err.acervo_not_configured")?;
     PathBuf::from(&cfg.brain_dir)
         .canonicalize()
         .map_err(|e| e.to_string())
@@ -41,9 +41,9 @@ fn guarded_existing(base: &Path, rel: &str) -> Result<PathBuf, String> {
     let p = base
         .join(rel)
         .canonicalize()
-        .map_err(|_| "não encontrado".to_string())?;
+        .map_err(|_| "err.not_found".to_string())?;
     if !p.starts_with(base) {
-        return Err("fora do acervo".into());
+        return Err("err.outside_acervo".into());
     }
     Ok(p)
 }
@@ -59,7 +59,7 @@ fn normalize_rel(rel: &str) -> Result<String, String> {
             "" | "." => {}
             ".." => {
                 if stack.pop().is_none() {
-                    return Err("fora do acervo".into());
+                    return Err("err.outside_acervo".into());
                 }
             }
             p => stack.push(p),
@@ -196,7 +196,7 @@ fn next_ref_id(fm: &str) -> String {
 
 // Anchor a caminho to the canonical `acervo://` form (BR-independent invariant so
 // promoted refs never dangle into the git-ignored world).
-fn anchor_caminho(caminho: &str) -> String {
+fn anchor_path(caminho: &str) -> String {
     if caminho.starts_with("acervo://") {
         caminho.to_string()
     } else {
@@ -213,7 +213,7 @@ fn add_ref_to_content(
     caminho: &str,
     id: Option<&str>,
 ) -> (String, String) {
-    let caminho = anchor_caminho(caminho);
+    let caminho = anchor_path(caminho);
     let (fm_opt, body) = split_front_matter(content);
     let fm = fm_opt.unwrap_or_else(|| "loro: 1".to_string());
     let id = id
@@ -306,7 +306,7 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 // A marker carries only a type (+ optional timecode/ref) — NEVER transcript text
 // (BR-8). Kept in meta.json purely for round-trip (rewrites must not drop it).
 #[derive(Serialize, Deserialize, Default, Clone)]
-struct Marcador {
+struct Marker {
     #[serde(default)]
     tipo: String,
     #[serde(default)]
@@ -332,7 +332,7 @@ struct BrainstormingMeta {
     #[serde(default)]
     atualizado_em: String,
     #[serde(default)]
-    marcadores: Vec<Marcador>,
+    marcadores: Vec<Marker>,
     #[serde(default)]
     tags: Vec<String>,
 }
@@ -467,13 +467,13 @@ fn list_brainstormings(base: &Path) -> Vec<BrainstormingListItem> {
 }
 
 // Set/clear a brainstorming's optional UI grouping category (meta-only).
-fn set_categoria(base: &Path, slug: &str, categoria: Option<&str>) -> Result<(), String> {
+fn set_category(base: &Path, slug: &str, categoria: Option<&str>) -> Result<(), String> {
     if !valid_context(slug) {
-        return Err("brainstorming inválido".into());
+        return Err("err.invalid_brainstorm".into());
     }
     let dir = brainstorming_dir(base).join(slug);
     if !dir.is_dir() {
-        return Err("brainstorming não encontrado".into());
+        return Err("err.brainstorm_not_found".into());
     }
     let mut m = read_meta(&dir);
     m.categoria = categoria
@@ -530,7 +530,7 @@ fn list_meetings(base: &Path, slug: &str) -> Vec<MeetingListItem> {
 #[tauri::command]
 pub fn brain_list_meetings(slug: String) -> Result<Vec<MeetingListItem>, String> {
     if !valid_context(&slug) {
-        return Err("brainstorming inválido".into());
+        return Err("err.invalid_brainstorm".into());
     }
     Ok(list_meetings(&acervo_base()?, &slug))
 }
@@ -548,7 +548,7 @@ fn new_notebook(
     let (dir, fname, tema_field) = match tema.map(str::trim).filter(|t| !t.is_empty()) {
         Some(t) => {
             if !valid_context(t) {
-                return Err("brainstorming inválido".into());
+                return Err("err.invalid_brainstorm".into());
             }
             (
                 brainstorming_dir(base).join(t).join("notas"),
@@ -565,7 +565,7 @@ fn new_notebook(
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let path = dir.join(&fname);
     if path.exists() {
-        return Err("já existe um notebook com esse nome".into());
+        return Err("err.notebook_exists".into());
     }
     let fm = living_front_matter(&id, &tema_field, today);
     std::fs::write(&path, format!("{fm}# {titulo}\n")).map_err(|e| e.to_string())?;
@@ -593,7 +593,7 @@ fn resolve_ref(base: &Path, source_rel: &str, r: &str) -> Result<RefResolution, 
     let raw = if let Some(rest) = r.strip_prefix("acervo://") {
         rest.to_string()
     } else if r.starts_with('/') {
-        return Err("referência absoluta não permitida".into());
+        return Err("err.absolute_ref_not_allowed".into());
     } else {
         let dir = Path::new(source_rel)
             .parent()
@@ -625,10 +625,10 @@ pub struct Asset {
 fn read_asset(base: &Path, rel: &str) -> Result<Asset, String> {
     let p = guarded_existing(base, rel)?;
     let name = p.file_name().and_then(|s| s.to_str()).unwrap_or("");
-    let mime = asset_mime(name).ok_or("tipo de arquivo não suportado")?;
+    let mime = asset_mime(name).ok_or("err.unsupported_file_type")?;
     let len = p.metadata().map_err(|e| e.to_string())?.len();
     if len > ASSET_MAX_BYTES {
-        return Err("arquivo grande demais (máx. 5 MiB)".into());
+        return Err("err.file_too_large".into());
     }
     let bytes = std::fs::read(&p).map_err(|e| e.to_string())?;
     Ok(Asset {
@@ -751,15 +751,15 @@ fn promote(
 ) -> Result<PromoteReport, String> {
     let source_abs = guarded_existing(base, source_rel)?;
     if !source_abs.is_file() {
-        return Err("origem inválida".into());
+        return Err("err.invalid_origin".into());
     }
     if !valid_context(dest_context) {
-        return Err("contexto de destino inválido".into());
+        return Err("err.invalid_target_context".into());
     }
     let ctx_dir = base.join("contextos").join(dest_context);
     let ctx_md = ctx_dir.join("context.md");
     if !ctx_md.is_file() {
-        return Err("contexto de destino inexistente".into());
+        return Err("err.target_context_not_found".into());
     }
     let ref_dir = ctx_dir.join("referencias");
 
@@ -958,7 +958,7 @@ fn gather_part(base: &Path, item: &SelItem) -> Result<ReportPart, String> {
             abs.parent().map(|p| p.to_path_buf()).unwrap_or(abs)
         };
         if !dir.starts_with(base) || !dir.join("manifest.json").is_file() {
-            return Err("reunião não encontrada".into());
+            return Err("err.meeting_not_found".into());
         }
         let dir_rel = dir
             .strip_prefix(base)
@@ -990,7 +990,7 @@ fn gather_part(base: &Path, item: &SelItem) -> Result<ReportPart, String> {
     } else {
         let abs = guarded_existing(base, &rel)?;
         if !abs.is_file() {
-            return Err("item não encontrado".into());
+            return Err("err.item_not_found".into());
         }
         let content = content_of(&abs)?;
         let (_, body) = split_front_matter(&content);
@@ -1114,11 +1114,11 @@ fn build_brainstorm_report(
     stamp: &str,
 ) -> Result<String, String> {
     if !valid_context(slug) {
-        return Err("brainstorming inválido".into());
+        return Err("err.invalid_brainstorm".into());
     }
     let root = brainstorming_dir(base).join(slug);
     if !root.is_dir() {
-        return Err("brainstorming não encontrado".into());
+        return Err("err.brainstorm_not_found".into());
     }
     // empty selection == all parts of the brainstorming
     let owned_all;
@@ -1170,15 +1170,15 @@ pub fn brain_brainstorm_delete(app: AppHandle, input: DeleteBrainstormInput) -> 
     } else if rel.starts_with("pessoal/") {
         "pessoal"
     } else {
-        return Err("só itens do brainstorming podem ser apagados aqui".into());
+        return Err("err.brainstorm_delete_only".into());
     };
     if rel.contains("..") {
-        return Err("caminho inválido".into());
+        return Err("err.invalid_path".into());
     }
     let base = acervo_base()?;
     let p = guarded_existing(&base, &rel)?;
     if !p.starts_with(base.join(world)) {
-        return Err("fora do brainstorming".into());
+        return Err("err.outside_brainstorm".into());
     }
     if p.is_dir() {
         std::fs::remove_dir_all(&p).map_err(|e| e.to_string())?;
@@ -1215,19 +1215,19 @@ pub fn brain_list_brainstorms() -> Result<Vec<BrainstormingListItem>, String> {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SetCategoriaInput {
+pub struct SetCategoryInput {
     slug: String,
     #[serde(default)]
     categoria: Option<String>,
 }
 
 #[tauri::command]
-pub fn brain_set_brainstorm_categoria(
+pub fn brain_set_brainstorm_category(
     app: AppHandle,
-    input: SetCategoriaInput,
+    input: SetCategoryInput,
 ) -> Result<(), String> {
     let base = acervo_base()?;
-    set_categoria(&base, &input.slug, input.categoria.as_deref())?;
+    set_category(&base, &input.slug, input.categoria.as_deref())?;
     emit_brainstorming_changed(&app, serde_json::json!({ "slug": input.slug }));
     Ok(())
 }
@@ -1242,16 +1242,16 @@ pub fn brain_rename_brainstorm(
 ) -> Result<BrainstormingRef, String> {
     let base = acervo_base()?;
     if !valid_context(&slug) {
-        return Err("brainstorming inválido".into());
+        return Err("err.invalid_brainstorm".into());
     }
     let from = brainstorming_dir(&base).join(&slug);
     if !from.is_dir() {
-        return Err("brainstorming não encontrado".into());
+        return Err("err.brainstorm_not_found".into());
     }
     let new_slug = sanitize_slug(&nome)?;
     let to = brainstorming_dir(&base).join(&new_slug);
     if new_slug != slug && to.exists() {
-        return Err("já existe um brainstorming com esse nome".into());
+        return Err("err.brainstorm_exists".into());
     }
     if new_slug != slug {
         std::fs::rename(&from, &to).map_err(|e| e.to_string())?;
@@ -1405,7 +1405,7 @@ mod tests {
     }
 
     #[test]
-    fn base64_encode_bate_com_valores_conhecidos() {
+    fn base64_encode_matches_known_values() {
         assert_eq!(base64_encode(b""), "");
         assert_eq!(base64_encode(b"f"), "Zg==");
         assert_eq!(base64_encode(b"fo"), "Zm8=");
@@ -1414,7 +1414,7 @@ mod tests {
     }
 
     #[test]
-    fn normalize_rel_impede_escapar_da_raiz() {
+    fn normalize_rel_prevents_escaping_the_root() {
         assert_eq!(normalize_rel("a/./b/c").unwrap(), "a/b/c");
         assert_eq!(normalize_rel("a/b/../c").unwrap(), "a/c");
         assert!(normalize_rel("../etc/passwd").is_err());
@@ -1422,7 +1422,7 @@ mod tests {
     }
 
     #[test]
-    fn tipo_inferido_por_extensao() {
+    fn ref_tipo_inferred_from_extension() {
         assert_eq!(ref_tipo("notas/x.md"), "doc");
         assert_eq!(ref_tipo("a/chart.png"), "image");
         assert_eq!(ref_tipo("a/audio.wav"), "audio");
@@ -1430,7 +1430,7 @@ mod tests {
     }
 
     #[test]
-    fn create_brainstorming_e_list_e_status() {
+    fn create_brainstorming_and_list_and_status() {
         let base = tmp("bs");
         let t = create_brainstorming(&base, "Frota 2026!", Some("produto"), "2026-07-27").unwrap();
         assert_eq!(t.slug, "frota-2026");
@@ -1453,7 +1453,7 @@ mod tests {
     }
 
     #[test]
-    fn list_meetings_le_titulo_do_manifest_e_ordena_recente_primeiro() {
+    fn list_meetings_reads_titulo_from_manifest_and_sorts_recent_first() {
         let base = tmp("mtgs");
         create_brainstorming(&base, "Frota", None, "2026-07-27").unwrap();
         let root = base.join("brainstorming/frota/reunioes");
@@ -1485,22 +1485,22 @@ mod tests {
     }
 
     #[test]
-    fn set_categoria_e_rename_round_trip() {
+    fn set_categoria_and_rename_round_trip() {
         let base = tmp("cat");
         create_brainstorming(&base, "Ideias soltas", None, "2026-07-27").unwrap();
         assert_eq!(list_brainstormings(&base)[0].categoria, None);
-        set_categoria(&base, "ideias-soltas", Some("pessoal")).unwrap();
+        set_category(&base, "ideias-soltas", Some("pessoal")).unwrap();
         assert_eq!(
             list_brainstormings(&base)[0].categoria.as_deref(),
             Some("pessoal")
         );
         // clearing sets it back to None
-        set_categoria(&base, "ideias-soltas", Some("  ")).unwrap();
+        set_category(&base, "ideias-soltas", Some("  ")).unwrap();
         assert_eq!(list_brainstormings(&base)[0].categoria, None);
     }
 
     #[test]
-    fn new_notebook_avulso_tem_front_matter_e_data() {
+    fn standalone_new_notebook_has_front_matter_and_date() {
         let base = tmp("nb");
         let rel = new_notebook(&base, None, "Ideia solta", "2026-07-27").unwrap();
         assert_eq!(rel, "brainstorming/avulso/2026-07-27-ideia-solta.md");
@@ -1514,7 +1514,7 @@ mod tests {
     }
 
     #[test]
-    fn add_ref_grava_caminho_ancorado_e_devolve_id() {
+    fn add_ref_stores_anchored_caminho_and_returns_id() {
         let content = "---\nloro: 1\nid: x\nrefs: []\n---\n\n# Nota\n";
         let (out, id) = add_ref_to_content(content, "image", "pessoal/temas/x/chart.png", None);
         assert_eq!(id, "r1");
@@ -1530,7 +1530,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_ref_ancorado_e_relativo() {
+    fn resolve_ref_resolves_anchored_and_relative() {
         let base = tmp("resolve");
         std::fs::create_dir_all(base.join("pessoal/temas/x/notas")).unwrap();
         std::fs::write(base.join("pessoal/temas/x/chart.png"), b"P").unwrap();
@@ -1556,7 +1556,7 @@ mod tests {
     }
 
     #[test]
-    fn read_asset_valida_mime_e_tamanho() {
+    fn read_asset_validates_mime_and_size() {
         let base = tmp("asset");
         std::fs::write(base.join("ok.png"), vec![1u8, 2, 3, 4]).unwrap();
         std::fs::write(
@@ -1576,7 +1576,7 @@ mod tests {
     }
 
     #[test]
-    fn guarded_existing_recusa_fora_da_raiz() {
+    fn guarded_existing_refuses_outside_the_root() {
         // brain_open_external relies on this guard: a traversal path is refused.
         let base = tmp("guard");
         std::fs::create_dir_all(base.join("pessoal")).unwrap();
@@ -1586,9 +1586,9 @@ mod tests {
     }
 
     #[test]
-    fn meta_json_round_trip_preserva_marcadores_e_tags() {
+    fn meta_json_round_trip_preserves_marcadores_and_tags() {
         // BR-8 posture: markers carry only types/timecodes (never prose) and a
-        // meta.json rewrite (e.g. set_categoria) must not drop them.
+        // meta.json rewrite (e.g. set_category) must not drop them.
         let base = tmp("meta");
         let dir = base.join("brainstorming/x");
         std::fs::create_dir_all(&dir).unwrap();
@@ -1649,7 +1649,7 @@ mod tests {
     }
 
     #[test]
-    fn assemble_brainstorm_report_merges_all_parts_e_agrega_stats() {
+    fn assemble_brainstorm_report_merges_all_parts_and_aggregates_stats() {
         let base = tmp("report");
         seed_report_fixture(&base, "frota-2026");
         let rel =
@@ -1672,7 +1672,7 @@ mod tests {
             "## Notas",
             "## Dados",
         ] {
-            assert!(r.contains(h), "faltou {h}");
+            assert!(r.contains(h), "missing {h}");
         }
         assert!(!r.contains("## Estatísticas"));
         // merges BOTH meetings' prose + the standalone items
@@ -1711,7 +1711,7 @@ mod tests {
     }
 
     #[test]
-    fn extract_section_ignora_placeholder_e_para_no_proximo_heading() {
+    fn extract_section_ignores_placeholder_and_stops_at_next_heading() {
         let md = "## Resumo\n\n_(resumo automático — rode “analisar” para preencher)_\n\n## Decisões\n\nDecidiu-se X.\n";
         assert_eq!(extract_section(md, "Resumo"), "");
         assert_eq!(extract_section(md, "Decisões"), "Decidiu-se X.");
@@ -1719,7 +1719,7 @@ mod tests {
     }
 
     #[test]
-    fn promote_nao_vaza_para_pessoal_e_respeita_deny_list() {
+    fn promote_never_leaks_into_pessoal_and_respects_deny_list() {
         // The headline ADR-0009 guard: promotion copies NO denied file into
         // contextos/ and leaves NO ref pointing back into the git-ignored world.
         let base = tmp("promote");
@@ -1773,7 +1773,7 @@ mod tests {
         let leaks = |t: &str| t.contains("pessoal/") || t.contains("acervo://pessoal");
         for rel in &rep.staged_files {
             let txt = std::fs::read_to_string(base.join(rel)).unwrap_or_default();
-            assert!(!leaks(&txt), "staged {rel} vazou caminho para pessoal/");
+            assert!(!leaks(&txt), "staged {rel} leaked a path into pessoal/");
         }
         // context.md carries the prose with rewritten refs, no pessoal path
         let ctx = std::fs::read_to_string(base.join("contextos/frota/context.md")).unwrap();

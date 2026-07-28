@@ -3,7 +3,7 @@
 // sem pacotes npm de plugin. O áudio/texto nunca sai da máquina.
 
 const TAURI = window.__TAURI__ || {};
-const invoke = TAURI.core ? TAURI.core.invoke : async () => { throw new Error("Tauri indisponível"); };
+const invoke = TAURI.core ? TAURI.core.invoke : async () => { throw new Error("Tauri unavailable"); };
 const listen = TAURI.event ? TAURI.event.listen : async () => {};
 const getWin = TAURI.window ? TAURI.window.getCurrentWindow : null;
 const { esc, mdInline, mdRender, mergeSettings } = window.LoroText;
@@ -15,8 +15,8 @@ const LM = window.LoroMeeting || {};
 // log de diagnóstico (vai para loro-client.log via backend) + console
 const winLabel = getWin ? (getWin().label || "?") : "?";
 function clog(m) { try { invoke("client_log", { msg: `[ui:${winLabel}] ${m}` }); } catch (_) {} console.log(m); }
-window.addEventListener("error", (e) => clog(`ERRO ${e.message} @ ${e.filename}:${e.lineno}`));
-window.addEventListener("unhandledrejection", (e) => clog(`REJEIÇÃO ${e.reason}`));
+window.addEventListener("error", (e) => clog(`error: ${e.message} @ ${e.filename}:${e.lineno}`));
+window.addEventListener("unhandledrejection", (e) => clog(`unhandled rejection: ${e.reason}`));
 
 const $ = (id) => document.getElementById(id);
 const el = {
@@ -33,16 +33,38 @@ const el = {
 };
 
 // ---- i18n da interface (pt/en) ----
-const I18N = {
-  pt: { settings: "configurações", project: "projeto", active: "ativo", color: "cor",
-    uiLang: "idioma da interface", transcription: "transcrição", storage: "armazenamento", acervo: "acervo" },
-  en: { settings: "settings", project: "project", active: "active", color: "color",
-    uiLang: "interface language", transcription: "transcription", storage: "storage", acervo: "knowledge base" },
-};
-function t(key) { return (I18N[settings.uiLang] || I18N.pt)[key] || (I18N.pt[key] || key); }
+// Gettext-style (src/i18n.js): the pt-BR string in the code is the msgid.
+// Static HTML is translated in place: [data-i18n] marks a text node and
+// [data-i18n-attrs="title,placeholder"] marks attributes; the original pt
+// value is captured on first pass so switching back is lossless.
+const { t, tErr, setLang: setI18nLang } = window.LoroI18n;
 function applyI18n() {
+  setI18nLang(settings.uiLang);
   document.documentElement.setAttribute("lang", settings.uiLang === "en" ? "en" : "pt-br");
-  document.querySelectorAll("[data-i18n]").forEach((n) => { n.textContent = t(n.dataset.i18n); });
+  document.querySelectorAll("[data-i18n]").forEach((n) => {
+    if (!n.dataset.i18nSrc) n.dataset.i18nSrc = n.textContent.trim();
+    n.textContent = t(n.dataset.i18nSrc);
+  });
+  document.querySelectorAll("[data-i18n-attrs]").forEach((n) => {
+    for (const attr of n.dataset.i18nAttrs.split(",")) {
+      const a = attr.trim();
+      if (!a) continue;
+      // dataset keys must be camelCase — "aria-label" → i18nSrcAriaLabel
+      const src = `i18nSrc${a.replace(/(^|-)([a-z])/g, (_, __, c) => c.toUpperCase())}`;
+      if (!n.dataset[src]) n.dataset[src] = n.getAttribute(a) || "";
+      if (n.dataset[src]) n.setAttribute(a, t(n.dataset[src]));
+    }
+  });
+}
+// Dynamic surfaces hold rendered pt/en text, so a language switch re-renders
+// them from state (static HTML is handled by applyI18n alone).
+// UI-language-driven date/number locale (the only i18n helper besides t/tErr).
+const uiLocale = () => (settings.uiLang === "en" ? "en-US" : "pt-BR");
+function rerenderForLang() {
+  try { render(); } catch (_) {}
+  try { updateCfgLabel(); } catch (_) {}
+  try { brainRefresh(); } catch (_) {}
+  try { renderSelectionBar(); } catch (_) {}
 }
 
 // painel ao vivo (dock): abre/fecha; abre sozinho ao começar a gravar
@@ -98,7 +120,7 @@ function applySettings() {
   el.mode.value = settings.mode;
   state.autoscroll = settings.autoscroll;
   el.pickDir.textContent = settings.saveDir || "…";
-  el.pickDir.title = settings.saveDir || "Escolher pasta de armazenamento";
+  el.pickDir.title = settings.saveDir || t("Escolher pasta de armazenamento");
   if (el.uiLang) el.uiLang.value = settings.uiLang;
   applyI18n();
 }
@@ -201,7 +223,7 @@ function drawLoop() {
 // deviceLabel: p/ áudio do sistema, casa o dispositivo de entrada BlackHole
 async function startAudio(deviceLabel) {
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    clog("getUserMedia indisponível — sem medidor de áudio"); setMeter("off"); return;
+    clog("getUserMedia unavailable — no audio meter"); setMeter("off"); return;
   }
   let constraints = { audio: true };
   if (deviceLabel) {
@@ -217,10 +239,10 @@ async function startAudio(deviceLabel) {
       const d = devs.find((x) => x.kind === "audioinput" && new RegExp(deviceLabel, "i").test(x.label));
       if (d && d.deviceId) constraints = { audio: { deviceId: { exact: d.deviceId } } };
       else {
-        clog("medidor: entrada '" + deviceLabel + "' não encontrada — sem onda");
+        clog("meter: input '" + deviceLabel + "' not found — no wave");
         setMeter("nosignal"); return;
       }
-    } catch (e) { clog("enumerateDevices erro: " + e); setMeter("off"); return; }
+    } catch (e) { clog("enumerateDevices error: " + e); setMeter("off"); return; }
   }
   audio.stream = await navigator.mediaDevices.getUserMedia(constraints);
   setMeter(settings.source === "meeting" ? "meeting" : (deviceLabel ? "system" : "mic"));
@@ -242,17 +264,17 @@ async function startAudio(deviceLabel) {
     audio.recorder.start();
   }
   drawLoop();
-  clog("medidor de áudio ativo");
+  clog("audio meter active");
 }
 // indicador funcional da captura: mic / sistema / sem sinal / desligado
 function setMeter(kind) {
   if (!el.privacy) return;
   const map = {
-    mic: ["● mic", "captando microfone"],
-    system: ["● sistema", "captando áudio do computador (BlackHole)"],
-    meeting: ["● reunião", "captando sua voz + áudio do computador (Loro Reunião)"],
-    nosignal: ["sem sinal", "não achei o dispositivo de captura — rode ./loro.sh sysaudio-setup"],
-    off: ["gravando", "gravando"],
+    mic: ["● mic", t("captando microfone")],
+    system: [`● ${t("sistema")}`, t("captando áudio do computador (BlackHole)")],
+    meeting: [`● ${t("reunião")}`, t("captando sua voz + áudio do computador (Loro Reunião)")],
+    nosignal: [t("sem sinal"), t("não achei o dispositivo de captura — rode ./loro.sh sysaudio-setup")],
+    off: [t("gravando"), t("gravando")],
   };
   const [txt, title] = map[kind] || map.off;
   el.privacy.textContent = txt;
@@ -279,14 +301,14 @@ async function finalizeRecording() {
   const filename = `rec-${stamp()}.${ext}`;
   try {
     const path = await invoke("save_recording", { data: Array.from(buf), filename });
-    toast("diarizando… (pode levar alguns minutos)", 0);
+    toast(t("diarizando… (pode levar alguns minutos)"), 0);
     const md = await invoke("diarize", { audioPath: path });
     state.lines = md.split(/\n{2,}/).map((s) => s.trim()).filter(Boolean);
     render();
-    toast("diarização concluída");
+    toast(t("diarização concluída"));
   } catch (e) {
-    toast("diarização falhou: " + String(e).slice(0, 80));
-    clog("diarize erro: " + e);
+    toast(t("diarização falhou") + ": " + tErr(String(e)));
+    clog("diarize error: " + e);
   }
 }
 function stamp() {
@@ -300,7 +322,7 @@ function stamp() {
 async function finalizeFileTranscription() {
   const chunks = audio.chunks; audio.chunks = []; audio.recorder = null;
   state.fileMode = false;
-  if (!chunks.length) { toast("nada gravado"); return; }
+  if (!chunks.length) { toast(t("nada gravado")); return; }
   const blob = new Blob(chunks, { type: audio.mime });
   const buf = new Uint8Array(await blob.arrayBuffer());
   const ext = (audio.mime.includes("mp4") || audio.mime.includes("aac")) ? "mp4" : "webm";
@@ -309,8 +331,8 @@ async function finalizeFileTranscription() {
     const path = await invoke("save_recording", { data: Array.from(buf), filename });
     await invoke("transcribe_file", { path, cfg: currentCfg() });
   } catch (e) {
-    toast("transcrição falhou: " + String(e).slice(0, 80));
-    clog("transcribe_file erro: " + e);
+    toast(t("transcrição falhou") + ": " + tErr(String(e)));
+    clog("transcribe_file error: " + e);
   }
 }
 
@@ -339,38 +361,38 @@ async function startSession() {
     try {
       devs = await invoke("list_capture_devices");
     } catch (e) {
-      toast("falha ao listar dispositivos");
-      clog("list_capture_devices erro: " + e);
+      toast(t("falha ao listar dispositivos"));
+      clog("list_capture_devices error: " + e);
       return;
     }
     const pick = LoroAudio.pickCaptureDevice(devs, settings.source);
     if (pick.missing === "system") {
       openBlackholeSetup();
-      clog("system source: BlackHole ausente; dispositivos=" + JSON.stringify(devs));
+      clog("system source: BlackHole missing; devices=" + JSON.stringify(devs));
       return;
     }
     cfg.capture = pick.capture;
-    clog("fonte sistema via #" + pick.capture);
+    clog("system source via #" + pick.capture);
   }
   clog("start: " + JSON.stringify(cfg));
   // 1) inicia a transcrição PRIMEIRO — não depende do microfone do webview
   try {
     await invoke("start", { cfg });
   } catch (e) {
-    toast("não iniciou: " + String(e).slice(0, 120));
-    clog("invoke start erro: " + e);
+    toast(t("não iniciou") + ": " + tErr(String(e)));
+    clog("invoke start error: " + e);
     return;
   }
   // 2) medidor/onda (best-effort, nunca bloqueia): mic direto, ou o BlackHole no modo sistema
   const meterLabel = meterLabelFor(settings.source);
-  startAudio(meterLabel).catch((e) => clog("startAudio falhou (segue sem onda): " + e));
+  startAudio(meterLabel).catch((e) => clog("startAudio failed (continuing without wave): " + e));
 }
 async function stopSession() {
   if (!state.running) return;
   if (meeting.active) return stopMeeting();
-  if (settings.mode === "file") { clog("stop (modo arquivo)"); onStopped(); return; }
-  clog("stop solicitado");
-  try { await invoke("stop"); } catch (e) { clog("invoke stop erro: " + e); }
+  if (settings.mode === "file") { clog("stop (file mode)"); onStopped(); return; }
+  clog("stop requested");
+  try { await invoke("stop"); } catch (e) { clog("invoke stop error: " + e); }
 }
 
 // ADR-0010 — a meeting is a living file under a tema. START picks/creates a tema
@@ -381,21 +403,21 @@ async function stopSession() {
 // audio/mic.webm). The reuniao.md tab is opened as THE live surface (the footer
 // live panel is retired for meetings), and the transcript only shows after stop.
 async function startMeetingSession() {
-  if (state.running || meeting.active) { toast("já há uma gravação em andamento"); return; }
+  if (state.running || meeting.active) { toast(t("já há uma gravação em andamento")); return; }
   let temas = [];
   try { temas = (await invoke("brain_list_brainstorms")) || []; } catch (_) {}
   const choice = await pickMeeting(temas);
   if (!choice) return;
   const cfg = currentCfg();
-  clog("start (reunião ADR-0010): tema=" + choice.tema);
+  clog("start (meeting ADR-0010): tema=" + choice.tema);
   let res;
   try {
     res = await invoke("brain_meeting_start", { input: { tema: choice.tema, titulo: choice.titulo, cfg } });
   } catch (e) {
     const msg = String(e);
-    if (/permiss|tcc|grava|screen/i.test(msg)) toast("permita a Gravação de Tela nas Configurações e tente de novo", 0);
-    else toast("não iniciei a reunião: " + msg.slice(0, 100));
-    clog("brain_meeting_start erro: " + e);
+    if (/permiss|tcc|grava|screen/i.test(msg)) toast(t("permita a Gravação de Tela nas Configurações e tente de novo"), 0);
+    else toast(t("não iniciei a reunião") + ": " + tErr(msg));
+    clog("brain_meeting_start error: " + e);
     return;
   }
   meeting.active = true; meeting.id = res.id; meeting.dir = res.dir;
@@ -405,12 +427,12 @@ async function startMeetingSession() {
   await openDoc(res.livingRel, { preview: false }); // a aba é a superfície ao vivo
   // microfone via MediaRecorder (onda + audio/mic.webm); degrada p/ só-sistema se falhar
   try { await startAudio(undefined); }
-  catch (e) { clog("startAudio (reunião) erro — seguindo só com áudio do sistema: " + e); }
+  catch (e) { clog("startAudio (meeting) error — continuing with system audio only: " + e); }
   onStarted();
   startMeetingTail(); // ADR-0012: sistema (outros participantes) ao vivo
   startMeetingPreview(); // ADR-0012 modelo A: microfone (operador) ao vivo
   pessoalSig = ""; refreshPessoal();
-  toast("reunião iniciada — a transcrição aparece durante a reunião");
+  toast(t("reunião iniciada — a transcrição aparece durante a reunião"));
 }
 
 // ADR-0012 pseudo-stream: while recording, poll the system-audio tail every ~18s
@@ -424,7 +446,7 @@ const MEETING_TAIL_MS = 18000;
 function startMeetingTail() {
   stopMeetingTail();
   meeting.tailFrom = 0; meeting.tailBusy = false;
-  meeting.tailStatus = "preview: iniciando…";
+  meeting.tailStatus = t("preview: iniciando…");
   meeting.tailTimer = setInterval(tickMeetingTail, MEETING_TAIL_MS);
 }
 function stopMeetingTail() {
@@ -448,7 +470,7 @@ function spawnPreviewRec() {
   const segStart = meetingElapsedMs(); // ADR-0013: this segment's start on the timeline
   let rec;
   try { rec = new MediaRecorder(audio.stream); }
-  catch (e) { clog("preview rec erro: " + e); return; }
+  catch (e) { clog("preview rec error: " + e); return; }
   meeting.previewRec = rec;
   meeting.previewChunks = [];
   rec.ondataavailable = (e) => { if (e.data && e.data.size) meeting.previewChunks.push(e.data); };
@@ -459,7 +481,7 @@ function spawnPreviewRec() {
     if (meeting.active && meeting.phase === "recording" && meeting.previewTimer) spawnPreviewRec();
     onPreviewSegment(chunks, rec.mimeType || "audio/webm", segStart);
   };
-  try { rec.start(); } catch (e) { clog("preview start erro: " + e); }
+  try { rec.start(); } catch (e) { clog("preview start error: " + e); }
 }
 function startMeetingPreview() {
   stopMeetingPreview();
@@ -484,14 +506,14 @@ async function onPreviewSegment(chunks, mime, tMs) {
     if (text.trim() && meeting.id === id) {
       // ADR-0013: the operator's mic segment, timecoded so it interleaves with the
       // system windows in chronological order.
-      try { await invoke("brain_meeting_append", { input: { id, chunk: text, tMs: tMs || 0, source: "mic" } }); setTailStatus(id, "preview ao vivo ativo"); }
-      catch (e) { clog("brain_meeting_append (mic) erro: " + e); }
+      try { await invoke("brain_meeting_append", { input: { id, chunk: text, tMs: tMs || 0, source: "mic" } }); setTailStatus(id, t("preview ao vivo ativo")); }
+      catch (e) { clog("brain_meeting_append (mic) error: " + e); }
     } else {
-      setTailStatus(id, "preview: microfone sem fala substantiva ainda");
+      setTailStatus(id, t("preview: microfone sem fala substantiva ainda"));
     }
   } catch (e) {
-    clog("brain_meeting_transcribe_segment erro: " + e);
-    setTailStatus(id, "preview indisponível: " + String(e).slice(0, 80));
+    clog("brain_meeting_transcribe_segment error: " + e);
+    setTailStatus(id, t("preview indisponível") + ": " + tErr(String(e)));
   }
 }
 async function tickMeetingTail() {
@@ -502,25 +524,25 @@ async function tickMeetingTail() {
   const winStart = meeting.tailFrom; // ADR-0013: this system window's start on the timeline
   try {
     const res = await invoke("brain_meeting_transcribe_tail", { input: { id, fromMs: meeting.tailFrom } });
-    if (!res) { setTailStatus(id, "preview: sem resposta do backend"); return; }
+    if (!res) { setTailStatus(id, t("preview: sem resposta do backend")); return; }
     if (typeof res.nextMs === "number" && res.nextMs > meeting.tailFrom) meeting.tailFrom = res.nextMs;
     const raw = res.text || "";
     const text = LM.filterHallucinations(raw); // drop whisper silence-artifacts
     if (text.trim() && meeting.active && meeting.id === id) {
       // the other participants (system audio), timecoded by the window start.
-      try { await invoke("brain_meeting_append", { input: { id, chunk: text, tMs: winStart || 0, source: "system" } }); setTailStatus(id, "preview ao vivo ativo"); }
-      catch (e) { clog("brain_meeting_append (tail) erro: " + e); }
+      try { await invoke("brain_meeting_append", { input: { id, chunk: text, tMs: winStart || 0, source: "system" } }); setTailStatus(id, t("preview ao vivo ativo")); }
+      catch (e) { clog("brain_meeting_append (tail) error: " + e); }
     } else if (raw.trim()) {
       // Houve áudio transcrito, mas só silêncio/ruído (alucinação de legenda) —
       // sinaliza captura OK porém sem fala; diferente de "sem áudio".
-      setTailStatus(id, "preview: só silêncio/ruído até agora (fale para testar a captura)");
+      setTailStatus(id, t("preview: só silêncio/ruído até agora (fale para testar a captura)"));
     } else {
       // Nenhum texto do backend: janela vazia ou áudio ainda não legível.
-      setTailStatus(id, "preview: aguardando áudio (sem novo trecho ainda)");
+      setTailStatus(id, t("preview: aguardando áudio (sem novo trecho ainda)"));
     }
   } catch (e) {
-    clog("brain_meeting_transcribe_tail erro: " + e);
-    setTailStatus(id, "preview indisponível: " + String(e).slice(0, 80));
+    clog("brain_meeting_transcribe_tail error: " + e);
+    setTailStatus(id, t("preview indisponível") + ": " + tErr(String(e)));
   } finally {
     meeting.tailBusy = false;
   }
@@ -535,7 +557,7 @@ function setTailStatus(id, msg) {
 // Encerrar: para captura/onda; o MediaRecorder dispara finalizeMeeting no onstop.
 // Se o microfone falhou (sem recorder), conduzimos o encerramento diretamente.
 function stopMeeting() {
-  clog("stop (reunião ADR-0010)");
+  clog("stop (meeting ADR-0010)");
   stopMeetingTail();     // encerra o preview de sistema
   stopMeetingPreview();  // encerra o preview de mic (faz o flush do último segmento)
   const hadRecorder = !!(audio.recorder && audio.recorder.state !== "inactive");
@@ -559,7 +581,7 @@ async function finalizeMeeting() {
   renderIfLiving(id);
   // encerra o sidecar de áudio do sistema (o mix é ignorado — áudio é transiente)
   try { await invoke("brain_meeting_stop", { input: { id } }); }
-  catch (e) { clog("brain_meeting_stop erro: " + e); }
+  catch (e) { clog("brain_meeting_stop error: " + e); }
   await finishMeetingAfterTranscription(); // monta o relatório + purga o áudio
 }
 
@@ -580,7 +602,7 @@ async function flushMeetingLines() {
   const chunk = meeting.pendingLines.join("\n\n");
   meeting.pendingLines = [];
   try { await invoke("brain_meeting_append", { input: { id: meeting.id, chunk } }); }
-  catch (e) { clog("brain_meeting_append erro: " + e); }
+  catch (e) { clog("brain_meeting_append error: " + e); }
 }
 
 // Conclusão: garante o flush final, monta o relatório (brain_meeting_build_notebook)
@@ -597,15 +619,15 @@ async function finishMeetingAfterTranscription() {
   let rel = null;
   if (id) {
     try { const r = await invoke("brain_meeting_build_notebook", { id }); rel = r && r.rel; }
-    catch (e) { toast("não montei o relatório: " + String(e).slice(0, 80)); clog("build_notebook erro: " + e); }
+    catch (e) { toast(t("não montei o relatório") + ": " + tErr(String(e))); clog("build_notebook error: " + e); }
     // Áudio é transiente (decisão do dono): apaga após a transcrição autoritativa.
     try { await invoke("brain_meeting_purge_audio", { input: { id } }); }
-    catch (e) { clog("brain_meeting_purge_audio erro: " + e); }
+    catch (e) { clog("brain_meeting_purge_audio error: " + e); }
   }
   pessoalSig = ""; refreshPessoal();
   renderIfLiving(id);
-  if (rel) { toast("relatório pronto"); openDoc(rel, { preview: false }); }
-  else if (id) toast("reunião encerrada");
+  if (rel) { toast(t("relatório pronto")); openDoc(rel, { preview: false }); }
+  else if (id) toast(t("reunião encerrada"));
 }
 
 // Resolve o completoRel (relativo ao acervo) num caminho de arquivo para a
@@ -618,15 +640,15 @@ async function acervoFsPath(rel) {
 
 // Marcadores PII-free (BR-8): tipo + timecode a partir do relógio da sessão.
 async function markMeeting(tipo) {
-  if (!meeting.active || !meeting.id) { toast("nenhuma reunião em andamento"); return; }
+  if (!meeting.active || !meeting.id) { toast(t("nenhuma reunião em andamento")); return; }
   const tMs = state.startTime ? Math.max(0, Date.now() - state.startTime) : 0;
-  try { await invoke("brain_meeting_marker", { input: { id: meeting.id, tipo, tMs } }); toast("marcado: " + tipo); }
-  catch (e) { toast(String(e).slice(0, 80)); clog("brain_meeting_marker erro: " + e); }
+  try { await invoke("brain_meeting_marker", { input: { id: meeting.id, tipo, tMs } }); toast(t("marcado") + ": " + tipo); }
+  catch (e) { toast(tErr(String(e))); clog("brain_meeting_marker error: " + e); }
 }
 
 // paleta: "nova reunião" (independe do seletor de fonte) · "abrir relatório"
 function startMeetingFlow() {
-  if (state.running || meeting.active) { toast("já há uma gravação em andamento"); return; }
+  if (state.running || meeting.active) { toast(t("já há uma gravação em andamento")); return; }
   startMeetingSession();
 }
 // ADR-0013: general Q&A over the acervo. Any question is answered from the
@@ -635,17 +657,17 @@ function startMeetingFlow() {
 // skills — the answer appears in the terminal. Not meeting-scoped.
 function askAcervo() {
   openModal(
-    "Perguntar ao acervo",
-    `<p class="pmnote mono">A resposta vem primeiro dos contextos (a base de conhecimento) e, se preciso, de conectores MCP. Roda no Claude do terminal.</p>` +
-      `<label class="wfield"><span class="mono">pergunta</span>` +
-      `<input id="askInput" type="text" placeholder="ex.: qual a política de multas da frota?" spellcheck="false"></label>`,
-    "perguntar",
+    t("Perguntar ao acervo"),
+    `<p class="pmnote mono">${t("A resposta vem primeiro dos contextos (a base de conhecimento) e, se preciso, de conectores MCP. Roda no Claude do terminal.")}</p>` +
+      `<label class="wfield"><span class="mono">${t("pergunta")}</span>` +
+      `<input id="askInput" type="text" placeholder="${t("ex.: qual a política de multas da frota?")}" spellcheck="false"></label>`,
+    t("perguntar"),
     () => {
       const q = (($("askInput") && $("askInput").value) || "").trim();
       const cmd = LoroBrainstorm.brainAskCmd(q);
-      if (!cmd) { toast("digite uma pergunta"); return; }
+      if (!cmd) { toast(t("digite uma pergunta")); return; }
       termRun(cmd);
-      toast("pergunta enviada ao Claude do terminal — a resposta aparece abaixo", 4000);
+      toast(t("pergunta enviada ao Claude do terminal — a resposta aparece abaixo"), 4000);
     }
   );
   const inp = $("askInput"); if (inp) inp.focus();
@@ -654,24 +676,24 @@ function askAcervo() {
 async function buildAndOpenReport() {
   let id = meeting.id;
   if (!id) { const rel = currentRel(); id = rel ? (LM.livingId(rel) || LM.reportId(rel)) : null; }
-  if (!id) { toast("abra uma reunião para gerar o relatório"); return; }
-  try { const r = await invoke("brain_meeting_build_notebook", { id }); if (r && r.rel) openDoc(r.rel, { preview: false }); toast("relatório pronto"); }
-  catch (e) { toast("não montei o relatório: " + String(e).slice(0, 80)); clog("build_notebook erro: " + e); }
+  if (!id) { toast(t("abra uma reunião para gerar o relatório")); return; }
+  try { const r = await invoke("brain_meeting_build_notebook", { id }); if (r && r.rel) openDoc(r.rel, { preview: false }); toast(t("relatório pronto")); }
+  catch (e) { toast(t("não montei o relatório") + ": " + tErr(String(e))); clog("build_notebook error: " + e); }
 }
 
 // modo "gravar tudo": não há processo do whisper-stream — apenas grava o áudio
 // local (mesmo mecanismo do checkbox de diarização); a transcrição roda inteira
 // só ao parar, em finalizeFileTranscription().
 async function startFileSession() {
-  clog("start (modo arquivo): gravando para transcrever ao final");
+  clog("start (file mode): recording to transcribe at the end");
   state.fileMode = true;
   const meterLabel = meterLabelFor(settings.source);
   try {
     await startAudio(meterLabel);
   } catch (e) {
     state.fileMode = false;
-    toast("não consegui gravar: " + String(e).slice(0, 120));
-    clog("startAudio (modo arquivo) erro: " + e);
+    toast(t("não consegui gravar") + ": " + tErr(String(e)));
+    clog("startAudio (file mode) error: " + e);
     return;
   }
   onStarted();
@@ -714,11 +736,11 @@ async function autoSaveNow() {
       settings.saveDir = dir; persistSettings(); applySettings();
     }
     const path = await invoke("auto_save", { content, dir, filename: `loro-${stamp()}.md` });
-    toast("salvo: " + path.split("/").pop());
+    toast(t("salvo") + ": " + path.split("/").pop());
     clearDoc();   // buffer limpo: a próxima sessão começa zerada
   } catch (e) {
-    clog("auto_save erro: " + e);
-    toast("auto-save falhou — salve manualmente");
+    clog("auto_save error: " + e);
+    toast(t("auto-save falhou — salve manualmente"));
     el.savebar.hidden = false;
   }
 }
@@ -736,8 +758,8 @@ async function save() {
   const content = state.lines.join("\n\n") + "\n";
   try {
     const path = await invoke("save_transcript", { content });
-    if (path) { toast("salvo"); el.savebar.hidden = true; clearDoc(); }
-  } catch (e) { toast("falha ao salvar"); clog("save erro: " + e); }
+    if (path) { toast(t("salvo")); el.savebar.hidden = true; clearDoc(); }
+  } catch (e) { toast(t("falha ao salvar")); clog("save error: " + e); }
 }
 function discard() { el.savebar.hidden = true; }
 // limpa buffer de transcrição E o timer (sessão salva começa do zero)
@@ -749,7 +771,7 @@ async function openCfg() {
   cfgWrap.hidden = false;
   try {
     const cfg = await invoke("brain_get_config");
-    acervoDir.textContent = cfg ? cfg.brainDir : "não configurado — crie um projeto";
+    acervoDir.textContent = cfg ? cfg.brainDir : t("não configurado — crie um projeto");
     acervoDir.title = cfg ? cfg.brainDir : "";
   } catch (_) { acervoDir.textContent = "—"; }
   // seção projeto: nome ativo + paleta de cores
@@ -770,7 +792,7 @@ function drawProjColors(cur) {
       acervos = av.acervos || [];
       const updated = acervos.find((a) => a.id === cur.id);
       drawProjColors(updated);
-    } catch (e) { toast(String(e).slice(0, 80)); }
+    } catch (e) { toast(tErr(String(e))); }
   });
 }
 function closeCfg() { cfgWrap.hidden = true; }
@@ -780,26 +802,29 @@ window.addEventListener("keydown", (e) => { if (e.key === "Escape" && !cfgWrap.h
 
 function updateCfgLabel() {
   const m = el.model.value === "large-v3-turbo" ? "turbo" : "small";
-  const src = { system: "áudio do sistema", meeting: "reunião" }[el.source.value] || "microfone";
-  const modeLabel = el.mode.value === "file" ? "gravar tudo" : "ao vivo";
+  const src = { system: t("áudio do sistema"), meeting: t("reunião") }[el.source.value] || t("microfone");
+  const modeLabel = el.mode.value === "file" ? t("gravar tudo") : t("ao vivo");
   const sum = $("cfgSummary");
   if (sum) sum.textContent = `${el.lang.value} · ${m} · ${src} · ${modeLabel}`;
-  el.cfgBtn.title = `Configurações — ${el.lang.value} · ${m} · ${modeLabel}`;
+  el.cfgBtn.title = `${t("Configurações")} — ${el.lang.value} · ${m} · ${modeLabel}`;
 }
 function updatePrivacy() {
   el.privacy.classList.remove("warn");
   delete el.privacy.dataset.meter;
-  if (state.recordForDiarize || state.fileMode || state.meetingMode) { el.privacy.textContent = "grava áudio"; el.privacy.classList.add("warn"); }
+  if (state.recordForDiarize || state.fileMode || state.meetingMode) { el.privacy.textContent = t("grava áudio"); el.privacy.classList.add("warn"); }
   else if (settings.autosave) { el.privacy.textContent = "auto-save"; }
-  else { el.privacy.textContent = "sem gravar"; }
+  else { el.privacy.textContent = t("sem gravar"); }
 }
 
 // ---- wiring ----
 el.toggle.addEventListener("click", toggle);
 el.cfgBtn.addEventListener("click", openCfg);
-if (el.uiLang) el.uiLang.addEventListener("change", (e) => {
-  settings.uiLang = e.target.value; persistSettings(); applyI18n();
-  if ($("brainLang")) $("brainLang").value = settings.uiLang; // default do idioma de novos projetos
+if (el.uiLang) el.uiLang.addEventListener("change", async (e) => {
+  settings.uiLang = e.target.value; persistSettings();
+  try { settings.uiLang = await invoke("ui_set_lang", { lang: e.target.value }); } catch (_) {}
+  applyI18n();
+  rerenderForLang();
+  if ($("brainLang")) $("brainLang").value = settings.uiLang; // default language for new projects
 });
 el.saveBtn.addEventListener("click", save);
 el.discardBtn.addEventListener("click", discard);
@@ -826,7 +851,7 @@ el.pickDir.addEventListener("click", async () => {
   try {
     const dir = await invoke("pick_folder");
     if (dir) { settings.saveDir = dir; persistSettings(); applySettings(); }
-  } catch (e) { clog("pick_folder erro: " + e); }
+  } catch (e) { clog("pick_folder error: " + e); }
 });
 
 // ============================ acervo (brain) ============================
@@ -886,7 +911,7 @@ function applyAccent(hex) {
 function renderSwatches(container, current, onPick) {
   if (!container) return;
   container.innerHTML = PALETTE.map((c) =>
-    `<button class="swatch${(current || "") === c.hex ? " on" : ""}" title="${c.name}"
+    `<button class="swatch${(current || "") === c.hex ? " on" : ""}" title="${t(c.name)}"
       data-hex="${c.hex}" style="--sw:${c.hex || "var(--teal)"}"></button>`).join("");
   container.querySelectorAll("[data-hex]").forEach((b) => (b.onclick = () => onPick(b.dataset.hex, b)));
 }
@@ -950,7 +975,7 @@ B.editWrap.addEventListener("click", (e) => { if (e.target === B.editWrap) close
 B.editSave.addEventListener("click", async () => {
   if (!editOnSave) return closeEditor();
   try { await editOnSave(B.editArea.value); closeEditor(); sideSig = ""; brainRefresh(); }
-  catch (e) { toast(String(e).slice(0, 90)); clog("editor save erro: " + e); }
+  catch (e) { toast(tErr(String(e))); clog("editor save error: " + e); }
 });
 $("guideBtn").addEventListener("click", () => openGuideDoc());
 { const ab = $("askBtn"); if (ab) ab.addEventListener("click", askAcervo); }
@@ -960,14 +985,14 @@ $("guideBtn").addEventListener("click", () => openGuideDoc());
 // One function, two entry points: the home card CTA and the sidebar quick action.
 function genContextNow() {
   termRun(LoroBrainstorm.brainContextCmd());
-  toast("gerando contexto no Claude do terminal — acompanhe abaixo", 4000);
+  toast(t("gerando contexto no Claude do terminal — acompanhe abaixo"), 4000);
 }
 {
   const gen = $("queueGenCtx");
   if (gen) gen.addEventListener("click", genContextNow);
 }
 
-const fmtWhen = (ms) => new Date(ms).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+const fmtWhen = (ms) => new Date(ms).toLocaleString(uiLocale(), { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 // editável no app = só pendentes de texto na fila; o resto é gerado pelo loop
 const isEditable = (p) => p.startsWith("inbox/") && /\.(md|txt)$/i.test(p);
 const shortName = (n) => n.replace(/\.(md|txt)$/i, "").replace(/^\d{4}-\d{2}-\d{2}--?/, "");
@@ -991,7 +1016,7 @@ async function brainRefresh() {
   } catch (_) {}
   let st;
   try { st = await invoke("brain_status"); }
-  catch (e) { clog("brain_status erro: " + e); return; }
+  catch (e) { clog("brain_status error: " + e); return; }
   lastSt = st;
   // se não há acervo configurado E não estamos criando um novo → wizard
   const showWizard = (!st.configured || creatingNew);
@@ -1008,7 +1033,7 @@ async function brainRefresh() {
   invoke("brain_git_state").then((g) => {
     B.gitBtn.hidden = !g.available;
     if (g.available) {
-      B.gitBtn.textContent = g.repo ? (g.pending ? `versionar (${g.pending})` : "versionado ✓") : "iniciar git";
+      B.gitBtn.textContent = g.repo ? (g.pending ? `${t("versionar")} (${g.pending})` : `${t("versionado")} ✓`) : t("iniciar git");
       B.gitBtn.classList.toggle("warm", g.repo && g.pending > 0);
     }
   }).catch(() => { B.gitBtn.hidden = true; });
@@ -1017,8 +1042,8 @@ async function brainRefresh() {
   refreshEnv();
   // seletor de contexto do envio (preserva escolha)
   const sel = $("importCtx"), chosen = sel.value;
-  sel.innerHTML = '<option value="">contexto: automático</option>' +
-    st.contexts.map((c) => `<option value="${esc(c.name)}">contexto: ${esc(c.name)}</option>`).join("");
+  sel.innerHTML = `<option value="">${t("contexto")}: ${t("automático")}</option>` +
+    st.contexts.map((c) => `<option value="${esc(c.name)}">${t("contexto")}: ${esc(c.name)}</option>`).join("");
   sel.value = chosen && st.contexts.some((c) => c.name === chosen) ? chosen : "";
   // lateral: só re-renderiza quando os dados mudam (preserva expansões profundas)
   const sig = JSON.stringify([st.inbox.map((f) => f.name), st.contexts, st.reunioes.length, st.notas.length]);
@@ -1038,8 +1063,8 @@ function renderHome(st) {
   const lastAct = (st.activity || "").split("\n")[0].match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2})/);
   const n = st.inbox.length;
   $("bPulse").textContent = n
-    ? `${n} ite${n > 1 ? "ns" : "m"} na fila`
-    : (lastAct ? `em dia · último processamento ${lastAct[1].slice(5)}` : "em dia — envie um relatório do brainstorming ou arquivos");
+    ? `${n} ${n > 1 ? t("itens na fila") : t("item na fila")}`
+    : (lastAct ? `${t("em dia · último processamento")} ${lastAct[1].slice(5)}` : t("em dia — envie um relatório do brainstorming ou arquivos"));
   $("bPulse").classList.toggle("warm", n > 0);
   // card da fila: o CTA só chama quando HÁ o que processar; o card "acende"
   // (borda quente) para o próximo passo ficar evidente sem ler nada.
@@ -1047,8 +1072,8 @@ function renderHome(st) {
   if (gen) {
     gen.disabled = !n;
     gen.title = n
-      ? "Processa a fila com o Claude (/brain-context): cada item vira/atualiza um contexto versionado"
-      : "a fila está vazia — selecione partes no brainstorming ou envie arquivos";
+      ? t("Processa a fila com o Claude (/brain-context): cada item vira/atualiza um contexto versionado")
+      : t("a fila está vazia — selecione partes no brainstorming ou envie arquivos");
   }
   const qc = $("queueCard");
   if (qc) qc.classList.toggle("warm", n > 0);
@@ -1057,10 +1082,10 @@ function renderHome(st) {
   q.innerHTML = st.inbox.length
     ? st.inbox.slice(0, 4).map((f) => {
         const ed = /\.(md|txt)$/i.test(f.name);
-        return `<div class="qrow unsynced" title="não sincronizado (aguardando o loop)"><span class="qname mono" ${ed ? `data-doc="inbox/${esc(f.name)}"` : ""}>${ed ? "✎ " : ""}${esc(f.name)}</span>
-          <button class="rowmenu" data-qmenu="${esc(f.name)}" title="ações">⋯</button></div>`;
-      }).join("") + (st.inbox.length > 4 ? `<div class="bempty">+ ${st.inbox.length - 4} na lateral</div>` : "")
-    : `<div class="bempty">vazia — selecione partes no brainstorming ou arraste arquivos abaixo</div>`;
+        return `<div class="qrow unsynced" title="${t("não sincronizado (aguardando o loop)")}"><span class="qname mono" ${ed ? `data-doc="inbox/${esc(f.name)}"` : ""}>${ed ? "✎ " : ""}${esc(f.name)}</span>
+          <button class="rowmenu" data-qmenu="${esc(f.name)}" title="${t("ações")}">⋯</button></div>`;
+      }).join("") + (st.inbox.length > 4 ? `<div class="bempty">+ ${st.inbox.length - 4} ${t("na lateral")}</div>` : "")
+    : `<div class="bempty">${t("vazia — selecione partes no brainstorming ou arraste arquivos abaixo")}</div>`;
   q.querySelectorAll("[data-doc]").forEach((el2) => (el2.onclick = () => openDoc(el2.dataset.doc)));
   q.querySelectorAll("[data-qmenu]").forEach((el2) => (el2.onclick = (e) => { e.stopPropagation(); openQueueMenu(el2, el2.dataset.qmenu); }));
   // contextos mais ativos (barras)
@@ -1072,7 +1097,7 @@ function renderHome(st) {
         <span class="htrack"><span class="hfill" style="width:${Math.round(((c.entries + c.ideas) / max) * 100)}%"></span></span>
         <span class="hval mono">${c.entries}${c.ideas ? ` <i>+${c.ideas}🌱</i>` : ""}</span>
       </div>`).join("")
-    : `<div class="bempty">os guias crescem conforme o loop processa</div>`;
+    : `<div class="bempty">${t("os guias crescem conforme o loop processa")}</div>`;
   $("homeBars").querySelectorAll("[data-hctx]").forEach((el2) =>
     (el2.onclick = () => openDoc(`contextos/${el2.dataset.hctx}/context.md`)));
   // atividade como feed
@@ -1084,7 +1109,7 @@ function renderHome(st) {
         const txt = m ? m[3] : l;
         return `<div class="fitem"><span class="fdot"></span><span class="ftime mono">${esc(time)}</span><span class="ftxt">${esc(txt)}</span></div>`;
       }).join("")
-    : `<div class="bempty">o loop ainda não rodou — use /loop 1h /brain no Claude Code</div>`;
+    : `<div class="bempty">${t("o loop ainda não rodou — use /loop 1h /brain no Claude Code")}</div>`;
 }
 
 // ---- ícones Material (SVG inline, monocromático via currentColor) ----
@@ -1154,14 +1179,14 @@ function renderCtxNode(node) {
   const nctx = node.isCtx ? (lastSt ? lastSt.contexts : []).find((c) => c.name === node.path) : null;
   // em vez da contagem de entradas do CHANGELOG (confundia), um ponto quando há
   // mudança não commitada na subárvore deste contexto (ADR-0007).
-  const dot = ctxDirty(node.path) ? `<span class="gdot" title="mudanças não commitadas">●</span>` : "";
+  const dot = ctxDirty(node.path) ? `<span class="gdot" title="${t("mudanças não commitadas")}">●</span>` : "";
   const pills = (node.isCtx && nctx && nctx.seeded === false
-    ? `<span class="pill soft" title="pasta nova — clique para estruturar">novo</span>` : "") + dot;
+    ? `<span class="pill soft" title="${t("pasta nova — clique para estruturar")}">${t("novo")}</span>` : "") + dot;
   const attr = node.isCtx ? `data-ctx="${esc(node.path)}"` : `data-fold="${esc(node.path)}"`;
   const kids = [...node.children.values()].sort((x, y) => x.seg.localeCompare(y.seg)).map(renderCtxNode).join("");
   const holder = node.isCtx ? `<div class="bchild" data-ctxchild="${esc(node.path)}" ${open ? "" : "hidden"}></div>` : "";
   const arch = `<button class="rowmenu" data-cmenu="${esc(node.path)}" data-isctx="${node.isCtx ? 1 : 0}"
-      title="ações (${node.isCtx ? "contexto" : "pasta"}: renomear, mover, deletar)">⋯</button>`;
+      title="${t("ações")} (${node.isCtx ? t("contexto") : t("pasta")}: ${t("renomear, mover, deletar")})">⋯</button>`;
   return `<div class="bitem ${node.isCtx ? "ctx" : "grp"}${open ? " open" : ""}" ${attr} title="${esc(node.path)}">
       <span class="tw">${tw}</span>${icon}<span class="bn">${esc(node.seg)}</span>${pills}${arch}
     </div>
@@ -1176,18 +1201,18 @@ function renderSidebar(st) {
     ? st.inbox.map((f) => {
         const ed = /\.(md|txt)$/i.test(f.name);
         return `<div class="bitem file unsynced${ed ? " ed" : ""}" data-doc="inbox/${esc(f.name)}"
-          title="${ed ? "não sincronizado — clique para editar" : "não sincronizado (aguardando o loop)"}">${ico("file")}<span class="bn">${esc(f.name)}</span>
-          <button class="rowmenu" data-qmenu="${esc(f.name)}" data-move="${esc(f.name)}" title="ações">⋯</button></div>`;
+          title="${ed ? t("não sincronizado — clique para editar") : t("não sincronizado (aguardando o loop)")}">${ico("file")}<span class="bn">${esc(f.name)}</span>
+          <button class="rowmenu" data-qmenu="${esc(f.name)}" data-move="${esc(f.name)}" title="${t("ações")}">⋯</button></div>`;
       }).join("") +
-      `<div class="bitem addctx" data-genctx title="Processa a fila com o Claude (/brain-context)">▶ gerar contexto</div>`
-    : `<div class="bempty">vazia — envie um relatório ou arquivos para gerar contexto</div>`;
+      `<div class="bitem addctx" data-genctx title="${t("Processa a fila com o Claude (/brain-context)")}">▶ ${t("gerar contexto")}</div>`
+    : `<div class="bempty">${t("vazia — envie um relatório ou arquivos para gerar contexto")}</div>`;
   // contextos como ÁRVORE: pastas/áreas agrupam; contextos reais abrem o guia.
   // A criação lidera a lista (creation-first UX, 2026-07-28).
   B.navCtx.innerHTML =
-    `<div class="bitem addctx" data-addctx title="Criar um novo contexto">＋ novo contexto</div>` +
+    `<div class="bitem addctx" data-addctx title="${t("Criar um novo contexto")}">＋ ${t("novo contexto")}</div>` +
     (st.contexts.length
       ? renderCtxForest(buildCtxTree(st.contexts))
-      : `<div class="bempty">nenhum contexto ainda — crie o primeiro para organizar o conhecimento</div>`);
+      : `<div class="bempty">${t("nenhum contexto ainda — crie o primeiro para organizar o conhecimento")}</div>`);
   // fontes agrupadas por mês (escala p/ listas grandes)
   B.navSources.innerHTML = [["reunioes", st.reunioes], ["notas", st.notas]].map(([kind, files]) => {
     if (!files.length) return "";
@@ -1202,9 +1227,9 @@ function renderSidebar(st) {
         `</div>`;
     }).join("");
     return `<div class="bitem ctx${kOpen ? " open" : ""}" data-toggle="${kKey}">
-        ${ico(kind === "reunioes" ? "meeting" : "note", "ac")}<span class="bn">${kind === "reunioes" ? "reuniões" : "notas"}</span><span class="pill">${files.length}</span></div>
+        ${ico(kind === "reunioes" ? "meeting" : "note", "ac")}<span class="bn">${kind === "reunioes" ? t("reuniões") : t("notas")}</span><span class="pill">${files.length}</span></div>
       <div class="bchild" ${kOpen ? "" : "hidden"}>${inner}</div>`;
-  }).join("") || `<div class="bempty">reuniões e notas aparecem aqui quando o loop processar a fila</div>`;
+  }).join("") || `<div class="bempty">${t("reuniões e notas aparecem aqui quando o loop processar a fila")}</div>`;
   wireSidebar();
   // re-carrega filhos dos contextos abertos
   for (const c of st.contexts) if (bOpen.has("ctx:" + c.name)) loadCtxChildren(c.name);
@@ -1280,7 +1305,7 @@ function wireDrag() {
       const name = e.dataTransfer.getData("text/loro");
       if (!name) return;
       try { await invoke("brain_move_to_acervo", { name, targetId: activeAcervo, context: el2.dataset.ctx }); toast(`→ ${el2.dataset.ctx}`); sideSig = ""; brainRefresh(); }
-      catch (err) { toast(String(err).slice(0, 90)); }
+      catch (err) { toast(tErr(String(err))); }
     });
   });
 }
@@ -1294,7 +1319,7 @@ async function loadCtxChildren(name) {
   // subpastas que já são subdomínios (contextos) aparecem na ÁRVORE de contextos;
   // não as repetimos aqui como "pasta" — visualização única (ADR-0007).
   const ctxSet = new Set((lastSt && lastSt.contexts ? lastSt.contexts : []).map((c) => c.name));
-  const pretty = { "context.md": "contexto do domínio", "guia.md": "guia do domínio", "CHANGELOG.md": "histórico", CODEOWNERS: "donos", brainstorming: "brainstorming", incubadora: "brainstorming", referencias: "referências" };
+  const pretty = { "context.md": t("contexto do domínio"), "guia.md": t("guia do domínio"), "CHANGELOG.md": t("histórico"), CODEOWNERS: t("donos"), brainstorming: "brainstorming", incubadora: "brainstorming", referencias: t("referências") };
   const order = (n) => n === "context.md" ? 0 : n === "guia.md" ? 0 : n === "CHANGELOG.md" ? 1 : n === "referencias" ? 2 : 3;
   entries.sort((a, b) => order(a.name) - order(b.name) || a.name.localeCompare(b.name));
   let html = "";
@@ -1311,7 +1336,7 @@ async function loadCtxChildren(name) {
       html += `<div class="bitem file ${gitClass(en.path)}" data-doc="${esc(en.path)}">${ico(fileIcon(en.name, false))}<span class="bn">${esc(pretty[en.name] || en.name)}</span></div>`;
     }
   }
-  holder.innerHTML = html || `<div class="bempty">vazio</div>`;
+  holder.innerHTML = html || `<div class="bempty">${t("vazio")}</div>`;
   wireSidebar();
   markSel();
 }
@@ -1339,24 +1364,24 @@ async function refreshPessoal() {
 function renderPessoal(temas, avulso) {
   // criação em primeiro lugar: a ação primária do grupo fica no topo, não
   // escondida depois da lista (decisão de UX, 2026-07-28)
-  let html = `<div class="bitem addctx" data-addtema title="Criar um novo brainstorming">＋ novo brainstorming</div>`;
+  let html = `<div class="bitem addctx" data-addtema title="${t("Criar um novo brainstorming")}">＋ ${t("novo brainstorming")}</div>`;
   if (temas.length || avulso.length) {
     // group brainstormings by their optional categoria (uncategorized last)
-    for (const grp of LoroBrainstorm.groupByCategoria(temas)) {
-      if (grp.categoria !== "Sem categoria" || LoroBrainstorm.groupByCategoria(temas).length > 1) {
-        html += `<div class="bcat">${esc(grp.categoria)}</div>`;
+    for (const grp of LoroBrainstorm.groupByCategory(temas)) {
+      if (grp.categoria !== "Sem categoria" || LoroBrainstorm.groupByCategory(temas).length > 1) {
+        html += `<div class="bcat">${esc(grp.categoria === "Sem categoria" ? t("Sem categoria") : grp.categoria)}</div>`;
       }
       html += grp.items.map(renderTemaNode).join("");
     }
     if (avulso.length) {
       const key = "pes:avulso", open = bOpen.has(key);
-      html += `<div class="bitem ctx${open ? " open" : ""}" data-pestoggle="${key}">${ico("note", "ac")}<span class="bn">avulso</span><span class="pill">${avulso.length}</span></div>` +
+      html += `<div class="bitem ctx${open ? " open" : ""}" data-pestoggle="${key}">${ico("note", "ac")}<span class="bn">${t("avulso")}</span><span class="pill">${avulso.length}</span></div>` +
         `<div class="bchild" ${open ? "" : "hidden"}>` +
         avulso.map((f) => `<div class="bitem file" data-doc="${esc(f.path)}" title="${esc(f.name)}">${ico("file")}<span class="bn">${esc(shortName(f.name))}</span></div>`).join("") +
         `</div>`;
     }
   } else {
-    html += `<div class="bempty">nenhum brainstorming ainda — crie o primeiro para reunir reuniões e notas</div>`;
+    html += `<div class="bempty">${t("nenhum brainstorming ainda — crie o primeiro para reunir reuniões e notas")}</div>`;
   }
   B.navPessoal.innerHTML = html;
   wirePessoal();
@@ -1368,7 +1393,7 @@ function renderTemaNode(t) {
   const pill = t.reunioes ? `<span class="pill">${t.reunioes}</span>` : "";
   return `<div class="bitem ctx${open ? " open" : ""}" data-tema="${esc(t.slug)}" title="${esc(t.nome || t.slug)}">` +
     `${ico("idea", "ac")}<span class="bn">${esc(t.nome || t.slug)}</span>${pill}` +
-    `<button class="rowmenu" data-bsmenu="${esc(t.slug)}" title="ações do brainstorming">⋯</button></div>${holder}`;
+    `<button class="rowmenu" data-bsmenu="${esc(t.slug)}" title="${window.LoroI18n.t("ações do brainstorming")}">⋯</button></div>${holder}`;
 }
 // Dentro de um brainstorming a árvore é PLANA (revisão de UX sobre o ADR-0013):
 // as reuniões aparecem direto no nível do brainstorming — com os artefatos de
@@ -1380,11 +1405,11 @@ function renderTemaNode(t) {
 // A meeting row carries a ⋯ menu (renomear/apagar); files keep the plain ×.
 function bsPartRow(kind, openRel, selRel, label, title, indent, meetingId) {
   const act = meetingId
-    ? `<button class="rowmenu" data-mtgmenu="${esc(selRel)}" data-mtgid="${esc(meetingId)}" data-mtgtitle="${esc(label)}" title="ações da reunião (renomear, apagar)">⋯</button>`
-    : `<button class="rowmenu danger" data-delpessoal="${esc(selRel)}" title="apagar">×</button>`;
+    ? `<button class="rowmenu" data-mtgmenu="${esc(selRel)}" data-mtgid="${esc(meetingId)}" data-mtgtitle="${esc(label)}" title="${t("ações da reunião (renomear, apagar)")}">⋯</button>`
+    : `<button class="rowmenu danger" data-delpessoal="${esc(selRel)}" title="${t("apagar")}">×</button>`;
   const icon = kind === "reuniao" ? "meeting" : kind === "nota" ? "note" : "file";
   return `<div class="bitem file${indent ? " bsub" : ""}" data-doc="${esc(openRel)}" title="${esc(title)}">` +
-    `<input type="checkbox" class="bschk" data-bssel="${esc(selRel)}" data-bskind="${kind}" title="selecionar para a fila">` +
+    `<input type="checkbox" class="bschk" data-bssel="${esc(selRel)}" data-bskind="${kind}" title="${t("selecionar para a fila")}">` +
     `${ico(icon)}<span class="bn">${esc(label)}</span>` + act + `</div>`;
 }
 async function loadTemaChildren(slug) {
@@ -1395,8 +1420,8 @@ async function loadTemaChildren(slug) {
   let inner = "";
   for (const m of meetings) {
     // título do manifest (renomeável); cai para o id humanizado quando ausente
-    const t = LM.meetingTitleFromManifest({ titulo: m.titulo }, m.id);
-    const label = t === m.id ? LM.meetingLabel(m.id) : t;
+    const title = LM.meetingTitleFromManifest({ titulo: m.titulo }, m.id);
+    const label = title === m.id ? LM.meetingLabel(m.id, settings.uiLang) : title;
     inner += bsPartRow("reuniao", `${m.rel}/reuniao.md`, m.rel, label, m.id, false, m.id);
     for (const [asub, akind] of [["investigacoes", "investigacao"], ["respostas", "nota"]]) {
       let arts = [];
@@ -1409,11 +1434,11 @@ async function loadTemaChildren(slug) {
   try { notas = ((await invoke("brain_list_dir", { rel: `brainstorming/${slug}/notas` })) || []).filter((f) => !f.dir); }
   catch (_) {}
   if (!meetings.length && !notas.length) {
-    inner += `<div class="bempty">vazio — grave uma reunião (●) ou escreva uma nota</div>`;
+    inner += `<div class="bempty">${t("vazio — grave uma reunião (●) ou escreva uma nota")}</div>`;
   }
-  if (notas.length) inner += `<div class="bcat">notas</div>`;
+  if (notas.length) inner += `<div class="bcat">${t("notas")}</div>`;
   // A criação lidera a lista (creation-first UX, 2026-07-28).
-  inner += `<div class="bitem addctx" data-addnota="${esc(slug)}" title="Escrever uma nota neste brainstorming">＋ nova nota</div>`;
+  inner += `<div class="bitem addctx" data-addnota="${esc(slug)}" title="${t("Escrever uma nota neste brainstorming")}">＋ ${t("nova nota")}</div>`;
   for (const f of notas) inner += bsPartRow("nota", f.path, f.path, shortName(f.name), f.name, false);
   holder.innerHTML = inner;
   wirePessoal();
@@ -1479,7 +1504,7 @@ function promptNewNota(slug, anchor) {
   notaEditing = true;
   const inp = document.createElement("input");
   inp.className = "bnewctx";
-  inp.placeholder = "título da nota (Enter)";
+  inp.placeholder = t("título da nota (Enter)");
   anchor.before(inp); inp.focus();
   const done = () => { inp.remove(); notaEditing = false; };
   inp.addEventListener("keydown", async (e) => {
@@ -1491,7 +1516,7 @@ function promptNewNota(slug, anchor) {
       const rel = await invoke("brain_new_notebook", { tema: slug, titulo });
       done(); pessoalSig = ""; refreshPessoal();
       if (rel) openDoc(rel, { preview: false });
-    } catch (err) { toast(String(err).slice(0, 80)); }
+    } catch (err) { toast(tErr(String(err))); }
   });
   inp.addEventListener("blur", done);
 }
@@ -1502,9 +1527,9 @@ function openBsMenu(slug, anchor) {
   B.acervoMenu.hidden = true;
   B.bMenu.innerHTML =
     `<div class="fhead">${esc(slug)}</div>` +
-    `<div class="fitem2" data-ren><span class="fn">renomear</span></div>` +
-    `<div class="fitem2" data-toqueue><span class="fn">gerar relatório de tudo → fila</span></div>` +
-    `<div class="fitem2 danger" data-del><span class="fn">apagar brainstorming</span></div>`;
+    `<div class="fitem2" data-ren><span class="fn">${t("renomear")}</span></div>` +
+    `<div class="fitem2" data-toqueue><span class="fn">${t("gerar relatório de tudo → fila")}</span></div>` +
+    `<div class="fitem2 danger" data-del><span class="fn">${t("apagar brainstorming")}</span></div>`;
   B.bMenu.querySelector("[data-ren]").onclick = () => { closeFloat(); promptRenameBs(slug); };
   B.bMenu.querySelector("[data-toqueue]").onclick = () => { closeFloat(); sendBrainstormToQueue(slug, []); };
   B.bMenu.querySelector("[data-del]").onclick = () => { closeFloat(); delPessoal("brainstorming/" + slug, "tema"); };
@@ -1518,19 +1543,19 @@ function openBsMenu(slug, anchor) {
 // (same reason pickMeeting/askMeetingAnswer use openModal).
 function promptRenameBs(slug) {
   openModal(
-    "Renomear brainstorming",
-    `<label class="wfield"><span class="mono">nome</span>` +
+    t("Renomear brainstorming"),
+    `<label class="wfield"><span class="mono">${t("nome")}</span>` +
       `<input id="bsRenInput" type="text" value="${esc(slug)}" spellcheck="false"></label>`,
-    "renomear",
+    t("renomear"),
     async () => {
       const nome = (($("bsRenInput") && $("bsRenInput").value) || "").trim();
-      if (!nome) { toast("informe um nome"); return; }
+      if (!nome) { toast(t("informe um nome")); return; }
       try {
         const r = await invoke("brain_rename_brainstorm", { slug, nome });
         pessoalSig = ""; refreshPessoal();
         if (r && r.rel) openDoc(`${r.rel}/indice.md`, { preview: false });
-        toast("renomeado");
-      } catch (e) { toast("não renomeei: " + String(e).slice(0, 80)); }
+        toast(t("renomeado"));
+      } catch (e) { toast(t("não renomeei") + ": " + tErr(String(e))); }
     }
   );
   const inp = $("bsRenInput"); if (inp) { inp.focus(); inp.select(); }
@@ -1542,8 +1567,8 @@ function openMeetingMenu(rel, id, title, anchor) {
   B.acervoMenu.hidden = true;
   B.bMenu.innerHTML =
     `<div class="fhead">${esc(title)}</div>` +
-    `<div class="fitem2" data-ren><span class="fn">✎ renomear</span></div>` +
-    `<div class="fitem2 danger" data-del><span class="fn">apagar reunião</span></div>`;
+    `<div class="fitem2" data-ren><span class="fn">✎ ${t("renomear")}</span></div>` +
+    `<div class="fitem2 danger" data-del><span class="fn">${t("apagar reunião")}</span></div>`;
   B.bMenu.querySelector("[data-ren]").onclick = () => { closeFloat(); promptRenameMeeting(id, title); };
   B.bMenu.querySelector("[data-del]").onclick = () => { closeFloat(); delPessoal(rel, "reuniao"); };
   placeMenu(anchor);
@@ -1551,20 +1576,20 @@ function openMeetingMenu(rel, id, title, anchor) {
 
 function promptRenameMeeting(id, current) {
   openModal(
-    "Renomear reunião",
-    `<label class="wfield"><span class="mono">título</span>` +
+    t("Renomear reunião"),
+    `<label class="wfield"><span class="mono">${t("título")}</span>` +
       `<input id="mtgRenInput" type="text" value="${esc(current)}" spellcheck="false"></label>`,
-    "renomear",
+    t("renomear"),
     async () => {
       const titulo = (($("mtgRenInput") && $("mtgRenInput").value) || "").trim();
-      if (!titulo) { toast("informe um título"); return; }
+      if (!titulo) { toast(t("informe um título")); return; }
       try {
         await invoke("brain_meeting_rename", { input: { id, titulo } });
-        toast("reunião renomeada");
+        toast(t("reunião renomeada"));
         pessoalSig = ""; refreshPessoal();
-        const t = activeTab();
-        if (t && LM.meetingDir(t.rel)) renderActive(); // heading da aba aberta
-      } catch (e) { toast("não renomeei: " + String(e).slice(0, 80)); }
+        const tb = activeTab();
+        if (tb && LM.meetingDir(tb.rel)) renderActive(); // heading da aba aberta
+      } catch (e) { toast(t("não renomeei") + ": " + tErr(String(e))); }
     }
   );
   const inp = $("mtgRenInput"); if (inp) { inp.focus(); inp.select(); }
@@ -1579,9 +1604,9 @@ async function sendBrainstormToQueue(slug, selection) {
       openDoc(out.rel, { preview: false });                 // the report is visible
       await invoke("brain_send_report_to_queue", { reportRel: out.rel, destContext: null });
       pessoalSig = ""; refreshPessoal(); sideSig = ""; brainRefresh();
-      toast("relatório na fila de geração de contexto");
+      toast(t("relatório na fila de geração de contexto"));
     }
-  } catch (e) { toast("não enviei: " + String(e).slice(0, 80)); clog("build_report/send erro: " + e); }
+  } catch (e) { toast(t("não enviei") + ": " + tErr(String(e))); clog("build_report/send error: " + e); }
 }
 
 // The selected parts across the tree -> their SelItem list (kind read from the
@@ -1594,7 +1619,7 @@ async function sendSelectionToQueue() {
   if (!sel.length) return;
   // all selected parts belong to the open brainstorming; derive its slug
   const m = /^brainstorming\/([^/]+)\//.exec(sel[0].rel);
-  if (!m) { toast("seleção inválida"); return; }
+  if (!m) { toast(t("seleção inválida")); return; }
   await sendBrainstormToQueue(m[1], sel);
   bsSelection = new Set(); renderSelectionBar();
 }
@@ -1609,9 +1634,9 @@ function renderSelectionBar() {
     bar.id = "bsSelBar"; bar.className = "bsselbar";
     B.navPessoal.after(bar);
   }
-  bar.innerHTML = `<span>${bsSelection.size} selecionado(s)</span>` +
-    `<button class="abtn" id="bsSelSend" title="Gera um relatório consolidado das partes escolhidas e o envia para a fila de geração de contexto">enviar para a fila →</button>` +
-    `<button class="abtn ghost" id="bsSelClear">limpar</button>`;
+  bar.innerHTML = `<span>${bsSelection.size} ${t("selecionado(s)")}</span>` +
+    `<button class="abtn" id="bsSelSend" title="${t("Gera um relatório consolidado das partes escolhidas e o envia para a fila de geração de contexto")}">${t("enviar para a fila")} →</button>` +
+    `<button class="abtn ghost" id="bsSelClear">${t("limpar")}</button>`;
   $("bsSelSend").onclick = sendSelectionToQueue;
   $("bsSelClear").onclick = () => { bsSelection = new Set(); wirePessoal(); renderSelectionBar(); };
 }
@@ -1619,16 +1644,16 @@ function renderSelectionBar() {
 // Apaga um item do mundo brainstorming (arquivo, reunião ou brainstorming inteiro).
 // Confinado a brainstorming/ no backend (nunca toca contextos/ versionado).
 async function delPessoal(rel, kind) {
-  const what = kind === "tema" ? "o brainstorming e TODO o seu conteúdo"
-    : kind === "reuniao" ? "a reunião e todos os seus arquivos (transcrição, relatório, artefatos)"
-    : "este item";
-  if (!confirm(`Apagar ${what}? Não pode ser desfeito.`)) return;
+  const what = kind === "tema" ? t("o brainstorming e TODO o seu conteúdo")
+    : kind === "reuniao" ? t("a reunião e todos os seus arquivos (transcrição, relatório, artefatos)")
+    : t("este item");
+  if (!confirm(`${t("Apagar")} ${what}? ${t("Não pode ser desfeito.")}`)) return;
   try {
     await invoke("brain_brainstorm_delete", { input: { rel } });
     closeTabsUnder(rel);
-    toast("apagado");
+    toast(t("apagado"));
     pessoalSig = ""; refreshPessoal();
-  } catch (e) { toast("não apaguei: " + String(e).slice(0, 80)); clog("brain_brainstorm_delete erro: " + e); }
+  } catch (e) { toast(t("não apaguei") + ": " + tErr(String(e))); clog("brain_brainstorm_delete error: " + e); }
 }
 
 // ---- workspace selectors (ADR-0008) ----
@@ -1657,12 +1682,12 @@ function renderTabs() {
     if (tab.id === active) cls.push("on");
     if (tab.preview) cls.push("preview");
     if (home) cls.push("home");
-    const title = home ? "visão geral" : esc(tab.title);
-    const dot = tab.dirty ? `<span class="wsdot" title="alterações não salvas">●</span>` : "";
-    const close = home ? "" : `<button class="wsclose" data-close="${tab.id}" title="fechar (⌘/Ctrl+W)" aria-label="fechar">×</button>`;
+    const title = home ? t("visão geral") : esc(tab.title);
+    const dot = tab.dirty ? `<span class="wsdot" title="${t("alterações não salvas")}">●</span>` : "";
+    const close = home ? "" : `<button class="wsclose" data-close="${tab.id}" title="${t("fechar")} (⌘/Ctrl+W)" aria-label="${t("fechar")}">×</button>`;
     const glyph = home ? "⌂ " : "";
     return `<div class="${cls.join(" ")}" data-tab="${tab.id}" draggable="${home ? "false" : "true"}"
-        title="${esc(tab.rel === HOME_REL ? "visão geral" : tab.rel)}"><span class="wsn">${glyph}${title}</span>${dot}${close}</div>`;
+        title="${esc(tab.rel === HOME_REL ? t("visão geral") : tab.rel)}"><span class="wsn">${glyph}${title}</span>${dot}${close}</div>`;
   }).join("");
   wireTabs();
 }
@@ -1696,7 +1721,7 @@ function reorderTab(dragId, overId) {
 function closeTabById(id) {
   const tab = ws.tabs.find((t) => t.id === id);
   if (!tab || tab.rel === HOME_REL) return; // Home is non-closable
-  if (tab.dirty && !window.confirm(`Descartar alterações não salvas de "${tab.title}"?`)) return;
+  if (tab.dirty && !window.confirm(`${t("Descartar alterações não salvas de")} "${tab.title}"?`)) return;
   const h = cmById.get(id);
   if (h) { try { h.destroy(); } catch (_) {} }
   cmById.delete(id); savedById.delete(id); fmById.delete(id);
@@ -1747,18 +1772,18 @@ function setupWorkspace() {
 B.navHome.addEventListener("click", openHome);
 
 function docBadge(p, isGuide) {
-  if (isGuide) return ["instruções do loop — aplicadas antes de processar", "ok"];
-  if (p.startsWith("inbox/")) return ["pendente — será processado pelo loop", "ok"];
-  if (p.endsWith("guia.md")) return ["formato antigo — migre para context.md", "warn2"];
-  if (p.endsWith("CHANGELOG.md")) return ["histórico (append-only)", "ro"];
-  return ["documento do acervo", "ro"];
+  if (isGuide) return [t("instruções do loop — aplicadas antes de processar"), "ok"];
+  if (p.startsWith("inbox/")) return [t("pendente — será processado pelo loop"), "ok"];
+  if (p.endsWith("guia.md")) return [t("formato antigo — migre para context.md"), "warn2"];
+  if (p.endsWith("CHANGELOG.md")) return [t("histórico (append-only)"), "ro"];
+  return [t("documento do acervo"), "ro"];
 }
 // Versioning (git) badge — only on context tabs; a pessoal/ tab never surfaces
 // any git state (ADR-0008, LoroWorld.gitVisible).
 function setDocGit(p, kind, isGuide) {
   if (isGuide || !LoroWorld.gitVisible(kind)) { B.gitBadge.hidden = true; return; }
   const cls = gitClass(p);
-  const map = { "g-new": "novo (não versionado)", "g-mod": "modificado", "g-del": "apagado" };
+  const map = { "g-new": t("novo (não versionado)"), "g-mod": t("modificado"), "g-del": t("apagado") };
   if (cls && map[cls]) { B.gitBadge.hidden = false; B.gitBadge.textContent = map[cls]; B.gitBadge.className = "mono badge " + cls; }
   else B.gitBadge.hidden = true;
 }
@@ -1802,9 +1827,9 @@ async function saveTab(id, value) {
     savedById.set(id, value);
     ws = LoroWorkspace.markDirty(ws, id, false);
     renderTabs();
-    toast("salvo");
+    toast(t("salvo"));
     sideSig = ""; brainRefresh();
-  } catch (e) { toast(String(e).slice(0, 90)); clog("save doc erro: " + e); }
+  } catch (e) { toast(tErr(String(e))); clog("save doc error: " + e); }
 }
 function saveActive() {
   const t = activeTab();
@@ -1816,7 +1841,7 @@ async function mountEditor(tab) {
   let h = cmById.get(tab.id);
   if (!h) {
     let raw;
-    try { raw = await readDoc(tab.rel); } catch (e) { toast("não foi possível abrir"); clog("readDoc erro: " + e); return; }
+    try { raw = await readDoc(tab.rel); } catch (e) { toast(t("não foi possível abrir")); clog("readDoc error: " + e); return; }
     if (ws.activeId !== tab.id) return; // a faster switch won the race
     savedById.set(tab.id, raw);
     h = window.LoroCM6.create({
@@ -1841,12 +1866,12 @@ async function renderView(tab) {
   if (h) raw = h.getValue(); // an edited-but-not-saved buffer wins over disk
   else {
     try { raw = await readDoc(tab.rel); }
-    catch (e) { toast("não foi possível abrir"); clog("brain_read erro: " + e); return; }
+    catch (e) { toast(t("não foi possível abrir")); clog("brain_read error: " + e); return; }
     if (ws.activeId !== tab.id) return; // a faster switch won the race
     savedById.set(tab.id, raw);
   }
   const fallback = tab.rel === GUIDE_REL
-    ? "_Sem instruções ainda. Escreva orientações que o loop seguirá antes de processar a fila._"
+    ? t("_Sem instruções ainda. Escreva orientações que o loop seguirá antes de processar a fila._")
     : "";
   B.editHost.hidden = true;
   B.doc.hidden = false;
@@ -1880,7 +1905,7 @@ function renderRefsPanel(fm) {
       `<span class="reftipo mono">${esc(tipo)}</span><span class="refname">${esc(name)}</span></a></li>`;
   }).join("");
   if (!rows) return "";
-  return `<details class="refspanel" open><summary>Referências <span class="mono">(${all.length})</span></summary>` +
+  return `<details class="refspanel" open><summary>${t("Referências")} <span class="mono">(${all.length})</span></summary>` +
     `<ul class="reflist">${rows}</ul></details>`;
 }
 
@@ -1953,8 +1978,8 @@ function paintMeetingSurface(id, raw, manifest, status, artefatos) {
   const preview = status === "recording" && meeting.id === id && meeting.tailStatus
     ? `<p class="mtg-preview mono">${esc(meeting.tailStatus)}</p>` : "";
   const emptyMsg = status === "recording"
-    ? `<p class="bempty">gravando — o preview ao vivo aparece a cada ~18s conforme houver fala.</p>`
-    : `<p class="bempty">sem transcrição — não houve fala capturada nesta reunião.</p>`;
+    ? `<p class="bempty">${t("gravando — o preview ao vivo aparece a cada ~18s conforme houver fala.")}</p>`
+    : `<p class="bempty">${t("sem transcrição — não houve fala capturada nesta reunião.")}</p>`;
   B.doc.innerHTML =
     `<div class="mtg-surface">` +
       `<div class="mtg-doc">${meetingStatusBar(status)}${preview}` +
@@ -1967,8 +1992,8 @@ function paintMeetingSurface(id, raw, manifest, status, artefatos) {
 }
 
 function meetingStatusBar(status) {
-  const map = { recording: ["gravando", "rec"], transcribing: ["transcrevendo…", "warn"], done: ["concluída", "ok"] };
-  const [txt, cls] = map[status] || ["concluída", "ok"];
+  const map = { recording: [t("gravando"), "rec"], transcribing: [t("transcrevendo…"), "warn"], done: [t("concluída"), "ok"] };
+  const [txt, cls] = map[status] || [t("concluída"), "ok"];
   return `<div class="mtg-status ${cls}"><span class="mtg-statusdot"></span><span class="mono">${esc(txt)}</span></div>`;
 }
 
@@ -1985,15 +2010,15 @@ function meetingRailHtml(id) {
       `<p class="mtg-note mono">${note}</p>` +
     `</div>`;
   return `<div class="mtg-railsec mtg-analise">` +
-    `<div class="mtg-railhead mono">o que fazer com esta reunião</div>` +
-    action("", "mtgAnalyseBtn", "analisar",
-      "O Claude lê a transcrição e o contexto local primeiro, aponta tema, decisões, riscos e dúvidas, e escreve o relatório.") +
-    action("", "mtgAnswerBtn", "responder…",
-      "Faça uma pergunta sobre a reunião — a resposta é ancorada no que foi dito e no contexto local.") +
-    action("ghost", "mtgReportBtn", "ver relatório",
-      "Abre o relatório desta reunião (resumo, decisões, dúvidas, investigações).") +
-    action("cta", "mtgQueueBtn", "enviar para a fila →",
-      "Gera um relatório consolidado desta reunião e o coloca na fila de geração de contexto (próximo passo do fluxo).") +
+    `<div class="mtg-railhead mono">${t("o que fazer com esta reunião")}</div>` +
+    action("", "mtgAnalyseBtn", t("analisar"),
+      t("O Claude lê a transcrição e o contexto local primeiro, aponta tema, decisões, riscos e dúvidas, e escreve o relatório.")) +
+    action("", "mtgAnswerBtn", t("responder…"),
+      t("Faça uma pergunta sobre a reunião — a resposta é ancorada no que foi dito e no contexto local.")) +
+    action("ghost", "mtgReportBtn", t("ver relatório"),
+      t("Abre o relatório desta reunião (resumo, decisões, dúvidas, investigações).")) +
+    action("cta", "mtgQueueBtn", `${t("enviar para a fila")} →`,
+      t("Gera um relatório consolidado desta reunião e o coloca na fila de geração de contexto (próximo passo do fluxo).")) +
     `</div>`;
 }
 
@@ -2008,7 +2033,7 @@ function wireMeetingSurface(id) {
   if (queueBtn) queueBtn.onclick = () => {
     const dir = currentMeetingDir(id);
     const m = dir && /^brainstorming\/([^/]+)\//.exec(dir);
-    if (!m) { toast("abra a reunião para enviar"); return; }
+    if (!m) { toast(t("abra a reunião para enviar")); return; }
     sendBrainstormToQueue(m[1], [{ kind: "reuniao", rel: dir }]);
   };
 }
@@ -2030,11 +2055,11 @@ function currentMeetingDir(id) {
 // list only reflects app-written artifacts).
 function runMeetingSkill(kind, id, question) {
   const dir = currentMeetingDir(id);
-  if (!dir) { toast("abra a reunião para analisar"); return; }
+  if (!dir) { toast(t("abra a reunião para analisar")); return; }
   const cmd = LM.meetingSkillCmd(kind, dir, question);
-  if (!cmd) { toast("digite uma pergunta"); return; }
+  if (!cmd) { toast(t("digite uma pergunta")); return; }
   termRun(cmd);
-  toast(kind === "answer" ? "pergunta enviada ao Claude do terminal" : "análise enviada ao Claude do terminal", 4000);
+  toast(kind === "answer" ? t("pergunta enviada ao Claude do terminal") : t("análise enviada ao Claude do terminal"), 4000);
   // A skill write is async and IPC-free (no pessoal-changed event), so nudge a
   // couple of tree/surface refreshes to reveal the artefatos it produces.
   scheduleMeetingSkillRefresh(id);
@@ -2049,16 +2074,16 @@ function scheduleMeetingSkillRefresh(id) {
 // shared modal (window.prompt is unreliable in the webview) mirroring pickMeeting.
 function askMeetingAnswer(id) {
   const dir = currentMeetingDir(id);
-  if (!dir) { toast("abra a reunião para responder"); return; }
+  if (!dir) { toast(t("abra a reunião para responder")); return; }
   openModal(
-    "Perguntar sobre a reunião",
-    `<p class="pmnote mono">a pergunta roda no Claude do terminal (ADR-0012); a resposta aparece lá e em artefatos/respostas.</p>` +
-      `<label class="wfield"><span class="mono">pergunta</span>` +
-      `<input id="mtgQuestion" type="text" placeholder="ex.: quais decisões ficaram em aberto?" spellcheck="false"></label>`,
-    "perguntar",
+    t("Perguntar sobre a reunião"),
+    `<p class="pmnote mono">${t("a pergunta roda no Claude do terminal (ADR-0012); a resposta aparece lá e em artefatos/respostas.")}</p>` +
+      `<label class="wfield"><span class="mono">${t("pergunta")}</span>` +
+      `<input id="mtgQuestion" type="text" placeholder="${t("ex.: quais decisões ficaram em aberto?")}" spellcheck="false"></label>`,
+    t("perguntar"),
     () => {
       const q = (($("mtgQuestion") && $("mtgQuestion").value) || "").trim();
-      if (!q) { toast("digite uma pergunta"); return; }
+      if (!q) { toast(t("digite uma pergunta")); return; }
       runMeetingSkill("answer", id, q);
     }
   );
@@ -2074,13 +2099,13 @@ async function wireMeetingAi(id) {
   const sink = B.doc.querySelector("#mtgAiSink");
   try {
     const d = await invoke("ai_doctor");
-    if (statusEl) statusEl.textContent = LM.aiStatusLine(d);
+    if (statusEl) statusEl.textContent = LM.aiStatusLine(d, settings.uiLang);
     // The disclosure text comes from the backend (ADR-0011 constant); its
     // visibility is driven by the cloud toggle in wireMeetingSurface.
     if (sink) sink.textContent = (d && d.ambientBinarySink) || "";
   } catch (e) {
-    if (statusEl) statusEl.textContent = "status indisponível";
-    clog("ai_doctor erro: " + e);
+    if (statusEl) statusEl.textContent = t("status indisponível");
+    clog("ai_doctor error: " + e);
   }
   const auditBtn = B.doc.querySelector("#mtgAuditBtn");
   const list = B.doc.querySelector("#mtgAuditList");
@@ -2094,12 +2119,12 @@ async function wireMeetingAi(id) {
 async function showMeetingAudit(id, list) {
   if (!list.hidden) { list.hidden = true; return; }
   list.hidden = false;
-  list.innerHTML = `<li class="bempty">carregando…</li>`;
+  list.innerHTML = `<li class="bempty">${t("carregando…")}</li>`;
   let events = [];
   try { events = await invoke("brain_meeting_audit", { id }); }
-  catch (e) { list.innerHTML = `<li class="bempty">não li a auditoria</li>`; clog("meeting_audit erro: " + e); return; }
+  catch (e) { list.innerHTML = `<li class="bempty">${t("não li a auditoria")}</li>`; clog("meeting_audit error: " + e); return; }
   if (!events || !events.length) {
-    list.innerHTML = `<li class="bempty">nada saiu desta máquina</li>`;
+    list.innerHTML = `<li class="bempty">${t("nada saiu desta máquina")}</li>`;
     return;
   }
   list.innerHTML = events.map((ev) =>
@@ -2116,27 +2141,27 @@ async function mtgOpenArtifact(rel, name) {
   if (/\.(md|txt)$/i.test(key)) { openDoc(rel, { preview: true }); return; }
   if (/\.(svg|png|jpe?g|gif|webp)$/i.test(key)) {
     try { const a = await invoke("brain_read_asset", { rel }); mtgShowImage(rel, a.mime, a.base64); }
-    catch (e) { toast("não abri a imagem"); clog("read_asset erro: " + e); }
+    catch (e) { toast(t("não abri a imagem")); clog("read_asset error: " + e); }
     return;
   }
   mtgOpenExternal(rel);
 }
 async function mtgOpenExternal(rel) {
   try { await invoke("brain_open_external", { rel }); }
-  catch (e) { toast("não abri o arquivo"); clog("open_external erro: " + e); }
+  catch (e) { toast(t("não abri o arquivo")); clog("open_external error: " + e); }
 }
 
 // ADR-0010: delete one audio track (mic/system/completo). Guarded by a confirm
 // (destructive, and BR-1 makes it local-only — there is no copy elsewhere), then
 // repaints the living surface from the manifest the backend returns.
 async function mtgDeleteAudio(id, which) {
-  const label = { completo: "áudio completo", mic: "microfone", system: "sistema" }[which] || "áudio";
-  if (!window.confirm(`Apagar o ${label} desta reunião? Esta ação não pode ser desfeita.`)) return;
+  const label = { completo: t("áudio completo"), mic: t("microfone"), system: t("sistema") }[which] || t("áudio");
+  if (!window.confirm(`${t("Apagar o")} ${label} ${t("desta reunião? Esta ação não pode ser desfeita.")}`)) return;
   try {
     await invoke("brain_meeting_delete_audio", { input: { id, which } });
-    toast(`${label} apagado`);
+    toast(`${label} ${t("apagado")}`);
     refreshLivingInPlace(id); // repinta a partir do manifest atualizado
-  } catch (e) { toast("não apaguei o áudio: " + String(e).slice(0, 80)); clog("delete_audio erro: " + e); }
+  } catch (e) { toast(t("não apaguei o áudio") + ": " + tErr(String(e))); clog("delete_audio error: " + e); }
 }
 function mtgShowImage(rel, mime, base64) {
   openModal(String(rel).split("/").pop(), `<div class="mtg-imgwrap"><img alt="" src="data:${mime};base64,${base64}"></div>`, null, null);
@@ -2162,19 +2187,19 @@ function pickMeeting(temas) {
       ? `<label class="wfield"><span class="mono">brainstorming</span>` +
           `<select id="mtgTema">${opts}</select></label>`
       : `<label class="wfield"><span class="mono">brainstorming</span>` +
-          `<input id="mtgNovoTema" type="text" placeholder="ex.: frota 2026" spellcheck="false"></label>`;
+          `<input id="mtgNovoTema" type="text" placeholder="${t("ex.: frota 2026")}" spellcheck="false"></label>`;
     const html =
-      `<p class="pmnote mono">a reunião é gravada 100% na sua máquina — o áudio nunca sai do computador.</p>` +
+      `<p class="pmnote mono">${t("a reunião é gravada 100% na sua máquina — o áudio nunca sai do computador.")}</p>` +
       temaField +
-      `<label class="wfield"><span class="mono">título</span>` +
-        `<input id="mtgTitulo" type="text" placeholder="opcional — ex.: semanal de custos" spellcheck="false"></label>`;
-    openModal("Nova reunião", html, "começar", () => {
+      `<label class="wfield"><span class="mono">${t("título")}</span>` +
+        `<input id="mtgTitulo" type="text" placeholder="${t("opcional — ex.: semanal de custos")}" spellcheck="false"></label>`;
+    openModal(t("Nova reunião"), html, t("começar"), () => {
       const selEl = $("mtgTema");
       const novo = (($("mtgNovoTema") && $("mtgNovoTema").value) || "").trim();
       const tema = selEl ? selEl.value : novo;
       const titulo = (($("mtgTitulo") && $("mtgTitulo").value) || "").trim();
       // the modal closes on confirm regardless; abort (never hang) if no brainstorming
-      if (!tema) { toast("escolha ou nomeie um brainstorming"); finish(null); return; }
+      if (!tema) { toast(t("escolha ou nomeie um brainstorming")); finish(null); return; }
       finish({ tema, titulo: titulo || null });
     });
     PM.cancel.addEventListener("click", () => finish(null), { once: true });
@@ -2208,9 +2233,9 @@ async function renderActive() {
   B.docWrap.hidden = false;
   $("bDraftNote").hidden = true;   // the first-edit note is one-time; reset per render
   closeFind();
-  B.crumb.textContent = isGuide ? "instruções do loop" : tab.rel;
+  B.crumb.textContent = isGuide ? t("instruções do loop") : tab.rel;
   // permanent world badge (versionado / rascunho), else document-specific badge
-  const world = LoroWorld.crumbBadge(tab.kind);
+  const world = LoroWorld.crumbBadge(tab.kind, settings.uiLang);
   const [label, cls] = world && !isGuide ? [world.label, world.cls] : docBadge(tab.rel, isGuide);
   B.badge.textContent = label; B.badge.className = "mono badge " + cls;
   setDocGit(tab.rel, tab.kind, isGuide);
@@ -2254,7 +2279,7 @@ function updatePromotedBadge(tab) {
     } catch (_) { promo = null; }
   }
   const para = promo && (promo.para || (typeof promo === "string" ? promo : ""));
-  if (para) { badge.hidden = false; badge.textContent = "promovido → " + para; }
+  if (para) { badge.hidden = false; badge.textContent = t("promovido") + " → " + para; }
   else badge.hidden = true;
 }
 
@@ -2354,24 +2379,24 @@ async function onRefClick(sourceRel, fm, token, anchorEl) {
   const m = /^ref:(.+)$/.exec(token || "");
   if (m) {
     const found = R.findRef ? R.findRef(fm, m[1].trim()) : null;
-    if (!found || !found.caminho) { toast("referência não encontrada"); return; }
+    if (!found || !found.caminho) { toast(t("referência não encontrada")); return; }
     caminho = found.caminho;
   }
   let res;
   try { res = await invoke("brain_resolve_ref", { sourceRel, ref: caminho }); }
-  catch (e) { toast("não resolvi a referência"); clog("resolve_ref erro: " + e); return; }
-  if (!res || !res.exists) { toast("arquivo não encontrado" + (res && res.rel ? ": " + res.rel : "")); return; }
+  catch (e) { toast(t("não resolvi a referência")); clog("resolve_ref error: " + e); return; }
+  if (!res || !res.exists) { toast(t("arquivo não encontrado") + (res && res.rel ? ": " + res.rel : "")); return; }
   if (res.tipo === "doc") { openDoc(res.rel, { preview: true }); return; }
   if (res.tipo === "image") {
     try {
       const asset = await invoke("brain_read_asset", { rel: res.rel });
       toggleInlineImage(anchorEl, asset.mime, asset.base64, res.rel);
-    } catch (e) { toast("não abri a imagem"); clog("read_asset erro: " + e); }
+    } catch (e) { toast(t("não abri a imagem")); clog("read_asset error: " + e); }
     return;
   }
   // audio / other → OS default app (guarded to the acervo root in Rust)
   try { await invoke("brain_open_external", { rel: res.rel }); }
-  catch (e) { toast("não abri o arquivo"); clog("open_external erro: " + e); }
+  catch (e) { toast(t("não abri o arquivo")); clog("open_external error: " + e); }
 }
 // CSP-safe inline image: a base64 data: URI (img-src 'self' data:). Toggles off
 // on a second click so a reference does not permanently occupy the reader.
@@ -2407,7 +2432,7 @@ const COMMANDS = [
   { label: "novo brainstorming", run: () => promptNewTema() },
   { label: "novo caderno", run: () => promptNewNotebook() },
   { label: "nova reunião", run: () => startMeetingFlow() },
-  { label: "encerrar reunião", run: () => { if (meeting.active) stopSession(); else toast("nenhuma reunião em andamento"); } },
+  { label: "encerrar reunião", run: () => { if (meeting.active) stopSession(); else toast(t("nenhuma reunião em andamento")); } },
   { label: "abrir relatório", run: () => buildAndOpenReport() },
   { label: "marcar dúvida", run: () => markMeeting("duvida") },
   { label: "marcar decisão", run: () => markMeeting("decisao") },
@@ -2430,7 +2455,7 @@ function openPalette(mode) {
   if (mode === "file") {
     // refresh the quick-open index each open (cheap; keeps it current)
     invoke("brain_list_all").then((idx) => { paletteIndex = idx || []; renderPalette(); })
-      .catch((e) => { paletteIndex = []; renderPalette(); clog("brain_list_all erro: " + e); });
+      .catch((e) => { paletteIndex = []; renderPalette(); clog("brain_list_all error: " + e); });
   }
   renderPalette();
   B.cmdkInput.focus(); B.cmdkInput.select();
@@ -2454,8 +2479,9 @@ function renderPalette() {
   const isCmd = cmdkMode === "command" || raw.startsWith(">");
   const query = isCmd ? raw.replace(/^>\s*/, "") : raw;
   if (isCmd) {
-    cmdkRows = LoroFuzzy.filter(query, COMMANDS, (c) => c.label)
-      .map((c) => ({ kind: "cmd", label: c.label, run: c.run }));
+    // COMMANDS holds pt msgids; translate at render time so a language switch applies
+    cmdkRows = LoroFuzzy.filter(query, COMMANDS, (c) => t(c.label))
+      .map((c) => ({ kind: "cmd", label: t(c.label), run: c.run }));
   } else {
     const src = query ? paletteIndex : mruRecents();
     cmdkRows = LoroFuzzy.filter(query, src, (it) => it.rel)
@@ -2464,13 +2490,13 @@ function renderPalette() {
   cmdkIndex = 0;
   B.cmdkList.innerHTML = cmdkRows.length
     ? cmdkRows.map((r, i) => {
-        const world = r.kind === "file" && r.world === "context" ? "versionado"
-          : r.kind === "file" && r.world === "personal" ? "rascunho" : "";
+        const world = r.kind === "file" && r.world === "context" ? t("versionado")
+          : r.kind === "file" && r.world === "personal" ? t("rascunho") : "";
         const badge = world ? `<span class="cmdk-w ${r.world}">${world}</span>` : "";
         const sub = r.sub ? `<span class="cmdk-sub mono">${esc(r.sub)}</span>` : "";
         return `<li class="cmdk-item${i === 0 ? " on" : ""}" data-i="${i}"><span class="cmdk-l">${esc(r.label)}</span>${sub}${badge}</li>`;
       }).join("")
-    : `<li class="cmdk-empty mono">nada encontrado</li>`;
+    : `<li class="cmdk-empty mono">${t("nada encontrado")}</li>`;
   B.cmdkList.querySelectorAll("[data-i]").forEach((li) => {
     li.onmousemove = () => setCmdkIndex(Number(li.dataset.i));
     li.onclick = () => { setCmdkIndex(Number(li.dataset.i)); runPalette(); };
@@ -2531,7 +2557,7 @@ window.addEventListener("keydown", (e) => {
 // ---- seletor de acervo (projetos) ----
 function renderSwitch() {
   const cur = acervos.find((a) => a.id === activeAcervo);
-  B.acervoName.textContent = cur ? cur.name : "acervo";
+  B.acervoName.textContent = cur ? cur.name : t("acervo");
   applyAccent(cur ? cur.color : "");
 }
 B.acervoBtn.addEventListener("click", (e) => {
@@ -2540,14 +2566,14 @@ B.acervoBtn.addEventListener("click", (e) => {
   B.acervoMenu.innerHTML =
     acervos.map((a) => `<div class="fitem2${a.id === activeAcervo ? " on" : ""}" data-acervo="${esc(a.id)}">
         <span class="fn">${esc(a.name)}</span>${a.autoContext ? '<span class="pill">auto</span>' : ""}
-        <button class="rowmenu" data-rmacervo="${esc(a.id)}" title="remover projeto do Loro (a pasta é preservada)">×</button></div>`).join("") +
-    `<div class="fsep"></div><div class="fitem2 add" data-newacervo="1">＋ novo projeto</div>`;
+        <button class="rowmenu" data-rmacervo="${esc(a.id)}" title="${t("remover projeto do Loro (a pasta é preservada)")}">×</button></div>`).join("") +
+    `<div class="fsep"></div><div class="fitem2 add" data-newacervo="1">＋ ${t("novo projeto")}</div>`;
   B.acervoMenu.querySelectorAll("[data-acervo]").forEach((el2) => (el2.onclick = async (e) => {
     if (e.target.closest("[data-rmacervo]")) return;
     closeFloat();
     if (el2.dataset.acervo === activeAcervo) return;
     try { await invoke("brain_set_active", { id: el2.dataset.acervo }); setupWorkspace(); sideSig = ""; brainRefresh(); }
-    catch (err) { toast(String(err).slice(0, 80)); }
+    catch (err) { toast(tErr(String(err))); }
   }));
   B.acervoMenu.querySelectorAll("[data-rmacervo]").forEach((el2) => (el2.onclick = (e) => {
     e.stopPropagation(); openConfirmRemoveAcervo(el2, el2.dataset.rmacervo);
@@ -2562,20 +2588,20 @@ function openConfirmRemoveAcervo(anchor, id) {
   const name = a ? a.name : id;
   B.acervoMenu.hidden = true;
   B.bMenu.innerHTML =
-    `<div class="fhead">remover projeto</div>
-     <div class="fitem2 muted fstatic">“${esc(name)}” sai do Loro — a pasta em ${esc(a ? a.dir : "")} é preservada no disco</div>
+    `<div class="fhead">${t("remover projeto")}</div>
+     <div class="fitem2 muted fstatic">“${esc(name)}” ${t("sai do Loro — a pasta em")} ${esc(a ? a.dir : "")} ${t("é preservada no disco")}</div>
      <div class="confirm-actions">
-       <button class="btn-danger" data-yes>remover</button>
-       <button class="link mono muted" data-no>cancelar</button>
+       <button class="btn-danger" data-yes>${t("remover")}</button>
+       <button class="link mono muted" data-no>${t("cancelar")}</button>
      </div>`;
   B.bMenu.querySelector("[data-yes]").onclick = async () => {
     closeFloat();
     try {
       const av = await invoke("brain_remove_acervo", { id });
       acervos = av.acervos || []; activeAcervo = av.active || "";
-      toast("projeto removido (pasta preservada)");
+      toast(t("projeto removido (pasta preservada)"));
       setupWorkspace(); sideSig = ""; brainRefresh();
-    } catch (e) { toast(String(e).slice(0, 90)); }
+    } catch (e) { toast(tErr(String(e))); }
   };
   B.bMenu.querySelector("[data-no]").onclick = closeFloat;
   const r = anchor.getBoundingClientRect();
@@ -2586,7 +2612,7 @@ function openConfirmRemoveAcervo(anchor, id) {
 
 function openNewAcervo() {
   creatingNew = true;
-  B.wizTitle.textContent = "Novo projeto (acervo)";
+  B.wizTitle.textContent = t("Novo projeto (acervo)");
   B.nameInput.value = ""; B.ctxInput.value = ""; brainDir = ""; B.dirBtn.textContent = "…";
   B.autoInput.checked = false; B.gitInput.checked = true;
   wizColor = "";
@@ -2604,7 +2630,7 @@ function activeColor() { const a = acervos.find((x) => x.id === activeAcervo); r
 // setup / criar acervo
 B.dirBtn.addEventListener("click", async () => {
   try { const d = await invoke("pick_folder"); if (d) { brainDir = d; B.dirBtn.textContent = d; } }
-  catch (e) { clog("pick_folder erro: " + e); }
+  catch (e) { clog("pick_folder error: " + e); }
 });
 B.createBtn.addEventListener("click", async () => {
   const contexts = B.ctxInput.value.split(",").map((s) => s.trim()).filter(Boolean);
@@ -2620,11 +2646,11 @@ B.createBtn.addEventListener("click", async () => {
     });
     acervos = av.acervos || []; activeAcervo = av.active || "";
     creatingNew = false;
-    toast("projeto criado");
+    toast(t("projeto criado"));
     settings.saveDir = ""; persistSettings();
     setupWorkspace(); sideSig = ""; brainRefresh();
   } catch (e) {
-    B.setupErr.textContent = String(e); B.setupErr.hidden = false;
+    B.setupErr.textContent = tErr(String(e)); B.setupErr.hidden = false;
   }
 });
 
@@ -2632,25 +2658,25 @@ B.createBtn.addEventListener("click", async () => {
 // O Git fica escondido: o usuário só "versiona" e depois "propõe a mudança".
 B.gitBtn.addEventListener("click", () => {
   openEditor(
-    "Versionar mudança — descreva em uma linha",
+    t("Versionar mudança — descreva em uma linha"),
     "",
     async (desc) => {
       const message = (desc || "").trim();
-      if (!message) throw "descreva a mudança";
-      const r = await invoke("brain_versionar", { slug: message, message });
-      toast(`versionado em ${r.branch}`);
+      if (!message) throw t("descreva a mudança");
+      const r = await invoke("brain_version", { slug: message, message });
+      toast(`${t("versionado em")} ${r.branch}`);
     }
   );
 });
 
 B.proposeBtn.addEventListener("click", () => {
   openEditor(
-    "Propor mudança (RFC) — corpo do Pull Request",
-    "## Resumo da mudança\n\n\n## Contexto afetado\n\n\n## Riscos e pendências\n",
+    t("Propor mudança (RFC) — corpo do Pull Request"),
+    t("## Resumo da mudança\n\n\n## Contexto afetado\n\n\n## Riscos e pendências\n"),
     async (body) => {
       const title = (body || "").split("\n").map((l) => l.replace(/^#+\s*/, "").trim()).find(Boolean) || "RFC";
-      const pr = await invoke("brain_propor_mudanca", { title, body });
-      toast(pr.number ? `PR #${pr.number} aberto` : "mudança proposta");
+      const pr = await invoke("brain_propose_change", { title, body });
+      toast(pr.number ? `PR #${pr.number} ${t("aberto")}` : t("mudança proposta"));
     }
   );
 });
@@ -2666,7 +2692,7 @@ let pmOnConfirm = null;
 function openModal(title, bodyHtml, confirmLabel, onConfirm) {
   PM.title.textContent = title;
   PM.body.innerHTML = bodyHtml;
-  PM.confirm.textContent = confirmLabel || "confirmar";
+  PM.confirm.textContent = confirmLabel || t("confirmar");
   PM.confirm.hidden = !onConfirm;
   pmOnConfirm = onConfirm || null;
   PM.wrap.hidden = false;
@@ -2679,7 +2705,7 @@ PM.wrap.addEventListener("click", (e) => { if (e.target === PM.wrap) closeModal(
 PM.confirm.addEventListener("click", async () => {
   if (!pmOnConfirm) return closeModal();
   try { const fn = pmOnConfirm; closeModal(); await fn(); }
-  catch (e) { toast(String(e).slice(0, 100)); clog("modal confirm erro: " + e); }
+  catch (e) { toast(tErr(String(e))); clog("modal confirm error: " + e); }
 });
 window.addEventListener("keydown", (e) => { if (e.key === "Escape" && !PM.wrap.hidden) closeModal(); });
 
@@ -2702,7 +2728,7 @@ function promptNewTema() {
   bsEditing = true;
   const inp = document.createElement("input");
   inp.className = "bnewctx";
-  inp.placeholder = "nome do brainstorming (Enter) · ex.: frota 2026";
+  inp.placeholder = t("nome do brainstorming (Enter) · ex.: frota 2026");
   B.navPessoal.before(inp); inp.focus();
   const done = () => { inp.remove(); bsEditing = false; };
   inp.addEventListener("keydown", async (e) => {
@@ -2714,16 +2740,16 @@ function promptNewTema() {
       const r = await invoke("brain_create_brainstorm", { input: { nome } });
       done(); pessoalSig = ""; refreshPessoal();
       if (r && r.rel) openDoc(`${r.rel}/indice.md`, { preview: false });
-    } catch (err) { toast(String(err).slice(0, 80)); }
+    } catch (err) { toast(tErr(String(err))); }
   });
   inp.addEventListener("blur", done);
 }
 function promptNewNotebook() {
-  openEditor("Novo caderno — título (linha 1) · tema opcional (linha 2)", "", async (v) => {
+  openEditor(t("Novo caderno — título (linha 1) · tema opcional (linha 2)"), "", async (v) => {
     const [titulo, tema] = (v || "").split("\n").map((s) => s.trim());
-    if (!titulo) throw "informe um título";
+    if (!titulo) throw t("informe um título");
     const rel = await invoke("brain_new_notebook", { tema: tema || null, titulo });
-    toast("caderno criado");
+    toast(t("caderno criado"));
     pessoalSig = ""; refreshPessoal();
     if (rel) openDoc(rel, { preview: false });
   });
@@ -2740,19 +2766,19 @@ function promotionPreview(fm) {
     if (!r || typeof r !== "object") continue;
     const tipo = r.tipo || (R.tipoFromExt ? R.tipoFromExt(r.caminho || "") : "other");
     const name = String(r.caminho || "").split("/").pop() || String(r.caminho || "");
-    out.push(tipo === "audio" ? `áudio: ${name} → referência em texto (stub)` : `${tipo}: ${name} → referencias/${name}`);
+    out.push(tipo === "audio" ? `${t("áudio")}: ${name} → ${t("referência em texto (stub)")}` : `${tipo}: ${name} → referencias/${name}`);
   }
   for (const a of audio) {
     if (!a || typeof a !== "object") continue;
-    out.push(`áudio: ${String(a.caminho || "").split("/").pop() || a.caminho} → referência em texto (stub)`);
+    out.push(`${t("áudio")}: ${String(a.caminho || "").split("/").pop() || a.caminho} → ${t("referência em texto (stub)")}`);
   }
   return out;
 }
 async function startPromotion(sourceRel) {
-  if (!sourceRel) { toast("abra um caderno pessoal para promover"); return; }
-  if (!sourceRel.startsWith("pessoal/")) { toast("apenas itens pessoais podem ser promovidos"); return; }
+  if (!sourceRel) { toast(t("abra um caderno pessoal para promover")); return; }
+  if (!sourceRel.startsWith("pessoal/")) { toast(t("apenas itens pessoais podem ser promovidos")); return; }
   const ctxs = lastSt ? lastSt.contexts.map((c) => c.name) : [];
-  if (!ctxs.length) { toast("crie um contexto antes de promover"); return; }
+  if (!ctxs.length) { toast(t("crie um contexto antes de promover")); return; }
   // pre-read the source front-matter for the preview (best-effort)
   let fm = null;
   try {
@@ -2763,18 +2789,18 @@ async function startPromotion(sourceRel) {
   const previewItems = promotionPreview(fm);
   const preview = previewItems.length
     ? previewItems.map((l) => "• " + esc(l)).join("<br>")
-    : "sem anexos — apenas o texto será mesclado no context.md";
+    : t("sem anexos — apenas o texto será mesclado no context.md");
   const opts = ctxs.map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join("");
   const html =
-    `<p class="pmnote mono">não destrutivo — o original permanece no seu espaço pessoal (rascunho). Áudio nunca é copiado; vira referência em texto.</p>` +
-    `<label class="pmfield"><span class="mono">de</span><span class="mono pmsrc">${esc(sourceRel)}</span></label>` +
-    `<label class="pmfield"><span class="mono">destino</span><select id="pmDest" class="mini-select">${opts}</select></label>` +
-    `<div class="pmphead mono">será preparado (staged) em referencias/ e mesclado no context.md:</div>` +
+    `<p class="pmnote mono">${t("não destrutivo — o original permanece no seu espaço pessoal (rascunho). Áudio nunca é copiado; vira referência em texto.")}</p>` +
+    `<label class="pmfield"><span class="mono">${t("de")}</span><span class="mono pmsrc">${esc(sourceRel)}</span></label>` +
+    `<label class="pmfield"><span class="mono">${t("destino")}</span><select id="pmDest" class="mini-select">${opts}</select></label>` +
+    `<div class="pmphead mono">${t("será preparado (staged) em referencias/ e mesclado no context.md:")}</div>` +
     `<div class="pmpreview mono">${preview}</div>`;
-  openModal("Promover para contexto", html, "promover", async () => {
+  openModal(t("Promover para contexto"), html, t("promover"), async () => {
     const destContext = $("pmDest").value;
     const r = await invoke("brain_promote", { sourceRel, destContext, mode: "merge" });
-    toast(`promovido → ${destContext}`);
+    toast(`${t("promovido")} → ${destContext}`);
     refreshTabFromDisk(sourceRel);
     sideSig = ""; pessoalSig = ""; brainRefresh(); refreshPessoal();
     offerPropose(r, destContext);
@@ -2785,9 +2811,9 @@ function offerPropose(r, destContext) {
   const files = (r && r.stagedFiles) || [];
   const entry = r && r.changelogEntry ? `<div class="pmphead mono">CHANGELOG: ${esc(String(r.changelogEntry))}</div>` : "";
   const html =
-    `<p class="pmnote mono">promovido para <b>${esc(destContext)}</b> — nada foi versionado ainda (não destrutivo).</p>` +
-    `<div class="pmpreview mono">${files.length ? files.map((f) => "• " + esc(f)).join("<br>") : "context.md atualizado"}</div>${entry}`;
-  openModal("Mudança pronta", html, "propor mudança agora", async () => { B.gitBtn.click(); });
+    `<p class="pmnote mono">${t("promovido para")} <b>${esc(destContext)}</b> — ${t("nada foi versionado ainda (não destrutivo).")}</p>` +
+    `<div class="pmpreview mono">${files.length ? files.map((f) => "• " + esc(f)).join("<br>") : t("context.md atualizado")}</div>${entry}`;
+  openModal(t("Mudança pronta"), html, t("propor mudança agora"), async () => { B.gitBtn.click(); });
 }
 
 // ---- migrar acervo (simulação → aplicar) — estende brain_migrate (ADR-0004/0009) ----
@@ -2797,17 +2823,17 @@ function migrationBodyHtml(rep) {
   if (Array.isArray(moves)) {
     lines = moves.map((m) => typeof m === "string" ? m : `${m.from || m.de || "?"} → ${m.to || m.para || "?"}`);
   }
-  const preview = lines.length ? lines.map((l) => "• " + esc(l)).join("<br>") : "nada a migrar";
-  return `<p class="pmnote mono">simulação — nada é movido ainda · notas/ permanece versionado · incubadora/ vira tema pessoal</p>` +
+  const preview = lines.length ? lines.map((l) => "• " + esc(l)).join("<br>") : t("nada a migrar");
+  return `<p class="pmnote mono">${t("simulação — nada é movido ainda · notas/ permanece versionado · incubadora/ vira tema pessoal")}</p>` +
     `<div class="pmpreview mono">${preview}</div>`;
 }
 async function runMigration() {
   let rep;
   try { rep = await invoke("brain_migrate", { apply: false }); }
-  catch (e) { toast("falha ao planejar migração"); clog("migrate erro: " + e); return; }
-  openModal("Migrar acervo (simulação)", migrationBodyHtml(rep), "aplicar migração", async () => {
+  catch (e) { toast(t("falha ao planejar migração")); clog("migrate error: " + e); return; }
+  openModal(t("Migrar acervo (simulação)"), migrationBodyHtml(rep), t("aplicar migração"), async () => {
     await invoke("brain_migrate", { apply: true });
-    toast("migração aplicada");
+    toast(t("migração aplicada"));
     sideSig = ""; pessoalSig = ""; brainRefresh(); refreshPessoal();
   });
 }
@@ -2821,9 +2847,9 @@ listen("pessoal-changed", () => { pessoalSig = ""; refreshPessoal(); });
 listen("tema-changed", () => { pessoalSig = ""; refreshPessoal(); });
 listen("promotion-done", (e) => {
   const p = (e && e.payload) || {};
-  toast(p.destContext ? `promovido → ${p.destContext}` : "promoção concluída");
+  toast(p.destContext ? `${t("promovido")} → ${p.destContext}` : t("promoção concluída"));
   sideSig = ""; pessoalSig = ""; brainRefresh(); refreshPessoal();
-  const t = activeTab(); if (t && t.rel !== HOME_REL) renderActive();
+  const tb = activeTab(); if (tb && tb.rel !== HOME_REL) renderActive();
 });
 
 // GitHub environment doctor: checked once per acervo (network); the wizard card
@@ -2845,23 +2871,23 @@ function renderGhCard() {
   const heading = d && (d.gh.detail || d.remote.detail);
   if (!heading) { B.ghCard.hidden = true; return; }
   B.ghCard.hidden = false;
-  B.ghState.textContent = d.versioningEnabled ? `conectado${d.account ? " · @" + d.account : ""}` : "local";
+  B.ghState.textContent = d.versioningEnabled ? `${t("conectado")}${d.account ? " · @" + d.account : ""}` : "local";
   B.ghState.className = "mono badge " + (d.versioningEnabled ? "ok" : "ro");
   const rows = [
-    ["git", d.git], ["gh (GitHub CLI)", d.gh], ["autenticação", d.ghAuth],
-    ["identidade git", d.gitIdentity], ["repositório remoto", d.remote],
+    ["git", d.git], ["gh (GitHub CLI)", d.gh], [t("autenticação"), d.ghAuth],
+    [t("identidade git"), d.gitIdentity], [t("repositório remoto"), d.remote],
   ];
   B.ghChecks.innerHTML = rows.map(([label, c]) => {
-    const fix = c.fixable && !c.ok ? ` <button class="mini act" data-fix="identity">corrigir</button>` : "";
+    const fix = c.fixable && !c.ok ? ` <button class="mini act" data-fix="identity">${t("corrigir")}</button>` : "";
     return `<li class="ghchk ${c.ok ? "on" : "off"}"><span>${c.ok ? "✓" : "•"} ${esc(label)}</span>` +
       `<span class="ghhint mono">${esc(c.detail || c.hint || "")}</span>${fix}</li>`;
   }).join("");
   B.ghChecks.querySelectorAll("[data-fix]").forEach((b) => (b.onclick = fixIdentity));
 }
 async function fixIdentity() {
-  openEditor("Identidade do git — nome e e-mail (uma linha cada)", "Seu Nome\nseu@email", async (v) => {
+  openEditor(t("Identidade do git — nome e e-mail (uma linha cada)"), t("Seu Nome\nseu@email"), async (v) => {
     const [name, email] = (v || "").split("\n").map((s) => s.trim());
-    if (!name || !email) throw "informe nome e e-mail";
+    if (!name || !email) throw t("informe nome e e-mail");
     await invoke("env_set_identity", { name, email });
     refreshEnv(true);
   });
@@ -2875,10 +2901,10 @@ async function refreshNotifications() {
   try { n = await invoke("brain_notifications"); } catch (_) { B.ghNotif.hidden = true; return; }
   if (!n.connected) { B.ghNotif.hidden = true; return; }
   const parts = [];
-  if (n.reviewRequestedToMe.length) parts.push(`⌛ ${n.reviewRequestedToMe.length} aguardam sua revisão`);
-  if (n.awaitingApproval.length) parts.push(`${n.awaitingApproval.length} aguardando aprovação`);
-  if (n.changesPending.length) parts.push(`${n.changesPending.length} com ajustes pedidos`);
-  if (n.recentlyApproved.length) parts.push(`✓ ${n.recentlyApproved.length} aprovadas`);
+  if (n.reviewRequestedToMe.length) parts.push(`⌛ ${n.reviewRequestedToMe.length} ${t("aguardam sua revisão")}`);
+  if (n.awaitingApproval.length) parts.push(`${n.awaitingApproval.length} ${t("aguardando aprovação")}`);
+  if (n.changesPending.length) parts.push(`${n.changesPending.length} ${t("com ajustes pedidos")}`);
+  if (n.recentlyApproved.length) parts.push(`✓ ${n.recentlyApproved.length} ${t("aprovadas")}`);
   B.ghNotif.hidden = parts.length === 0;
   B.ghNotif.textContent = parts.join(" · ");
 }
@@ -2889,12 +2915,12 @@ function showTimeline(rel) {
   invoke("brain_timeline", { rel }).then((items) => {
     const body = items.length
       ? items.map((c) => {
-          const when = c.when ? new Date(c.when).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
+          const when = c.when ? new Date(c.when).toLocaleString(uiLocale(), { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
           return `• ${when} — ${c.label}${c.author ? ` (${c.author})` : ""}`;
         }).join("\n")
-      : "(sem versões anteriores ainda)";
-    openEditor(`Histórico — ${rel}`, body, null);
-  }).catch((e) => { toast("sem histórico"); clog("timeline erro: " + e); });
+      : t("(sem versões anteriores ainda)");
+    openEditor(`${t("Histórico")} — ${rel}`, body, null);
+  }).catch((e) => { toast(t("sem histórico")); clog("timeline error: " + e); });
 }
 B.gitBadge.addEventListener("click", () => { const rel = currentRel(); if (rel) showTimeline(rel); });
 
@@ -2902,20 +2928,20 @@ B.gitBadge.addEventListener("click", () => { const rel = currentRel(); if (rel) 
 function openConfirmDelete(anchor, name) {
   B.acervoMenu.hidden = true;
   B.bMenu.innerHTML =
-    `<div class="fhead">apagar da fila</div>
-     <div class="fitem2 muted fstatic">“${esc(name)}” não será processado pelo loop</div>
+    `<div class="fhead">${t("apagar da fila")}</div>
+     <div class="fitem2 muted fstatic">“${esc(name)}” ${t("não será processado pelo loop")}</div>
      <div class="confirm-actions">
-       <button class="btn-danger" data-yes>apagar</button>
-       <button class="link mono muted" data-no>cancelar</button>
+       <button class="btn-danger" data-yes>${t("apagar")}</button>
+       <button class="link mono muted" data-no>${t("cancelar")}</button>
      </div>`;
   B.bMenu.querySelector("[data-yes]").onclick = async () => {
     closeFloat();
     try {
       await invoke("brain_delete_inbox", { name });
-      toast("apagado — não será processado");
+      toast(t("apagado — não será processado"));
       closeTabsUnder("inbox/" + name, true);
       sideSig = ""; brainRefresh();
-    } catch (e) { toast(String(e).slice(0, 80)); }
+    } catch (e) { toast(tErr(String(e))); }
   };
   B.bMenu.querySelector("[data-no]").onclick = closeFloat;
   const r = anchor.getBoundingClientRect();
@@ -2929,8 +2955,8 @@ function openQueueMenu(anchorEl, name) {
   B.acervoMenu.hidden = true;
   B.bMenu.innerHTML =
     `<div class="fhead">${esc(name)}</div>
-     <div class="fitem2" data-a="mv"><span class="fn">⇢ mover para…</span></div>
-     <div class="fitem2 ditem" data-a="del"><span class="fn">apagar…</span></div>`;
+     <div class="fitem2" data-a="mv"><span class="fn">⇢ ${t("mover para…")}</span></div>
+     <div class="fitem2 ditem" data-a="del"><span class="fn">${t("apagar…")}</span></div>`;
   B.bMenu.querySelector('[data-a="mv"]').onclick = () => openMoveMenu(anchorEl, name);
   B.bMenu.querySelector('[data-a="del"]').onclick = () => openConfirmDelete(anchorEl, name);
   placeMenu(anchorEl);
@@ -2954,7 +2980,7 @@ function ctxFolders() {
   return [...set].sort();
 }
 async function ctxMoved(name, newPath) {
-  closeFloat(); toast(`movido → ${newPath}`);
+  closeFloat(); toast(`${t("movido")} → ${newPath}`);
   bOpen.delete("ctx:" + name);
   closeTabsUnder("contextos/" + name + "/", false);
   sideSig = ""; brainRefresh();
@@ -2962,10 +2988,10 @@ async function ctxMoved(name, newPath) {
 function openCtxMenu(anchor, name, isFolder) {
   B.acervoMenu.hidden = true;
   B.bMenu.innerHTML =
-    `<div class="fhead">${esc(name)}${isFolder ? " (pasta)" : ""}</div>
-     <div class="fitem2" data-a="ren"><span class="fn">✎ renomear</span></div>
-     <div class="fitem2" data-a="mv"><span class="fn">⇢ mover para…</span></div>
-     <div class="fitem2 ditem" data-a="del"><span class="fn">deletar…</span></div>`;
+    `<div class="fhead">${esc(name)}${isFolder ? ` (${t("pasta")})` : ""}</div>
+     <div class="fitem2" data-a="ren"><span class="fn">✎ ${t("renomear")}</span></div>
+     <div class="fitem2" data-a="mv"><span class="fn">⇢ ${t("mover para…")}</span></div>
+     <div class="fitem2 ditem" data-a="del"><span class="fn">${t("deletar…")}</span></div>`;
   B.bMenu.querySelector('[data-a="ren"]').onclick = () => openRenameCtx(anchor, name);
   B.bMenu.querySelector('[data-a="mv"]').onclick = () => openMoveCtxMenu(anchor, name, isFolder);
   B.bMenu.querySelector('[data-a="del"]').onclick = () => openConfirmDeleteCtx(anchor, name, isFolder);
@@ -2977,9 +3003,9 @@ function openRenameCtx(anchor, name) {
   const leaf = name.split("/").pop();
   const parent = name.includes("/") ? name.slice(0, name.lastIndexOf("/") + 1) : "";
   B.bMenu.innerHTML =
-    `<div class="fhead">renomear</div>
+    `<div class="fhead">${t("renomear")}</div>
      <input id="renInput" class="bnewctx menuinput" value="${esc(leaf)}" spellcheck="false" />
-     <div class="fitem2 muted fstatic">novo nome (mantém a pasta atual)</div>`;
+     <div class="fitem2 muted fstatic">${t("novo nome (mantém a pasta atual)")}</div>`;
   const inp = B.bMenu.querySelector("#renInput");
   inp.focus(); inp.select();
   inp.addEventListener("keydown", async (e) => {
@@ -2987,7 +3013,7 @@ function openRenameCtx(anchor, name) {
     if (e.key !== "Enter") return;
     const to = parent + inp.value.trim();
     try { await invoke("brain_rename_context", { from: name, to }); await ctxMoved(name, to); }
-    catch (err) { toast(String(err).slice(0, 90)); }
+    catch (err) { toast(tErr(String(err))); }
   });
 }
 
@@ -2998,29 +3024,29 @@ function openMoveCtxMenu(anchor, name, isFolder) {
   const folders = ctxFolders().filter((f) => f !== parent && f !== name && !f.startsWith(name + "/"));
   const others = acervos.filter((a) => a.id !== activeAcervo);
   B.bMenu.innerHTML =
-    `<div class="fhead">mover “${esc(leaf)}”</div>
-     <div class="fhead">neste projeto</div>` +
-    (parent !== "" ? `<div class="fitem2" data-to=""><span class="fn">↥ raiz</span></div>` : "") +
+    `<div class="fhead">${t("mover")} “${esc(leaf)}”</div>
+     <div class="fhead">${t("neste projeto")}</div>` +
+    (parent !== "" ? `<div class="fitem2" data-to=""><span class="fn">↥ ${t("raiz")}</span></div>` : "") +
     folders.map((f) => `<div class="fitem2" data-to="${esc(f)}"><span class="fn">→ ${esc(f)}/</span></div>`).join("") +
-    `<div class="fitem2" data-newfolder><span class="fn">＋ nova pasta…</span></div>` +
-    (others.length ? `<div class="fhead">outro projeto</div>` +
+    `<div class="fitem2" data-newfolder><span class="fn">＋ ${t("nova pasta…")}</span></div>` +
+    (others.length ? `<div class="fhead">${t("outro projeto")}</div>` +
       others.map((a) => `<div class="fitem2" data-ac="${esc(a.id)}"><span class="fn">⇢ ${esc(a.name)}</span></div>`).join("") : "");
   const moveTo = async (dest) => {
     const to = dest === "" ? leaf : dest + "/" + leaf;
     try { await invoke("brain_rename_context", { from: name, to }); await ctxMoved(name, to); }
-    catch (err) { toast(String(err).slice(0, 90)); }
+    catch (err) { toast(tErr(String(err))); }
   };
   B.bMenu.querySelectorAll("[data-to]").forEach((el2) => (el2.onclick = () => moveTo(el2.dataset.to)));
   B.bMenu.querySelectorAll("[data-ac]").forEach((el2) => (el2.onclick = async () => {
     void isFolder;
-    try { await invoke("brain_move_context_to_acervo", { name, targetId: el2.dataset.ac }); await ctxMoved(name, "outro projeto"); }
-    catch (err) { toast(String(err).slice(0, 90)); }
+    try { await invoke("brain_move_context_to_acervo", { name, targetId: el2.dataset.ac }); await ctxMoved(name, t("outro projeto")); }
+    catch (err) { toast(tErr(String(err))); }
   }));
   const nf = B.bMenu.querySelector("[data-newfolder]");
   if (nf) nf.onclick = () => {
-    B.bMenu.innerHTML = `<div class="fhead">mover para nova pasta</div>
-       <input id="nfInput" class="bnewctx menuinput" placeholder="nome-da-pasta (ex.: operacoes)" spellcheck="false" />
-       <div class="fitem2 muted fstatic">Enter confirma · vira <pasta>/${esc(leaf)}</div>`;
+    B.bMenu.innerHTML = `<div class="fhead">${t("mover para nova pasta")}</div>
+       <input id="nfInput" class="bnewctx menuinput" placeholder="${t("nome-da-pasta (ex.: operacoes)")}" spellcheck="false" />
+       <div class="fitem2 muted fstatic">${t("Enter confirma · vira")} <pasta>/${esc(leaf)}</div>`;
     const inp = B.bMenu.querySelector("#nfInput");
     inp.focus();
     inp.addEventListener("keydown", (e) => {
@@ -3034,22 +3060,21 @@ function openMoveCtxMenu(anchor, name, isFolder) {
 // deletar contexto/pasta: destrutivo, com confirmação explícita
 function openConfirmDeleteCtx(anchor, name, isFolder) {
   B.bMenu.innerHTML =
-    `<div class="fhead">deletar ${isFolder ? "pasta" : "contexto"}</div>
-     <div class="fitem2 muted fstatic">“${esc(name)}”${isFolder ? " e todos os subcontextos serão apagados" : " será apagado"} do disco
-       (se o projeto é versionado, o histórico git preserva)</div>
+    `<div class="fhead">${t("deletar")} ${isFolder ? t("pasta") : t("contexto")}</div>
+     <div class="fitem2 muted fstatic">“${esc(name)}” ${isFolder ? t("e todos os subcontextos serão apagados") : t("será apagado")} ${t("do disco (se o projeto é versionado, o histórico git preserva)")}</div>
      <div class="confirm-actions">
-       <button class="btn-danger" data-yes>deletar</button>
-       <button class="link mono muted" data-no>cancelar</button>
+       <button class="btn-danger" data-yes>${t("deletar")}</button>
+       <button class="link mono muted" data-no>${t("cancelar")}</button>
      </div>`;
   B.bMenu.querySelector("[data-yes]").onclick = async () => {
     closeFloat();
     try {
       await invoke("brain_delete_context", { name });
-      toast("deletado");
+      toast(t("deletado"));
       closeTabsUnder("contextos/" + name + "/", false);
       bOpen.delete("ctx:" + name);
       sideSig = ""; brainRefresh();
-    } catch (e) { toast(String(e).slice(0, 80)); }
+    } catch (e) { toast(tErr(String(e))); }
   };
   B.bMenu.querySelector("[data-no]").onclick = closeFloat;
   placeMenu(anchor);
@@ -3060,18 +3085,18 @@ function openMoveFileMenu(anchorEl, rel) {
   B.acervoMenu.hidden = true;
   const ctxs = lastSt ? lastSt.contexts.map((c) => c.name) : [];
   B.bMenu.innerHTML =
-    `<div class="fhead">mover para referências de</div>` +
+    `<div class="fhead">${t("mover para referências de")}</div>` +
     (ctxs.length ? ctxs.map((c) => `<div class="fitem2" data-ref="${esc(c)}"><span class="fn">→ ${esc(c)}</span></div>`).join("")
-                 : `<div class="fitem2 muted fstatic">sem contextos</div>`) +
-    `<div class="fsep"></div><div class="fitem2" data-ref=""><span class="fn">→ notas (sem contexto)</span></div>`;
+                 : `<div class="fitem2 muted fstatic">${t("sem contextos")}</div>`) +
+    `<div class="fsep"></div><div class="fitem2" data-ref=""><span class="fn">→ ${t("notas (sem contexto)")}</span></div>`;
   B.bMenu.querySelectorAll("[data-ref]").forEach((el2) => (el2.onclick = async () => {
     closeFloat();
     try {
       const newRel = await invoke("brain_move", { rel, destContext: el2.dataset.ref });
-      toast("movido");
+      toast(t("movido"));
       sideSig = ""; brainRefresh();
       if (ws.tabs.some((t) => t.rel === rel)) { closeTabsUnder(rel, true); openDoc(newRel, { preview: false }); }
-    } catch (e) { toast(String(e).slice(0, 90)); clog("brain_move erro: " + e); }
+    } catch (e) { toast(tErr(String(e))); clog("brain_move error: " + e); }
   }));
   placeMenu(anchorEl);
 }
@@ -3082,20 +3107,20 @@ function openMoveMenu(anchor, fileName) {
   const cur = lastSt ? lastSt.contexts.map((c) => c.name) : [];
   const others = acervos.filter((a) => a.id !== activeAcervo);
   B.bMenu.innerHTML =
-    `<div class="fhead">rotear neste projeto</div>` +
+    `<div class="fhead">${t("rotear neste projeto")}</div>` +
     (cur.length ? cur.map((c) => `<div class="fitem2" data-ctx="${esc(c)}"><span class="fn">→ ${esc(c)}</span></div>`).join("")
-                : `<div class="fitem2 muted">sem contextos</div>`) +
-    (others.length ? `<div class="fhead">mover para outro projeto</div>` +
+                : `<div class="fitem2 muted">${t("sem contextos")}</div>`) +
+    (others.length ? `<div class="fhead">${t("mover para outro projeto")}</div>` +
       others.map((a) => `<div class="fitem2" data-to="${esc(a.id)}"><span class="fn">⇢ ${esc(a.name)}</span></div>`).join("")
       : "");
   const doMove = async (payload) => {
     closeFloat();
     try {
       await invoke("brain_move_to_acervo", { name: fileName, ...payload });
-      toast("movido");
+      toast(t("movido"));
       closeTabsUnder("inbox/" + fileName, true);
       sideSig = ""; brainRefresh();
-    } catch (e) { toast(String(e).slice(0, 90)); clog("move erro: " + e); }
+    } catch (e) { toast(tErr(String(e))); clog("move error: " + e); }
   };
   B.bMenu.querySelectorAll("[data-ctx]").forEach((el2) =>
     (el2.onclick = () => doMove({ targetId: activeAcervo, context: el2.dataset.ctx })));
@@ -3111,8 +3136,8 @@ $("brainImport").addEventListener("click", async () => {
   const ctx = $("importCtx").value || null;
   try {
     const n = await invoke("brain_import", { context: ctx });
-    if (n > 0) { toast(`${n} arquivo${n > 1 ? "s" : ""} na fila`); sideSig = ""; brainRefresh(); }
-  } catch (e) { toast(String(e).slice(0, 90)); clog("brain_import erro: " + e); }
+    if (n > 0) { toast(`${n} ${n > 1 ? t("arquivos na fila") : t("arquivo na fila")}`); sideSig = ""; brainRefresh(); }
+  } catch (e) { toast(tErr(String(e))); clog("brain_import error: " + e); }
 });
 // novo contexto (input inline no cabeçalho da lateral)
 // input inline p/ criar contexto (usado pelo header e pelo item "+ novo contexto")
@@ -3122,14 +3147,14 @@ function promptNewContext() {
   ctxEditing = true;
   const inp = document.createElement("input");
   inp.className = "bnewctx";
-  inp.placeholder = "nome-do-contexto (Enter) · ex.: engenharia/qa";
+  inp.placeholder = t("nome-do-contexto (Enter) · ex.: engenharia/qa");
   B.navCtx.before(inp); inp.focus();
   const done = () => { inp.remove(); ctxEditing = false; };
   inp.addEventListener("keydown", async (e) => {
     if (e.key === "Escape") return done();
     if (e.key !== "Enter") return;
     try { await invoke("brain_add_context", { name: inp.value }); done(); sideSig = ""; brainRefresh(); }
-    catch (err) { toast(String(err).slice(0, 80)); }
+    catch (err) { toast(tErr(String(err))); }
   });
   inp.addEventListener("blur", done);
 }
@@ -3150,7 +3175,7 @@ function fitTerm() {
 }
 function initTerm() {
   const Term = window.Terminal, Fit = window.FitAddon && window.FitAddon.FitAddon;
-  if (!Term) { toast("terminal indisponível"); clog("xterm ausente"); return; }
+  if (!Term) { toast(t("terminal indisponível")); clog("xterm missing"); return; }
   const dark = matchMedia("(prefers-color-scheme: dark)").matches;
   term = new Term({
     fontFamily: "ui-monospace, SF Mono, Menlo, monospace", fontSize: 12.5,
@@ -3165,7 +3190,7 @@ function initTerm() {
   term.onData((d) => invoke("term_input", { data: d }).catch(() => {}));
   invoke("term_open", { cols: term.cols || 80, rows: term.rows || 24 })
     .then(() => { termReady = true; })
-    .catch((e) => { toast(String(e).slice(0, 90)); clog("term_open erro: " + e); });
+    .catch((e) => { toast(tErr(String(e))); clog("term_open error: " + e); });
 }
 async function restartTerm() {
   try { await invoke("term_close"); } catch (_) {}
@@ -3173,7 +3198,7 @@ async function restartTerm() {
   initTerm();
 }
 listen("term-output", (e) => { if (term) term.write(e.payload); });
-listen("term-exit", () => { if (term) term.write("\r\n\x1b[2m[processo encerrado — 'reiniciar' para abrir de novo]\x1b[0m\r\n"); termReady = false; });
+listen("term-exit", () => { if (term) term.write(`\r\n\x1b[2m[${t("processo encerrado — 'reiniciar' para abrir de novo")}]\x1b[0m\r\n`); termReady = false; });
 $("termBtn").addEventListener("click", () => setTermPanel($("termPanel").hidden));
 $("termCollapse").addEventListener("click", () => setTermPanel(false));
 $("termClear").addEventListener("click", restartTerm);
@@ -3204,11 +3229,11 @@ async function checkSetup() {
   try {
     const d = await invoke("doctor");
     const missing = [];
-    if (!d.whisper_stream) missing.push("whisper (motor de transcrição)");
-    if (!d.models || d.models.length === 0) missing.push("modelo de voz");
+    if (!d.whisper_stream) missing.push(t("whisper (motor de transcrição)"));
+    if (!d.models || d.models.length === 0) missing.push(t("modelo de voz"));
     const banner = $("setupBanner");
     if (!missing.length) { banner.hidden = true; return; }
-    $("setupMsg").textContent = "faltam dependências: " + missing.join(" · ");
+    $("setupMsg").textContent = t("faltam dependências") + ": " + missing.join(" · ");
     banner.hidden = false;
     $("setupRun").onclick = () => {
       const parts = [];
@@ -3216,7 +3241,7 @@ async function checkSetup() {
       if (!d.models || d.models.length === 0)
         parts.push(`mkdir -p ~/.loro/models && curl -L --progress-bar -o ~/.loro/models/ggml-large-v3-turbo.bin ${MODEL_URL}`);
       termRun(parts.join(" && "));
-      toast("instalando no terminal — acompanhe abaixo", 4000);
+      toast(t("instalando no terminal — acompanhe abaixo"), 4000);
     };
   } catch (_) {}
 }
@@ -3225,11 +3250,10 @@ async function checkSetup() {
 function openBlackholeSetup() {
   B.acervoMenu.hidden = true;
   B.bMenu.innerHTML =
-    `<div class="fhead">áudio do sistema — configurar</div>
-     <div class="fitem2 muted fstatic">1 · instale o driver BlackHole · 2 · crie um dispositivo
-       multi-saída (saída padrão) no Áudio MIDI incluindo o BlackHole</div>
-     <div class="fitem2" data-bh><span class="fn">1 · instalar BlackHole no terminal</span></div>
-     <div class="fitem2" data-am><span class="fn">2 · abrir Áudio MIDI</span></div>`;
+    `<div class="fhead">${t("áudio do sistema — configurar")}</div>
+     <div class="fitem2 muted fstatic">${t("1 · instale o driver BlackHole · 2 · crie um dispositivo multi-saída (saída padrão) no Áudio MIDI incluindo o BlackHole")}</div>
+     <div class="fitem2" data-bh><span class="fn">${t("1 · instalar BlackHole no terminal")}</span></div>
+     <div class="fitem2" data-am><span class="fn">${t("2 · abrir Áudio MIDI")}</span></div>`;
   B.bMenu.querySelector("[data-bh]").onclick = () => { closeFloat(); termRun("brew install blackhole-2ch"); };
   B.bMenu.querySelector("[data-am]").onclick = () => { closeFloat(); invoke("open_audio_midi").catch(() => {}); };
   const r = el.privacy.getBoundingClientRect();
@@ -3247,8 +3271,8 @@ listen("tauri://drag-drop", async (e) => {
   document.getElementById("app").classList.remove("dropping");
   try {
     const n = await invoke("brain_import_paths", { paths, context: null });
-    if (n > 0) { toast(`${n} arquivo${n > 1 ? "s" : ""} na fila`); sideSig = ""; brainRefresh(); }
-  } catch (err) { toast(String(err).slice(0, 90)); clog("import_paths erro: " + err); }
+    if (n > 0) { toast(`${n} ${n > 1 ? t("arquivos na fila") : t("arquivo na fila")}`); sideSig = ""; brainRefresh(); }
+  } catch (err) { toast(tErr(String(err))); clog("import_paths error: " + err); }
 });
 listen("tauri://drag-enter", () => { if (brainTab) document.getElementById("app").classList.add("dropping"); });
 listen("tauri://drag-leave", () => document.getElementById("app").classList.remove("dropping"));
@@ -3281,9 +3305,9 @@ listen("transcribe-state", (e) => {
   if (meeting.active && meeting.phase === "transcribing") {
     el.toggle.disabled = running;
     if (running) {
-      el.privacy.textContent = "transcrevendo…";
+      el.privacy.textContent = t("transcrevendo…");
       el.privacy.classList.add("warn");
-      toast("transcrevendo a reunião… pode levar alguns minutos", 0);
+      toast(t("transcrevendo a reunião… pode levar alguns minutos"), 0);
     } else {
       finishMeetingAfterTranscription();
     }
@@ -3291,18 +3315,18 @@ listen("transcribe-state", (e) => {
   }
   el.toggle.disabled = running;
   if (running) {
-    el.privacy.textContent = "transcrevendo…";
+    el.privacy.textContent = t("transcrevendo…");
     el.privacy.classList.add("warn");
-    toast("transcrevendo o áudio gravado… pode levar alguns minutos", 0);
+    toast(t("transcrevendo o áudio gravado… pode levar alguns minutos"), 0);
     return;
   }
   updatePrivacy();
-  if (!state.lines.length) { toast("transcrição vazia"); return; }
+  if (!state.lines.length) { toast(t("transcrição vazia")); return; }
   if (settings.autosave) autoSaveNow();
-  else { el.savebar.hidden = false; setLivePanel(true); toast("transcrição concluída"); }
+  else { el.savebar.hidden = false; setLivePanel(true); toast(t("transcrição concluída")); }
 });
 listen("transcribe-error", (e) => {
-  toast("transcrição falhou: " + String(e.payload).slice(0, 100));
+  toast(t("transcrição falhou") + ": " + tErr(String(e.payload)));
   clog("transcribe-error: " + e.payload);
 });
 
@@ -3314,7 +3338,23 @@ B.wsBody.addEventListener("scroll", () => { if (nearBottom(B.wsBody)) hidePill()
 // ---- init ----
 loadSettings();
 applySettings();
-B.dirBtn.textContent = "escolher pasta…";
+// uiLang lives in the backend config (source of truth). One-time migration:
+// a pre-existing "en" choice in localStorage is pushed to the backend.
+(async () => {
+  try {
+    let lang = await invoke("ui_get_lang");
+    if (lang !== "en" && settings.uiLang === "en") {
+      lang = await invoke("ui_set_lang", { lang: "en" });
+    }
+    if (lang !== settings.uiLang) {
+      settings.uiLang = lang;
+      persistSettings();
+      applySettings();
+      rerenderForLang();
+    }
+  } catch (_) { /* no backend (tests/dev server): localStorage value stands */ }
+})();
+B.dirBtn.textContent = t("escolher pasta…");
 resizeWave();
 drawIdle();
 updateCfgLabel();
@@ -3329,15 +3369,15 @@ clog("init ok · TAURI=[" + Object.keys(TAURI).join(",") + "] · gUM=" + !!(navi
 invoke("selftest_enabled").then((on) => {
   if (!on) return;
   invoke("list_capture_devices").then((d) => clog("selftest: devices=" + JSON.stringify(d)))
-    .catch((e) => clog("selftest: list_capture_devices erro: " + e));
+    .catch((e) => clog("selftest: list_capture_devices error: " + e));
   invoke("brain_status").then((s) => clog(`selftest: brain configured=${s.configured} ctx=${s.contexts.length} inbox=${s.inbox.length} processed=${s.processed}`))
-    .catch((e) => clog("selftest: brain_status erro: " + e));
-  clog("selftest: iniciando");
+    .catch((e) => clog("selftest: brain_status error: " + e));
+  clog("selftest: starting");
   startSession().then(() => {
     setTimeout(async () => {
-      clog(`selftest: running=${state.running} linhas=${state.lines.length}`);
+      clog(`selftest: running=${state.running} lines=${state.lines.length}`);
       await stopSession();
-      clog("selftest: parado");
+      clog("selftest: stopped");
     }, 7000);
   });
-}).catch((e) => clog("selftest_enabled erro: " + e));
+}).catch((e) => clog("selftest_enabled error: " + e));

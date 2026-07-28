@@ -295,6 +295,48 @@ the repository (2026-07-28). The owner asked for exactly one authoritative ADR.
   backend for a future in-app model call. Per-connector MCP consent (default
   off) remains the contract for that future path.
 
+### §10 UI language — user-level i18n (pt-BR / en)
+
+- **Two languages, user's choice** (2026-07-28): the interface chrome renders
+  in pt-BR (default) or English, switched live from the settings sheet. This
+  supersedes the former "UI stays pt-BR" convention; the *layout* still does
+  not change without a design decision.
+- **`uiLang` is global config, not acervo config**: persisted as
+  `uiLang` in `~/.loro/config.json` (`LoroConfig.ui_lang`, default `"pt"`),
+  read/written via the `ui_get_lang`/`ui_set_lang` IPC commands. It is a
+  *user* preference, deliberately distinct from `Acervo.lang`, which remains
+  the per-project language that drives templates and seeded content. A
+  pre-existing localStorage `uiLang` is migrated to the backend once at boot.
+- **Gettext-style frontend dictionary** (`desktop/src/i18n.js`, node-testable
+  UMD like the other pure modules): the pt-BR string in the code *is* the
+  msgid — `t("nova reunião")` — and `EN` maps msgid → English; pt returns the
+  msgid unchanged, unknown msgids fall back to themselves. Static HTML is
+  marked with `data-i18n` (text) / `data-i18n-attrs` (title, placeholder,
+  aria-label); originals are captured on first pass so switching back is
+  lossless. Pure modules (`meeting.js`, `world.js`, `brainstorm.js`) take an
+  optional `lang` parameter instead of depending on the i18n global.
+- **Backend errors are stable codes, translated at the edge**: commands return
+  `err.<snake_key>` (optionally `err.<key>:<detail>`) instead of prose;
+  `tErr()` renders them in the active language, appending or interpolating the
+  detail, and passes unknown strings (e.g. raw OS errors) through untouched.
+  The tray menu/tooltip — outside the webview — is the one surface the backend
+  localizes itself (`tray_labels`), relabelled live by `ui_set_lang`.
+- **Code identifiers anglicized** (CLAUDE.md §6): the pt-named IPC commands
+  were renamed — `brain_versionar`→`brain_version`,
+  `brain_propor_mudanca`→`brain_propose_change`,
+  `brain_set_brainstorm_categoria`→`brain_set_brainstorm_category` — along
+  with internal Rust/JS identifiers and test names. **Serialized keys stay
+  pt** (`titulo`, `categoria`, `tema`, `marcadores`… in manifests/meta.json
+  and their IPC projections): they are the acervo on-disk contract, deferred
+  to the same en/pt RFC as the folder names below.
+- **Out of scope, unchanged**: acervo folder names stay pt
+  (`contextos/`, `reunioes/`, `notas/` — the known en/pt hotspot deferred to
+  its own RFC); serialized acervo keys (above); template/document *content*
+  follows `Acervo.lang`; `ai.rs` contract-locked messages (ADR-0011) stay
+  English; the overlay window title and its CSS `content:` placeholder
+  (`tauri.conf.json` / `overlay.html`) stay pt until the overlay loads the
+  i18n runtime.
+
 ## Consequences
 
 **Positive** — one authoritative document; every former ADR number used in code

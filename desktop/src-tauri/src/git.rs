@@ -150,7 +150,7 @@ pub fn git_identity(base: &Path) -> (Option<String>, Option<String>) {
 // repo (scoped; no system-wide change). Values are plain positional args.
 pub fn set_identity(base: &Path, name: &str, email: &str) -> Result<(), String> {
     if name.trim().is_empty() || email.trim().is_empty() {
-        return Err("nome e e-mail são obrigatórios".into());
+        return Err("err.git_identity_required".into());
     }
     git_init_repo(base)?;
     for (key, val) in [("user.name", name.trim()), ("user.email", email.trim())] {
@@ -347,7 +347,7 @@ pub fn sanitize_slug(s: &str) -> Result<String, String> {
     let slug: String = out.trim_matches('-').chars().take(50).collect();
     let slug = slug.trim_matches('-').to_string();
     if slug.is_empty() {
-        return Err("descreva a mudança para gerar o identificador".into());
+        return Err("err.change_description_required".into());
     }
     Ok(slug)
 }
@@ -511,7 +511,7 @@ pub fn ensure_gitignore(base: &Path) -> Result<(), String> {
 
 pub fn git_init_repo(base: &Path) -> Result<(), String> {
     if !git_available() {
-        return Err("git não encontrado no sistema".into());
+        return Err("err.git_not_found".into());
     }
     ensure_gitignore(base)?;
     if base.join(".git").is_dir() {
@@ -611,7 +611,7 @@ pub fn brain_git_files() -> GitFiles {
 // Manual "version now": stage everything and commit (BR: user drives push).
 #[tauri::command]
 pub fn brain_git_commit(message: String) -> Result<String, String> {
-    let cfg = read_brain_config().ok_or("acervo não configurado")?;
+    let cfg = read_brain_config().ok_or("err.acervo_not_configured")?;
     let base = PathBuf::from(&cfg.brain_dir);
     stage_and_commit(&base, message)
 }
@@ -713,7 +713,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_semver_extrai_de_saidas_reais() {
+    fn parse_semver_extracts_from_real_outputs() {
         assert_eq!(parse_semver("git version 2.50.1"), Some((2, 50, 1)));
         assert_eq!(
             parse_semver("gh version 2.83.2 (2025-12-10)"),
@@ -723,7 +723,7 @@ mod tests {
     }
 
     #[test]
-    fn version_meets_compara_major_minor() {
+    fn version_meets_compares_major_minor() {
         assert!(version_meets((2, 50, 1), (2, 20)));
         assert!(version_meets((3, 0, 0), (2, 20)));
         assert!(!version_meets((2, 10, 0), (2, 20)));
@@ -731,7 +731,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_auth_protocol_le_ssh_e_https() {
+    fn parse_auth_protocol_reads_ssh_and_https() {
         assert_eq!(
             parse_auth_protocol("  ✓ Git operations protocol: ssh"),
             Some("ssh".into())
@@ -744,17 +744,17 @@ mod tests {
     }
 
     #[test]
-    fn parse_log_line_separa_por_unit_separator() {
+    fn parse_log_line_splits_on_unit_separator() {
         let c = parse_log_line("abc123\u{1f}2026-07-26T10:00:00-03:00\u{1f}Ana\u{1f}feat: x | y")
             .unwrap();
         assert_eq!(c.id, "abc123");
         assert_eq!(c.author, "Ana");
-        assert_eq!(c.label, "feat: x | y"); // pipe no assunto é preservado
+        assert_eq!(c.label, "feat: x | y"); // pipe in the subject is preserved
         assert!(parse_log_line("").is_none());
     }
 
     #[test]
-    fn pr_info_desserializa_json_do_gh() {
+    fn pr_info_deserializes_gh_json() {
         let json = r#"[{"number":7,"title":"RFC: frota","headRefName":"rfc/frota-x",
             "author":{"login":"ana"},"reviewDecision":"REVIEW_REQUIRED",
             "reviewRequests":[{"login":"bob"},{"name":"Time Frota","slug":"frota"}],
@@ -771,8 +771,8 @@ mod tests {
     }
 
     #[test]
-    fn pr_info_tolera_campos_ausentes() {
-        // gh pode omitir campos; nada deve quebrar (serde default)
+    fn pr_info_tolerates_missing_fields() {
+        // gh may omit fields; nothing should break (serde default)
         let prs: Vec<PrInfo> = serde_json::from_str(r#"[{"number":1}]"#).unwrap();
         assert_eq!(prs[0].number, 1);
         assert!(prs[0].title.is_empty());
@@ -780,19 +780,19 @@ mod tests {
     }
 
     #[test]
-    fn sanitize_slug_blinda_o_nome_da_branch() {
-        // acentos (não-ASCII) viram separador — nome de branch portável
+    fn sanitize_slug_hardens_the_branch_name() {
+        // accents (non-ASCII) become a separator — portable branch name
         assert_eq!(sanitize_slug("Nova política!").unwrap(), "nova-pol-tica");
         assert_eq!(sanitize_slug("Frota 2026").unwrap(), "frota-2026");
         assert_eq!(sanitize_slug("  --hack; rm -rf  ").unwrap(), "hack-rm-rf");
         assert!(!sanitize_slug("x").unwrap().starts_with('-'));
-        // sem caracteres úteis → erro (nunca gera branch vazia/insegura)
+        // no useful characters → error (never yields an empty/unsafe branch)
         assert!(sanitize_slug("   !!!   ").is_err());
         assert!(sanitize_slug("---").is_err());
     }
 
     #[test]
-    fn is_versioning_denied_bloqueia_audio_transcricao_audit_sob_contextos() {
+    fn is_versioning_denied_blocks_audio_transcript_audit_under_contextos() {
         // ADR-0009: audio/transcript/audit under contextos/ are denied ...
         assert!(is_versioning_denied(
             "contextos/frota/reunioes/r1/audio.wav"
@@ -821,9 +821,9 @@ mod tests {
     }
 
     #[test]
-    fn stage_and_commit_nunca_versiona_audio_transcricao_audit_ou_pessoal() {
+    fn stage_and_commit_never_versions_audio_transcript_audit_or_pessoal() {
         if which("git").is_none() {
-            return; // git é dependência de sistema; pula se ausente
+            return; // git is a system dependency; skip when absent
         }
         let root = std::env::temp_dir().join(format!("loro-quar-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
@@ -843,6 +843,9 @@ mod tests {
         .unwrap();
         std::fs::write(root.join("brainstorming/x/nota.md"), "brainstorming").unwrap();
         std::fs::write(root.join("pessoal/temas/x/nota.md"), "pessoal").unwrap();
+        // owner decision (2026-07-28): root notas/ is personal — never versioned
+        std::fs::create_dir_all(root.join("notas")).unwrap();
+        std::fs::write(root.join("notas/2026-07-28-anotacao.md"), "pessoal").unwrap();
 
         stage_and_commit(&root, "base".into()).unwrap();
 
@@ -853,30 +856,34 @@ mod tests {
             .unwrap();
         let files = String::from_utf8_lossy(&tracked.stdout);
         assert!(files.contains("contextos/frota/context.md"));
-        assert!(!files.contains(".wav"), "áudio nunca é versionado");
+        assert!(!files.contains(".wav"), "audio is never versioned");
         assert!(
             !files.contains("reuniao.md"),
-            "transcrição nunca é versionada"
+            "the transcript is never versioned"
         );
         assert!(
             !files.contains("auditoria.jsonl"),
-            "auditoria nunca é versionada"
+            "the audit is never versioned"
         );
         assert!(
             !files.contains("brainstorming"),
-            "o mundo brainstorming/ nunca é versionado"
+            "the brainstorming/ world is never versioned"
         );
         assert!(
             !files.contains("pessoal"),
-            "o mundo legado pessoal/ nunca é versionado"
+            "the legacy pessoal/ world is never versioned"
+        );
+        assert!(
+            !files.contains("notas/"),
+            "root notas/ is personal — never versioned"
         );
         let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
-    fn versionar_cria_branch_rfc_e_preserva_main() {
+    fn version_creates_rfc_branch_and_preserves_main() {
         if which("git").is_none() {
-            return; // git é dependência de sistema; pula se ausente
+            return; // git is a system dependency; skip when absent
         }
         let root = std::env::temp_dir().join(format!("loro-ver-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
@@ -897,7 +904,7 @@ mod tests {
             "versionado"
         );
 
-        // a branch principal continua existindo (todo trabalho parte dela)
+        // the main branch still exists (all work branches off it)
         let kept = Command::new("git")
             .args(["rev-parse", "--verify", &orig])
             .current_dir(&root)

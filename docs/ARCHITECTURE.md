@@ -78,6 +78,11 @@ the text.
 Commands are Rust `#[tauri::command]` functions invoked from the frontend; keys
 are camelCase on the JS side. Events flow Rust → frontend via `emit`/`listen`.
 
+**Error contract (ADR-0001 §10):** user-facing command errors are stable codes
+— `err.<snake_key>`, optionally `err.<key>:<detail>` — translated by the
+frontend (`tErr()` in `src/i18n.js`) into the active UI language. Raw
+OS/serde errors may still pass through and are shown untranslated.
+
 ### 4.1 Commands (representative)
 
 | Command | Args | Returns | Purpose |
@@ -93,6 +98,7 @@ are camelCase on the JS side. Events flow Rust → frontend via `emit`/`listen`.
 | `auto_save` | `content, dir, filename` | path | silent save to the configured folder |
 | `list_capture_devices` | — | `[{index,name}]` | enumerate capture devices (for `-c`) |
 | `brain_get_config` / `brain_setup` / `brain_add_context` / `brain_remove_context` | … | config | acervo config lifecycle |
+| `ui_get_lang` / `ui_set_lang` | — / `lang ("pt"\|"en")` | lang | user-level UI language (ADR-0001 §10); set relabels the tray live |
 | `brain_status` | — | status | contexts, inbox, processed, activity |
 | `brain_read` | `rel` | content | read a file inside the acervo (path-traversal guarded) |
 | `brain_import` | `context?` | count | copy files into the inbox (prefix `<ctx>--`) |
@@ -107,7 +113,7 @@ Brainstorming world + the fila → contexto flow (ADR-0001 §7):
 | `brain_list_meetings` | `slug` | `[{id,rel,titulo,status}]` | a brainstorming's meetings, newest first, labelled by manifest `titulo` |
 | `brain_meeting_rename` | `{id, titulo}` | `()` | rename a meeting (manifest + heading; the folder id stays stable) |
 | `brain_rename_brainstorm` | `slug, nome` | `{slug, rel}` | rename a brainstorming (folder + meta) |
-| `brain_set_brainstorm_categoria` | `{slug, categoria?}` | `()` | set/clear the UI grouping category |
+| `brain_set_brainstorm_category` | `{slug, categoria?}` | `()` | set/clear the UI grouping category |
 | `brain_brainstorm_delete` | `{rel}` | `()` | delete a brainstorming item (guarded to `brainstorming/`) |
 | `brain_brainstorm_build_report` | `slug, selection[]` | `{rel}` | build ONE consolidated report (empty selection = all parts) |
 | `brain_send_report_to_queue` | `reportRel, destContext?` | name | copy a report into the fila (`inbox/`) steered by `<ctx>--` |
@@ -119,8 +125,8 @@ Knowledge versioning & collaboration (ADR-0001 §5) — all opt-in, no credentia
 | `brain_git_state` / `brain_git_files` | — | state / per-file status | local repo status (button label, VSCode-like tree colors) |
 | `env_doctor` | — | checklist + `versioningEnabled` | validate git/gh/auth/identity/remote; gates the remote flow |
 | `env_set_identity` | `name, email` | `()` / err | the one safe wizard fix — sets git identity scoped to the acervo |
-| `brain_versionar` | `slug, message` | `{branch, result}` | Versionar: `git checkout -b rfc/<slug>` (off default) + add + commit (local) |
-| `brain_propor_mudanca` | `title, body` | `{number, url}` | Propor: push the rfc/ branch + `gh pr create` (the RFC); gated |
+| `brain_version` | `slug, message` | `{branch, result}` | Versionar: `git checkout -b rfc/<slug>` (off default) + add + commit (local) |
+| `brain_propose_change` | `title, body` | `{number, url}` | Propor: push the rfc/ branch + `gh pr create` (the RFC); gated |
 | `gh_pr_list` / `gh_pr_status` | — / `number` | PR(s) | read open PRs / one PR's review status via `gh --json` |
 | `brain_notifications` | — | inbox by category | collaboration inbox from open PRs; `connected:false` when local-only |
 | `brain_timeline` | `rel?` | `[{id,when,author,label}]` | abstracted history (git log) for the timeline UI |
@@ -164,8 +170,8 @@ Path resolution: `LORO_HOME` (exported by `loro.sh`) or a sensible default;
   and splits a composite domain into recursive `contextos/<c>/<sub>/` subdomains
   (parent becomes overview + index), up to `MAX_CONTEXT_DEPTH` levels (ADR-0001 §4).
 - **Knowledge versioning (ADR-0001 §5), Git hidden behind two buttons:** *Versionar*
-  → `brain_versionar` creates `rfc/<slug>` off the default branch and commits the
-  working changes locally (Git only). *Propor mudança* → `brain_propor_mudanca`
+  → `brain_version` creates `rfc/<slug>` off the default branch and commits the
+  working changes locally (Git only). *Propor mudança* → `brain_propose_change`
   pushes that branch and opens the PR (the RFC) via `gh`, gated on `env_doctor`'s
   `versioningEnabled`. Owners approve on GitHub via `.github/CODEOWNERS` + branch
   protection; merging into `main` makes the change the official source of truth.

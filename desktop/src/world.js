@@ -8,10 +8,17 @@
   root.LoroWorld = api;
 })(typeof window !== "undefined" ? window : globalThis, function () {
   // Permanent crumb badge per world. `null` means the caller keeps its own
-  // document-specific badge (inbox/guide/etc.).
-  function crumbBadge(kind) {
-    if (kind === "context") return { label: "versionado", cls: "ok" };
-    if (kind === "personal") return { label: "rascunho — não versionado", cls: "warn2" };
+  // document-specific badge (inbox/guide/etc.). `lang` ("pt" default | "en")
+  // localizes the label directly — pure modules cannot reach the window-level
+  // i18n dictionary.
+  const BADGE_COPY = {
+    pt: { context: "versionado", personal: "rascunho — não versionado" },
+    en: { context: "versioned", personal: "draft — not versioned" },
+  };
+  function crumbBadge(kind, lang) {
+    const t = BADGE_COPY[lang === "en" ? "en" : "pt"];
+    if (kind === "context") return { label: t.context, cls: "ok" };
+    if (kind === "personal") return { label: t.personal, cls: "warn2" };
     return null;
   }
 

@@ -82,7 +82,10 @@
   // "nova reunião" default. `id` is the last path segment of the meeting dir.
   function meetingTitleFromManifest(manifest, id) {
     const t = manifest && typeof manifest.titulo === "string" ? manifest.titulo.trim() : "";
-    if (t && t.toLowerCase() !== "reunião" && t.toLowerCase() !== "nova reunião") return t;
+    // Data comparison, not UI copy: manifests written under either UI language
+    // may carry a stale default title, so both pt and en defaults are rejected.
+    const STALE = ["reunião", "nova reunião", "meeting", "new meeting"];
+    if (t && STALE.indexOf(t.toLowerCase()) === -1) return t;
     return String(id == null ? "" : id);
   }
   // Label from a meeting id like "2026-07-27-1430-semanal-de-custos": strip the
@@ -90,13 +93,16 @@
   // untitled meeting carries the generic "reuniao" tail, which identifies
   // nothing in the sidebar — label it by its date/time instead ("reunião 27/07
   // 14:30"). Falls back to the raw id when it does not match the stamped shape.
-  function meetingLabel(id) {
+  // `lang` ("pt" default | "en") localizes only the generated "reunião"/"meeting"
+  // prefix; a titled slug is data and is never translated.
+  function meetingLabel(id, lang) {
     const s = String(id == null ? "" : id);
     const m = /^(\d{4})-(\d{2})-(\d{2})-(\d{2})(\d{2})-(.+)$/.exec(s);
     if (!m) return s;
     const tail = m[6].replace(/-/g, " ").trim();
     if (!tail || tail === "reuniao" || tail === "nova reuniao") {
-      return "reunião " + m[3] + "/" + m[2] + " " + m[4] + ":" + m[5];
+      const word = lang === "en" ? "meeting" : "reunião";
+      return word + " " + m[3] + "/" + m[2] + " " + m[4] + ":" + m[5];
     }
     return tail;
   }
@@ -112,18 +118,25 @@
     return b ? b + "/" + r : r;
   }
 
-  // Format the ai_doctor posture into one honest pt-BR status line for the
-  // análise rail (ADR-0011). Booleans only — never a secret or a token (BR-9);
-  // in v1 embeddings/MCP/análise are deferred, so this reports "—" for them and
-  // the caller keeps the analisar button disabled. Pure so it is node-tested.
-  function aiStatusLine(d) {
+  // Format the ai_doctor posture into one honest status line for the análise
+  // rail (ADR-0011). Booleans only — never a secret or a token (BR-9); in v1
+  // embeddings/MCP/análise are deferred, so this reports "—" for them and the
+  // caller keeps the analisar button disabled. Pure so it is node-tested.
+  // `lang` ("pt" default | "en") localizes the copy directly — pure modules
+  // cannot reach the window-level i18n dictionary.
+  const AI_STATUS_COPY = {
+    pt: { ready: "pronto", unavailable: "indisponível", available: "disponível", cloud: "nuvem" },
+    en: { ready: "ready", unavailable: "unavailable", available: "available", cloud: "cloud" },
+  };
+  function aiStatusLine(d, lang) {
     d = d || {};
+    const t = AI_STATUS_COPY[lang === "en" ? "en" : "pt"];
     const local = d.localModelReady
-      ? "pronto" + (d.localModelName ? " (" + d.localModelName + ")" : "")
-      : "indisponível";
-    const nuvem = d.cloudAvailable ? "disponível" : "—";
-    const mcp = d.mcpAvailable ? "disponível" : "—";
-    return "local: " + local + " · nuvem: " + nuvem + " · MCP: " + mcp;
+      ? t.ready + (d.localModelName ? " (" + d.localModelName + ")" : "")
+      : t.unavailable;
+    const nuvem = d.cloudAvailable ? t.available : "—";
+    const mcp = d.mcpAvailable ? t.available : "—";
+    return "local: " + local + " · " + t.cloud + ": " + nuvem + " · MCP: " + mcp;
   }
 
   // Whisper hallucinates caption-credit / non-speech artifacts on SILENCE (e.g.

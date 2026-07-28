@@ -168,8 +168,8 @@ um **companheiro** do seu fluxo/agentes, não os substitui.
     )
 }
 
-// skill /brain-context gravada DENTRO do acervo (o diretório é autocontido).
-// ADR-0013: é o passo fila → contexto do fluxo brainstorming → fila → contexto.
+// /brain-context skill written INSIDE the acervo (the directory is self-contained).
+// ADR-0013: it is the queue → context step of the brainstorming → queue → context flow.
 pub const BRAIN_SKILL: &str = r#"---
 description: Gera contexto a partir da fila (inbox) — reuniões, relatórios e textos viram context.md + CHANGELOG.md
 ---
