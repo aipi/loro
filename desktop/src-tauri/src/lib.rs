@@ -2861,6 +2861,82 @@ fn term_close(state: State<AppState>) {
     }
 }
 
+// ---- ADR-0002 §4: terminal/Claude readiness handshake ----------------------
+// Slash-commands only mean something to a running Claude. The frontend asks
+// this instead of guessing from terminal output: is the PTY open, and does a
+// `claude` process live under its shell right now?
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TermStatus {
+    open: bool,
+    claude_running: bool,
+}
+
+fn parse_ps_table(out: &str) -> Vec<(u32, u32, String)> {
+    out.lines()
+        .filter_map(|l| {
+            let mut it = l.split_whitespace();
+            let pid = it.next()?.parse().ok()?;
+            let ppid = it.next()?.parse().ok()?;
+            let comm = it.next()?.to_string();
+            Some((pid, ppid, comm))
+        })
+        .collect()
+}
+
+fn has_descendant_process(table: &[(u32, u32, String)], root: u32, name: &str) -> bool {
+    let mut frontier = vec![root];
+    let mut seen = std::collections::HashSet::new();
+    while let Some(pid) = frontier.pop() {
+        if !seen.insert(pid) {
+            continue;
+        }
+        for (cpid, ppid, comm) in table {
+            if *ppid == pid {
+                // `ps -axo comm=` may print the full executable path on macOS
+                let base = comm.rsplit('/').next().unwrap_or(comm);
+                if base == name {
+                    return true;
+                }
+                frontier.push(*cpid);
+            }
+        }
+    }
+    false
+}
+
+#[tauri::command]
+fn term_status(state: State<AppState>) -> TermStatus {
+    let shell_pid = state
+        .term
+        .lock()
+        .unwrap()
+        .as_ref()
+        .and_then(|s| s.child.process_id());
+    let Some(root) = shell_pid else {
+        return TermStatus {
+            open: false,
+            claude_running: false,
+        };
+    };
+    let claude_running = Command::new("ps")
+        .args(["-axo", "pid=,ppid=,comm="])
+        .output()
+        .ok()
+        .map(|o| {
+            has_descendant_process(
+                &parse_ps_table(&String::from_utf8_lossy(&o.stdout)),
+                root,
+                "claude",
+            )
+        })
+        .unwrap_or(false);
+    TermStatus {
+        open: true,
+        claude_running,
+    }
+}
+
 pub fn run() {
     init_logging();
     info!(os = std::env::consts::OS, "Loro starting");
@@ -2999,6 +3075,7 @@ pub fn run() {
             term_input,
             term_resize,
             term_close,
+            term_status,
             brain_import,
             brain_delete_inbox,
             brain_write_inbox,
@@ -3061,6 +3138,24 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ADR-0002 §4 — the terminal/Claude readiness handshake asks the OS whether
+    // a `claude` process lives under the PTY shell, instead of guessing from
+    // terminal output.
+    #[test]
+    fn ps_table_parses_and_finds_descendant_by_name() {
+        let table = parse_ps_table(
+            "  1     0  launchd\n 300     1  zsh\n 412   300  claude\n 500   412  node\n 600     1  zsh\n",
+        );
+        assert!(has_descendant_process(&table, 300, "claude"));
+        assert!(!has_descendant_process(&table, 600, "claude"));
+        // the root itself does not count as its own descendant match
+        assert!(!has_descendant_process(&table, 412, "zsh"));
+        // grandchildren are found too
+        assert!(has_descendant_process(&table, 300, "node"));
+        // malformed lines are skipped, not fatal
+        assert!(parse_ps_table("garbage\n").is_empty());
+    }
 
     #[test]
     fn tray_labels_follow_ui_lang() {

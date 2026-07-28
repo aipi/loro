@@ -666,7 +666,7 @@ function askAcervo() {
       const q = (($("askInput") && $("askInput").value) || "").trim();
       const cmd = LoroBrainstorm.brainAskCmd(q);
       if (!cmd) { toast(t("digite uma pergunta")); return; }
-      termRun(cmd);
+      termRunClaude(cmd);
       toast(t("pergunta enviada ao Claude do terminal — a resposta aparece abaixo"), 4000);
     }
   );
@@ -984,7 +984,7 @@ $("guideBtn").addEventListener("click", () => openGuideDoc());
 // queue into versioned contexts. Same terminal-skill pattern as analisar/responder.
 // One function, two entry points: the home card CTA and the sidebar quick action.
 function genContextNow() {
-  termRun(LoroBrainstorm.brainContextCmd());
+  termRunClaude(LoroBrainstorm.brainContextCmd());
   toast(t("gerando contexto no Claude do terminal — acompanhe abaixo"), 4000);
 }
 {
@@ -2062,7 +2062,7 @@ function runMeetingSkill(kind, id, question) {
   if (!dir) { toast(t("abra a reunião para analisar")); return; }
   const cmd = LM.meetingSkillCmd(kind, dir, question);
   if (!cmd) { toast(t("digite uma pergunta")); return; }
-  termRun(cmd);
+  termRunClaude(cmd);
   toast(kind === "answer" ? t("pergunta enviada ao Claude do terminal") : t("análise enviada ao Claude do terminal"), 4000);
   // A skill write is async and IPC-free (no pessoal-changed event), so nudge a
   // couple of tree/surface refreshes to reveal the artefatos it produces.
@@ -3228,7 +3228,7 @@ $("termSide").addEventListener("click", () => {
   settings.termSide = !settings.termSide; persistSettings(); applyTermLayout();
 });
 
-// roda um comando no terminal embutido (abre o painel e digita)
+// roda um comando de SHELL no terminal embutido (abre o painel e digita)
 function termRun(cmd) {
   setTermPanel(true);
   let tries = 0;
@@ -3237,6 +3237,33 @@ function termRun(cmd) {
     if (++tries < 40) setTimeout(send, 250);
   };
   send();
+}
+
+// ADR-0002 §4 — runs a SLASH-COMMAND, which only a live Claude understands.
+// Handshake: poll term_status until a `claude` process exists under the PTY
+// shell (relaunching it once if the session was reused after Claude exited),
+// give the TUI a short settle so it doesn't drop pending stdin, then inject.
+// Fails loudly instead of typing into a bare shell.
+async function termRunClaude(cmd) {
+  const cfg = await invoke("brain_get_config").catch(() => null);
+  if (!cfg || !cfg.brainDir) { toast(tErr("err.acervo_not_configured")); return; }
+  setTermPanel(true);
+  let relaunched = false;
+  for (let tries = 0; tries < 50; tries++) {           // ~15s total
+    const st = await invoke("term_status").catch(() => null);
+    if (st && st.open && st.claudeRunning) {
+      await new Promise((r) => setTimeout(r, tries === 0 ? 0 : 800)); // settle a fresh TUI
+      await invoke("term_input", { data: cmd + "\n" }).catch(() => {});
+      return;
+    }
+    if (st && st.open && !st.claudeRunning && termReady && !relaunched) {
+      relaunched = true; // reused session where Claude exited: bring it back
+      await invoke("term_input", { data: "claude\n" }).catch(() => {});
+    }
+    await new Promise((r) => setTimeout(r, 300));
+  }
+  toast(t("não foi possível abrir o Claude no terminal — verifique se o CLI está instalado (claude)"), 5000);
+  clog("termRunClaude: claude did not come up; command not injected");
 }
 
 // ---- setup guiado: o Loro verifica dependências e resolve pelo terminal ----
