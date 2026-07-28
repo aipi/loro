@@ -72,8 +72,11 @@ the repository (2026-07-28). The owner asked for exactly one authoritative ADR.
   builds the `.dmg` on a macOS runner and publishes a GitHub Release). The
   workflow gates on the full test/lint suite and on the tag matching
   `tauri.conf.json`'s version. The bundle is **not** Developer-ID signed
-  (owner decision, 2026-07-28 — no Apple Developer account): first launch
-  requires right-click → Open; the release notes state this.
+  (owner decision, 2026-07-28 — no Apple Developer account): on macOS 15+
+  Gatekeeper blocks the quarantined app (misreporting it as "damaged");
+  installing requires `xattr -d com.apple.quarantine /Applications/Loro.app`,
+  stated in the release notes. Frictionless install needs Developer ID
+  signing + notarization — revisit if distribution widens.
 - Backend split by concern (`paths`, `config`, `templates`, `acervo`, `meeting`,
   `git`, `ai`, core `lib`); TDD, `clippy -D warnings`, per-BR test coverage.
 
@@ -212,7 +215,11 @@ the repository (2026-07-28). The owner asked for exactly one authoritative ADR.
   and a `meta.json` (optional `categoria`, UI-only grouping). It is invisible to
   the context walk and can never enter a Versionar/Propor commit (also enforced
   by the `stage_and_commit` untrack list and a write guard refusing meeting
-  audio/transcripts under `contextos/`).
+  audio/transcripts under `contextos/`). Owner decision (2026-07-28): the
+  acervo-root `notas/` is personal too — `GIT_IGNORED` carries the anchored
+  `/notas/` entry (root-only; a `notas/` inside a context stays versionable) and
+  the untrack list heals acervos that had already indexed it, since
+  `ensure_gitignore` + untrack run on every versionar.
 - **The flow is three sequential, visible stages**: build an idea in a
   brainstorming → **elect** parts into ONE consolidated report that enters the
   **fila** (the existing `inbox/` queue — no new store) → **"gerar contexto"**
