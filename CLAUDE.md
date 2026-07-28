@@ -25,7 +25,8 @@ domain `loro`); technical decisions live in the code repo.
 |---|---|
 | `brain/contexts/loro/context.md` | What the product is, its rationale, and the immutable business rules (`BR-…`) |
 | `docs/ARCHITECTURE.md` | How it is built (contexts, IPC contract, flows) |
-| `docs/adr/0001-baseline.md` | The **single consolidated ADR**: all technical decisions, with a map from the former ADR numbers still referenced in code comments |
+| `docs/adr/0001-baseline.md` | The consolidated **baseline ADR**: all technical decisions up to 2026-07, with a map from the former ADR numbers still referenced in code comments |
+| `docs/adr/0002-….md` | Incremental ADRs from 2026-07-28 on (0002: Studio v2 — generation language, branch-first git, editor lifecycle, in-app manual) |
 | `CLAUDE.md` | How to work (this file) |
 
 **Precedence on conflict:** brain domain source-of-truth > ARCHITECTURE > ADR > CLAUDE.md.
