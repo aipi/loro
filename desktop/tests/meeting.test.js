@@ -82,6 +82,23 @@ test("aiStatusLine formats the ai_doctor posture in pt-BR (booleans only)", () =
   assert.strictEqual(LM.aiStatusLine(undefined), "local: indisponível · nuvem: — · MCP: —");
 });
 
+// i18n: pure modules cannot reach the window-level i18n dictionary, so the
+// UI-text producers take an optional `lang` ("pt" default | "en") and emit the
+// localized text directly.
+test("aiStatusLine renders in English when lang is 'en'", () => {
+  assert.strictEqual(
+    LM.aiStatusLine({ localModelReady: true, localModelName: "ollama", cloudAvailable: true, mcpAvailable: false }, "en"),
+    "local: ready (ollama) · cloud: available · MCP: —"
+  );
+  assert.strictEqual(
+    LM.aiStatusLine({ localModelReady: false, cloudAvailable: false, mcpAvailable: false }, "en"),
+    "local: unavailable · cloud: — · MCP: —"
+  );
+  assert.strictEqual(LM.aiStatusLine(undefined, "en"), "local: unavailable · cloud: — · MCP: —");
+  // explicit "pt" matches the default
+  assert.strictEqual(LM.aiStatusLine(undefined, "pt"), "local: indisponível · nuvem: — · MCP: —");
+});
+
 // ADR-0012 terminal trigger: the app injects a Claude Code slash command into
 // the terminal PTY. These helpers build that exact string, so they are the unit
 // that must never leak a premature submit (a raw newline) or a bad dir.
@@ -146,9 +163,26 @@ test("meetingLabel identifies untitled meetings by date/time, never a bare 'reun
   assert.strictEqual(LM.meetingLabel("2026-07-28-0905-nova-reuniao"), "reunião 28/07 09:05");
 });
 
+test("meetingLabel identifies untitled meetings in English when lang is 'en'", () => {
+  assert.strictEqual(LM.meetingLabel("2026-07-28-1430-reuniao", "en"), "meeting 28/07 14:30");
+  assert.strictEqual(LM.meetingLabel("2026-07-28-0905-nova-reuniao", "en"), "meeting 28/07 09:05");
+  // a titled slug is data, not UI copy — lang never changes it
+  assert.strictEqual(LM.meetingLabel("2026-07-27-1430-semanal-de-custos", "en"), "semanal de custos");
+  assert.strictEqual(LM.meetingLabel("sem-stamp", "en"), "sem-stamp");
+});
+
 test("meetingTitleFromManifest prefers titulo, never the stale default", () => {
   assert.strictEqual(LM.meetingTitleFromManifest({ titulo: "Semanal" }, "id-x"), "Semanal");
   // the default "Reunião"/"nova reunião" falls back to the id (fixes the bug)
   assert.strictEqual(LM.meetingTitleFromManifest({ titulo: "Reunião" }, "id-x"), "id-x");
   assert.strictEqual(LM.meetingTitleFromManifest({}, "id-x"), "id-x");
+});
+
+test("meetingTitleFromManifest also rejects the English stale defaults (manifest data may be en)", () => {
+  // manifests written under an English UI carry the en default titles; the
+  // stale-default check is a data comparison, so it accepts both languages
+  assert.strictEqual(LM.meetingTitleFromManifest({ titulo: "Meeting" }, "id-x"), "id-x");
+  assert.strictEqual(LM.meetingTitleFromManifest({ titulo: "new meeting" }, "id-x"), "id-x");
+  // the pt defaults keep being rejected too
+  assert.strictEqual(LM.meetingTitleFromManifest({ titulo: "nova reunião" }, "id-x"), "id-x");
 });

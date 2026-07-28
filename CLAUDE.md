@@ -76,8 +76,10 @@ business logic in the Tauri `run()` wiring.
 ## 6. Conventions
 
 - **Language:** code, comments, logs and all documentation (brain, ADR,
-  ARCHITECTURE, this file) are in **English**. The product **UI stays in
-  Portuguese (pt-BR)** and its layout must not change without a design decision.
+  ARCHITECTURE, this file) are in **English**. The product UI is **pt-BR by
+  default with a user-selectable English toggle** (ADR-0001 §10; pt-BR strings
+  in code are the i18n msgids). The layout must not change without a design
+  decision.
 - **Naming:** ubiquitous language — names reflect the domain, per language idiom
   (Rust snake_case, JS camelCase). Claude Code command/skill files use **hyphenated**
   names (`brain-context`, `brain-analyse`, `brain-answer`), never a dot — a dot is

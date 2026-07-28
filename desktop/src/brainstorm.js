@@ -11,16 +11,31 @@
   // The sequential flow the UI must make legible. The user always moves left to
   // right: build ideas in a brainstorming, elect parts into the context queue,
   // then generate the versioned context.
-  const STAGES = [
-    { key: "brainstorming", label: "Brainstorming", hint: "construa a ideia: reuniões e notas" },
-    { key: "fila", label: "Fila", hint: "eleja partes → um relatório entra na fila de geração de contexto" },
-    { key: "contexto", label: "Contexto", hint: "gere o contexto versionado a partir da fila (/brain-context)" },
-  ];
+  // Stage copy per language. Keys are stable identifiers (never translated);
+  // labels/hints are UI copy — pure modules cannot reach the window-level i18n
+  // dictionary, so callers pass `lang` ("pt" default | "en") to stages().
+  const STAGES_BY_LANG = {
+    pt: [
+      { key: "brainstorming", label: "Brainstorming", hint: "construa a ideia: reuniões e notas" },
+      { key: "fila", label: "Fila", hint: "eleja partes → um relatório entra na fila de geração de contexto" },
+      { key: "contexto", label: "Contexto", hint: "gere o contexto versionado a partir da fila (/brain-context)" },
+    ],
+    en: [
+      { key: "brainstorming", label: "Brainstorming", hint: "build the idea: meetings and notes" },
+      { key: "fila", label: "Queue", hint: "elect parts → a report enters the context generation queue" },
+      { key: "contexto", label: "Context", hint: "generate the versioned context from the queue (/brain-context)" },
+    ],
+  };
+  function stages(lang) {
+    return STAGES_BY_LANG[lang === "en" ? "en" : "pt"];
+  }
+  // Legacy pt-BR constant kept for callers not yet passing a lang.
+  const STAGES = STAGES_BY_LANG.pt;
 
   // Group brainstormings by their optional `categoria` (a UI-only label). Returns
   // an ordered list of { categoria, items } — items keep their input order;
   // groups are sorted with the uncategorized bucket ("Sem categoria") last.
-  function groupByCategoria(list) {
+  function groupByCategory(list) {
     const arr = Array.isArray(list) ? list : [];
     const UNCAT = "Sem categoria";
     const map = new Map();
@@ -84,8 +99,8 @@
   }
 
   return {
-    STAGES,
-    groupByCategoria,
+    STAGES, stages,
+    groupByCategory,
     emptySelection, toggleSelection, selectedItems,
     reportInboxName, brainContextCmd, brainAskCmd,
   };

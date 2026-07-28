@@ -57,7 +57,7 @@ const DEFERRED_PROSE: &str = "_(resumo automático — rode “analisar” para 
 // The active acervo root, canonicalized — the single trust boundary for every FS
 // path below (same guard the other brain_* commands use).
 fn acervo_base() -> Result<PathBuf, String> {
-    let cfg = read_brain_config().ok_or("acervo não configurado")?;
+    let cfg = read_brain_config().ok_or("err.acervo_not_configured")?;
     PathBuf::from(&cfg.brain_dir)
         .canonicalize()
         .map_err(|e| e.to_string())
@@ -98,7 +98,7 @@ fn valid_meeting_id(id: &str) -> bool {
 // un-migrated acervos; stateless and path-guarded (canonicalize + starts_with).
 fn resolve_meeting_dir(base: &Path, id: &str) -> Result<PathBuf, String> {
     if !valid_meeting_id(id) {
-        return Err("id de reunião inválido".into());
+        return Err("err.invalid_meeting_id".into());
     }
     // (roots to scan, whether the <id> sits directly under `reunioes/`)
     let roots = [
@@ -114,13 +114,13 @@ fn resolve_meeting_dir(base: &Path, id: &str) -> Result<PathBuf, String> {
             if cand.join("manifest.json").is_file() {
                 let canon = cand.canonicalize().map_err(|e| e.to_string())?;
                 if !canon.starts_with(base) {
-                    return Err("fora do acervo".into());
+                    return Err("err.outside_acervo".into());
                 }
                 return Ok(canon);
             }
         }
     }
-    Err("reunião não encontrada".into())
+    Err("err.meeting_not_found".into())
 }
 
 // Resolve a meeting's on-disk dir by id for cross-module readers (ADR-0011
@@ -213,7 +213,7 @@ pub struct Artifact {
 
 #[derive(Serialize, Deserialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
-pub struct Marcador {
+pub struct Marker {
     #[serde(default)]
     tipo: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -266,7 +266,7 @@ pub struct Manifest {
     #[serde(default)]
     artifacts: Vec<Artifact>,
     #[serde(default)]
-    marcadores: Vec<Marcador>,
+    marcadores: Vec<Marker>,
     #[serde(default)]
     consent: Consent,
     #[serde(default)]
@@ -277,7 +277,7 @@ pub struct Manifest {
 // so a caller never edits a phantom manifest.
 fn manifest_read(dir: &Path) -> Result<Manifest, String> {
     let txt = std::fs::read_to_string(dir.join("manifest.json"))
-        .map_err(|_| "manifest não encontrado".to_string())?;
+        .map_err(|_| "err.manifest_not_found".to_string())?;
     serde_json::from_str(&txt).map_err(|e| e.to_string())
 }
 
@@ -407,16 +407,16 @@ fn valid_tipo(tipo: &str) -> bool {
 // ADR-0013: the meeting-AI skills can't touch manifest.json (the app owns the
 // atomic writer), so they append PII-free markers to a `marcadores.jsonl` sidecar
 // which the app FOLDS into the manifest at build time. Pure: parse each JSONL line
-// as a Marcador, keep only known `tipo`s (BR-8: a text field would never parse into
-// Marcador — only tipo/t_ms/ref exist), and append them to the existing markers.
-fn fold_marcadores(existing: &[Marcador], lines: &str) -> Vec<Marcador> {
+// as a Marker, keep only known `tipo`s (BR-8: a text field would never parse into
+// Marker — only tipo/t_ms/ref exist), and append them to the existing markers.
+fn fold_markers(existing: &[Marker], lines: &str) -> Vec<Marker> {
     let mut out = existing.to_vec();
     for line in lines.lines() {
         let t = line.trim();
         if t.is_empty() {
             continue;
         }
-        if let Ok(mk) = serde_json::from_str::<Marcador>(t) {
+        if let Ok(mk) = serde_json::from_str::<Marker>(t) {
             if valid_tipo(&mk.tipo) {
                 out.push(mk);
             }
@@ -428,9 +428,9 @@ fn fold_marcadores(existing: &[Marcador], lines: &str) -> Vec<Marcador> {
 // Read `<dir>/marcadores.jsonl` (if any) and return the manifest markers folded
 // with it. Idempotency is the caller's concern (the sidecar is consumed/cleared
 // after a successful fold so a re-run does not double-count).
-fn fold_marcadores_file(dir: &Path, existing: &[Marcador]) -> Vec<Marcador> {
+fn fold_markers_file(dir: &Path, existing: &[Marker]) -> Vec<Marker> {
     match std::fs::read_to_string(dir.join("marcadores.jsonl")) {
-        Ok(lines) => fold_marcadores(existing, &lines),
+        Ok(lines) => fold_markers(existing, &lines),
         Err(_) => existing.to_vec(),
     }
 }
@@ -558,7 +558,7 @@ fn create_meeting(
         .join("reunioes")
         .join(&id);
     if dir.exists() {
-        return Err("já existe uma reunião com esse identificador".into());
+        return Err("err.meeting_id_exists".into());
     }
     std::fs::create_dir_all(dir.join("audio")).map_err(|e| e.to_string())?;
     for k in ARTIFACT_KINDS {
@@ -583,7 +583,7 @@ fn create_meeting(
 
     let dir = dir.canonicalize().map_err(|e| e.to_string())?;
     if !dir.starts_with(base) {
-        return Err("fora do acervo".into());
+        return Err("err.outside_acervo".into());
     }
     let living_rel = format!("{}/reuniao.md", rel_of(base, &dir));
     Ok(Created {
@@ -804,7 +804,7 @@ pub fn brain_meeting_write_artifact(
     input: WriteArtifactInput,
 ) -> Result<WriteArtifactOut, String> {
     if !valid_kind(&input.kind) {
-        return Err("tipo de artefato inválido".into());
+        return Err("err.invalid_artifact_type".into());
     }
     let name = safe_artifact_name(&input.name)?;
     let base = acervo_base()?;
@@ -817,7 +817,7 @@ pub fn brain_meeting_write_artifact(
     let path = kind_dir.join(&name);
     // Final guard: the resolved parent must stay inside the meeting dir.
     if !path.starts_with(&dir) {
-        return Err("fora da reunião".into());
+        return Err("err.outside_meeting".into());
     }
     std::fs::write(&path, input.content.as_bytes()).map_err(|e| e.to_string())?;
 
@@ -856,7 +856,7 @@ pub struct MarkerInput {
 #[tauri::command]
 pub fn brain_meeting_marker(input: MarkerInput) -> Result<(), String> {
     if !valid_tipo(&input.tipo) {
-        return Err("tipo de marcador inválido".into());
+        return Err("err.invalid_marker_type".into());
     }
     let base = acervo_base()?;
     let dir = resolve_meeting_dir(&base, &input.id)?;
@@ -864,7 +864,7 @@ pub fn brain_meeting_marker(input: MarkerInput) -> Result<(), String> {
     let _guard = lock.lock().map_err(|_| "lock envenenado".to_string())?;
 
     let mut manifest = manifest_read(&dir)?;
-    manifest.marcadores.push(Marcador {
+    manifest.marcadores.push(Marker {
         tipo: input.tipo,
         t_ms: Some(input.t_ms),
         r#ref: input.r#ref,
@@ -959,7 +959,7 @@ fn replace_title_heading(md: &str, titulo: &str) -> String {
 fn rename_meeting(dir: &Path, titulo: &str) -> Result<Manifest, String> {
     let t = titulo.trim();
     if t.is_empty() {
-        return Err("informe um título".into());
+        return Err("err.title_required".into());
     }
     let mut m = manifest_read(dir)?;
     m.titulo = t.to_string();
@@ -1016,7 +1016,7 @@ pub fn brain_meeting_build_notebook(app: AppHandle, id: String) -> Result<BuildO
     // double-counts. The app is still the only writer of manifest.json.
     let sidecar = dir.join("marcadores.jsonl");
     if sidecar.is_file() {
-        manifest.marcadores = fold_marcadores_file(&dir, &manifest.marcadores);
+        manifest.marcadores = fold_markers_file(&dir, &manifest.marcadores);
         let _ = std::fs::remove_file(&sidecar);
     }
     let notebook = assemble_notebook(&manifest);
@@ -1042,7 +1042,7 @@ fn audio_filename(which: &str) -> Result<&'static str, String> {
         "mic" => Ok("mic.webm"),
         "system" => Ok("system.wav"),
         "completo" => Ok("completo.wav"),
-        _ => Err("faixa de áudio inválida".into()),
+        _ => Err("err.invalid_audio_track".into()),
     }
 }
 
@@ -1054,7 +1054,7 @@ fn delete_audio_core(dir: &Path, which: &str) -> Result<Manifest, String> {
     let audio_dir = dir.join("audio");
     let path = audio_dir.join(file);
     if !path.starts_with(&audio_dir) {
-        return Err("fora da reunião".into());
+        return Err("err.outside_meeting".into());
     }
     if path.is_file() {
         std::fs::remove_file(&path).map_err(|e| e.to_string())?;
@@ -1207,10 +1207,9 @@ pub fn brain_meeting_transcribe_tail(input: TranscribeTailInput) -> Result<Trans
     let manifest = manifest_read(&dir)?;
     if manifest.modelo.is_empty() {
         let _ = std::fs::remove_file(&snap);
-        return Err("modelo indisponível para transcrição ao vivo".into());
+        return Err("err.live_model_unavailable".into());
     }
-    let ffmpeg =
-        which("ffmpeg").ok_or("ffmpeg não encontrado. Instale (macOS: brew install ffmpeg).")?;
+    let ffmpeg = which("ffmpeg").ok_or("err.ffmpeg_not_found")?;
     let cli = crate::paths::whisper_cli_bin();
     let model = crate::paths::model_path(&manifest.modelo);
     let lang = if manifest.idioma.is_empty() {
@@ -1266,14 +1265,13 @@ pub fn brain_meeting_transcribe_segment(
     }
     let manifest = manifest_read(&dir)?;
     if manifest.modelo.is_empty() {
-        return Err("modelo indisponível para transcrição ao vivo".into());
+        return Err("err.live_model_unavailable".into());
     }
     let audio_dir = dir.join("audio");
     std::fs::create_dir_all(&audio_dir).map_err(|e| e.to_string())?;
     let seg = audio_dir.join(".seg.webm");
     std::fs::write(&seg, &input.data).map_err(|e| e.to_string())?;
-    let ffmpeg =
-        which("ffmpeg").ok_or("ffmpeg não encontrado. Instale (macOS: brew install ffmpeg).")?;
+    let ffmpeg = which("ffmpeg").ok_or("err.ffmpeg_not_found")?;
     let cli = crate::paths::whisper_cli_bin();
     let model = crate::paths::model_path(&manifest.modelo);
     let lang = if manifest.idioma.is_empty() {
@@ -1372,7 +1370,7 @@ mod tests {
     }
 
     #[test]
-    fn rename_meeting_atualiza_titulo_no_manifest_e_no_heading() {
+    fn rename_meeting_updates_titulo_in_manifest_and_heading() {
         let base = tmp("rename");
         let c = seed(&base);
         append_one(&c.dir, "[00:00] fala preservada").unwrap();
@@ -1392,7 +1390,7 @@ mod tests {
     }
 
     #[test]
-    fn replace_title_heading_ignora_headings_do_front_matter_e_do_corpo() {
+    fn replace_title_heading_ignores_front_matter_and_body_headings() {
         // only the FIRST body `# ` line is the title; later `# ` lines (e.g. a
         // pasted transcript heading) stay untouched
         let md = "---\nid: x\n---\n\n# Velho\n\ntexto\n# Não sou título\n";
@@ -1403,7 +1401,7 @@ mod tests {
     }
 
     #[test]
-    fn insert_timed_block_ordena_falas_cronologicamente_entre_dispositivos() {
+    fn insert_timed_block_orders_speech_chronologically_across_devices() {
         // ADR-0013: mic ("você") and system ("sistema") arrive out of order; the
         // living file must read in conversation order (by timecode), not arrival.
         let header = living_header("i", "t", "T", "2026-07-27T00:00:00Z");
@@ -1471,11 +1469,11 @@ mod tests {
     }
 
     #[test]
-    fn fold_marcadores_incorpora_sidecar_e_rejeita_tipo_e_texto() {
+    fn fold_marcadores_folds_sidecar_and_rejects_bad_tipo_and_text() {
         // ADR-0013: skills append PII-free markers to marcadores.jsonl; the app
         // folds them into the manifest markers. Unknown tipo dropped; a line with a
-        // text field never parses into a Marcador (BR-8) — so it is ignored.
-        let existing = vec![Marcador {
+        // text field never parses into a Marker (BR-8) — so it is ignored.
+        let existing = vec![Marker {
             tipo: "duvida".into(),
             t_ms: None,
             r#ref: None,
@@ -1486,7 +1484,7 @@ mod tests {
 {\"tipo\":\"segredo\"}\n\
 \n\
 {\"tipo\":\"pergunta\",\"texto\":\"dado sensível de cliente\"}\n";
-        let folded = fold_marcadores(&existing, lines);
+        let folded = fold_markers(&existing, lines);
         // 1 existing + decisao + investigacao + pergunta = 4 (segredo rejected)
         let tipos: Vec<&str> = folded.iter().map(|m| m.tipo.as_str()).collect();
         assert_eq!(tipos, vec!["duvida", "decisao", "investigacao", "pergunta"]);
@@ -1502,7 +1500,7 @@ mod tests {
         assert!(valid_tipo("investigacao") && valid_tipo("pergunta"));
         assert!(!valid_tipo("segredo") && !valid_tipo(""));
         // BR-8: a marker serializes to type/timecode/ref only — no text field
-        let mk = Marcador {
+        let mk = Marker {
             tipo: "duvida".into(),
             t_ms: Some(1500),
             r#ref: None,
@@ -1583,17 +1581,17 @@ mod tests {
             modelo: "large-v3-turbo".into(),
             idioma: "pt".into(),
             marcadores: vec![
-                Marcador {
+                Marker {
                     tipo: "decisao".into(),
                     t_ms: Some(65_000),
                     r#ref: None,
                 },
-                Marcador {
+                Marker {
                     tipo: "duvida".into(),
                     t_ms: Some(5_000),
                     r#ref: None,
                 },
-                Marcador {
+                Marker {
                     tipo: "duvida".into(),
                     t_ms: Some(9_000),
                     r#ref: None,
@@ -1616,7 +1614,7 @@ mod tests {
             "## Decisões",
             "## Dúvidas & Respostas",
         ] {
-            assert!(nb.contains(h), "faltou a seção {h}");
+            assert!(nb.contains(h), "missing section {h}");
         }
         // owner decision (2026-07-28): no boilerplate sections and no count
         // blocks — the transcript stays in reuniao.md, never duplicated here
@@ -1641,7 +1639,7 @@ mod tests {
         assert!(!nb.contains("Consentimento:"));
         assert!(
             !nb.contains("[áudio]"),
-            "áudio é transiente — nunca referenciado"
+            "audio is transient — never referenced"
         );
         // deferred prose is labelled honestly, not fabricated (no ADR ref leaks)
         assert!(nb.contains("resumo automático"));
@@ -1744,12 +1742,12 @@ mod tests {
         let files = String::from_utf8_lossy(&tracked.stdout);
         assert!(
             !files.contains("brainstorming"),
-            "brainstorming/ nunca é versionado"
+            "brainstorming/ is never versioned"
         );
         assert!(
             !files.contains("reuniao.md"),
-            "transcrição nunca é versionada"
+            "the transcript is never versioned"
         );
-        assert!(!files.contains(".wav"), "áudio nunca é versionado");
+        assert!(!files.contains(".wav"), "audio is never versioned");
     }
 }

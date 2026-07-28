@@ -22,6 +22,16 @@ test("crumbBadge: other kinds have no world badge (caller falls back)", () => {
   assert.strictEqual(World.crumbBadge("other"), null);
 });
 
+test("crumbBadge: renders in English when lang is 'en'", () => {
+  assert.strictEqual(World.crumbBadge("context", "en").label, "versioned");
+  assert.strictEqual(World.crumbBadge("context", "en").cls, "ok");
+  assert.strictEqual(World.crumbBadge("personal", "en").label, "draft — not versioned");
+  assert.strictEqual(World.crumbBadge("personal", "en").cls, "warn2");
+  assert.strictEqual(World.crumbBadge("other", "en"), null);
+  // explicit "pt" matches the default
+  assert.strictEqual(World.crumbBadge("context", "pt").label, "versionado");
+});
+
 test("gitVisible: only context tabs surface Git state", () => {
   assert.strictEqual(World.gitVisible("context"), true);
   // BR of ADR-0008: a pessoal/ tab never renders a git-dirty state.
