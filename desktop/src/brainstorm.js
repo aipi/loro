@@ -93,9 +93,14 @@
   // acervo's contexts (+ MCP). Flattens whitespace/newlines to one PTY line (the
   // terminal submits on newline). Returns null when the question is empty after
   // sanitizing, so the caller declines to inject.
-  function brainAskCmd(question) {
+  // ctx (optional) scopes the question to one context: the scope travels as a
+  // plain-text prefix, so the /loro-ask contract stays a free-text question
+  // and any agent understands it.
+  function brainAskCmd(question, ctx) {
     const q = String(question == null ? "" : question).replace(/\s+/g, " ").trim();
-    return q ? "/loro-ask " + q : null;
+    if (!q) return null;
+    const c = String(ctx == null ? "" : ctx).replace(/\s+/g, " ").trim();
+    return "/loro-ask " + (c ? "[contexto: " + c + "] " : "") + q;
   }
 
   return {

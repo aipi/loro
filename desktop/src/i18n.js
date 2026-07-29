@@ -170,6 +170,12 @@
     // usage templates + per-acervo agent (ADR-0003)
     "modelo de uso": "usage template",
     "gravar reunião": "record meeting",
+    "Perguntar ao contexto": "Ask the context",
+    "a pergunta fica ancorada neste contexto": "the question is anchored on this context",
+    "ações (renomear, apagar)": "actions (rename, delete)",
+    "Renomear arquivo": "Rename file",
+    "nome": "name",
+    "renomeado": "renamed",
     "Nova gravação": "New recording",
     "onde salvar": "save to",
     "transcrição avulsa (salvar ao final)": "one-off transcription (save at the end)",

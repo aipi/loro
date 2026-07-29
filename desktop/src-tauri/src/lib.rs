@@ -3268,6 +3268,7 @@ pub fn run() {
             brain_rename_brainstorm,
             brain_set_brainstorm_category,
             brain_brainstorm_delete,
+            brain_rename_pessoal,
             brain_list_brainstorms,
             brain_list_meetings,
             brain_new_notebook,

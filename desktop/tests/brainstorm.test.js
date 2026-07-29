@@ -89,3 +89,11 @@ test("brainAskCmd builds a one-line /loro-ask; null on empty", () => {
   assert.strictEqual(B.brainAskCmd("   "), null);
   assert.strictEqual(B.brainAskCmd(null), null);
 });
+
+test("brainAskCmd scopes the question to a context when given", () => {
+  const { brainAskCmd } = require("../src/brainstorm.js");
+  assert.strictEqual(brainAskCmd("qual o pipeline?", "vendas/contas"),
+    "/loro-ask [contexto: vendas/contas] qual o pipeline?");
+  assert.strictEqual(brainAskCmd("qual o pipeline?"), "/loro-ask qual o pipeline?");
+  assert.strictEqual(brainAskCmd("", "vendas"), null);
+});

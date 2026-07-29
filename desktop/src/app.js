@@ -700,16 +700,20 @@ function startMeetingFlow(presetTema) {
 // versioned contexts (local base) first, MCP/external only after (the /loro-ask
 // skill enforces the order). Injects into the terminal Claude, like the meeting
 // skills — the answer appears in the terminal. Not meeting-scoped.
-function askAcervo() {
+function askAcervo(ctx) {
+  const scope = ctx
+    ? `<p class="pmnote mono">${t("a pergunta fica ancorada neste contexto")}: <b>${esc(ctx)}</b></p>`
+    : "";
   openModal(
-    t("Perguntar ao acervo"),
-    `<p class="pmnote mono">${t("A resposta vem primeiro dos contextos (a base de conhecimento) e, se preciso, de conectores MCP. Roda no Claude do terminal.")}</p>` +
+    ctx ? t("Perguntar ao contexto") : t("Perguntar ao acervo"),
+    scope +
+      `<p class="pmnote mono">${t("A resposta vem primeiro dos contextos (a base de conhecimento) e, se preciso, de conectores MCP. Roda no Claude do terminal.")}</p>` +
       `<label class="wfield"><span class="mono">${t("pergunta")}</span>` +
       `<input id="askInput" type="text" placeholder="${t("ex.: qual a política de multas da frota?")}" spellcheck="false"></label>`,
     t("perguntar"),
     () => {
       const q = (($("askInput") && $("askInput").value) || "").trim();
-      const cmd = LoroBrainstorm.brainAskCmd(q);
+      const cmd = LoroBrainstorm.brainAskCmd(q, ctx);
       if (!cmd) { toast(t("digite uma pergunta")); return; }
       termRunAgent(cmd);
       toast(t("pergunta enviada ao agente do terminal — a resposta aparece abaixo"), 4000);
@@ -1504,7 +1508,7 @@ function renderTemaNode(t) {
 function bsPartRow(kind, openRel, selRel, label, title, indent, meetingId, meetingStatus) {
   const act = meetingId
     ? `<button class="rowmenu" data-mtgmenu="${esc(selRel)}" data-mtgid="${esc(meetingId)}" data-mtgtitle="${esc(label)}" data-mtgstatus="${esc(meetingStatus || "")}" title="${t("ações da reunião (analisar, perguntar, relatório…)")}">⋯</button>`
-    : `<button class="rowmenu danger" data-delpessoal="${esc(selRel)}" title="${t("apagar")}">×</button>`;
+    : `<button class="rowmenu" data-artmenu="${esc(selRel)}" data-artlabel="${esc(label)}" title="${t("ações (renomear, apagar)")}">⋯</button>`;
   const icon = kind === "reuniao" ? "meeting" : kind === "nota" ? "note" : "file";
   return `<div class="bitem file${indent ? " bsub" : ""}" data-doc="${esc(openRel)}" title="${esc(title)}">` +
     `<input type="checkbox" class="bschk" data-bssel="${esc(selRel)}" data-bskind="${kind}" title="${t("selecionar para a fila")}">` +
@@ -1568,6 +1572,9 @@ function wirePessoal() {
   });
   B.navPessoal.querySelectorAll("[data-delpessoal]").forEach((el2) => (el2.onclick = (e) => {
     e.stopPropagation(); delPessoal(el2.dataset.delpessoal);
+  }));
+  B.navPessoal.querySelectorAll("[data-artmenu]").forEach((el2) => (el2.onclick = (e) => {
+    e.stopPropagation(); openArtefatoMenu(el2.dataset.artmenu, el2.dataset.artlabel, el2);
   }));
   B.navPessoal.querySelectorAll("[data-addmeeting]").forEach((el2) => (el2.onclick = (e) => {
     e.stopPropagation(); startMeetingFlow(el2.dataset.addmeeting);
@@ -1693,6 +1700,38 @@ function openMeetingMenu(rel, id, title, status, anchor) {
   B.bMenu.querySelector("[data-ren]").onclick = () => { closeFloat(); promptRenameMeeting(id, title); };
   B.bMenu.querySelector("[data-del]").onclick = () => { closeFloat(); delPessoal(rel, "reuniao"); };
   placeMenu(anchor);
+}
+
+// notes and analysis artifacts: rename in place (world-confined backend) + delete
+function openArtefatoMenu(rel, label, anchor) {
+  B.acervoMenu.hidden = true;
+  B.bMenu.innerHTML =
+    `<div class="fhead">${esc(label)}</div>` +
+    `<div class="fitem2" data-ren><span class="fn">✎ ${t("renomear")}</span></div>` +
+    `<div class="fitem2 danger" data-del><span class="fn">${t("apagar")}</span></div>`;
+  B.bMenu.querySelector("[data-ren]").onclick = () => { closeFloat(); promptRenameArtefato(rel); };
+  B.bMenu.querySelector("[data-del]").onclick = () => { closeFloat(); delPessoal(rel); };
+  placeMenu(anchor);
+}
+function promptRenameArtefato(rel) {
+  const current = rel.split("/").pop() || "";
+  openModal(
+    t("Renomear arquivo"),
+    `<label class="wfield"><span class="mono">${t("nome")}</span>` +
+      `<input id="artRenInput" type="text" value="${esc(current)}" spellcheck="false"></label>`,
+    t("renomear"),
+    async () => {
+      const name = (($("artRenInput") && $("artRenInput").value) || "").trim();
+      if (!name) { toast(t("informe um título")); return; }
+      try {
+        await invoke("brain_rename_pessoal", { rel, name });
+        toast(t("renomeado"));
+        pessoalSig = ""; refreshPessoal();
+      } catch (e) { toast(tErr(String(e))); }
+    }
+  );
+  const inp = $("artRenInput");
+  if (inp) { inp.focus(); const dot = current.lastIndexOf("."); inp.setSelectionRange(0, dot > 0 ? dot : current.length); }
 }
 
 function promptRenameMeeting(id, current) {
@@ -3258,9 +3297,12 @@ function openCtxMenu(anchor, name, isFolder) {
   B.acervoMenu.hidden = true;
   B.bMenu.innerHTML =
     `<div class="fhead">${esc(name)}${isFolder ? ` (${t("pasta")})` : ""}</div>
+     <div class="fitem2 strong" data-a="ask"><span class="fn">? ${t("perguntar…")}</span></div>
+     <div class="fsep"></div>
      <div class="fitem2" data-a="ren"><span class="fn">✎ ${t("renomear")}</span></div>
      <div class="fitem2" data-a="mv"><span class="fn">⇢ ${t("mover para…")}</span></div>
      <div class="fitem2 ditem" data-a="del"><span class="fn">${t("deletar…")}</span></div>`;
+  B.bMenu.querySelector('[data-a="ask"]').onclick = () => { closeFloat(); askAcervo(name); };
   B.bMenu.querySelector('[data-a="ren"]').onclick = () => openRenameCtx(anchor, name);
   B.bMenu.querySelector('[data-a="mv"]').onclick = () => openMoveCtxMenu(anchor, name, isFolder);
   B.bMenu.querySelector('[data-a="del"]').onclick = () => openConfirmDeleteCtx(anchor, name, isFolder);
