@@ -1344,7 +1344,10 @@ function renderCtxNode(node) {
     ? `<span class="pill soft" title="${t("pasta nova — clique para estruturar")}">${t("novo")}</span>` : "") + dot;
   const attr = node.isCtx ? `data-ctx="${esc(node.path)}"` : `data-fold="${esc(node.path)}"`;
   const kids = [...node.children.values()].sort((x, y) => x.seg.localeCompare(y.seg)).map(renderCtxNode).join("");
-  const holder = node.isCtx ? `<div class="bchild" data-ctxchild="${esc(node.path)}" ${open ? "" : "hidden"}></div>` : "";
+  // fill target only, NOT a tree level: the context's own files (contexto/
+  // histórico/anexos) are siblings of its subcontexts — a .bchild here would
+  // double-indent them and read as if they belonged to a subcontext.
+  const holder = node.isCtx ? `<div data-ctxchild="${esc(node.path)}" ${open ? "" : "hidden"}></div>` : "";
   const arch = `<button class="rowmenu" data-cmenu="${esc(node.path)}" data-isctx="${node.isCtx ? 1 : 0}"
       title="${t("ações")} (${node.isCtx ? t("contexto") : t("pasta")}: ${t("renomear, mover, deletar")})">⋯</button>`;
   return `<div class="bitem ${node.isCtx ? "ctx" : "grp"}${open ? " open" : ""}" ${attr} title="${esc(node.path)}">
