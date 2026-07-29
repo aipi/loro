@@ -62,7 +62,7 @@ in a brainstorming; you select what matters and send a report to the queue;
   write, and **● record meeting** to record a **meeting** tied to the topic
   (also in the palette `Cmd/Ctrl+Shift+P` → "nova reunião").
 - Opening a meeting's `reuniao.md` tab reveals the actions **analyse**,
-  **answer…** (questions about the meeting), **view report** and **send to
+  **ask…** (questions about the meeting), **view report** and **send to
   the queue**.
 - In a meeting: mark **questions/decisions/investigations** while people speak
   (via the palette `Cmd/Ctrl+Shift+P` or the buttons); then run **analyse** so
@@ -73,7 +73,7 @@ in a brainstorming; you select what matters and send a report to the queue;
 
 - Select the parts of a brainstorming and **send the report to the queue** (or
   drop `.md`/`.txt` files straight into it).
-- **▶ generate context** runs `/brain-context` in the terminal Claude, which
+- **▶ generate context** runs `/loro-context` in the terminal Claude, which
   structures the material into `contextos/<c>/context.md` (+ CHANGELOG).
 - With an **empty** queue the button warns and does not run: there is nothing
   to generate from.
@@ -94,7 +94,7 @@ in a brainstorming; you select what matters and send a report to the queue;
 ## Ask the knowledge base
 
 - **ask the knowledge base** opens Claude in the embedded terminal and sends
-  your question via `/brain-ask`; the answer anchors on the acervo's
+  your question via `/loro-ask`; the answer anchors on the acervo's
   `context.md` files and says clearly when the base does not cover the topic.
 
 ## FAQ

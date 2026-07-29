@@ -83,7 +83,7 @@ business logic in the Tauri `run()` wiring.
   decision.
 - **Naming:** ubiquitous language — names reflect the domain, per language idiom
   (Rust snake_case, JS camelCase). Claude Code command/skill files use **hyphenated**
-  names (`brain-context`, `brain-analyse`, `brain-answer`), never a dot — a dot is
+  names (`loro-context`, `loro-analyse`, `loro-question`), never a dot — a dot is
   not a valid Claude Code command name.
 - **Comments:** default is none; comment the *why*, never the *what*; reference
   `BR-`/`ADR-` when relevant.

@@ -60,7 +60,7 @@ fila; o botão "gerar contexto" pede ao Claude do terminal que destile a fila em
   escrever, e **● gravar reunião** para gravar uma **reunião** ligada ao tema
   (também na paleta `Cmd/Ctrl+Shift+P` → "nova reunião").
 - Ao abrir a aba `reuniao.md` de uma reunião aparecem as ações **analisar**,
-  **responder…** (perguntas sobre a reunião), **ver relatório** e **enviar
+  **perguntar…** (perguntas sobre a reunião), **ver relatório** e **enviar
   para a fila**.
 - Numa reunião: marque **dúvidas/decisões/investigações** durante a fala (via
   paleta `Cmd/Ctrl+Shift+P` ou pelos botões); depois rode **analisar** para o
@@ -71,7 +71,7 @@ fila; o botão "gerar contexto" pede ao Claude do terminal que destile a fila em
 
 - Selecione as partes de um brainstorming e **envie o relatório para a fila**
   (ou solte arquivos `.md`/`.txt` direto na fila).
-- **▶ gerar contexto** roda `/brain-context` no Claude do terminal, que
+- **▶ gerar contexto** roda `/loro-context` no Claude do terminal, que
   estrutura o material em `contextos/<c>/context.md` (+ CHANGELOG).
 - Com a fila **vazia**, o botão avisa e não roda: não há de onde gerar.
 
@@ -90,7 +90,7 @@ fila; o botão "gerar contexto" pede ao Claude do terminal que destile a fila em
 ## Perguntar ao acervo
 
 - **perguntar ao acervo** abre o Claude no terminal embutido e envia sua
-  pergunta com `/brain-ask`; a resposta se ancora nos `context.md` do acervo e
+  pergunta com `/loro-ask`; a resposta se ancora nos `context.md` do acervo e
   diz claramente quando a base não cobre o assunto.
 
 ## FAQ

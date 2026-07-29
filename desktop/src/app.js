@@ -697,7 +697,7 @@ function startMeetingFlow(presetTema) {
   startMeetingSession(presetTema);
 }
 // ADR-0013: general Q&A over the acervo. Any question is answered from the
-// versioned contexts (local base) first, MCP/external only after (the /brain-ask
+// versioned contexts (local base) first, MCP/external only after (the /loro-ask
 // skill enforces the order). Injects into the terminal Claude, like the meeting
 // skills — the answer appears in the terminal. Not meeting-scoped.
 function askAcervo() {
@@ -1042,8 +1042,8 @@ B.editSave.addEventListener("click", async () => {
 });
 $("guideBtn").addEventListener("click", () => openGuideDoc());
 { const ab = $("askBtn"); if (ab) ab.addEventListener("click", askAcervo); }
-// ADR-0013: "gerar contexto" — the fila → contexto step. Injects /brain-context
-// into the terminal Claude (the renamed /brain loop), which processes the whole
+// ADR-0013: "gerar contexto" — the fila → contexto step. Injects /loro-context
+// into the terminal Claude (the /loro-context loop), which processes the whole
 // queue into versioned contexts. Same terminal-skill pattern as analisar/responder.
 // One function, two entry points: the home card CTA and the sidebar quick action.
 function genContextNow() {
@@ -1146,7 +1146,7 @@ function renderHome(st) {
   if (gen) {
     gen.disabled = !n;
     gen.title = n
-      ? t("Processa a fila com o Claude (/brain-context): cada item vira/atualiza um contexto versionado")
+      ? t("Processa a fila com o Claude (/loro-context): cada item vira/atualiza um contexto versionado")
       : t("a fila está vazia — selecione partes no brainstorming ou envie arquivos");
   }
   const qc = $("queueCard");
@@ -1183,7 +1183,7 @@ function renderHome(st) {
         const txt = m ? m[3] : l;
         return `<div class="fitem"><span class="fdot"></span><span class="ftime mono">${esc(time)}</span><span class="ftxt">${esc(txt)}</span></div>`;
       }).join("")
-    : `<div class="bempty">${t("o loop ainda não rodou — use /loop 1h /brain no Claude Code")}</div>`;
+    : `<div class="bempty">${t("o loop ainda não rodou — use /loop 1h /loro-context no Claude Code")}</div>`;
 }
 
 // ---- ícones Material (SVG inline, monocromático via currentColor) ----
@@ -1295,7 +1295,7 @@ function renderSidebar(st) {
           title="${ed ? t("não sincronizado — clique para editar") : t("não sincronizado (aguardando o loop)")}">${ico("file")}<span class="bn">${esc(f.name)}${bMeta(f.mtime, "inbox/" + f.name)}</span>
           <button class="rowmenu" data-qmenu="${esc(f.name)}" data-move="${esc(f.name)}" title="${t("ações")}">⋯</button></div>`;
       }).join("") +
-      `<div class="bitem addctx" data-genctx title="${t("Processa a fila com o Claude (/brain-context)")}">▶ ${t("gerar contexto")}</div>`
+      `<div class="bitem addctx" data-genctx title="${t("Processa a fila com o Claude (/loro-context)")}">▶ ${t("gerar contexto")}</div>`
     : `<div class="bempty">${t("vazia — envie um relatório ou arquivos para gerar contexto")}</div>`;
   // contextos como ÁRVORE: pastas/áreas agrupam; contextos reais abrem o guia.
   // A criação lidera a lista (creation-first UX, 2026-07-28).
@@ -1637,7 +1637,7 @@ function openBsMenu(slug, anchor) {
 }
 
 // Rename via the shared modal — window.prompt is unreliable in the webview
-// (same reason pickMeeting/askMeetingAnswer use openModal).
+// (same reason pickMeeting/askMeetingQuestion use openModal).
 function promptRenameBs(slug) {
   openModal(
     t("Renomear brainstorming"),
@@ -2122,7 +2122,7 @@ function meetingRailHtml(id) {
     `<div class="mtg-railhead mono">${t("o que fazer com esta reunião")}</div>` +
     action("", "mtgAnalyseBtn", t("analisar"),
       t("O Claude lê a transcrição e o contexto local primeiro, aponta tema, decisões, riscos e dúvidas, e escreve o relatório.")) +
-    action("", "mtgAnswerBtn", t("responder…"),
+    action("", "mtgQuestionBtn", t("perguntar…"),
       t("Faça uma pergunta sobre a reunião — a resposta é ancorada no que foi dito e no contexto local.")) +
     action("ghost", "mtgReportBtn", t("ver relatório"),
       t("Abre o relatório desta reunião (resumo, decisões, dúvidas, investigações).")) +
@@ -2134,8 +2134,8 @@ function meetingRailHtml(id) {
 function wireMeetingSurface(id) {
   const analyseBtn = B.doc.querySelector("#mtgAnalyseBtn");
   if (analyseBtn) analyseBtn.onclick = () => runMeetingSkill("analyse", id);
-  const answerBtn = B.doc.querySelector("#mtgAnswerBtn");
-  if (answerBtn) answerBtn.onclick = () => askMeetingAnswer(id);
+  const questionBtn = B.doc.querySelector("#mtgQuestionBtn");
+  if (questionBtn) questionBtn.onclick = () => askMeetingQuestion(id);
   const reportBtn = B.doc.querySelector("#mtgReportBtn");
   if (reportBtn) reportBtn.onclick = () => buildAndOpenReport();
   const queueBtn = B.doc.querySelector("#mtgQueueBtn");
@@ -2168,7 +2168,7 @@ function runMeetingSkill(kind, id, question) {
   const cmd = LM.meetingSkillCmd(kind, dir, question);
   if (!cmd) { toast(t("digite uma pergunta")); return; }
   termRunAgent(cmd);
-  toast(kind === "answer" ? t("pergunta enviada ao agente do terminal") : t("análise enviada ao agente do terminal"), 4000);
+  toast(kind === "question" ? t("pergunta enviada ao agente do terminal") : t("análise enviada ao agente do terminal"), 4000);
   // A skill write is async and IPC-free (no pessoal-changed event), so nudge a
   // couple of tree/surface refreshes to reveal the artefatos it produces.
   scheduleMeetingSkillRefresh(id);
@@ -2179,9 +2179,9 @@ function scheduleMeetingSkillRefresh(id) {
   }, ms));
 }
 
-// "responder…": prompt for a free-text question, then inject /answer. Uses the
+// "perguntar…": prompt for a free-text question, then inject /loro-question. Uses the
 // shared modal (window.prompt is unreliable in the webview) mirroring pickMeeting.
-function askMeetingAnswer(id) {
+function askMeetingQuestion(id) {
   const dir = currentMeetingDir(id);
   if (!dir) { toast(t("abra a reunião para responder")); return; }
   openModal(
@@ -2193,7 +2193,7 @@ function askMeetingAnswer(id) {
     () => {
       const q = (($("mtgQuestion") && $("mtgQuestion").value) || "").trim();
       if (!q) { toast(t("digite uma pergunta")); return; }
-      runMeetingSkill("answer", id, q);
+      runMeetingSkill("question", id, q);
     }
   );
   const inp = $("mtgQuestion"); if (inp) inp.focus();

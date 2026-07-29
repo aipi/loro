@@ -1120,21 +1120,21 @@ fn ensure_acervo_structure(
     ] {
         std::fs::create_dir_all(base.join(sub)).map_err(|e| e.to_string())?;
     }
-    // /brain-context is the thin Claude adapter for the queue -> context loop
+    // /loro-context is the thin Claude adapter for the queue -> context loop
     // (ADR-0013); analyse/answer are the meeting-AI skills the terminal Claude runs
     // over a meeting's live stream (ADR-0012). Neutral instructions live in
     // AGENTS.md. Non-destructive.
     for (rel, body) in [
-        (".claude/commands/brain-context.md", brain_skill(lang)),
+        (".claude/commands/loro-context.md", brain_skill(lang)),
         (
-            ".claude/commands/brain-analyse.md",
+            ".claude/commands/loro-analyse.md",
             meeting_analyse_skill(lang),
         ),
         (
-            ".claude/commands/brain-answer.md",
-            meeting_answer_skill(lang),
+            ".claude/commands/loro-question.md",
+            meeting_question_skill(lang),
         ),
-        (".claude/commands/brain-ask.md", brain_ask_skill(lang)),
+        (".claude/commands/loro-ask.md", brain_ask_skill(lang)),
     ] {
         let p = base.join(rel);
         if !p.exists() {
@@ -1987,7 +1987,7 @@ fn migrate_acervo(base: &Path, apply: bool, lang: &str) -> Result<MigrationRepor
     }
 
     // A legacy `.claude/commands/brain.md` (the old loop skill) is left on disk for
-    // back-compat and only reported — the new loop skill is `brain-context.md`
+    // back-compat and only reported — the new loop skill is `loro-context.md`
     // (created below). Never delete the user's file.
     if base.join(".claude/commands/brain.md").is_file() {
         report
@@ -1995,24 +1995,24 @@ fn migrate_acervo(base: &Path, apply: bool, lang: &str) -> Result<MigrationRepor
             .push(".claude/commands/brain.md (legado)".into());
     }
 
-    // ADR-0013/0012: the loop skill (brain-context) and the meeting-AI skills
+    // ADR-0013/0012: the loop skill (loro-context) and the meeting-AI skills
     // (analyse/answer) are created only if absent so existing acervos gain them on
     // migration; never overwrites edits.
     for (rel, body) in [
         (
-            ".claude/commands/brain-context.md",
+            ".claude/commands/loro-context.md",
             brain_skill(lang).to_string(),
         ),
         (
-            ".claude/commands/brain-analyse.md",
+            ".claude/commands/loro-analyse.md",
             meeting_analyse_skill(lang).to_string(),
         ),
         (
-            ".claude/commands/brain-answer.md",
-            meeting_answer_skill(lang).to_string(),
+            ".claude/commands/loro-question.md",
+            meeting_question_skill(lang).to_string(),
         ),
         (
-            ".claude/commands/brain-ask.md",
+            ".claude/commands/loro-ask.md",
             brain_ask_skill(lang).to_string(),
         ),
     ] {
@@ -2327,7 +2327,7 @@ fn brain_write_inbox(name: String, content: String) -> Result<(), String> {
 
 // ADR-0013: the fila (inbox/) is THE path brainstorming -> contexto. Copy an
 // existing report (or any acervo text file) into the queue, steered to a target
-// context via the `<contexto>--<nome>` prefix the /brain-context loop reads. The
+// context via the `<contexto>--<nome>` prefix the /loro-context loop reads. The
 // report stays in the brainstorming; only a copy enters the queue. Path-guarded to
 // the acervo root; contexts with '/' collapse to '-' so the queue name stays flat.
 #[tauri::command]
@@ -2865,7 +2865,7 @@ fn client_log(msg: String) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 // ---- embedded terminal (interactive PTY) — runs the agent CLI in the dock ----
 // ADR-0012: guarantee the meeting-AI skills exist in the acervo so
-// `/brain-context`, `/brain-analyse` and `/brain-answer` are discoverable by the
+// `/loro-context`, `/loro-analyse` and `/loro-question` are discoverable by the
 // terminal Claude even for acervos created before this change — no explicit
 // "migrar acervo" needed. Create-if-absent; never overwrites user edits.
 fn ensure_meeting_skills(base: &Path, lang: &str) {
@@ -2873,16 +2873,16 @@ fn ensure_meeting_skills(base: &Path, lang: &str) {
         return;
     }
     for (rel, body) in [
-        (".claude/commands/brain-context.md", brain_skill(lang)),
+        (".claude/commands/loro-context.md", brain_skill(lang)),
         (
-            ".claude/commands/brain-analyse.md",
+            ".claude/commands/loro-analyse.md",
             meeting_analyse_skill(lang),
         ),
         (
-            ".claude/commands/brain-answer.md",
-            meeting_answer_skill(lang),
+            ".claude/commands/loro-question.md",
+            meeting_question_skill(lang),
         ),
-        (".claude/commands/brain-ask.md", brain_ask_skill(lang)),
+        (".claude/commands/loro-ask.md", brain_ask_skill(lang)),
     ] {
         let p = base.join(rel);
         if !p.exists() {
@@ -2933,7 +2933,7 @@ fn term_open(app: AppHandle, state: State<AppState>, cols: u16, rows: u16) -> Re
     drop(pair.slave);
     let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
     let mut writer = pair.master.take_writer().map_err(|e| e.to_string())?;
-    // Auto-launch the terminal Claude so the /brain-* skills (analisar/responder/
+    // Auto-launch the terminal agent so the /loro-* skills (analisar/perguntar/
     // ask/gerar contexto) work out of the box — the buttons inject slash commands
     // that only a running Claude understands. The login shell sources the profile
     // (real PATH) before reading this stdin, so `claude` resolves; if it is not
@@ -3421,7 +3421,7 @@ mod tests {
         assert!(t.contains("CODEOWNERS")); // collaboration per context owner
         assert!(!t.contains("index.html")); // no HTML product
         assert!(t.contains("hotspot")); // ideas become hotspots, not idea files
-        assert!(t.contains("/brain-context")); // ADR-0013: renamed skill
+        assert!(t.contains("/loro-context")); // ADR-0013: renamed skill
     }
 
     #[test]

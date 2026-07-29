@@ -1434,7 +1434,7 @@ pub fn brain_brainstorm_build_report(
 }
 
 // ADR-0013: `brain_promote` (direct personal->context copy) is NO LONGER on the
-// primary path — the fila (brain_send_report_to_queue -> /brain-context) is THE
+// primary path — the fila (brain_send_report_to_queue -> /loro-context) is THE
 // route brainstorming -> contexto, and the UI no longer calls this. Kept + tested
 // as an internal capability; do not surface it as a competing user action.
 #[tauri::command]

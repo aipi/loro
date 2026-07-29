@@ -1,5 +1,5 @@
 // ADR-0013 — pure Brainstorming-flow helpers (grouping by categoria, the part
-// selection model, the fila filename contract, the /brain-context command, the
+// selection model, the fila filename contract, the /loro-context command, the
 // 3-stage flow copy). No DOM/Tauri: exercised in Node via require().
 const test = require("node:test");
 const assert = require("node:assert");
@@ -28,7 +28,7 @@ test("stages(lang) localizes the flow copy; default stays pt-BR", () => {
   for (const s of en) assert.ok(s.label && s.hint, "en stage needs label + hint");
   assert.strictEqual(en[0].hint, "build the idea: meetings and notes");
   assert.strictEqual(en[1].hint, "elect parts → a report enters the context generation queue");
-  assert.strictEqual(en[2].hint, "generate the versioned context from the queue (/brain-context)");
+  assert.strictEqual(en[2].hint, "generate the versioned context from the queue (/loro-context)");
 });
 
 test("groupByCategory buckets by categoria, uncategorized last", () => {
@@ -77,14 +77,14 @@ test("reportInboxName steers a report to a context via the <ctx>-- prefix", () =
 });
 
 test("brainContextCmd is the renamed loop skill (hyphen, not dot)", () => {
-  assert.strictEqual(B.brainContextCmd(), "/brain-context");
+  assert.strictEqual(B.brainContextCmd(), "/loro-context");
 });
 
-test("brainAskCmd builds a one-line /brain-ask; null on empty", () => {
-  assert.strictEqual(B.brainAskCmd("qual o prazo da frota?"), "/brain-ask qual o prazo da frota?");
+test("brainAskCmd builds a one-line /loro-ask; null on empty", () => {
+  assert.strictEqual(B.brainAskCmd("qual o prazo da frota?"), "/loro-ask qual o prazo da frota?");
   // multiline/whitespace flattened — never a premature submit
   const cmd = B.brainAskCmd("linha 1\nlinha 2\t");
-  assert.strictEqual(cmd, "/brain-ask linha 1 linha 2");
+  assert.strictEqual(cmd, "/loro-ask linha 1 linha 2");
   assert.ok(!/[\r\n]/.test(cmd));
   assert.strictEqual(B.brainAskCmd("   "), null);
   assert.strictEqual(B.brainAskCmd(null), null);

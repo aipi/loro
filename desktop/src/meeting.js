@@ -51,21 +51,21 @@
   }
 
   // Build the exact slash-command string the app injects into the terminal
-  // Claude (ADR-0012): analyse -> "/brain-analyse <dir>"; answer ->
-  // "/brain-answer <dir> <question>". Command names use hyphens (a dot is not a
+  // Claude (ADR-0012): analyse -> "/loro-analyse <dir>"; question ->
+  // "/loro-question <dir> <question>". Command names use hyphens (a dot is not a
   // valid Claude Code command name); they must match the files materialised by
-  // templates.rs (.claude/commands/brain-analyse.md, brain-answer.md). Returns
-  // null when the dir is missing, or (for answer) when the question is empty
+  // templates.rs (.claude/commands/loro-analyse.md, loro-question.md). Returns
+  // null when the dir is missing, or (for question) when the question is empty
   // after sanitising, so the caller declines to inject.
   function meetingSkillCmd(kind, dir, question) {
     const d = sanitizeSkillArg(dir);
     if (!d) return null;
-    if (kind === "answer") {
+    if (kind === "question") {
       const q = sanitizeSkillArg(question);
       if (!q) return null;
-      return "/brain-answer " + d + " " + q;
+      return "/loro-question " + d + " " + q;
     }
-    return "/brain-analyse " + d;
+    return "/loro-analyse " + d;
   }
 
   function stripMarker(text) {

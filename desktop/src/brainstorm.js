@@ -18,12 +18,12 @@
     pt: [
       { key: "brainstorming", label: "Brainstorming", hint: "construa a ideia: reuniões e notas" },
       { key: "fila", label: "Fila", hint: "eleja partes → um relatório entra na fila de geração de contexto" },
-      { key: "contexto", label: "Contexto", hint: "gere o contexto versionado a partir da fila (/brain-context)" },
+      { key: "contexto", label: "Contexto", hint: "gere o contexto versionado a partir da fila (/loro-context)" },
     ],
     en: [
       { key: "brainstorming", label: "Brainstorming", hint: "build the idea: meetings and notes" },
       { key: "fila", label: "Queue", hint: "elect parts → a report enters the context generation queue" },
-      { key: "contexto", label: "Context", hint: "generate the versioned context from the queue (/brain-context)" },
+      { key: "contexto", label: "Context", hint: "generate the versioned context from the queue (/loro-context)" },
     ],
   };
   function stages(lang) {
@@ -83,19 +83,19 @@
     return c ? c + "--" + base : base;
   }
 
-  // Build the "/brain-context" invocation the "gerar contexto" button injects
+  // Build the "/loro-context" invocation the "gerar contexto" button injects
   // into the terminal (the renamed loop skill; hyphen, not a dot). No argument is
   // required — the loop reads the whole inbox — so it is a bare command. Kept as a
   // helper (symmetry with meetingSkillCmd) so the command string has one source.
-  function brainContextCmd() { return "/brain-context"; }
+  function brainContextCmd() { return "/loro-context"; }
 
-  // Build the "/brain-ask <question>" invocation for the general Q&A over the
+  // Build the "/loro-ask <question>" invocation for the general Q&A over the
   // acervo's contexts (+ MCP). Flattens whitespace/newlines to one PTY line (the
   // terminal submits on newline). Returns null when the question is empty after
   // sanitizing, so the caller declines to inject.
   function brainAskCmd(question) {
     const q = String(question == null ? "" : question).replace(/\s+/g, " ").trim();
-    return q ? "/brain-ask " + q : null;
+    return q ? "/loro-ask " + q : null;
   }
 
   return {

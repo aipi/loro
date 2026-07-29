@@ -20,16 +20,16 @@ test("agentName takes the basename of the first token", () => {
 });
 
 test("agentInvocation keeps slash-commands for claude", () => {
-  assert.strictEqual(agentInvocation("claude", "/brain-context"), "/brain-context");
-  assert.strictEqual(agentInvocation("/opt/bin/claude", "/brain-ask o que mudou?"), "/brain-ask o que mudou?");
+  assert.strictEqual(agentInvocation("claude", "/loro-context"), "/loro-context");
+  assert.strictEqual(agentInvocation("/opt/bin/claude", "/loro-ask o que mudou?"), "/loro-ask o que mudou?");
 });
 
 test("agentInvocation rewrites slash-commands as a plain prompt for other agents", () => {
-  const out = agentInvocation("gemini", "/brain-context");
-  assert.match(out, /\.claude\/commands\/brain-context\.md/);
+  const out = agentInvocation("gemini", "/loro-context");
+  assert.match(out, /\.claude\/commands\/loro-context\.md/);
   assert.ok(!out.startsWith("/"));
-  const withArgs = agentInvocation("ollama run llama3", "/brain-answer qual foi a decisão?");
-  assert.match(withArgs, /brain-answer\.md/);
+  const withArgs = agentInvocation("ollama run llama3", "/loro-question qual foi a decisão?");
+  assert.match(withArgs, /loro-question\.md/);
   assert.match(withArgs, /qual foi a decisão\?$/);
 });
 

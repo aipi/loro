@@ -82,12 +82,26 @@
   ambient sink (ai.rs `AMBIENT_SINK_DISCLOSURE`); nothing runs until the user
   invokes it.
 
+### §4 Skill family renamed: `brain-*` → `loro-*`; `answer` → `question`
+
+- The user-facing commands the acervo materializes are now named after the
+  product: **`/loro-context`, `/loro-analyse`, `/loro-question`, `/loro-ask`**
+  (files `.claude/commands/loro-*.md`). `brain-answer` also changed semantics
+  in its name: the user *asks* — the command is `loro-question`.
+- **Migration is non-destructive:** `ensure_meeting_skills` (create-if-absent,
+  runs on `term_open`) and `ensure_acervo_structure` materialize the new
+  files in existing acervos before any terminal use; legacy `brain-*.md`
+  files are left on disk untouched (the app never deletes user files).
+- Internal Rust/JS identifiers keep the `brain_` domain prefix (`brain_setup`,
+  `brain_status`, …): the rename is the *user-facing command surface*, not the
+  code's ubiquitous language. ADR-0001 keeps the old names as history.
+
 ## Consequences
 
 - The wizard gains a template picker (localized from the manifests, not from
   i18n.js) and an agent command field; toasts on agent paths use neutral
   wording ("agente do terminal").
-- Vertical skill *content* (e.g. `/brain-mensagem` generating sales follow-ups
+- Vertical skill *content* (e.g. `/loro-mensagem` generating sales follow-ups
   from an account's context) is deliberately out of v1 — the `skills/`
   mechanism ships tested, the catalog comes as its own RFC.
 - Descriptive copy elsewhere in the app still says "Claude" where the flow is

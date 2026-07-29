@@ -71,8 +71,8 @@ The acervo lives in a **user-chosen folder, separate from this codebase**
 (config in `~/.loro/config.json`). Domains are user-defined and recursive
 (subdomains as nested folders); each has a single `context.md` source of truth +
 an append-only `CHANGELOG.md`; open questions live inline as *hotspots*. Meeting
-AI (`/brain-analyse`, `/brain-answer`) and the distillation loop
-(`/brain-context`) run as Claude Code skills in the embedded terminal,
+AI (`/loro-analyse`, `/loro-question`) and the distillation loop
+(`/loro-context`) run as Claude Code skills in the embedded terminal,
 **local-first**: they read the local base before any external source.
 
 ## Security & privacy

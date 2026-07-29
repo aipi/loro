@@ -24,14 +24,14 @@ processes captured transcripts into a knowledge base on disk.
                                |
                         ~/.loro/  (config, models, logs)
                                |
-   transcripts (inbox) ---> Claude loop (/brain-context) ---> knowledge base
+   transcripts (inbox) ---> Claude loop (/loro-context) ---> knowledge base
 ```
 
 **Knowledge flow (ADR-0001 §7):** the studio makes one sequential path explicit —
 **Brainstorming → Fila → Contexto**. A *brainstorming* (`brainstorming/<slug>/`, the
 renamed non-versioned world) gathers meetings/investigations/questions/notes; the
 user elects parts into ONE consolidated report that enters the **fila** (the
-`inbox/` queue); **"gerar contexto"** runs `/brain-context` (the renamed loop skill)
+`inbox/` queue); **"gerar contexto"** runs `/loro-context` (the renamed loop skill)
 which distills the fila into versioned `contextos/`.
 
 Config, models and logs live under `~/.loro/`. The knowledge base ("brain") is a
@@ -167,7 +167,7 @@ Path resolution: `LORO_HOME` (exported by `loro.sh`) or a sensible default;
   Errors surface via `transcribe-error`.
 - **Auto-save:** on stop, if enabled, the buffer is written to
   `<saveDir>/loro-<timestamp>.md` (validated filename).
-- **Brain loop (`/brain-context`, ADR-0001 §7):** `loop → /brain-context` reads the acervo inbox, distills each new input
+- **Brain loop (`/loro-context`, ADR-0001 §7):** `loop → /loro-context` reads the acervo inbox, distills each new input
   into `reunioes/` or `notas/`, appends prose to `contextos/<c>/CHANGELOG.md`,
   updates `contextos/<c>/context.md` (consolidated in sections 1–5; anything still
   open/contradictory as a **hotspot** in section 6 — ideas are no longer files),
@@ -214,7 +214,7 @@ All technical decisions are consolidated in the single **`docs/adr/0001-baseline
 | Product per context | single `context.md` (source of truth) + CHANGELOG; inline hotspots | ADR-0001 §4 |
 | Change proposal | RFC = branch + Pull Request; opt-in remote via `gh` + CODEOWNERS | ADR-0001 §5 |
 | Studio shell | multi-tab workspace, command palette, vendored CM6 IIFE | ADR-0001 §6 |
-| Knowledge flow | Brainstorming → Fila → Contexto (`/brain-context`) | ADR-0001 §7 |
+| Knowledge flow | Brainstorming → Fila → Contexto (`/loro-context`) | ADR-0001 §7 |
 | Meetings | living file + notebook report, transient audio | ADR-0001 §8 |
 | Meeting AI | terminal-Claude skills, local-first | ADR-0001 §9 |
 | Doc language | English | ADR-0001 |

@@ -64,10 +64,10 @@ the model: ideas live here, inline, not as separate files.)
 > the renamed NON-VERSIONED world — was `pessoal/temas/`, one .gitignore line)
 > gathers meetings/investigations/questions/notes; the user elects parts into ONE
 > consolidated report that enters the *fila* (the `inbox/` queue); "gerar contexto"
-> runs `/brain-context` (the renamed loop skill) to distill the fila into VERSIONED
+> runs `/loro-context` (the renamed loop skill) to distill the fila into VERSIONED
 > `contextos/` (RFC=PR, ADR-0001 §5). Meetings are living folders with a built report;
-> audio is transient (deleted after transcription). Meeting AI (`/brain-analyse`,
-> `/brain-answer`) runs as a terminal-Claude skill, LOCAL-FIRST (reads the context
+> audio is transient (deleted after transcription). Meeting AI (`/loro-analyse`,
+> `/loro-question`) runs as a terminal-Claude skill, LOCAL-FIRST (reads the context
 > before any external/MCP source). Direct promotion (`brain_promote`) is retired
 > from the primary path. Recorded in ADR-0001 §6–§9. Open: fate of legacy notas/.
 
@@ -77,7 +77,7 @@ the model: ideas live here, inline, not as separate files.)
 > (any CLI, `claude` default) — ADR-0003. Shipped: structure seeding (contexts,
 > AGENTS.md addendum, queue guide), custom templates in `~/.loro/templates`,
 > agent-agnostic skill injection. Open: the vertical skill *catalog* (e.g.
-> `/brain-mensagem` generating sales follow-ups from an account context),
+> `/loro-mensagem` generating sales follow-ups from an account context),
 > further verticals (legal, …), and a full "Claude"→"agent" wording sweep in
 > descriptive UI copy.
 
