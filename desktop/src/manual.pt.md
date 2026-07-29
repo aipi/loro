@@ -20,18 +20,18 @@ quando quiser pela paleta: `Cmd/Ctrl+Shift+P` → "apresentação do Loro".
 1. **Criar o acervo** — na primeira abertura, o assistente pede um nome, a
    pasta onde gerar e os contextos iniciais (ex.: `produto`, `engenharia`).
    Marque "versionar com git" para habilitar o fluxo de revisão (recomendado).
-   O toggle **"modo automático"** (ligado por padrão) deixa o loop criar ou
-   atribuir um contexto sozinho quando processa a fila, sem exigir que você
-   defina todos os contextos de antemão; dá para desligar depois em
-   Configurações — desligado, o loop deixa pendente o que não encaixa em
-   nenhum contexto já existente, e avisa que precisa da sua decisão.
-2. **Modelo de uso** — escolha um modelo pronto (Vendas, Engenharia,
-   Produto & gestão, Aprendizado, Educação, Recrutamento, Saúde) ou o
-   Genérico (em branco). O modelo pré-preenche os contextos (você pode
-   editar), adiciona regras da vertical ao `AGENTS.md`, semeia o guia da
-   fila e define o molde do `context.md` de cada contexto (as seções variam
-   por vertical — vendas fala de pipeline e compromissos, saúde de condutas
-   e protocolos). "Duplicar para personalizar" copia qualquer modelo para
+2. **Modelo de uso** — a primeira opção é **Automático** (padrão): o loop
+   cria e atribui contexto sozinho ao processar a fila, então você não
+   precisa definir contextos agora (dá para desligar depois em
+   Configurações). As demais opções são modelos prontos (Vendas,
+   Engenharia, Produto & gestão, Aprendizado, Educação, Recrutamento,
+   Saúde) ou o Genérico (em branco) — nesses, você define os contextos e o
+   loop não cria novos sozinho. Cada modelo pré-preenche os contextos (você
+   pode editar), adiciona regras da vertical ao `AGENTS.md`, semeia o guia
+   da fila e define o molde do `context.md` de cada contexto (as seções
+   variam por vertical — vendas fala de pipeline e compromissos, saúde de
+   condutas e protocolos). A explicação de cada opção aparece logo abaixo ao
+   selecioná-la. "Duplicar para personalizar" copia qualquer modelo para
    `~/.loro/templates/`, onde você edita os arquivos e ele passa a aparecer
    no assistente. Modelos com dados pessoais (Vendas, Recrutamento, Saúde)
    trazem regras de minimização — o de Saúde avisa: dados de saúde são
@@ -239,11 +239,13 @@ de um brainstorming ou reunião.
 Não — pode editá-la, mas não excluí-la. Só habilidades customizadas (criadas
 por você) podem ser excluídas.
 
-**O que o "modo automático" realmente faz?** Quando ligado (padrão), o loop
-pode criar um contexto novo ou decidir a qual contexto atribuir algo, sozinho,
-ao processar a fila. Desligado (em Configurações), ele não cria nada novo por
-conta própria — deixa o item pendente na fila e avisa que precisa da sua
-decisão manual. Não afeta atribuir a um contexto que já existe.
+**O que o "modo automático" realmente faz?** É o modelo de uso "Automático"
+(escolhido na criação, o padrão). Com ele, o loop pode criar um contexto novo
+ou decidir a qual contexto atribuir algo, sozinho, ao processar a fila.
+Escolhendo qualquer outro modelo (ou desligando depois em Configurações), ele
+não cria nada novo por conta própria — deixa o item pendente na fila e avisa
+que precisa da sua decisão manual. Não afeta atribuir a um contexto que já
+existe.
 
 **Por que as investigações/respostas de uma reunião não aparecem de cara?**
 Ficam recolhidas por padrão para a lateral não crescer demais — toque na

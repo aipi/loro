@@ -293,6 +293,7 @@
     "auto-save falhou — salve manualmente": "auto-save failed — save manually",
     "auto-scroll": "auto-scroll",
     "automático": "automatic",
+    "o loop cria e atribui contexto sozinho ao processar a fila — você não precisa definir contextos agora (dá para desligar depois em Configurações).": "the loop creates and assigns contexts on its own when it processes the queue — you don't need to define contexts now (you can turn it off later in Settings).",
     "avulso": "misc",
     "azul": "blue",
     "Brainstorming": "Brainstorming",

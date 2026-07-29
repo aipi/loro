@@ -942,7 +942,7 @@ const B = {
   main: $("brain"),
   setup: $("brainSetup"), shell: $("brainShell"),
   dirBtn: $("brainDirBtn"), ctxInput: $("brainCtxInput"), createBtn: $("brainCreateBtn"),
-  nameInput: $("brainNameInput"), autoInput: $("brainAuto"), gitInput: $("brainGit"),
+  nameInput: $("brainNameInput"), gitInput: $("brainGit"),
   agentInput: $("brainAgentInput"), wizTemplates: $("wizTemplates"), wizTemplateHint: $("wizTemplateHint"),
   cancelBtn: $("brainCancelBtn"), wizTitle: $("wizTitle"), setupErr: $("brainSetupErr"),
   acervoBtn: $("acervoBtn"), acervoName: $("acervoName"), acervoMenu: $("acervoMenu"),
@@ -979,8 +979,13 @@ const bOpen = new Set();   // nós expandidos da lateral
 let sideSig = "";          // assinatura p/ não re-renderizar a lateral sem mudança
 let acervos = [], activeAcervo = "", creatingNew = false, gitFiles = {}, wizColor = "";
 // usage template picker state (ADR-0003): selected id, fetched list, and
-// whether the user already edited the contexts field by hand
-let wizTemplate = "generico", wizTemplates = [], wizCtxDirty = false;
+// whether the user already edited the contexts field by hand.
+// ADR-0006/0007: "automático" is a synthetic FIRST option of the same
+// picker (owner decision) — mutually exclusive with the verticals: it means
+// autoContext=true + generico seeding (no predefined contexts; the loop
+// creates/assigns them). No separate checkbox in the wizard anymore.
+const AUTO_TEMPLATE_ID = "__auto";
+let wizTemplate = AUTO_TEMPLATE_ID, wizTemplates = [], wizCtxDirty = false;
 let lastEnvAcervo = null;
 
 // paleta curada (funciona no claro e no escuro); "" = padrão (teal do tema)
@@ -3503,9 +3508,10 @@ function openNewAcervo() {
   creatingNew = true;
   B.wizTitle.textContent = t("Novo projeto (acervo)");
   B.nameInput.value = ""; B.ctxInput.value = ""; brainDir = ""; B.dirBtn.textContent = "…";
-  B.autoInput.checked = true; B.gitInput.checked = true;
+  B.gitInput.checked = true;
   B.agentInput.value = "claude";
-  wizColor = ""; wizTemplate = "generico"; wizCtxDirty = false;
+  // default to automático (the previous checkbox defaulted on) — ADR-0007
+  wizColor = ""; wizTemplate = AUTO_TEMPLATE_ID; wizCtxDirty = false;
   drawWizColors();
   loadWizTemplates();
   B.cancelBtn.hidden = false; B.setupErr.hidden = true;
@@ -3525,6 +3531,11 @@ async function loadWizTemplates() {
 function drawWizTemplates() {
   const box = B.wizTemplates;
   box.innerHTML = "";
+  // synthetic "automático" first — its own mode, not a backend preset
+  const auto = document.createElement("option");
+  auto.value = AUTO_TEMPLATE_ID;
+  auto.textContent = t("automático");
+  box.appendChild(auto);
   for (const tpl of wizTemplates) {
     const o = document.createElement("option");
     o.value = tpl.id;
@@ -3535,6 +3546,8 @@ function drawWizTemplates() {
   box.value = wizTemplate;
   box.onchange = () => {
     wizTemplate = box.value;
+    // automático → contexts are optional (the loop creates them); a vertical
+    // prefills its predefined contexts as before.
     const tpl = wizTemplates.find((x) => x.id === wizTemplate);
     if (tpl) B.ctxInput.value = LoroPresets.prefillContexts(B.ctxInput.value, wizCtxDirty, tpl.contexts);
     drawWizHint();
@@ -3542,9 +3555,14 @@ function drawWizTemplates() {
   drawWizHint();
 }
 function drawWizHint() {
-  const sel = wizTemplates.find((x) => x.id === wizTemplate);
   const hint = B.wizTemplateHint;
   hint.innerHTML = "";
+  if (wizTemplate === AUTO_TEMPLATE_ID) {
+    hint.hidden = false;
+    hint.textContent = t("o loop cria e atribui contexto sozinho ao processar a fila — você não precisa definir contextos agora (dá para desligar depois em Configurações).");
+    return;
+  }
+  const sel = wizTemplates.find((x) => x.id === wizTemplate);
   if (!sel) { hint.hidden = true; return; }
   hint.hidden = false;
   hint.append(document.createTextNode(sel.description + " "));
@@ -3575,13 +3593,16 @@ B.createBtn.addEventListener("click", async () => {
   const contexts = B.ctxInput.value.split(",").map((s) => s.trim()).filter(Boolean);
   B.setupErr.hidden = true;
   try {
+    // ADR-0007: automático is a synthetic picker option → autoContext + generico
+    // seeding; any real template = manual (autoContext off).
+    const auto = wizTemplate === AUTO_TEMPLATE_ID;
     const av = await invoke("brain_setup", {
       dir: brainDir, contexts,
       name: B.nameInput.value.trim() || null,
-      autoContext: B.autoInput.checked,
+      autoContext: auto,
       gitInit: B.gitInput.checked,
       color: wizColor || null,
-      template: wizTemplate || null,
+      template: auto ? "generico" : (wizTemplate || null),
       agent: B.agentInput.value.trim() || null,
       // ADR-0002 §1: no per-project language — seeds follow the UI language
     });

@@ -20,18 +20,19 @@ palette: `Cmd/Ctrl+Shift+P` → "Loro tour".
 1. **Create the knowledge base** — on first launch the wizard asks for a name,
    the folder to generate into and the initial contexts (e.g. `product`,
    `engineering`). Check "version with git" to enable the review flow
-   (recommended). The **"auto mode"** toggle (on by default) lets the loop
-   create or assign a context on its own when it processes the queue, so you
-   don't need to define every context upfront; turn it off later in Settings
-   — off, the loop leaves whatever doesn't fit an existing context pending,
-   and reports that it needs your manual decision.
-2. **Usage template** — pick a ready-made template (Sales, Engineering,
-   Product & management, Learning, Education, Hiring, Healthcare) or the
-   Generic (blank) one. A template prefills the contexts (still editable),
-   appends the vertical's rules to `AGENTS.md`, seeds the queue guide and
-   sets the `context.md` mold of every context (sections vary per vertical —
-   sales talks pipeline and commitments, healthcare talks practices and
-   protocols).
+   (recommended).
+2. **Usage template** — the first option is **Automatic** (default): the loop
+   creates and assigns contexts on its own when it processes the queue, so
+   you don't need to define contexts now (you can turn it off later in
+   Settings). The other options are ready-made templates (Sales,
+   Engineering, Product & management, Learning, Education, Hiring,
+   Healthcare) or the Generic (blank) one — with those, you define the
+   contexts and the loop won't create new ones on its own. Each template
+   prefills the contexts (still editable), appends the vertical's rules to
+   `AGENTS.md`, seeds the queue guide and sets the `context.md` mold of
+   every context (sections vary per vertical — sales talks pipeline and
+   commitments, healthcare talks practices and protocols). Each option's
+   explanation appears right below it when selected.
    "Duplicate to customize" copies any template into `~/.loro/templates/`,
    where you edit the files and it shows up in the wizard. Templates that
    touch personal data (Sales, Hiring, Healthcare) ship minimization rules —
@@ -239,12 +240,13 @@ meeting's ⋯ menu ("executar habilidade…").
 you can edit it, but not delete it. Only custom habilidades (the ones you
 create) can be deleted.
 
-**What does "auto mode" actually do?** When on (default), the loop can
-create a new context or decide which one to assign something to, on its own,
-while processing the queue. Off (in Settings), it never creates anything new
-by itself — it leaves the item pending in the queue and reports that it
-needs your manual decision. It never affects assigning to a context that
-already exists.
+**What does "auto mode" actually do?** It's the "Automatic" usage template
+(chosen at creation, the default). With it, the loop can create a new context
+or decide which one to assign something to, on its own, while processing the
+queue. With any other template (or after turning it off in Settings), it
+never creates anything new by itself — it leaves the item pending in the
+queue and reports that it needs your manual decision. It never affects
+assigning to a context that already exists.
 
 **Why don't a meeting's investigations/answers show up right away?** They're
 collapsed by default so the sidebar doesn't grow too large — tap the ▸ arrow
