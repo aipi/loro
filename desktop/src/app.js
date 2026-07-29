@@ -1751,35 +1751,52 @@ async function promptSyncTool(fonte, slug) {
   );
   const inp = $("syncToolInput"); if (inp) inp.focus();
 }
-document.querySelectorAll("#toolsCard [data-tool]").forEach((el2) =>
-  el2.addEventListener("click", () => promptSyncTool(el2.dataset.tool)));
-
-// ============================ ferramentas customizadas (ADR-0006) ============================
-// A tool is any .md in .claude/commands/ NOT among the 7 built-in skills — the
-// filename IS the slash-command (mirrors the deny-list in acervo.rs's
-// BUILTIN_SKILLS; keep both lists in sync). Listed in the sidebar AND as
-// "usar" buttons on the Visão Geral card.
+// ============================ habilidades (ADR-0006/0007) ============================
+// A "habilidade" (UI label; code keeps the English "tool" per CLAUDE.md §6) is
+// any .md in .claude/commands/ — the filename IS the slash-command. Built-ins
+// (BUILTIN_SKILLS) can be edited but never deleted (brain_delete_tool already
+// refuses them; the UI just hides the option); custom ones have full CRUD.
 const TOOL_BUILTINS = new Set([
   "loro-context.md", "loro-analyse.md", "loro-question.md",
   "loro-ask.md", "loro-note.md", "loro-sync.md", "loro-tool.md",
+]);
+// Subset offered by the generic "executar habilidade" picker (brainstorming/
+// meeting ⋯ menus): the workflow-specific built-ins already have their own
+// dedicated UI (nova nota, perguntar ao acervo, gerar contexto, analisar/
+// perguntar na reunião) — repeating them here would just be noise. Only the
+// generically "run against an alvo" built-ins + every custom tool show up.
+const TOOL_PICKER_EXCLUDE = new Set([
+  "loro-context.md", "loro-analyse.md", "loro-question.md",
+  "loro-ask.md", "loro-note.md", "loro-tool.md",
 ]);
 let toolsSig = "";
 async function refreshTools() {
   if (!brainTab) return;
   let files = [];
-  try {
-    files = ((await invoke("brain_list_dir", { rel: ".claude/commands" })) || [])
-      .filter((f) => !f.dir && !TOOL_BUILTINS.has(f.name));
-  } catch (_) { files = []; }
+  try { files = ((await invoke("brain_list_dir", { rel: ".claude/commands" })) || []).filter((f) => !f.dir); }
+  catch (_) { files = []; }
   const sig = JSON.stringify(files.map((f) => f.name));
   if (sig === toolsSig) return;
   toolsSig = sig;
-  renderTools(files);
+  // description cached per file (used as the hover tooltip everywhere — the
+  // picker never renders every description inline, only on :hover/title).
+  const withDesc = await Promise.all(files.map(async (f) => {
+    let desc = "";
+    try {
+      const raw = await invoke("brain_read", { rel: f.path });
+      const m = /description:\s*(.+)/.exec(raw);
+      if (m) desc = m[1].trim();
+    } catch (_) {}
+    return { ...f, builtin: TOOL_BUILTINS.has(f.name), desc };
+  }));
+  renderTools(withDesc);
 }
-function toolRow(rel, label) {
-  return `<div class="bitem file" data-doc="${esc(rel)}" title="${esc(rel)}">` +
+function toolRow(f) {
+  const label = shortName(f.name);
+  return `<div class="bitem file" data-doc="${esc(f.path)}" title="${esc(f.desc || f.path)}">` +
     `${ico("file")}<span class="bn">${esc(label)}</span>` +
-    `<button class="rowmenu" data-toolmenu="${esc(rel)}" data-toollabel="${esc(label)}" title="${t("ações (usar, editar, pedir à IA, excluir)")}">⋯</button>` +
+    (f.builtin ? `<span class="pill" title="${t("habilidade padrão")}">${t("padrão")}</span>` : "") +
+    `<button class="rowmenu" data-toolmenu="${esc(f.path)}" data-toollabel="${esc(label)}" data-toolbuiltin="${f.builtin ? "1" : ""}" title="${t("ações (usar, editar, pedir à IA, excluir)")}">⋯</button>` +
     `</div>`;
 }
 let lastToolFiles = [];
@@ -1788,15 +1805,8 @@ function renderTools(files) {
   const nav = $("navTools");
   if (nav) {
     nav.innerHTML = files.length
-      ? files.map((f) => toolRow(f.path, shortName(f.name))).join("")
-      : `<div class="bempty">${t("nenhuma ferramenta ainda — crie uma com IA ou importe uma pronta (＋)")}</div>`;
-  }
-  const home = $("homeCustomTools");
-  if (home) {
-    home.innerHTML = files.map((f) =>
-      `<button class="abtn" data-usetool="${esc(f.path)}">${esc(shortName(f.name))}</button>`).join("");
-    home.querySelectorAll("[data-usetool]").forEach((el2) =>
-      el2.addEventListener("click", () => promptUseTool(el2.dataset.usetool)));
+      ? files.map(toolRow).join("")
+      : `<div class="bempty">${t("nenhuma habilidade ainda — crie uma com IA ou importe uma pronta (＋)")}</div>`;
   }
   wireTools();
 }
@@ -1808,27 +1818,30 @@ function wireTools() {
     el2.ondblclick = () => openDoc(el2.dataset.doc, { preview: false });
   });
   nav.querySelectorAll("[data-toolmenu]").forEach((el2) => (el2.onclick = (e) => {
-    e.stopPropagation(); openToolMenu(el2.dataset.toolmenu, el2.dataset.toollabel, el2);
+    e.stopPropagation();
+    openToolMenu(el2.dataset.toolmenu, el2.dataset.toollabel, el2, !!el2.dataset.toolbuiltin);
   }));
 }
-// usar / editar / pedir à IA / excluir — same ⋯-menu spirit as openArtefatoMenu,
-// scoped to a tool instead of a note.
-function openToolMenu(rel, label, anchor) {
+// usar / editar / pedir à IA / (excluir, só se não for padrão) — same
+// ⋯-menu spirit as openArtefatoMenu, scoped to a habilidade instead of a nota.
+function openToolMenu(rel, label, anchor, builtin) {
   B.acervoMenu.hidden = true;
   B.bMenu.innerHTML =
     `<div class="fhead">${esc(label)}</div>` +
     `<div class="fitem2 strong" data-use><span class="fn">▶ ${t("usar")}</span></div>` +
     `<div class="fitem2" data-edit><span class="fn">✎ ${t("editar")}</span></div>` +
     `<div class="fitem2" data-ainote><span class="fn">✦ ${t("pedir à IA")}</span></div>` +
-    `<div class="fitem2 danger" data-del><span class="fn">${t("excluir")}</span></div>`;
+    (builtin
+      ? `<div class="fnote mono">${t("habilidade padrão — não pode ser excluída")}</div>`
+      : `<div class="fitem2 danger" data-del><span class="fn">${t("excluir")}</span></div>`);
   B.bMenu.querySelector("[data-use]").onclick = () => { closeFloat(); promptUseTool(rel); };
   B.bMenu.querySelector("[data-edit]").onclick = () => { closeFloat(); openDoc(rel, { preview: false }); };
   B.bMenu.querySelector("[data-ainote]").onclick = () => { closeFloat(); promptToolAI(rel); };
-  B.bMenu.querySelector("[data-del]").onclick = () => { closeFloat(); delTool(rel); };
+  if (!builtin) B.bMenu.querySelector("[data-del]").onclick = () => { closeFloat(); delTool(rel); };
   placeMenu(anchor);
 }
 async function delTool(rel) {
-  if (!confirm(t("excluir esta ferramenta?"))) return;
+  if (!confirm(t("excluir esta habilidade?"))) return;
   try { await invoke("brain_delete_tool", { rel }); toolsSig = ""; refreshTools(); toast(t("excluída")); }
   catch (e) { toast(tErr(String(e))); }
 }
@@ -1861,8 +1874,8 @@ async function promptUseTool(rel) {
 }
 function promptToolAI(rel) {
   openModal(
-    t("Pedir à IA sobre esta ferramenta"),
-    `<p class="pmnote mono">${t("a IA lê a ferramenta e aplica o pedido nela mesma — evolui, não apaga.")}</p>` +
+    t("Pedir à IA sobre esta habilidade"),
+    `<p class="pmnote mono">${t("a IA lê a habilidade e aplica o pedido nela mesma — evolui, não apaga.")}</p>` +
       `<label class="wfield"><span class="mono">${t("pedido")}</span>` +
       `<input id="toolAiInput" type="text" placeholder="${t("ex.: adicione um passo para validar o input")}" spellcheck="false"></label>`,
     t("enviar"),
@@ -1878,24 +1891,24 @@ function promptToolAI(rel) {
 }
 function promptNewToolAI() {
   openModal(
-    t("Nova ferramenta (IA)"),
-    `<p class="pmnote mono">${t("descreva o que a ferramenta deve fazer — a IA cria a skill; ela aparece na lateral quando terminar.")}</p>` +
+    t("Nova habilidade (IA)"),
+    `<p class="pmnote mono">${t("descreva o que a habilidade deve fazer — a IA cria a skill; ela aparece na lateral quando terminar.")}</p>` +
       `<label class="wfield"><span class="mono">${t("descrição")}</span>` +
       `<input id="newToolInput" type="text" placeholder="${t("ex.: resume um ticket do Jira em 3 bullets")}" spellcheck="false"></label>`,
     t("criar"),
     () => {
       const d = (($("newToolInput") && $("newToolInput").value) || "").trim();
       const cmd = LoroBrainstorm.newToolCmd(d);
-      if (!cmd) { toast(t("descreva a ferramenta")); return; }
+      if (!cmd) { toast(t("descreva a habilidade")); return; }
       termRunAgent(cmd);
-      toast(t("pedido enviado ao agente do terminal — a ferramenta aparece na lateral"), 4000);
+      toast(t("pedido enviado ao agente do terminal — a habilidade aparece na lateral"), 4000);
     }
   );
   const inp = $("newToolInput"); if (inp) inp.focus();
 }
 function promptImportTool() {
   openModal(
-    t("Importar ferramenta existente"),
+    t("Importar habilidade existente"),
     `<p class="pmnote mono">${t("cole o conteúdo de uma skill (.md) que você já tem.")}</p>` +
       `<label class="wfield"><span class="mono">${t("nome")}</span>` +
       `<input id="importToolName" type="text" placeholder="${t("ex.: resumo-jira")}" spellcheck="false"></label>` +
@@ -1909,7 +1922,7 @@ function promptImportTool() {
       try {
         const rel = await invoke("brain_new_tool", { nome, conteudo });
         toolsSig = ""; refreshTools();
-        toast(t("ferramenta importada"));
+        toast(t("habilidade importada"));
         openDoc(rel, { preview: false });
       } catch (e) { toast(tErr(String(e))); }
     }
@@ -1919,13 +1932,34 @@ function promptImportTool() {
 function openAddToolMenu(anchor) {
   B.acervoMenu.hidden = true;
   B.bMenu.innerHTML =
-    `<div class="fitem2 strong" data-ai><span class="fn">✦ ${t("nova ferramenta (IA)")}</span></div>` +
+    `<div class="fitem2 strong" data-ai><span class="fn">✦ ${t("nova habilidade (IA)")}</span></div>` +
     `<div class="fitem2" data-import><span class="fn">⇩ ${t("importar skill existente")}</span></div>`;
   B.bMenu.querySelector("[data-ai]").onclick = () => { closeFloat(); promptNewToolAI(); };
   B.bMenu.querySelector("[data-import]").onclick = () => { closeFloat(); promptImportTool(); };
   placeMenu(anchor);
 }
 { const ab = $("addToolBtn"); if (ab) ab.addEventListener("click", (e) => { e.stopPropagation(); openAddToolMenu(ab); }); }
+// Shared "executar habilidade" picker (brainstorming ⋯ and meeting ⋯): a
+// compact dropdown-like list — one row per pickable habilidade, description
+// only on hover (title=), never rendered inline (ADR-0007: avoid a wall of
+// text once there are many). loro-sync.md is special-cased into its 4
+// sources since it is one file covering four distinct identifiers.
+function openHabilidadeMenu(alvoRel, anchor) {
+  B.acervoMenu.hidden = true;
+  const pickable = lastToolFiles.filter((f) => !TOOL_PICKER_EXCLUDE.has(f.name));
+  const rows = pickable.map((f) => {
+    if (f.name === "loro-sync.md") {
+      return ["drive", "slack", "jira", "confluence"].map((fonte) =>
+        `<div class="fitem2" data-src="${fonte}" title="${esc(f.desc)}"><span class="fn">${fonte}</span></div>`).join("");
+    }
+    return `<div class="fitem2" data-tool="${esc(f.path)}" title="${esc(f.desc || f.path)}"><span class="fn">${esc(shortName(f.name))}</span></div>`;
+  }).join("");
+  B.bMenu.innerHTML = `<div class="fhead">${t("executar habilidade")}</div>` +
+    (rows || `<div class="fnote mono">${t("nenhuma habilidade disponível")}</div>`);
+  B.bMenu.querySelectorAll("[data-src]").forEach((el2) => (el2.onclick = () => { closeFloat(); promptSyncTool(el2.dataset.src, alvoRel); }));
+  B.bMenu.querySelectorAll("[data-tool]").forEach((el2) => (el2.onclick = () => { closeFloat(); promptUseTool(el2.dataset.tool); }));
+  placeMenu(anchor);
+}
 
 // Inline "nova nota" inside a brainstorming (mirrors promptNewContext/promptNewTema).
 // Writes brainstorming/<slug>/notas/<slug>.md via brain_new_notebook and opens it.
@@ -1959,11 +1993,13 @@ function openBsMenu(slug, anchor) {
   B.bMenu.innerHTML =
     `<div class="fhead">${esc(slug)}</div>` +
     `<div class="fitem2 strong" data-ainote><span class="fn">✦ ${t("nota por IA…")}</span></div>` +
+    `<div class="fitem2" data-tools><span class="fn">🧰 ${t("executar habilidade…")}</span></div>` +
     `<div class="fsep"></div>` +
     `<div class="fitem2" data-ren><span class="fn">${t("renomear")}</span></div>` +
     `<div class="fitem2" data-toqueue><span class="fn">${t("gerar relatório de tudo → fila")}</span></div>` +
     `<div class="fitem2 danger" data-del><span class="fn">${t("apagar brainstorming")}</span></div>`;
   B.bMenu.querySelector("[data-ainote]").onclick = () => { closeFloat(); promptNoteAI(`brainstorming/${slug}/notas`, false); };
+  B.bMenu.querySelector("[data-tools]").onclick = () => openHabilidadeMenu(`brainstorming/${slug}`, anchor);
   B.bMenu.querySelector("[data-ren]").onclick = () => { closeFloat(); promptRenameBs(slug); };
   B.bMenu.querySelector("[data-toqueue]").onclick = () => { closeFloat(); sendBrainstormToQueue(slug, []); };
   B.bMenu.querySelector("[data-del]").onclick = () => { closeFloat(); delPessoal("brainstorming/" + slug, "tema"); };
@@ -2010,7 +2046,7 @@ function openMeetingMenu(rel, id, title, status, anchor) {
     `<div class="fitem2${ready ? "" : " strong"}" data-question><span class="fn">? ${t("perguntar…")}</span></div>` +
     `<div class="fitem2${dis ? " off" : ""}" data-report><span class="fn">≡ ${t("ver relatório")}</span></div>` +
     (ready ? "" : `<div class="fnote mono">${t("analisar e ver relatório ficam disponíveis quando a reunião terminar — perguntar já funciona agora")}</div>`) +
-    `<div class="fitem2" data-tools><span class="fn">🧰 ${t("ferramentas…")}</span></div>` +
+    `<div class="fitem2" data-tools><span class="fn">🧰 ${t("executar habilidade…")}</span></div>` +
     `<div class="fsep"></div>` +
     `<div class="fitem2" data-ren><span class="fn">✎ ${t("renomear")}</span></div>` +
     `<div class="fitem2 danger" data-del><span class="fn">${t("apagar reunião")}</span></div>`;
@@ -2019,25 +2055,9 @@ function openMeetingMenu(rel, id, title, status, anchor) {
     B.bMenu.querySelector("[data-report]").onclick = () => { closeFloat(); buildAndOpenReport(id); };
   }
   B.bMenu.querySelector("[data-question]").onclick = () => { closeFloat(); askMeetingQuestion(id, rel); };
-  B.bMenu.querySelector("[data-tools]").onclick = () => openMeetingToolsMenu(rel, anchor);
+  B.bMenu.querySelector("[data-tools]").onclick = () => openHabilidadeMenu(rel, anchor);
   B.bMenu.querySelector("[data-ren]").onclick = () => { closeFloat(); promptRenameMeeting(id, title); };
   B.bMenu.querySelector("[data-del]").onclick = () => { closeFloat(); delPessoal(rel, "reuniao"); };
-  placeMenu(anchor);
-}
-// "🧰 ferramentas" usable during a meeting: same sync sources (Drive/Slack/
-// Jira/Confluence — meeting's own rel as alvo, no tema select needed) plus
-// any custom tool, reusing the exact same prompts as the Visão Geral card.
-function openMeetingToolsMenu(rel, anchor) {
-  B.acervoMenu.hidden = true;
-  const sources = ["drive", "slack", "jira", "confluence"]
-    .map((f) => `<div class="fitem2" data-src="${f}"><span class="fn">${f}</span></div>`).join("");
-  const tools = lastToolFiles
-    .map((f) => `<div class="fitem2" data-tool="${esc(f.path)}"><span class="fn">${esc(shortName(f.name))}</span></div>`).join("");
-  B.bMenu.innerHTML =
-    `<div class="fhead">${t("ferramentas")}</div>` + sources +
-    (tools ? `<div class="fsep"></div>${tools}` : "");
-  B.bMenu.querySelectorAll("[data-src]").forEach((el2) => (el2.onclick = () => { closeFloat(); promptSyncTool(el2.dataset.src, rel); }));
-  B.bMenu.querySelectorAll("[data-tool]").forEach((el2) => (el2.onclick = () => { closeFloat(); promptUseTool(el2.dataset.tool); }));
   placeMenu(anchor);
 }
 
