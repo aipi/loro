@@ -34,10 +34,10 @@
           <label class="wfield"><span class="mono" data-i18n>nome do projeto</span>
             <input id="brainNameInput" type="text" placeholder="ex.: Company, Pessoal" data-i18n-attrs="placeholder" />
           </label>
-          <div class="wfield"><span class="mono" data-i18n>modelo de uso</span>
-            <div id="wizTemplates" class="tplcards"></div>
-            <p id="wizTemplateHint" class="hint tplhint"></p>
-          </div>
+          <label class="wfield"><span class="mono" data-i18n>modelo de uso</span>
+            <select id="wizTemplates"></select>
+          </label>
+          <p id="wizTemplateHint" class="hint tplhint"></p>
           <label class="wfield"><span class="mono" data-i18n>onde gerar</span>
             <button id="brainDirBtn" class="link mono dirbtn">…</button>
           </label>
@@ -52,9 +52,11 @@
           <label class="wfield"><span class="mono" data-i18n>agente de IA (comando)</span>
             <input id="brainAgentInput" type="text" placeholder="claude — ou outro CLI: gemini, ollama run llama3…" data-i18n-attrs="placeholder" />
           </label>
-          <label class="wfield"><span class="mono" data-i18n>cor do projeto</span>
+          <!-- div, not label: a label would re-dispatch any swatch click to its
+               first labelable control (the first swatch), resetting the pick -->
+          <div class="wfield"><span class="mono" data-i18n>cor do projeto</span>
             <div id="wizColors" class="swatches"></div>
-          </label>
+          </div>
           <p class="hint"><span data-i18n>cada contexto vira uma pasta com</span> <span class="mono">context.md</span>
             <span data-i18n>(a fonte da verdade) e</span> <span class="mono">CHANGELOG.md</span><span data-i18n>; a colaboração usa</span>
             <span class="mono">.github/CODEOWNERS</span><span data-i18n>. Se já houver estrutura, ela é respeitada.</span></p>

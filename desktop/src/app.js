@@ -2736,18 +2736,22 @@ function drawWizTemplates() {
   const box = B.wizTemplates;
   box.innerHTML = "";
   for (const tpl of wizTemplates) {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = "tplcard" + (tpl.id === wizTemplate ? " on" : "");
-    b.textContent = tpl.name + (tpl.builtin ? "" : " ✎");
-    b.title = tpl.description;
-    b.onclick = () => {
-      wizTemplate = tpl.id;
-      B.ctxInput.value = LoroPresets.prefillContexts(B.ctxInput.value, wizCtxDirty, tpl.contexts);
-      drawWizTemplates();
-    };
-    box.appendChild(b);
+    const o = document.createElement("option");
+    o.value = tpl.id;
+    o.textContent = tpl.name + (tpl.builtin ? "" : " ✎");
+    o.title = tpl.description;
+    box.appendChild(o);
   }
+  box.value = wizTemplate;
+  box.onchange = () => {
+    wizTemplate = box.value;
+    const tpl = wizTemplates.find((x) => x.id === wizTemplate);
+    if (tpl) B.ctxInput.value = LoroPresets.prefillContexts(B.ctxInput.value, wizCtxDirty, tpl.contexts);
+    drawWizHint();
+  };
+  drawWizHint();
+}
+function drawWizHint() {
   const sel = wizTemplates.find((x) => x.id === wizTemplate);
   const hint = B.wizTemplateHint;
   hint.innerHTML = "";
