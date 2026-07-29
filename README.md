@@ -26,9 +26,11 @@ It is two things working together:
 
 > Docs: the brain domain `loro` (**`brain/contexts/loro/context.md`**, what/why —
 > this repo dogfoods its own model), **`docs/ARCHITECTURE.md`** (how),
-> **`docs/adr/0001-baseline.md`** (the single consolidated ADR),
+> **`docs/adr/`** (0001 is the consolidated baseline; 0002+ are incremental),
 > **`CLAUDE.md`** (how to work here). All docs and code are in English; the app
-> UI is in Portuguese (pt-BR).
+> UI is pt-BR by default with a user-selectable English toggle (generated
+> content follows the active UI language). An in-app user manual (pt/en) opens
+> from the `?` button.
 
 ## Requirements
 
