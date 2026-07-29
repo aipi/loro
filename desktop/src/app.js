@@ -1089,7 +1089,11 @@ B.editSave.addEventListener("click", async () => {
   catch (e) { toast(tErr(String(e))); clog("editor save error: " + e); }
 });
 $("guideBtn").addEventListener("click", () => openGuideDoc());
-{ const ab = $("askBtn"); if (ab) ab.addEventListener("click", askAcervo); }
+// ADR-0007 (owner request): the hero's "perguntar ao acervo" button became the
+// generic "executar habilidade" picker — perguntar ao acervo is one entry in
+// it (and stays on the palette, ⌘⌥Q). Unrestricted list: on the Visão Geral
+// there is no other dedicated UI to avoid duplicating.
+{ const hb = $("homeSkillBtn"); if (hb) hb.addEventListener("click", (e) => { e.stopPropagation(); openHabilidadeMenu(null, hb, true); }); }
 // ADR-0013: "gerar contexto" — the fila → contexto step. Injects /loro-context
 // into the terminal Claude (the /loro-context loop), which processes the whole
 // queue into versioned contexts. Same terminal-skill pattern as analisar/responder.
@@ -2159,9 +2163,12 @@ function wireHabilidadeCard(p, alvoRel) {
     runHabilidadeEntry(e2, alvo);
   };
 }
-function openHabilidadeMenu(alvoRel, anchor) {
+// `all` lifts the workflow-builtin exclusion — used where no dedicated UI
+// coexists (the Visão Geral hero button); alvoRel may be null there (each
+// habilidade then asks for/omits its own target).
+function openHabilidadeMenu(alvoRel, anchor, all) {
   B.acervoMenu.hidden = true;
-  const entries = pickableHabilidadeEntries();
+  const entries = all ? allHabilidadeEntries() : pickableHabilidadeEntries();
   const rows = entries.map((e, i) =>
     `<div class="fitem2" data-entry="${i}" title="${esc(e.title)}"><span class="fn">${esc(e.label)}</span></div>`).join("");
   B.bMenu.innerHTML = `<div class="fhead">${t("executar habilidade")}</div>` +
@@ -3845,6 +3852,8 @@ async function refreshEnv(force) {
 function renderGhCard() {
   const d = envDoctor;
   B.proposeBtn.hidden = !(d && d.versioningEnabled);
+  // the (i) explaining "propor mudança" shows/hides with the button itself
+  { const ph = $("proposeHelp"); if (ph) ph.hidden = B.proposeBtn.hidden; }
   // opt-in: só mostra o card quando o usuário caminha p/ colaboração (gh instalado
   // ou já há um remoto). Sem isso, o fluxo segue 100% local, sem ruído.
   const heading = d && (d.gh.detail || d.remote.detail);

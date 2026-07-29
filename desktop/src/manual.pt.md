@@ -191,9 +191,14 @@ de versionar/propor mudança normalmente).
 
 ## Perguntar ao acervo
 
-- **perguntar ao acervo** abre o Claude no terminal embutido e envia sua
-  pergunta com `/loro-ask`; a resposta se ancora nos `context.md` do acervo e
-  diz claramente quando a base não cobre o assunto.
+- Na Visão Geral, o botão **📖 executar habilidade** abre a lista completa de
+  habilidades — **perguntar ao acervo** é uma delas (também na paleta,
+  `Cmd/Ctrl+Alt+Q`). A pergunta roda com `/loro-ask`; a resposta se ancora
+  nos `context.md` do acervo e diz claramente quando a base não cobre o
+  assunto.
+- Ao lado de **propor mudança** há um **ⓘ** explicando o fluxo: publica a
+  branch `rfc/…` e abre o Pull Request (a RFC) para revisão dos donos do
+  contexto.
 
 ## FAQ
 

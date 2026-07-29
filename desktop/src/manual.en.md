@@ -190,9 +190,14 @@ normally).
 
 ## Ask the knowledge base
 
-- **ask the knowledge base** opens Claude in the embedded terminal and sends
-  your question via `/loro-ask`; the answer anchors on the acervo's
-  `context.md` files and says clearly when the base does not cover the topic.
+- On the Overview, the **📖 executar habilidade** button opens the full
+  habilidade list — **perguntar ao acervo** is one of them (also on the
+  palette, `Cmd/Ctrl+Alt+Q`). The question runs via `/loro-ask`; the answer
+  anchors on the acervo's `context.md` files and says clearly when the base
+  does not cover the topic.
+- Next to **propor mudança** there is an **ⓘ** explaining the flow: it
+  publishes the `rfc/…` branch and opens the Pull Request (the RFC) for the
+  context owners to review.
 
 ## FAQ
 
