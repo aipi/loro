@@ -39,10 +39,15 @@ fmt: ## Format the Rust code (cargo fmt)
 syscap: ## Compile the macOS system-audio capturer (ScreenCaptureKit, ADR-0005)
 	swiftc -O desktop/src-tauri/syscap/loro-syscap.swift -o desktop/src-tauri/syscap/loro-syscap
 
-build: syscap ## Build the production app bundle (tauri build)
+# npm deps are a real file prerequisite: on a fresh clone node_modules/.bin has
+# no `tauri`, so `npm run tauri ...` fails with "sh: tauri: command not found".
+desktop/node_modules: desktop/package.json
+	cd desktop && npm install
+
+build: syscap desktop/node_modules ## Build the production app bundle (tauri build)
 	cd desktop && npm run tauri build
 
-app: syscap ## Run the app in development mode (tauri dev)
+app: syscap desktop/node_modules ## Run the app in development mode (tauri dev)
 	cd desktop && npm run tauri dev
 
 test-docker: ## Run the test suite inside Docker (reproducible/headless)
