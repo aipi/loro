@@ -13,6 +13,10 @@ in a brainstorming; you select what matters and send a report to the queue;
 
 ## First steps
 
+On first launch a **welcome modal** sums up the main features (flow,
+recording, templates, agent, AI and shortcuts) — reopen it anytime via the
+palette: `Cmd/Ctrl+Shift+P` → "Loro tour".
+
 1. **Create the knowledge base** — on first launch the wizard asks for a name,
    the folder to generate into and the initial contexts (e.g. `product`,
    `engineering`). Check "version with git" to enable the review flow
@@ -63,8 +67,9 @@ in a brainstorming; you select what matters and send a report to the queue;
   write, and **● record meeting** to record a **meeting** tied to the topic
   (also in the palette `Cmd/Ctrl+Shift+P` → "nova reunião").
 - **✦ AI note** (the brainstorming's ⋯ menu) creates a note from your
-  request; **✦ ask the AI** (a note's or analysis' ⋯ menu) applies a request
-  to the existing file — the AI evolves the content, never erases it.
+  request; **✦ ask the AI** (a note's/analysis' ⋯ menu **and at the top of
+  the file viewer**) applies a request to the existing content — the AI
+  evolves it, never erases.
 - The **analyse**, **ask…** and **view report** actions live in the
   meeting's `reuniao.md` tab and also in the meeting's **⋯** menu in the
   sidebar; they enable once the meeting ends (analyse fills the report).

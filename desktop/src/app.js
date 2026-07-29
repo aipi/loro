@@ -103,6 +103,7 @@ const DEFAULTS = {
   model: "large-v3-turbo", lang: "pt", translate: false,
   autoscroll: true, autosave: false, saveDir: "", source: "mic", mode: "live", uiLang: "pt", termSide: false,
   sideW: 0, // sidebar width in px; 0 = the default CSS clamp (ADR-0002 §6)
+  welcomeSeen: false, // first-launch feature tour (reopen via palette)
 };
 let settings = { ...DEFAULTS };
 function loadSettings() {
@@ -1022,11 +1023,36 @@ document.addEventListener("click", (e) => {
 });
 window.addEventListener("keydown", (e) => { if (e.key === "Escape") hideTip(); });
 
+// ---- welcome (first launch): the main features in one modal ----------------
+// Shown once (settings.welcomeSeen); reopen anytime via the palette
+// ("apresentação do Loro"). Content mirrors the manual's headline features.
+function showWelcome() {
+  const li = (msg) => `<li>${t(msg)}</li>`;
+  openModal(
+    t("Bem-vindo ao Loro 🦜"),
+    `<ul class="welcome">` +
+      li("Fluxo em três passos: Brainstorming → Fila → Contexto — junte ideias, eleja o que importa e gere conhecimento versionado.") +
+      li("● grava reuniões ou transcrições avulsas — 100% local; o áudio nunca sai da sua máquina.") +
+      li("Modelos de uso (vendas, engenharia, saúde…) moldam os contextos e as regras do acervo na criação.") +
+      li("O agente de IA é escolha sua por acervo: claude por padrão, ou qualquer CLI — inclusive modelos locais.") +
+      li("Analise reuniões, pergunte ao acervo ou a um contexto, e crie/evolua notas com IA (✦) direto da lateral.") +
+      li("⌘/Ctrl+Shift+P abre a paleta de comandos — e todo comando tem um atalho ⌘/Ctrl+⌥.") +
+    `</ul>` +
+      `<p class="pmnote mono"><button id="welcomeManual" class="link mono strong">${t("abrir manual")}</button></p>`,
+    t("começar"),
+    () => {}
+  );
+  const m = $("welcomeManual");
+  if (m) m.onclick = () => { closeModal(); openDoc(MANUAL_REL, { preview: false }); };
+  settings.welcomeSeen = true; persistSettings();
+}
+
 // o acervo é a tela principal (sempre ativo); a transcrição vive no player (dock)
 function initBrain() {
   brainTab = true;
   brainRefresh();
   if (!brainPoll) brainPoll = setInterval(brainRefresh, 10000);
+  if (!settings.welcomeSeen) setTimeout(showWelcome, 600);
 }
 if (el.liveExpand) el.liveExpand.addEventListener("click", () => setLivePanel(el.surface.hidden));
 el.liveCollapse.addEventListener("click", () => setLivePanel(false));
@@ -2464,6 +2490,13 @@ async function renderActive() {
   B.badge.textContent = label; B.badge.className = "mono badge " + cls;
   setDocGit(tab.rel, tab.kind, isGuide);
   if (isGuide) $("bDocActs").hidden = true; else applyDocActions(tab.rel);
+  // ✦ ask-the-AI lives on the note viewer too (owner request): any markdown
+  // file of the non-versioned world except the meeting living surface (which
+  // has its own rail of actions).
+  const aiable = !isGuide && tab.rel.startsWith("brainstorming/") &&
+    tab.rel.endsWith(".md") && !LM.isLiving(tab.rel);
+  $("bAskAi").hidden = !aiable;
+  if (aiable) $("bAskAi").onclick = () => promptNoteAI(tab.rel, true);
   // ADR-0010: a meeting living file (reuniao.md) is its own append-only surface —
   // transcript + artefatos rail + análise/consent; no free-form CM6 editing.
   if (LM.isLiving(tab.rel)) {
@@ -2662,6 +2695,7 @@ const comboLabel = (c) =>
 const COMMANDS = [
   { label: "ir para início", code: "KeyH", run: () => openHome() },
   { label: "abrir manual", code: "KeyM", run: () => openDoc(MANUAL_REL, { preview: false }) },
+  { label: "apresentação do Loro", code: "KeyA", run: () => showWelcome() },
   { label: "alternar visualizar/editar", combo: IS_MAC ? "⌘E" : "Ctrl+E", run: () => toggleActiveMode() },
   { label: "fechar aba", combo: IS_MAC ? "⌘W" : "Ctrl+W", run: () => closeActiveTab() },
   { label: "reabrir aba", code: "KeyT", run: () => reopenClosedTab() },

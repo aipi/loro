@@ -13,6 +13,10 @@ fila; o botão "gerar contexto" pede ao Claude do terminal que destile a fila em
 
 ## Primeiros passos
 
+Na primeira abertura, um **modal de boas-vindas** resume as principais
+funcionalidades (fluxo, gravação, modelos, agente, IA e atalhos) — reabra
+quando quiser pela paleta: `Cmd/Ctrl+Shift+P` → "apresentação do Loro".
+
 1. **Criar o acervo** — na primeira abertura, o assistente pede um nome, a
    pasta onde gerar e os contextos iniciais (ex.: `produto`, `engenharia`).
    Marque "versionar com git" para habilitar o fluxo de revisão (recomendado).
@@ -61,8 +65,9 @@ fila; o botão "gerar contexto" pede ao Claude do terminal que destile a fila em
   escrever, e **● gravar reunião** para gravar uma **reunião** ligada ao tema
   (também na paleta `Cmd/Ctrl+Shift+P` → "nova reunião").
 - **✦ nota por IA** (menu ⋯ do brainstorming) cria uma nota a partir de um
-  pedido seu; **✦ pedir à IA** (menu ⋯ de uma nota ou análise) aplica um pedido
-  sobre o arquivo existente — a IA evolui o conteúdo, nunca apaga.
+  pedido seu; **✦ pedir à IA** (menu ⋯ de uma nota/análise **e no topo do
+  visualizador do arquivo**) aplica um pedido sobre o conteúdo existente — a
+  IA evolui, nunca apaga.
 - As ações **analisar**, **perguntar…** e **ver relatório** ficam na aba
   `reuniao.md` da reunião e também no menu **⋯** da reunião na lateral; elas
   habilitam quando a reunião termina (o relatório é preenchido pelo

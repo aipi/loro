@@ -109,6 +109,9 @@
 
 ## Consequences
 
+- A first-launch **welcome modal** presents the main features (reopen via the
+  palette, "apresentação do Loro"); "✦ pedir à IA" is also surfaced on the
+  note viewer's header, not only in the sidebar menus.
 - The wizard gains a template picker (localized from the manifests, not from
   i18n.js) and an agent command field; toasts on agent paths use neutral
   wording ("agente do terminal").
