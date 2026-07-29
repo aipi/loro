@@ -1963,12 +1963,14 @@ async function delTool(rel) {
   catch (e) { toast(tErr(String(e))); }
 }
 // "usar": reads the tool's own front-matter (description/argument-hint) to
-// prompt for arguments, then just runs "/<slug> <args>" — the file itself IS
-// the slash-command, no dedicated runner needed.
-// presetArg pre-fills the input (e.g. the meeting/note the habilidade was
-// invoked against) — the user can accept it as-is or extend it, instead of
-// retyping a path the caller already knew.
-async function promptUseTool(rel, presetArg) {
+// prompt for arguments, then just runs "/<slug> <alvo> <args>" — the file
+// itself IS the slash-command, no dedicated runner needed.
+// alvoRel (when given) is the file/topic the habilidade was invoked against:
+// it is a FIXED argument shown as a read-only row, never inside the writable
+// input (owner feedback) — every loro skill takes the alvo as its first
+// token, so it consumes the hint's first token and the remaining tokens are
+// listed for the user to fill in the free-text box.
+async function promptUseTool(rel, alvoRel) {
   const slug = rel.split("/").pop().replace(/\.md$/, "");
   let hint = "", desc = "";
   try {
@@ -1978,15 +1980,21 @@ async function promptUseTool(rel, presetArg) {
     if (mHint) hint = mHint[1].trim();
     if (mDesc) desc = mDesc[1].trim();
   } catch (_) {}
+  const fixed = (alvoRel || "").trim();
+  const tokens = hint.match(/<[^>]+>|\[[^\]]+\]/g) || [];
+  const rest = fixed && tokens.length ? tokens.slice(1) : tokens;
+  const restHint = rest.join("  ");
   openModal(
     `${t("usar")} /${slug}`,
     (desc ? `<p class="pmnote mono">${esc(desc)}</p>` : "") +
-      `<label class="wfield"><span class="mono">${t("argumentos")}</span>` +
-      `<input id="useToolInput" type="text" value="${esc(presetArg || "")}" placeholder="${esc(hint || t("opcional"))}" spellcheck="false"></label>`,
+      (fixed ? `<div class="wfield"><span class="mono">${t("alvo")}</span><span class="lockval mono" title="${esc(fixed)}">${esc(fixed)}</span></div>` : "") +
+      (restHint ? `<p class="pmnote mono">${t("argumentos")}: ${esc(restHint)}</p>` : "") +
+      `<label class="wfield"><span class="mono">${t("escrever")}</span>` +
+      `<input id="useToolInput" type="text" placeholder="${esc(restHint || t("opcional"))}" spellcheck="false"></label>`,
     t("rodar"),
     () => {
       const args = (($("useToolInput") && $("useToolInput").value) || "").trim();
-      termRunAgent("/" + slug + (args ? " " + args : ""));
+      termRunAgent("/" + slug + (fixed ? " " + fixed : "") + (args ? " " + args : ""));
       toast(t("comando enviado ao agente do terminal"), 4000);
     }
   );
