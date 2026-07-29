@@ -1261,10 +1261,11 @@ const ICONS = {
   note: "M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h10l6-6V5c0-1.1-.9-2-2-2zm-5 14v-4h4l-4 4z",
   file: "M6 2c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6H6zm7 7V3.5L18.5 9H13z",
   archive: "M20.54 5.23l-1.39-1.68C18.88 3.21 18.47 3 18 3H6c-.47 0-.88.21-1.16.55L3.46 5.23C3.17 5.57 3 6.02 3 6.5V19c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V6.5c0-.48-.17-.93-.46-1.27zM12 17.5L6.5 12H10v-2h4v2h3.5L12 17.5zM5.12 5l.81-1h12l.94 1H5.12z",
-  // habilidades (ADR-0007) — a bolt marks the CONCEPT (section title, rail
-  // cards); file rows use their own icons below so the title never looks
-  // like just another row (no emoji: 🧰 read inconsistently across fonts).
-  skill: "M11 21l1-9H7l6-11-1 9h5l-6 11z",
+  // habilidades (ADR-0007) — a book with a bookmark marks the CONCEPT
+  // (section title, rail cards), matching Claude's own skills icon (owner
+  // request); file rows use their own icons below so the title never looks
+  // like just another row.
+  skill: "M18 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 4h5v8l-2.5-1.5L6 12V4z",
   // built-in habilidade file — a puzzle piece (ships with the app).
   builtinskill: "M20.5 11H19V7c0-1.1-.9-2-2-2h-4V3.5C13 2.12 11.88 1 10.5 1S8 2.12 8 3.5V5H4c-1.1 0-1.99.9-1.99 2v3.8H3.5c1.49 0 2.7 1.21 2.7 2.7s-1.21 2.7-2.7 2.7H2V20c0 1.1.9 2 2 2h3.8v-1.5c0-1.49 1.21-2.7 2.7-2.7 1.49 0 2.7 1.21 2.7 2.7V22H17c1.1 0 2-.9 2-2v-4h1.5c1.38 0 2.5-1.12 2.5-2.5S21.88 11 20.5 11z",
   // custom habilidade file — a star (authored by the user).
@@ -2437,9 +2438,14 @@ function renderSelectionBar() {
     bar.id = "bsSelBar"; bar.className = "bsselbar";
     B.navPessoal.after(bar);
   }
-  bar.innerHTML = `<span>${bsSelection.size} ${t("selecionado(s)")}</span>` +
-    `<button class="abtn" id="bsSelSend" title="${t("Gera um relatório consolidado das partes escolhidas e o envia para a fila de geração de contexto")}">${t("enviar para a fila")} →</button>` +
-    `<button class="abtn ghost" id="bsSelClear">${t("limpar")}</button>`;
+  // two clean rows for the narrow sidebar (owner feedback: the three items
+  // wrapping side-by-side read as clutter): count + a quiet "limpar" link on
+  // top, the primary action as a full-width CTA below.
+  const n = bsSelection.size;
+  bar.innerHTML =
+    `<div class="bsselrow"><span class="mono">${n} ${t(n > 1 ? "selecionados" : "selecionado")}</span>` +
+    `<button class="link mono muted" id="bsSelClear">${t("limpar")}</button></div>` +
+    `<button class="railbtn cta" id="bsSelSend" title="${t("Gera um relatório consolidado das partes escolhidas e o envia para a fila de geração de contexto")}">${t("enviar para a fila")} →</button>`;
   $("bsSelSend").onclick = sendSelectionToQueue;
   $("bsSelClear").onclick = () => { bsSelection = new Set(); wirePessoal(); renderSelectionBar(); };
 }

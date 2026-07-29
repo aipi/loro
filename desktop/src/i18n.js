@@ -596,6 +596,8 @@
     "salvo": "saved",
     "seleção inválida": "invalid selection",
     "selecionado(s)": "selected",
+    "selecionado": "selected",
+    "selecionados": "selected",
     "selecionar para a fila": "select for the queue",
     "selecione partes → um relatório entra na fila": "select parts → a report enters the queue",
     "sem anexos — apenas o texto será mesclado no context.md": "no attachments — only the text will be merged into context.md",

@@ -147,9 +147,10 @@ doesn't clutter the screen once there are many.
   file), **ask the AI** (evolve it, preserving what already works) and
   **delete** (custom ones only).
 - In the sidebar, the icon tells the origin: **🧩 puzzle piece** = built-in,
-  **★ star** = custom (the **⚡ bolt** marks the section and the habilidade
-  controls). Click the "habilidades" section title to **collapse/expand**
-  the whole list (the ▾/▸ caret shows the state).
+  **★ star** = custom (the **📖 book** marks the section and the habilidade
+  controls, like Claude's own skills icon). Click the "habilidades" section
+  title to **collapse/expand** the whole list (the ▾/▸ caret shows the
+  state).
 
 ## Contexts have anexos too
 
