@@ -824,7 +824,6 @@ if (el.uiLang) el.uiLang.addEventListener("change", async (e) => {
   try { settings.uiLang = await invoke("ui_set_lang", { lang: e.target.value }); } catch (_) {}
   applyI18n();
   rerenderForLang();
-  if ($("brainLang")) $("brainLang").value = settings.uiLang; // default language for new projects
 });
 el.saveBtn.addEventListener("click", save);
 el.discardBtn.addEventListener("click", discard);
@@ -984,6 +983,12 @@ $("guideBtn").addEventListener("click", () => openGuideDoc());
 // queue into versioned contexts. Same terminal-skill pattern as analisar/responder.
 // One function, two entry points: the home card CTA and the sidebar quick action.
 function genContextNow() {
+  // ADR-0002 §5: an empty queue is refused loudly here, not just by disabled
+  // buttons — there is nothing to generate context FROM, and the user must know.
+  if (!lastSt || !lastSt.inbox || !lastSt.inbox.length) {
+    toast(t("a fila está vazia — envie um relatório ou arquivos antes de gerar contexto"), 5000);
+    return;
+  }
   termRunClaude(LoroBrainstorm.brainContextCmd());
   toast(t("gerando contexto no Claude do terminal — acompanhe abaixo"), 4000);
 }
@@ -2660,7 +2665,7 @@ B.createBtn.addEventListener("click", async () => {
       autoContext: B.autoInput.checked,
       gitInit: B.gitInput.checked,
       color: wizColor || null,
-      lang: ($("brainLang") && $("brainLang").value) || "pt",
+      // ADR-0002 §1: no per-project language — seeds follow the UI language
     });
     acervos = av.acervos || []; activeAcervo = av.active || "";
     creatingNew = false;

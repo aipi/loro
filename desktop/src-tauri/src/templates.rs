@@ -380,9 +380,11 @@ editar aqui geraria corrida com esse escritor).
    (só `tipo` + `t_ms?`/`ref?`, NUNCA texto de transcrição). O app incorpora esses
    marcadores ao relatório — não edite `manifest.json`.
 6. Atualize `$ARGUMENTS/relatorio.md`: substitua a prosa provisória das seções
-   `## Resumo`, `## Decisões` e `## Dúvidas & Respostas` por prosa real e objetiva
-   derivada da transcrição, mantendo os títulos. Se `relatorio.md` ainda não
-   existir, crie-o com essas seções.
+   `## Resumo`, `## Decisões` e `## Dúvidas & Respostas` (ou suas equivalentes em
+   inglês: `## Summary`, `## Decisions`, `## Questions & Answers` — o notebook
+   pode ter nascido em qualquer um dos dois idiomas) por prosa real e objetiva
+   derivada da transcrição, mantendo os títulos existentes. Se `relatorio.md`
+   ainda não existir, crie-o com essas seções no idioma deste skill.
 7. Acrescente UMA linha JSON, orientada a evento, em `$ARGUMENTS/auditoria.jsonl`
    registrando o que leu e produziu — nunca texto de transcrição, PII ou segredos
    (BR-8/BR-9), ex.:
@@ -452,13 +454,15 @@ race that writer).
    `tipo` + `t_ms?`/`ref?`, NEVER transcript text). The app folds these markers
    into the report — do not edit `manifest.json`.
 6. Update `$ARGUMENTS/relatorio.md`: replace the placeholder prose in the
-   `## Resumo`, `## Decisões` and `## Dúvidas & Respostas` sections with real,
-   objective prose derived from the transcript, keeping the titles. If
-   `relatorio.md` does not exist yet, create it with those sections.
+   `## Summary`, `## Decisions` and `## Questions & Answers` sections (or their
+   pt equivalents `## Resumo`, `## Decisões`, `## Dúvidas & Respostas` — the
+   notebook may have been born in either language) with real, objective prose
+   derived from the transcript, keeping the existing titles. If `relatorio.md`
+   does not exist yet, create it with those sections in this skill's language.
 7. Append ONE event-oriented JSON line to `$ARGUMENTS/auditoria.jsonl` recording
    what you read and produced — never transcript text, PII or secrets (BR-8/BR-9).
 
-Finish with a 1–2 line summary (pt-BR) of what you wrote.
+Finish with a 1–2 line summary (in English) of what you wrote.
 "#;
 
 pub const MEETING_ANSWER_SKILL_EN: &str = r#"---
@@ -488,7 +492,7 @@ only your own Read/Write tools — do not call loro IPC and do NOT edit
 4. Append ONE PII-free JSON line to `<dir>/auditoria.jsonl` (event `answer`, what
    you read/produced — never transcript text, PII or secrets: BR-8/BR-9).
 
-Reply in pt-BR.
+Reply in English.
 "#;
 
 pub fn meeting_analyse_skill(lang: &str) -> &'static str {
@@ -553,7 +557,7 @@ You are this acervo's consultant. Answer OBJECTIVELY (business prose, no methodo
 3. Answer citing which contexts grounded it (e.g. `contextos/frota`). If the base does
    not settle it, say so plainly and point at the relevant hotspot (§6) if any.
 
-Do not modify files (this is a query). Reply in pt-BR.
+Do not modify files (this is a query). Reply in English.
 "#;
 
 pub fn brain_ask_skill(lang: &str) -> &'static str {

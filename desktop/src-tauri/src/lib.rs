@@ -1221,10 +1221,9 @@ fn brain_setup(
             return Err(format!("err.invalid_context:{c}"));
         }
     }
-    let lang = match lang.as_deref() {
-        Some("en") => "en".to_string(),
-        _ => "pt".to_string(),
-    };
+    // ADR-0002 §1: generated content follows the UI language; the per-acervo
+    // language field is retired (still stored for older tooling, never asked).
+    let lang = lang.map(|l| normalize_lang(&l)).unwrap_or_else(ui_lang);
     let base = PathBuf::from(&dir);
     ensure_acervo_structure(&base, &ctxs, &lang)?;
     if git_init.unwrap_or(false) {
@@ -1323,7 +1322,7 @@ fn brain_add_context(name: String) -> Result<(), String> {
         return Err(format!("err.invalid_context:{slug}"));
     }
     let cfg = read_brain_config().ok_or("err.acervo_not_configured")?;
-    seed_context(Path::new(&cfg.brain_dir), &slug, &active_lang())
+    seed_context(Path::new(&cfg.brain_dir), &slug, &ui_lang())
 }
 
 // Pure, testable core: delete a context/folder dir under contextos/.
@@ -1760,7 +1759,7 @@ fn brain_migrate(apply: Option<bool>) -> Result<MigrationReport, String> {
     migrate_acervo(
         &PathBuf::from(&cfg.brain_dir),
         apply.unwrap_or(false),
-        &active_lang(),
+        &ui_lang(),
     )
 }
 
@@ -2782,7 +2781,7 @@ fn term_open(app: AppHandle, state: State<AppState>, cols: u16, rows: u16) -> Re
     if let Some(cfg) = read_brain_config() {
         let d = PathBuf::from(&cfg.brain_dir);
         if d.is_dir() {
-            ensure_meeting_skills(&d, "pt"); // discoverable without a manual migrate
+            ensure_meeting_skills(&d, &ui_lang()); // discoverable without a manual migrate
             cmd.cwd(d);
             in_acervo = true;
         }
