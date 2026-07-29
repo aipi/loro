@@ -1258,6 +1258,57 @@ pub fn brain_brainstorm_delete(app: AppHandle, input: DeleteBrainstormInput) -> 
     Ok(())
 }
 
+// Rename a brainstorming FILE (note / analysis artifact) in place. Same world
+// confinement as delete (never a versioned contextos/ path); the new name is a
+// bare filename — the original extension is kept when the user omits one.
+// Returns the new acervo-relative path. Pure core, testable without Tauri.
+pub(crate) fn rename_pessoal_file(base: &Path, rel: &str, name: &str) -> Result<String, String> {
+    let rel = rel.replace('\\', "/");
+    let world = if rel.starts_with("brainstorming/") {
+        "brainstorming"
+    } else if rel.starts_with("pessoal/") {
+        "pessoal"
+    } else {
+        return Err("err.outside_brainstorm".into());
+    };
+    if rel.contains("..") {
+        return Err("err.invalid_path".into());
+    }
+    let p = guarded_existing(base, &rel)?;
+    if !p.starts_with(base.join(world)) {
+        return Err("err.outside_brainstorm".into());
+    }
+    if !p.is_file() {
+        return Err("err.not_found".into());
+    }
+    let name = name.trim();
+    if name.is_empty() || name.contains('/') || name.contains('\\') || name.contains("..") {
+        return Err("err.invalid_file_name".into());
+    }
+    let mut newname = name.to_string();
+    if !newname.contains('.') {
+        if let Some(ext) = p.extension().and_then(|e| e.to_str()) {
+            newname.push('.');
+            newname.push_str(ext);
+        }
+    }
+    let dest = p.parent().ok_or("err.invalid_path")?.join(&newname);
+    if dest.exists() {
+        return Err("err.file_exists_in_target".into());
+    }
+    std::fs::rename(&p, &dest).map_err(|e| e.to_string())?;
+    let parent_rel = rel.rsplit_once('/').map(|(a, _)| a).unwrap_or("");
+    Ok(format!("{parent_rel}/{newname}"))
+}
+
+#[tauri::command]
+pub fn brain_rename_pessoal(app: AppHandle, rel: String, name: String) -> Result<String, String> {
+    let base = acervo_base()?;
+    let new_rel = rename_pessoal_file(&base, &rel, &name)?;
+    emit_brainstorming_changed(&app, serde_json::json!({ "rel": new_rel }));
+    Ok(new_rel)
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateBrainstormInput {
@@ -1434,7 +1485,7 @@ pub fn brain_brainstorm_build_report(
 }
 
 // ADR-0013: `brain_promote` (direct personal->context copy) is NO LONGER on the
-// primary path — the fila (brain_send_report_to_queue -> /brain-context) is THE
+// primary path — the fila (brain_send_report_to_queue -> /loro-context) is THE
 // route brainstorming -> contexto, and the UI no longer calls this. Kept + tested
 // as an internal capability; do not surface it as a competing user action.
 #[tauri::command]
@@ -1649,6 +1700,52 @@ mod tests {
         assert!(read_asset(&base, "big.png").is_err());
         // disallowed mime rejected
         assert!(read_asset(&base, "bad.pdf").is_err());
+    }
+
+    // renaming an analysis/note artifact: world-confined, extension kept
+    #[test]
+    fn rename_pessoal_file_renames_and_keeps_extension() {
+        let base = tmp("ren");
+        let dir = base.join("brainstorming/vendas/r1/artefatos/investigacoes");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("analise-1.md"), "corpo").unwrap();
+        let rel = "brainstorming/vendas/r1/artefatos/investigacoes/analise-1.md";
+        let out = rename_pessoal_file(&base, rel, "riscos do contrato").unwrap();
+        assert_eq!(
+            out,
+            "brainstorming/vendas/r1/artefatos/investigacoes/riscos do contrato.md"
+        );
+        assert!(dir.join("riscos do contrato.md").is_file());
+        assert!(!dir.join("analise-1.md").exists());
+    }
+
+    #[test]
+    fn rename_pessoal_file_refuses_escapes_and_collisions() {
+        let base = tmp("ren2");
+        let dir = base.join("brainstorming/x");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.md"), "a").unwrap();
+        std::fs::write(dir.join("b.md"), "b").unwrap();
+        std::fs::create_dir_all(base.join("contextos/c")).unwrap();
+        std::fs::write(base.join("contextos/c/context.md"), "x").unwrap();
+        // versioned world is off-limits
+        assert_eq!(
+            rename_pessoal_file(&base, "contextos/c/context.md", "y").unwrap_err(),
+            "err.outside_brainstorm"
+        );
+        // traversal in rel and in the new name
+        assert!(
+            rename_pessoal_file(&base, "brainstorming/../contextos/c/context.md", "y").is_err()
+        );
+        assert_eq!(
+            rename_pessoal_file(&base, "brainstorming/x/a.md", "../a").unwrap_err(),
+            "err.invalid_file_name"
+        );
+        // collision never overwrites
+        assert_eq!(
+            rename_pessoal_file(&base, "brainstorming/x/a.md", "b.md").unwrap_err(),
+            "err.file_exists_in_target"
+        );
     }
 
     #[test]

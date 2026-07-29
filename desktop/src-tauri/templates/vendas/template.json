@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "name": { "pt": "Vendas", "en": "Sales" },
+  "description": {
+    "pt": "Contas, pipeline e concorrência — calls e planilhas viram contexto por cliente.",
+    "en": "Accounts, pipeline and competition — calls and spreadsheets become per-client context."
+  },
+  "contexts": {
+    "pt": ["contas", "pipeline", "produto", "concorrencia"],
+    "en": ["accounts", "pipeline", "product", "competition"]
+  }
+}

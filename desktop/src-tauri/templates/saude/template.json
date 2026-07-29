@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "name": { "pt": "Saúde", "en": "Healthcare" },
+  "description": {
+    "pt": "Protocolos, condutas e organização de consultório — com minimização rigorosa (LGPD).",
+    "en": "Protocols, practices and clinic organization — with strict data minimization."
+  },
+  "contexts": {
+    "pt": ["protocolos", "condutas", "consultorio"],
+    "en": ["protocols", "practices", "clinic"]
+  }
+}

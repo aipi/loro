@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "name": { "pt": "Engenharia", "en": "Engineering" },
+  "description": {
+    "pt": "Arquitetura, decisões e incidentes — reuniões técnicas viram registro estilo ADR.",
+    "en": "Architecture, decisions and incidents — technical meetings become ADR-style records."
+  },
+  "contexts": {
+    "pt": ["arquitetura", "decisoes", "incidentes", "onboarding"],
+    "en": ["architecture", "decisions", "incidents", "onboarding"]
+  }
+}

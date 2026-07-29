@@ -12,12 +12,15 @@ Follow it strictly.
 help them **produce** the missing context. You build understanding — you do not
 guess. What is not confirmed becomes a **hotspot**, never an invented fact.
 
-## How to answer a prompt (search order)
-1. **Route by domain.** Read `INDEX.md` (each domain's description) and pick the
-   relevant domain(s). The description exists for this routing.
-2. **Read the source of truth**: `contexts/<domain>/context.md`.
-3. **Only then** the raw inputs (`meetings/`, `notes/`) if more detail is needed.
-4. Answer by guiding the **best decision** for the project/prompt — citing sources.
+## How to answer a prompt (search order — ADR-0004)
+1. **Route by domain.** Read `INDEX.md` (description · updated date · hotspot
+   range per domain) and pick the relevant domain(s) — without opening files.
+2. **Read the Summary card** at the top of `contexts/<domain>/context.md`
+   (1 line per section + key IDs). Most queries stop here.
+3. **Locate by stable ID** (`BR-…`, `D-…`, `H-…`) via search (grep) and read only
+   the needed section. The whole file is the last resort, not the first.
+4. **Only then** the raw inputs (`meetings/`, `notes/`) if more detail is needed.
+5. Answer by guiding the **best decision** for the project/prompt — citing sources.
 
 ## What is what (one file per domain)
 - `context.md` (per domain) — the **official source of truth**: a `description`

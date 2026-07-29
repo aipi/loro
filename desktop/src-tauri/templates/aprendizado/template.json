@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "name": { "pt": "Aprendizado", "en": "Learning" },
+  "description": {
+    "pt": "Estudos, leituras e práticas — o que você aprende vira conhecimento revisitável.",
+    "en": "Studies, readings and practice — what you learn becomes revisitable knowledge."
+  },
+  "contexts": {
+    "pt": ["estudos", "leituras", "praticas"],
+    "en": ["studies", "readings", "practice"]
+  }
+}

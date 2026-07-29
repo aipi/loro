@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "name": { "pt": "Educação", "en": "Education" },
+  "description": {
+    "pt": "Turmas, aulas e avaliações — planejamento e retrospectiva de ensino por turma.",
+    "en": "Classes, lessons and assessments — teaching planning and retrospective per class."
+  },
+  "contexts": {
+    "pt": ["turmas", "aulas", "avaliacoes"],
+    "en": ["classes", "lessons", "assessments"]
+  }
+}

@@ -23,6 +23,8 @@ mod config;
 use config::*;
 mod templates;
 use templates::*;
+mod presets;
+use presets::*;
 mod git;
 use git::*;
 mod acervo;
@@ -975,11 +977,12 @@ pub(crate) fn valid_context(name: &str) -> bool {
     !parts.is_empty() && parts.len() <= MAX_CONTEXT_DEPTH && parts.iter().all(|p| valid_segment(p))
 }
 
-// domain context (the official source of truth, MARKDOWN); {{CONTEXT}} = name.
-// 6 business sections; section 6 (Hotspots) holds the unconsolidated. The lenses
-// facts/thoughts/emotions/actions are how the loop INTERPRETS (see AGENTS.md).
-fn context_md(name: &str, lang: &str) -> String {
-    context_template(lang).replace("{{CONTEXT}}", name)
+// context (the official source of truth, MARKDOWN); {{CONTEXT}} = name.
+// Section "Hotspots" holds the unconsolidated. The usage template may provide
+// its own per-vertical mold (ADR-0003); the baseline template is the fallback.
+fn context_md(name: &str, lang: &str, mold: Option<&str>) -> String {
+    mold.unwrap_or_else(|| context_template(lang))
+        .replace("{{CONTEXT}}", name)
 }
 
 // the single knowledge file of a context; "guia.md" is the legacy name (kept so
@@ -994,7 +997,7 @@ fn context_file(dir: &Path) -> Option<PathBuf> {
     None
 }
 
-fn seed_context(base: &Path, name: &str, lang: &str) -> Result<(), String> {
+fn seed_context(base: &Path, name: &str, lang: &str, mold: Option<&str>) -> Result<(), String> {
     let d = base.join("contextos").join(name);
     std::fs::create_dir_all(&d).map_err(|e| e.to_string())?;
     let ch = d.join("CHANGELOG.md");
@@ -1009,7 +1012,8 @@ fn seed_context(base: &Path, name: &str, lang: &str) -> Result<(), String> {
     // Non-destructive: only seed context.md when neither the new nor the legacy
     // knowledge file exists (an already-populated context is never overwritten).
     if context_file(&d).is_none() {
-        std::fs::write(d.join("context.md"), context_md(name, lang)).map_err(|e| e.to_string())?;
+        std::fs::write(d.join("context.md"), context_md(name, lang, mold))
+            .map_err(|e| e.to_string())?;
     }
     // Ideas are no longer files: unconsolidated knowledge lives as HOTSPOTS inside
     // context.md. New contexts get no brainstorming/ folder; legacy folders on
@@ -1094,7 +1098,17 @@ fn acervos_view() -> AcervosView {
 }
 
 // Materialize the acervo folder structure (idempotent, non-destructive).
-fn ensure_acervo_structure(base: &Path, ctxs: &[String], lang: &str) -> Result<(), String> {
+// `tpl` is the usage template (preset, ADR-0003) applied only at creation:
+// AGENTS.md vertical addendum, extra skills and the initial queue guide.
+fn ensure_acervo_structure(
+    base: &Path,
+    ctxs: &[String],
+    lang: &str,
+    tpl: Option<&TemplateContent>,
+) -> Result<(), String> {
+    // First setup = no loop state yet. The queue guide (inbox/_prompt.md) is
+    // consumed by the loop, so re-materializations must never re-inject it.
+    let first_setup = !base.join(".brain/state.json").exists();
     for sub in [
         "inbox",
         "processed",
@@ -1106,29 +1120,49 @@ fn ensure_acervo_structure(base: &Path, ctxs: &[String], lang: &str) -> Result<(
     ] {
         std::fs::create_dir_all(base.join(sub)).map_err(|e| e.to_string())?;
     }
-    // /brain-context is the thin Claude adapter for the queue -> context loop
+    // /loro-context is the thin Claude adapter for the queue -> context loop
     // (ADR-0013); analyse/answer are the meeting-AI skills the terminal Claude runs
     // over a meeting's live stream (ADR-0012). Neutral instructions live in
     // AGENTS.md. Non-destructive.
     for (rel, body) in [
-        (".claude/commands/brain-context.md", brain_skill(lang)),
+        (".claude/commands/loro-context.md", brain_skill(lang)),
         (
-            ".claude/commands/brain-analyse.md",
+            ".claude/commands/loro-analyse.md",
             meeting_analyse_skill(lang),
         ),
         (
-            ".claude/commands/brain-answer.md",
-            meeting_answer_skill(lang),
+            ".claude/commands/loro-question.md",
+            meeting_question_skill(lang),
         ),
-        (".claude/commands/brain-ask.md", brain_ask_skill(lang)),
+        (".claude/commands/loro-ask.md", brain_ask_skill(lang)),
+        (".claude/commands/loro-note.md", loro_note_skill(lang)),
     ] {
         let p = base.join(rel);
         if !p.exists() {
             std::fs::write(&p, body).map_err(|e| e.to_string())?;
         }
     }
+    // Vertical extra skills from the usage template (ADR-0003), after the four
+    // standard ones and equally non-destructive.
+    if let Some(tpl) = tpl {
+        for (name, body) in &tpl.skills {
+            let p = base.join(".claude/commands").join(name);
+            if !p.exists() {
+                std::fs::write(&p, body).map_err(|e| e.to_string())?;
+            }
+        }
+        if first_setup {
+            if let Some(prompt) = &tpl.inbox_prompt {
+                let p = base.join("inbox/_prompt.md");
+                if !p.exists() {
+                    std::fs::write(&p, prompt).map_err(|e| e.to_string())?;
+                }
+            }
+        }
+    }
+    let mold = tpl.and_then(|t| t.context_md.as_deref());
     for c in ctxs {
-        seed_context(base, c, lang)?;
+        seed_context(base, c, lang, mold)?;
     }
     let state = base.join(".brain/state.json");
     if !state.exists() {
@@ -1138,10 +1172,17 @@ fn ensure_acervo_structure(base: &Path, ctxs: &[String], lang: &str) -> Result<(
     if !act.exists() {
         std::fs::write(&act, "").map_err(|e| e.to_string())?;
     }
-    // agnostic instruction file (AGENTS.md); keep any legacy CLAUDE.md untouched
+    // agnostic instruction file (AGENTS.md); keep any legacy CLAUDE.md untouched.
+    // The template contributes an addendum, never a replacement — the default
+    // body carries the loop mechanics the whole model depends on (ADR-0003).
     let agents = base.join("AGENTS.md");
     if !agents.exists() && !base.join("CLAUDE.md").exists() {
-        std::fs::write(&agents, agents_template(ctxs, lang)).map_err(|e| e.to_string())?;
+        let mut body = agents_template(ctxs, lang);
+        if let Some(extra) = tpl.and_then(|t| t.agents_extra.as_deref()) {
+            body.push('\n');
+            body.push_str(extra);
+        }
+        std::fs::write(&agents, body).map_err(|e| e.to_string())?;
     }
     let index = base.join("INDEX.md");
     if !index.exists() {
@@ -1193,6 +1234,7 @@ fn ui_set_lang(lang: String, state: State<AppState>) -> Result<String, String> {
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // mirrors the wizard form 1:1 (IPC contract)
 fn brain_setup(
     dir: String,
     contexts: Vec<String>,
@@ -1201,6 +1243,8 @@ fn brain_setup(
     git_init: Option<bool>,
     color: Option<String>,
     lang: Option<String>,
+    template: Option<String>,
+    agent: Option<String>,
 ) -> Result<AcervosView, String> {
     let dir = if dir.trim().is_empty() {
         default_brain_dir().display().to_string()
@@ -1224,8 +1268,16 @@ fn brain_setup(
     // ADR-0002 §1: generated content follows the UI language; the per-acervo
     // language field is retired (still stored for older tooling, never asked).
     let lang = lang.map(|l| normalize_lang(&l)).unwrap_or_else(ui_lang);
+    // Usage template (ADR-0003): resolve early so an unknown id fails before
+    // any disk write. Only the id is ever logged (BR-8).
+    let template = template
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+        .unwrap_or_else(default_template);
+    let tpl = resolve_template(&template, &lang)?;
+    let agent = normalize_agent(&agent.unwrap_or_default());
     let base = PathBuf::from(&dir);
-    ensure_acervo_structure(&base, &ctxs, &lang)?;
+    ensure_acervo_structure(&base, &ctxs, &lang, Some(&tpl))?;
     if git_init.unwrap_or(false) {
         git_init_repo(&base)?;
     }
@@ -1245,6 +1297,8 @@ fn brain_setup(
         a.name = display_name;
         a.auto_context = auto;
         a.lang = lang;
+        a.template = template;
+        a.agent = agent;
         if !color.is_empty() {
             a.color = color;
         }
@@ -1261,6 +1315,8 @@ fn brain_setup(
             auto_context: auto,
             color,
             lang,
+            template,
+            agent,
         });
         id
     };
@@ -1272,6 +1328,22 @@ fn brain_setup(
 #[tauri::command]
 fn brain_list_acervos() -> AcervosView {
     acervos_view()
+}
+
+// ---- ADR-0003: acervo usage templates (presets) -----------------------------
+#[tauri::command]
+fn brain_list_templates(lang: Option<String>) -> Vec<TemplateInfo> {
+    let lang = lang.map(|l| normalize_lang(&l)).unwrap_or_else(ui_lang);
+    list_templates(&lang)
+}
+
+// Copy a template into ~/.loro/templates as an editable custom template;
+// returns the created directory path.
+#[tauri::command]
+fn brain_duplicate_template(id: String) -> Result<String, String> {
+    let dir = duplicate_template(&id)?;
+    info!(template = %id, "template duplicated"); // id only, never content (BR-8)
+    Ok(dir.display().to_string())
 }
 
 // set the accent color of a project (persisted in the acervo config)
@@ -1322,7 +1394,14 @@ fn brain_add_context(name: String) -> Result<(), String> {
         return Err(format!("err.invalid_context:{slug}"));
     }
     let cfg = read_brain_config().ok_or("err.acervo_not_configured")?;
-    seed_context(Path::new(&cfg.brain_dir), &slug, &ui_lang())
+    let lang = ui_lang();
+    // Later-added contexts follow the acervo's usage template (ADR-0003); a
+    // vanished custom template degrades to the default mold, never an error.
+    let full = read_loro_config();
+    let mold = active_acervo(&full)
+        .and_then(|a| resolve_template(&a.template, &lang).ok())
+        .and_then(|t| t.context_md);
+    seed_context(Path::new(&cfg.brain_dir), &slug, &lang, mold.as_deref())
 }
 
 // Pure, testable core: delete a context/folder dir under contextos/.
@@ -1909,7 +1988,7 @@ fn migrate_acervo(base: &Path, apply: bool, lang: &str) -> Result<MigrationRepor
     }
 
     // A legacy `.claude/commands/brain.md` (the old loop skill) is left on disk for
-    // back-compat and only reported — the new loop skill is `brain-context.md`
+    // back-compat and only reported — the new loop skill is `loro-context.md`
     // (created below). Never delete the user's file.
     if base.join(".claude/commands/brain.md").is_file() {
         report
@@ -1917,25 +1996,29 @@ fn migrate_acervo(base: &Path, apply: bool, lang: &str) -> Result<MigrationRepor
             .push(".claude/commands/brain.md (legado)".into());
     }
 
-    // ADR-0013/0012: the loop skill (brain-context) and the meeting-AI skills
+    // ADR-0013/0012: the loop skill (loro-context) and the meeting-AI skills
     // (analyse/answer) are created only if absent so existing acervos gain them on
     // migration; never overwrites edits.
     for (rel, body) in [
         (
-            ".claude/commands/brain-context.md",
+            ".claude/commands/loro-context.md",
             brain_skill(lang).to_string(),
         ),
         (
-            ".claude/commands/brain-analyse.md",
+            ".claude/commands/loro-analyse.md",
             meeting_analyse_skill(lang).to_string(),
         ),
         (
-            ".claude/commands/brain-answer.md",
-            meeting_answer_skill(lang).to_string(),
+            ".claude/commands/loro-question.md",
+            meeting_question_skill(lang).to_string(),
         ),
         (
-            ".claude/commands/brain-ask.md",
+            ".claude/commands/loro-ask.md",
             brain_ask_skill(lang).to_string(),
+        ),
+        (
+            ".claude/commands/loro-note.md",
+            loro_note_skill(lang).to_string(),
         ),
     ] {
         let p = base.join(rel);
@@ -2249,7 +2332,7 @@ fn brain_write_inbox(name: String, content: String) -> Result<(), String> {
 
 // ADR-0013: the fila (inbox/) is THE path brainstorming -> contexto. Copy an
 // existing report (or any acervo text file) into the queue, steered to a target
-// context via the `<contexto>--<nome>` prefix the /brain-context loop reads. The
+// context via the `<contexto>--<nome>` prefix the /loro-context loop reads. The
 // report stays in the brainstorming; only a copy enters the queue. Path-guarded to
 // the acervo root; contexts with '/' collapse to '-' so the queue name stays flat.
 #[tauri::command]
@@ -2787,7 +2870,7 @@ fn client_log(msg: String) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 // ---- embedded terminal (interactive PTY) — runs the agent CLI in the dock ----
 // ADR-0012: guarantee the meeting-AI skills exist in the acervo so
-// `/brain-context`, `/brain-analyse` and `/brain-answer` are discoverable by the
+// `/loro-context`, `/loro-analyse` and `/loro-question` are discoverable by the
 // terminal Claude even for acervos created before this change — no explicit
 // "migrar acervo" needed. Create-if-absent; never overwrites user edits.
 fn ensure_meeting_skills(base: &Path, lang: &str) {
@@ -2795,16 +2878,17 @@ fn ensure_meeting_skills(base: &Path, lang: &str) {
         return;
     }
     for (rel, body) in [
-        (".claude/commands/brain-context.md", brain_skill(lang)),
+        (".claude/commands/loro-context.md", brain_skill(lang)),
         (
-            ".claude/commands/brain-analyse.md",
+            ".claude/commands/loro-analyse.md",
             meeting_analyse_skill(lang),
         ),
         (
-            ".claude/commands/brain-answer.md",
-            meeting_answer_skill(lang),
+            ".claude/commands/loro-question.md",
+            meeting_question_skill(lang),
         ),
-        (".claude/commands/brain-ask.md", brain_ask_skill(lang)),
+        (".claude/commands/loro-ask.md", brain_ask_skill(lang)),
+        (".claude/commands/loro-note.md", loro_note_skill(lang)),
     ] {
         let p = base.join(rel);
         if !p.exists() {
@@ -2855,7 +2939,7 @@ fn term_open(app: AppHandle, state: State<AppState>, cols: u16, rows: u16) -> Re
     drop(pair.slave);
     let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
     let mut writer = pair.master.take_writer().map_err(|e| e.to_string())?;
-    // Auto-launch the terminal Claude so the /brain-* skills (analisar/responder/
+    // Auto-launch the terminal agent so the /loro-* skills (analisar/perguntar/
     // ask/gerar contexto) work out of the box — the buttons inject slash commands
     // that only a running Claude understands. The login shell sources the profile
     // (real PATH) before reading this stdin, so `claude` resolves; if it is not
@@ -2925,15 +3009,36 @@ fn term_close(state: State<AppState>) {
     }
 }
 
-// ---- ADR-0002 §4: terminal/Claude readiness handshake ----------------------
-// Slash-commands only mean something to a running Claude. The frontend asks
-// this instead of guessing from terminal output: is the PTY open, and does a
-// `claude` process live under its shell right now?
+// ---- ADR-0002 §4: terminal/agent readiness handshake ------------------------
+// Slash-commands only mean something to a running agent. The frontend asks
+// this instead of guessing from terminal output: is the PTY open, and does the
+// active acervo's agent process live under its shell right now? The agent is
+// per-acervo (ADR-0003) — any CLI, `claude` by default.
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct TermStatus {
     open: bool,
-    claude_running: bool,
+    agent_running: bool,
+}
+
+// Process name to look for: basename of the agent command's first token
+// (e.g. "ollama run llama3" -> "ollama"; "/usr/local/bin/claude" -> "claude").
+fn agent_process_name(agent: &str) -> String {
+    agent
+        .split_whitespace()
+        .next()
+        .unwrap_or("claude")
+        .rsplit('/')
+        .next()
+        .unwrap_or("claude")
+        .to_string()
+}
+
+fn active_agent() -> String {
+    let cfg = read_loro_config();
+    active_acervo(&cfg)
+        .map(|a| normalize_agent(&a.agent))
+        .unwrap_or_else(default_agent)
 }
 
 fn parse_ps_table(out: &str) -> Vec<(u32, u32, String)> {
@@ -2980,10 +3085,11 @@ fn term_status(state: State<AppState>) -> TermStatus {
     let Some(root) = shell_pid else {
         return TermStatus {
             open: false,
-            claude_running: false,
+            agent_running: false,
         };
     };
-    let claude_running = Command::new("ps")
+    let agent_name = agent_process_name(&active_agent());
+    let agent_running = Command::new("ps")
         .args(["-axo", "pid=,ppid=,comm="])
         .output()
         .ok()
@@ -2991,14 +3097,20 @@ fn term_status(state: State<AppState>) -> TermStatus {
             has_descendant_process(
                 &parse_ps_table(&String::from_utf8_lossy(&o.stdout)),
                 root,
-                "claude",
+                &agent_name,
             )
         })
         .unwrap_or(false);
     TermStatus {
         open: true,
-        claude_running,
+        agent_running,
     }
+}
+
+// The agent command of the active acervo (frontend launches it in the PTY).
+#[tauri::command]
+fn term_agent() -> String {
+    active_agent()
 }
 
 pub fn run() {
@@ -3112,6 +3224,8 @@ pub fn run() {
             brain_get_config,
             brain_setup,
             brain_list_acervos,
+            brain_list_templates,
+            brain_duplicate_template,
             brain_set_active,
             brain_set_color,
             brain_remove_acervo,
@@ -3143,6 +3257,7 @@ pub fn run() {
             term_resize,
             term_close,
             term_status,
+            term_agent,
             brain_import,
             brain_delete_inbox,
             brain_write_inbox,
@@ -3159,6 +3274,7 @@ pub fn run() {
             brain_rename_brainstorm,
             brain_set_brainstorm_category,
             brain_brainstorm_delete,
+            brain_rename_pessoal,
             brain_list_brainstorms,
             brain_list_meetings,
             brain_new_notebook,
@@ -3312,19 +3428,19 @@ mod tests {
         assert!(t.contains("CODEOWNERS")); // collaboration per context owner
         assert!(!t.contains("index.html")); // no HTML product
         assert!(t.contains("hotspot")); // ideas become hotspots, not idea files
-        assert!(t.contains("/brain-context")); // ADR-0013: renamed skill
+        assert!(t.contains("/loro-context")); // ADR-0013: renamed skill
     }
 
     #[test]
     fn context_markdown_replaces_context_placeholder() {
         assert!(CONTEXT_TEMPLATE.contains("{{CONTEXT}}"));
-        let g = context_md("frota", "pt");
-        assert!(g.starts_with("# frota — contexto do domínio"));
+        let g = context_md("frota", "pt", None);
+        assert!(g.starts_with("# frota — contexto"));
         assert!(!g.contains("{{CONTEXT}}"));
         assert!(!g.contains("<html")); // pure markdown, no HTML
         assert!(g.contains("Hotspots")); // section 6 is the evolution backlog
                                          // the en language uses the English template
-        assert!(context_md("fleet", "en").contains("domain context"));
+        assert!(context_md("fleet", "en", None).contains("context"));
     }
 
     #[test]
@@ -3521,7 +3637,7 @@ mod tests {
     fn seeding_uses_context_md_and_collaboration_without_brainstorming() {
         let root = std::env::temp_dir().join(format!("loro-seed-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        ensure_acervo_structure(&root, &["frota".into()], "pt").unwrap();
+        ensure_acervo_structure(&root, &["frota".into()], "pt", None).unwrap();
         // the official source of truth is context.md; no guia.md nor brainstorming/
         assert!(root.join("contextos/frota/context.md").is_file());
         assert!(!root.join("contextos/frota/guia.md").exists());
@@ -3530,8 +3646,66 @@ mod tests {
         assert!(root.join(".github/CODEOWNERS").is_file());
         assert!(root.join(".github/pull_request_template.md").is_file());
         // idempotent and non-destructive: running again does not break
-        ensure_acervo_structure(&root, &["frota".into()], "pt").unwrap();
+        ensure_acervo_structure(&root, &["frota".into()], "pt", None).unwrap();
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ---- ADR-0003: usage templates seed AGENTS.md addendum, skills and the
+    // queue guide — non-destructively and only on first setup for the guide.
+    #[test]
+    fn template_seeds_agents_addendum_skills_and_queue_guide() {
+        let root = std::env::temp_dir().join(format!("loro-tpl-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let tpl = TemplateContent {
+            agents_extra: Some("## Regras da vertical: teste\n".into()),
+            inbox_prompt: Some("# Guia da fila — teste\n".into()),
+            context_md: Some("# {{CONTEXT}} — contexto\n\n## 1 · Molde da vertical\n".into()),
+            skills: vec![("brain-mensagem.md".into(), "corpo da skill".into())],
+        };
+        ensure_acervo_structure(&root, &["contas".into()], "pt", Some(&tpl)).unwrap();
+        let agents = std::fs::read_to_string(root.join("AGENTS.md")).unwrap();
+        // addendum appended after the default body — the loop mechanics survive
+        assert!(agents.contains("Acervo de contextos"));
+        assert!(agents.contains("Regras da vertical: teste"));
+        assert_eq!(
+            std::fs::read_to_string(root.join(".claude/commands/brain-mensagem.md")).unwrap(),
+            "corpo da skill"
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("inbox/_prompt.md")).unwrap(),
+            "# Guia da fila — teste\n"
+        );
+        // the vertical's own context.md mold, placeholder resolved
+        let ctx = std::fs::read_to_string(root.join("contextos/contas/context.md")).unwrap();
+        assert!(ctx.starts_with("# contas — contexto"));
+        assert!(ctx.contains("Molde da vertical"));
+        // the loop consumed the guide; a re-materialization must NOT re-inject it
+        std::fs::remove_file(root.join("inbox/_prompt.md")).unwrap();
+        ensure_acervo_structure(&root, &["contas".into()], "pt", Some(&tpl)).unwrap();
+        assert!(!root.join("inbox/_prompt.md").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn no_template_matches_previous_behavior() {
+        let root = std::env::temp_dir().join(format!("loro-notpl-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        ensure_acervo_structure(&root, &["frota".into()], "pt", None).unwrap();
+        let agents = std::fs::read_to_string(root.join("AGENTS.md")).unwrap();
+        assert_eq!(agents, agents_template(&["frota".into()], "pt"));
+        assert!(!root.join("inbox/_prompt.md").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn agent_process_name_takes_first_token_basename() {
+        assert_eq!(agent_process_name("claude"), "claude");
+        assert_eq!(agent_process_name("ollama run llama3"), "ollama");
+        assert_eq!(
+            agent_process_name("/usr/local/bin/gemini --flash"),
+            "gemini"
+        );
+        assert_eq!(agent_process_name(""), "claude");
     }
 
     #[test]
@@ -3683,7 +3857,7 @@ mod tests {
         let d = root.join("contextos/frota");
         std::fs::create_dir_all(&d).unwrap();
         std::fs::write(d.join("guia.md"), "conhecimento legado").unwrap();
-        seed_context(&root, "frota", "pt").unwrap();
+        seed_context(&root, "frota", "pt", None).unwrap();
         // legacy guia preserved; no context.md created over it
         assert_eq!(
             std::fs::read_to_string(d.join("guia.md")).unwrap(),

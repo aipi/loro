@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "name": { "pt": "Produto & gestão", "en": "Product & management" },
+  "description": {
+    "pt": "Roadmap, discovery e métricas — decisões e follow-ups de reuniões viram contexto.",
+    "en": "Roadmap, discovery and metrics — meeting decisions and follow-ups become context."
+  },
+  "contexts": {
+    "pt": ["roadmap", "discovery", "metricas", "rituais"],
+    "en": ["roadmap", "discovery", "metrics", "rituals"]
+  }
+}
