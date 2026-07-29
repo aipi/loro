@@ -54,6 +54,28 @@
     return cats.map(function (c) { return { categoria: c, items: map.get(c) }; });
   }
 
+  // ADR-0005: with many brainstormings the always-expanded tree got unreadable
+  // — a search box replaces it. A query filters by nome/slug; with no query,
+  // caps to the `cap` most recently updated (unless `showAll`), reporting how
+  // many were hidden so the caller can render a "ver todos (N)" row.
+  function filterAndCapTemas(temas, query, showAll, cap) {
+    const arr = Array.isArray(temas) ? temas : [];
+    const q = String(query == null ? "" : query).trim().toLowerCase();
+    if (q) {
+      const items = arr.filter(function (t) {
+        const nome = String((t && t.nome) || "").toLowerCase();
+        const slug = String((t && t.slug) || "").toLowerCase();
+        return nome.includes(q) || slug.includes(q);
+      });
+      return { items, hiddenCount: 0 };
+    }
+    if (showAll || arr.length <= cap) return { items: arr, hiddenCount: 0 };
+    const sorted = arr.slice().sort(function (a, b) {
+      return String((b && b.atualizadoEm) || "").localeCompare(String((a && a.atualizadoEm) || ""));
+    });
+    return { items: sorted.slice(0, cap), hiddenCount: arr.length - cap };
+  }
+
   // A selection model over a brainstorming's parts. Each part is
   // { kind: "reuniao"|"investigacao"|"pergunta"|"nota", rel }. The model is a
   // plain Set of rels so it stays serializable/testable.
@@ -111,10 +133,37 @@
     return d && p ? "/loro-note " + d + " " + p : null;
   }
 
+  // /loro-sync <fonte> <alvo> [busca-ou-link]: first token is the source (v1:
+  // "drive" only), second is the target note/topic, optional third narrows the
+  // search (a title keyword) or names the document directly (a Drive link) —
+  // useful when the default title search misses a shared meeting. Returns
+  // null when source or target is empty.
+  function syncCmd(source, target, query) {
+    const s = String(source == null ? "" : source).replace(/\s+/g, " ").trim();
+    const t = String(target == null ? "" : target).replace(/\s+/g, " ").trim();
+    const q = String(query == null ? "" : query).replace(/\s+/g, " ").trim();
+    return s && t ? "/loro-sync " + s + " " + t + (q ? " " + q : "") : null;
+  }
+
+  // /loro-tool: mirrors noteCmd's dual shape, but for custom tools — first
+  // token is the target (a description → create; an existing tool .md →
+  // evolve in place with the rest as the request).
+  function toolCmd(target, prompt) {
+    const d = String(target == null ? "" : target).replace(/\s+/g, " ").trim();
+    const p = String(prompt == null ? "" : prompt).replace(/\s+/g, " ").trim();
+    return d && p ? "/loro-tool " + d + " " + p : null;
+  }
+  // /loro-tool <descrição>: the create-a-new-tool shape — a single free-text
+  // description, no target file. Returns null when empty.
+  function newToolCmd(descricao) {
+    const d = String(descricao == null ? "" : descricao).replace(/\s+/g, " ").trim();
+    return d ? "/loro-tool " + d : null;
+  }
+
   return {
     STAGES, stages,
-    groupByCategory,
+    groupByCategory, filterAndCapTemas,
     emptySelection, toggleSelection, selectedItems,
-    reportInboxName, brainContextCmd, brainAskCmd, noteCmd,
+    reportInboxName, brainContextCmd, brainAskCmd, noteCmd, syncCmd, toolCmd, newToolCmd,
   };
 });

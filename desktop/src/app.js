@@ -847,6 +847,9 @@ async function openCfg() {
   const cur = acervos.find((a) => a.id === activeAcervo);
   $("cfgProj").textContent = cur ? cur.name : "—";
   drawProjColors(cur);
+  // ADR-0005: autoContext tem efeito real no loop — dá para desligar aqui
+  const autoCtx = $("cfgAutoContext");
+  if (autoCtx) autoCtx.checked = !!(cur && cur.autoContext);
   // sem pasta escolhida: mostra o destino padrão real (inbox do acervo)
   if (!settings.saveDir) {
     try { el.pickDir.textContent = await invoke("default_save_dir"); } catch (_) {}
@@ -866,6 +869,16 @@ function drawProjColors(cur) {
 }
 function closeCfg() { cfgWrap.hidden = true; }
 cfgClose.addEventListener("click", closeCfg);
+{
+  const autoCtx = $("cfgAutoContext");
+  if (autoCtx) autoCtx.addEventListener("change", async () => {
+    try {
+      await invoke("brain_set_auto_context", { value: autoCtx.checked });
+      const cur = acervos.find((a) => a.id === activeAcervo);
+      if (cur) cur.autoContext = autoCtx.checked;
+    } catch (e) { toast(tErr(String(e))); autoCtx.checked = !autoCtx.checked; }
+  });
+}
 cfgWrap.addEventListener("click", (e) => { if (e.target === cfgWrap) closeCfg(); });
 window.addEventListener("keydown", (e) => { if (e.key === "Escape" && !cfgWrap.hidden) closeCfg(); });
 
@@ -929,7 +942,7 @@ const B = {
   main: $("brain"),
   setup: $("brainSetup"), shell: $("brainShell"),
   dirBtn: $("brainDirBtn"), ctxInput: $("brainCtxInput"), createBtn: $("brainCreateBtn"),
-  nameInput: $("brainNameInput"), autoInput: $("brainAuto"), gitInput: $("brainGit"),
+  nameInput: $("brainNameInput"), gitInput: $("brainGit"), wizLang: $("wizLang"),
   agentInput: $("brainAgentInput"), wizTemplates: $("wizTemplates"), wizTemplateHint: $("wizTemplateHint"),
   cancelBtn: $("brainCancelBtn"), wizTitle: $("wizTitle"), setupErr: $("brainSetupErr"),
   acervoBtn: $("acervoBtn"), acervoName: $("acervoName"), acervoMenu: $("acervoMenu"),
@@ -966,8 +979,13 @@ const bOpen = new Set();   // nós expandidos da lateral
 let sideSig = "";          // assinatura p/ não re-renderizar a lateral sem mudança
 let acervos = [], activeAcervo = "", creatingNew = false, gitFiles = {}, wizColor = "";
 // usage template picker state (ADR-0003): selected id, fetched list, and
-// whether the user already edited the contexts field by hand
-let wizTemplate = "generico", wizTemplates = [], wizCtxDirty = false;
+// whether the user already edited the contexts field by hand.
+// ADR-0005: "automático" is a synthetic FIRST option of the same
+// picker (owner decision) — mutually exclusive with the verticals: it means
+// autoContext=true + generico seeding (no predefined contexts; the loop
+// creates/assigns them). No separate checkbox in the wizard anymore.
+const AUTO_TEMPLATE_ID = "__auto";
+let wizTemplate = AUTO_TEMPLATE_ID, wizTemplates = [], wizCtxDirty = false;
 let lastEnvAcervo = null;
 
 // paleta curada (funciona no claro e no escuro); "" = padrão (teal do tema)
@@ -1076,17 +1094,35 @@ B.editSave.addEventListener("click", async () => {
   catch (e) { toast(tErr(String(e))); clog("editor save error: " + e); }
 });
 $("guideBtn").addEventListener("click", () => openGuideDoc());
-{ const ab = $("askBtn"); if (ab) ab.addEventListener("click", askAcervo); }
+// ADR-0005 (owner request): the hero's "perguntar ao acervo" button became the
+// generic "executar habilidade" picker — perguntar ao acervo is one entry in
+// it (and stays on the palette, ⌘⌥Q). Unrestricted list: on the Visão Geral
+// there is no other dedicated UI to avoid duplicating.
+{ const hb = $("homeSkillBtn"); if (hb) hb.addEventListener("click", (e) => { e.stopPropagation(); openHabilidadeMenu(null, hb, true); }); }
 // ADR-0013: "gerar contexto" — the fila → contexto step. Injects /loro-context
 // into the terminal Claude (the /loro-context loop), which processes the whole
 // queue into versioned contexts. Same terminal-skill pattern as analisar/responder.
 // One function, two entry points: the home card CTA and the sidebar quick action.
-function genContextNow() {
+// ADR-0005: "salvar anexos" is opt-in per run — reuses the existing _prompt.md
+// guide plumbing (brain_read_guide/brain_write_guide) instead of new backend
+// surface; the loop already archives/clears _prompt.md after each run (step 0
+// of /loro-context), so this instruction is naturally one-shot.
+const ANEXOS_GUIDE_LINE = "Nesta rodada, copie os anexos referenciados pelos itens processados para contextos/<c>/anexos/ (por item, use o contexto de destino desse item).";
+async function genContextNow() {
   // ADR-0002 §5: an empty queue is refused loudly here, not just by disabled
   // buttons — there is nothing to generate context FROM, and the user must know.
   if (!lastSt || !lastSt.inbox || !lastSt.inbox.length) {
     toast(t("a fila está vazia — envie um relatório ou arquivos antes de gerar contexto"), 5000);
     return;
+  }
+  const saveAnexos = $("queueSaveAnexos");
+  if (saveAnexos && saveAnexos.checked) {
+    try {
+      const cur = (await invoke("brain_read_guide").catch(() => "")) || "";
+      if (!cur.includes(ANEXOS_GUIDE_LINE)) {
+        await invoke("brain_write_guide", { content: cur ? `${cur}\n\n${ANEXOS_GUIDE_LINE}` : ANEXOS_GUIDE_LINE });
+      }
+    } catch (e) { clog("queueSaveAnexos guide write error: " + e); }
   }
   termRunAgent(LoroBrainstorm.brainContextCmd());
   toast(t("gerando contexto no agente do terminal — acompanhe abaixo"), 4000);
@@ -1158,6 +1194,7 @@ async function brainRefresh() {
   const sig = JSON.stringify([st.inbox.map((f) => f.name), st.contexts, st.reunioes.length, st.notas.length]);
   if (sig !== sideSig) { sideSig = sig; renderSidebar(st); }
   refreshPessoal();   // ADR-0009: produção (mundo pessoal) — self-gated por assinatura
+  refreshTools();     // ADR-0005: ferramentas customizadas — self-gated por assinatura
   markSel();
 }
 
@@ -1233,6 +1270,15 @@ const ICONS = {
   note: "M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h10l6-6V5c0-1.1-.9-2-2-2zm-5 14v-4h4l-4 4z",
   file: "M6 2c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6H6zm7 7V3.5L18.5 9H13z",
   archive: "M20.54 5.23l-1.39-1.68C18.88 3.21 18.47 3 18 3H6c-.47 0-.88.21-1.16.55L3.46 5.23C3.17 5.57 3 6.02 3 6.5V19c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V6.5c0-.48-.17-.93-.46-1.27zM12 17.5L6.5 12H10v-2h4v2h3.5L12 17.5zM5.12 5l.81-1h12l.94 1H5.12z",
+  // habilidades (ADR-0005) — a book with a bookmark marks the CONCEPT
+  // (section title, rail cards), matching Claude's own skills icon (owner
+  // request); file rows use their own icons below so the title never looks
+  // like just another row.
+  skill: "M18 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 4h5v8l-2.5-1.5L6 12V4z",
+  // built-in habilidade file — a puzzle piece (ships with the app).
+  builtinskill: "M20.5 11H19V7c0-1.1-.9-2-2-2h-4V3.5C13 2.12 11.88 1 10.5 1S8 2.12 8 3.5V5H4c-1.1 0-1.99.9-1.99 2v3.8H3.5c1.49 0 2.7 1.21 2.7 2.7s-1.21 2.7-2.7 2.7H2V20c0 1.1.9 2 2 2h3.8v-1.5c0-1.49 1.21-2.7 2.7-2.7 1.49 0 2.7 1.21 2.7 2.7V22H17c1.1 0 2-.9 2-2v-4h1.5c1.38 0 2.5-1.12 2.5-2.5S21.88 11 20.5 11z",
+  // custom habilidade file — a star (authored by the user).
+  customskill: "M12 2l2.9 6.3 6.9.8-5.1 4.7 1.4 6.8-6.1-3.4-6.1 3.4 1.4-6.8-5.1-4.7 6.9-.8z",
 };
 function ico(name, extra = "") {
   const d = ICONS[name] || ICONS.file;
@@ -1304,13 +1350,16 @@ function renderCtxNode(node) {
   const icon = node.isCtx ? ico("context", "ac") : ico("folder", "ac");
   const nctx = node.isCtx ? (lastSt ? lastSt.contexts : []).find((c) => c.name === node.path) : null;
   // em vez da contagem de entradas do CHANGELOG (confundia), um ponto quando há
-  // mudança não commitada na subárvore deste contexto (ADR-0007).
+  // mudança não commitada na subárvore deste contexto (ADR-0005).
   const dot = ctxDirty(node.path) ? `<span class="gdot" title="${t("mudanças não commitadas")}">●</span>` : "";
   const pills = (node.isCtx && nctx && nctx.seeded === false
     ? `<span class="pill soft" title="${t("pasta nova — clique para estruturar")}">${t("novo")}</span>` : "") + dot;
   const attr = node.isCtx ? `data-ctx="${esc(node.path)}"` : `data-fold="${esc(node.path)}"`;
   const kids = [...node.children.values()].sort((x, y) => x.seg.localeCompare(y.seg)).map(renderCtxNode).join("");
-  const holder = node.isCtx ? `<div class="bchild" data-ctxchild="${esc(node.path)}" ${open ? "" : "hidden"}></div>` : "";
+  // fill target only, NOT a tree level: the context's own files (contexto/
+  // histórico/anexos) are siblings of its subcontexts — a .bchild here would
+  // double-indent them and read as if they belonged to a subcontext.
+  const holder = node.isCtx ? `<div data-ctxchild="${esc(node.path)}" ${open ? "" : "hidden"}></div>` : "";
   const arch = `<button class="rowmenu" data-cmenu="${esc(node.path)}" data-isctx="${node.isCtx ? 1 : 0}"
       title="${t("ações")} (${node.isCtx ? t("contexto") : t("pasta")}: ${t("renomear, mover, deletar")})">⋯</button>`;
   return `<div class="bitem ${node.isCtx ? "ctx" : "grp"}${open ? " open" : ""}" ${attr} title="${esc(node.path)}">
@@ -1405,6 +1454,25 @@ function wireSidebar() {
     if (bOpen.has(key)) bOpen.delete(key); else bOpen.add(key);
     sideSig = ""; renderSidebar(lastSt); markSel();
   }));
+  // ADR-0005: folder groups (folderGroupHtml) in the context tree toggle via
+  // [data-pestoggle] just like in the brainstorming tree — expand/collapse the
+  // next sibling (.bchild) in place, no full re-render.
+  B.navCtx.querySelectorAll("[data-pestoggle]").forEach((el2) => (el2.onclick = () => {
+    const key = el2.dataset.pestoggle, child = el2.nextElementSibling;
+    if (bOpen.has(key)) { bOpen.delete(key); el2.classList.remove("open"); if (child) child.hidden = true; }
+    else { bOpen.add(key); el2.classList.add("open"); if (child) child.hidden = false; }
+  }));
+  // ADR-0005: a context's anexos folder actions — create a note / import files.
+  B.navCtx.querySelectorAll("[data-ctxaddnota]").forEach((el2) => (el2.onclick = (e) => {
+    e.stopPropagation(); promptNewNoteInContext(el2.dataset.ctxaddnota, el2);
+  }));
+  B.navCtx.querySelectorAll("[data-ctxaddanexo]").forEach((el2) => (el2.onclick = (e) => {
+    e.stopPropagation();
+    const name = el2.dataset.ctxaddanexo;
+    importAnexoFromComputer(`contextos/${name}/anexos`, () => {
+      bOpen.add(`ctxfolder:${name}:anexos`); loadCtxChildren(name);
+    });
+  }));
   wireDrag();
 }
 
@@ -1445,13 +1513,14 @@ async function loadCtxChildren(name) {
   let entries = [];
   try { entries = await invoke("brain_list_dir", { rel: "contextos/" + name }); } catch (_) { return; }
   // subpastas que já são subdomínios (contextos) aparecem na ÁRVORE de contextos;
-  // não as repetimos aqui como "pasta" — visualização única (ADR-0007).
+  // não as repetimos aqui como "pasta" — visualização única (ADR-0005).
   const ctxSet = new Set((lastSt && lastSt.contexts ? lastSt.contexts : []).map((c) => c.name));
   const pretty = { "context.md": t("contexto"), "guia.md": t("guia do domínio"), "CHANGELOG.md": t("histórico"), CODEOWNERS: t("donos"), brainstorming: "brainstorming", incubadora: "brainstorming", referencias: t("referências") };
   const order = (n) => n === "context.md" ? 0 : n === "guia.md" ? 0 : n === "CHANGELOG.md" ? 1 : n === "referencias" ? 2 : 3;
   entries.sort((a, b) => order(a.name) - order(b.name) || a.name.localeCompare(b.name));
   let html = "";
   for (const en of entries) {
+    if (en.name === "anexos") continue; // ADR-0005: renderizado explicitamente abaixo, sempre visível
     if (en.dir) {
       if (ctxSet.has(name + "/" + en.name)) continue; // subdomínio: já está na árvore
       let files = [];
@@ -1464,6 +1533,17 @@ async function loadCtxChildren(name) {
       html += `<div class="bitem file ${gitClass(en.path)}" data-doc="${esc(en.path)}">${ico(fileIcon(en.name, false))}<span class="bn">${esc(pretty[en.name] || en.name)}</span></div>`;
     }
   }
+  // ADR-0005: um contexto também tem uma pasta `anexos/` — sempre visível, com
+  // as mesmas ações de um brainstorming (＋ nova nota, ＋ do computador),
+  // versionadas junto com o contexto.
+  let anexos = [];
+  try { anexos = ((await invoke("brain_list_dir", { rel: `contextos/${name}/anexos` })) || []).filter((f) => !f.dir); }
+  catch (_) {}
+  const anexRows = anexos.map((f) => `<div class="bitem file ${gitClass(f.path)}" data-doc="${esc(f.path)}" title="${esc(f.name)}">${ico("file")}<span class="bn">${esc(shortName(f.name))}</span></div>`).join("");
+  const anexActions =
+    `<button class="bsaddbtn" data-ctxaddnota="${esc(name)}" title="${t("Escrever uma nota nos anexos deste contexto")}">＋ ${t("nova nota")}</button>` +
+    `<button class="bsaddbtn" data-ctxaddanexo="${esc(name)}" title="${t("Adicionar um arquivo do computador aos anexos deste contexto")}">＋ ${t("do computador")}</button>`;
+  html += folderGroupHtml(`ctxfolder:${name}:anexos`, t("anexos"), anexos.length, anexRows, t("nenhum anexo ainda"), anexActions);
   holder.innerHTML = html || `<div class="bempty">${t("vazio")}</div>`;
   wireSidebar();
   markSel();
@@ -1478,6 +1558,12 @@ let pessoalSig = "";
 // A brainstorming groups reuniões/investigações/perguntas/notas; it can carry an
 // optional categoria (UI-only grouping). Selection of parts -> one consolidated
 // report -> the fila (see bsSelection / sendSelectionToQueue).
+// ADR-0005: above this many brainstormings the always-expanded tree gets hard
+// to scan — the search box appears and the list caps to the most recent
+// until the user searches or asks to see all (owner feedback).
+const PESSOAL_FILTER_THRESHOLD = 8;
+let pessoalRawTemas = [], pessoalRawAvulso = [];
+let pessoalFilterQuery = "", pessoalShowAll = false;
 async function refreshPessoal() {
   if (!brainTab) return;
   let temas = [], avulso = [];
@@ -1487,9 +1573,14 @@ async function refreshPessoal() {
   const sig = JSON.stringify([temas, avulso.map((f) => f.name)]);
   if (sig === pessoalSig) return;
   pessoalSig = sig;
+  pessoalRawTemas = temas; pessoalRawAvulso = avulso;
   renderPessoal(temas, avulso);
 }
-function renderPessoal(temas, avulso) {
+function renderPessoal(allTemas, avulso) {
+  const filterEl = $("pessoalFilter");
+  if (filterEl) filterEl.hidden = allTemas.length <= PESSOAL_FILTER_THRESHOLD;
+  const { items: temas, hiddenCount } = LoroBrainstorm.filterAndCapTemas(
+    allTemas, pessoalFilterQuery, pessoalShowAll, PESSOAL_FILTER_THRESHOLD);
   // creation moved to the section header (＋, wired once at boot) — full-width
   // creation rows polluted the tree (owner feedback 2026-07-28)
   let html = "";
@@ -1501,6 +1592,9 @@ function renderPessoal(temas, avulso) {
       }
       html += grp.items.map(renderTemaNode).join("");
     }
+    if (hiddenCount > 0) {
+      html += `<div class="bitem file" data-showalltemas>${ico("file")}<span class="bn">▾ ${t("ver todos")} (${allTemas.length})</span></div>`;
+    }
     if (avulso.length) {
       const key = "pes:avulso", open = bOpen.has(key);
       html += `<div class="bitem ctx${open ? " open" : ""}" data-pestoggle="${key}">${ico("note", "ac")}<span class="bn">${t("avulso")}</span><span class="pill">${avulso.length}</span></div>` +
@@ -1508,12 +1602,24 @@ function renderPessoal(temas, avulso) {
         avulso.map((f) => `<div class="bitem file" data-doc="${esc(f.path)}" title="${esc(f.name)}">${ico("file")}<span class="bn">${esc(shortName(f.name))}</span></div>`).join("") +
         `</div>`;
     }
+  } else if (pessoalFilterQuery) {
+    html += `<div class="bempty">${t("nenhum brainstorming encontrado para")} "${esc(pessoalFilterQuery)}"</div>`;
   } else {
     html += `<div class="bempty">${t("nenhum brainstorming ainda — crie o primeiro para reunir reuniões e notas")}</div>`;
   }
   B.navPessoal.innerHTML = html;
   wirePessoal();
+  B.navPessoal.querySelectorAll("[data-showalltemas]").forEach((el2) => (el2.onclick = () => {
+    pessoalShowAll = true; renderPessoal(pessoalRawTemas, pessoalRawAvulso);
+  }));
   for (const t of temas) if (bOpen.has("pes:tema:" + t.slug)) loadTemaChildren(t.slug);
+}
+{
+  const fi = $("pessoalFilter");
+  if (fi) fi.addEventListener("input", () => {
+    pessoalFilterQuery = fi.value; pessoalShowAll = false;
+    renderPessoal(pessoalRawTemas, pessoalRawAvulso);
+  });
 }
 function renderTemaNode(t) {
   const key = "pes:tema:" + t.slug, open = bOpen.has(key);
@@ -1531,15 +1637,19 @@ function renderTemaNode(t) {
 // segmentação em quatro pastas era atrito, não estrutura.
 // A selectable part row: a checkbox (data-bssel/data-bskind) + the open target.
 // A meeting row carries a ⋯ menu (renomear/apagar); files keep the plain ×.
-function bsPartRow(kind, openRel, selRel, label, title, indent, meetingId, meetingStatus) {
+function bsPartRow(kind, openRel, selRel, label, title, indent, meetingId, meetingStatus, mopen) {
   const act = meetingId
-    ? `<button class="rowmenu" data-mtgmenu="${esc(selRel)}" data-mtgid="${esc(meetingId)}" data-mtgtitle="${esc(label)}" data-mtgstatus="${esc(meetingStatus || "")}" title="${t("ações da reunião (analisar, perguntar, relatório…)")}">⋯</button>`
+    ? `<button class="rowtoggle${mopen ? " open" : ""}" data-mtgtoggle="${esc(meetingId)}" title="${t("mostrar/ocultar investigações e respostas")}">▸</button>` +
+      `<button class="rowmenu" data-mtgmenu="${esc(selRel)}" data-mtgid="${esc(meetingId)}" data-mtgtitle="${esc(label)}" data-mtgstatus="${esc(meetingStatus || "")}" title="${t("ações da reunião (analisar, perguntar, relatório…)")}">⋯</button>`
     : `<button class="rowmenu" data-artmenu="${esc(selRel)}" data-artlabel="${esc(label)}" title="${t("ações (renomear, apagar)")}">⋯</button>`;
   const icon = kind === "reuniao" ? "meeting" : kind === "nota" ? "note" : "file";
   return `<div class="bitem file${indent ? " bsub" : ""}" data-doc="${esc(openRel)}" title="${esc(title)}">` +
     `<input type="checkbox" class="bschk" data-bssel="${esc(selRel)}" data-bskind="${kind}" title="${t("selecionar para a fila")}">` +
     `${ico(icon)}<span class="bn">${esc(label)}</span>` + act + `</div>`;
 }
+// Investigações/respostas de cada reunião são carregadas sob demanda (fechado
+// por padrão) — a lateral crescia demais listando tudo sempre expandido, e a
+// maior parte fica sem uso na maioria das sessões (feedback do owner).
 async function loadTemaChildren(slug) {
   const holder = [...B.navPessoal.querySelectorAll("[data-temachild]")].find((h) => h.dataset.temachild === slug);
   if (!holder) return;
@@ -1548,34 +1658,73 @@ async function loadTemaChildren(slug) {
   let notas = [];
   try { notas = ((await invoke("brain_list_dir", { rel: `brainstorming/${slug}/notas` })) || []).filter((f) => !f.dir); }
   catch (_) {}
+  // ADR-0005: three brainstorming folders — reunioes/, notas/, anexos/.
+  // anexos/ is fed by a habilidade (sincronizar, apresentação, artefato) or
+  // by the user dropping files straight into the real folder on disk — no
+  // dedicated "importar" UI for that second path.
+  let anexos = [];
+  try { anexos = ((await invoke("brain_list_dir", { rel: `brainstorming/${slug}/anexos` })) || []).filter((f) => !f.dir); }
+  catch (_) {}
   let inner = "";
-  // ADR-0002 §6: the whole notes block leads the brainstorming (creation-first),
-  // above the meetings — "＋ nova nota" is the top row.
-  // creation-first but compact: one row, two half-width actions (nota/reunião)
-  // — two full rows polluted every expanded brainstorming (owner feedback).
-  inner += `<div class="bsadd">` +
-    `<button class="bsaddbtn" data-addnota="${esc(slug)}" title="${t("Escrever uma nota neste brainstorming")}">＋ ${t("nova nota")}</button>` +
-    `<button class="bsaddbtn rec2" data-addmeeting="${esc(slug)}" title="${t("Gravar uma reunião neste brainstorming (áudio 100% local)")}">● ${t("gravar reunião")}</button>` +
-    `</div>`;
-  for (const f of notas) inner += bsPartRow("nota", f.path, f.path, shortName(f.name), f.name, false);
+  // ADR-0005 (owner request): a pasta de verdade precisa estar visível na UI —
+  // três grupos com ícone de pasta (reuniões/notas/anexos), cada um
+  // colapsável (mesmo padrão `data-pestoggle` já usado para "avulso"). Cada
+  // pasta traz sua PRÓPRIA ação de criação no topo do corpo (owner request:
+  // "cada botão poderá existir dentro de cada uma das pastas"):
+  //   reuniões → ● gravar · notas → ＋ nova · anexos → ⇄ sincronizar + ＋ do computador.
+  let reunioesRows = "";
+  const pendingMeetingFills = [];
   for (const m of meetings) {
     // título do manifest (renomeável); cai para o id humanizado quando ausente
     const title = LM.meetingTitleFromManifest({ titulo: m.titulo }, m.id);
     const label = title === m.id ? LM.meetingLabel(m.id, settings.uiLang) : title;
-    inner += bsPartRow("reuniao", `${m.rel}/reuniao.md`, m.rel, label, m.id, false, m.id, m.status);
-    for (const [asub, akind] of [["investigacoes", "investigacao"], ["respostas", "nota"]]) {
-      let arts = [];
-      try { arts = ((await invoke("brain_list_dir", { rel: `${m.rel}/artefatos/${asub}` })) || []).filter((a) => !a.dir); }
-      catch (_) {}
-      for (const a of arts) inner += bsPartRow(akind, a.path, a.path, shortName(a.name), a.name, true);
-    }
+    const mkey = "mtg:" + m.id, mopen = bOpen.has(mkey);
+    reunioesRows += bsPartRow("reuniao", `${m.rel}/reuniao.md`, m.rel, label, m.id, true, m.id, m.status, mopen);
+    reunioesRows += `<div class="bchild" data-mtgchild="${esc(m.id)}" data-mtgrel="${esc(m.rel)}" ${mopen ? "" : "hidden"}></div>`;
+    if (mopen) pendingMeetingFills.push([m.id, m.rel]);
   }
-  if (!meetings.length && !notas.length) {
-    inner += `<div class="bempty">${t("vazio — grave uma reunião (●) ou escreva uma nota")}</div>`;
-  }
+  const notasRows = notas.map((f) => bsPartRow("nota", f.path, f.path, shortName(f.name), f.name, true)).join("");
+  const anexosRows = anexos.map((f) => bsPartRow("anexo", f.path, f.path, shortName(f.name), f.name, true)).join("");
+  const reunioesActions = `<button class="bsaddbtn rec2" data-addmeeting="${esc(slug)}" title="${t("Gravar uma reunião neste brainstorming (áudio 100% local)")}">● ${t("gravar reunião")}</button>`;
+  const notasActions = `<button class="bsaddbtn" data-addnota="${esc(slug)}" title="${t("Escrever uma nota neste brainstorming")}">＋ ${t("nova nota")}</button>`;
+  const anexosActions =
+    `<button class="bsaddbtn" data-syncdrive="${esc(slug)}" title="${t("Trazer uma nota de reunião externa (Google Drive/Gemini) para os anexos deste tema")}">⇄ ${t("sincronizar")}</button>` +
+    `<button class="bsaddbtn" data-addanexo="${esc(slug)}" title="${t("Adicionar um arquivo do computador aos anexos deste tema")}">＋ ${t("do computador")}</button>`;
+  inner += folderGroupHtml(`bsfolder:${slug}:reunioes`, t("reuniões"), meetings.length, reunioesRows, t("nenhuma reunião ainda"), reunioesActions);
+  inner += folderGroupHtml(`bsfolder:${slug}:notas`, t("notas"), notas.length, notasRows, t("nenhuma nota ainda"), notasActions);
+  inner += folderGroupHtml(`bsfolder:${slug}:anexos`, t("anexos"), anexos.length, anexosRows, t("nenhum anexo ainda"), anexosActions);
   holder.innerHTML = inner;
   wirePessoal();
+  // fillMeetingChild queries the live DOM — must run AFTER innerHTML is set,
+  // not while `inner` is still a string (the container doesn't exist yet).
+  for (const [id, rel] of pendingMeetingFills) await fillMeetingChild(id, rel);
   markSel();
+}
+// A collapsible folder group in the sidebar (reuniões/notas/anexos) — a real
+// folder icon + label + count, expand/collapse via the same [data-pestoggle]
+// wiring already used for "avulso" (wirePessoal, no new JS needed there). The
+// folder's own creation action(s) sit at the top of its body, so each button
+// lives inside the folder it acts on (ADR-0005, owner request).
+function folderGroupHtml(key, label, count, rowsHtml, emptyMsg, actionsHtml) {
+  const open = bOpen.has(key);
+  const pill = count ? `<span class="pill">${count}</span>` : "";
+  const actions = actionsHtml ? `<div class="bsadd">${actionsHtml}</div>` : "";
+  return `<div class="bitem ctx${open ? " open" : ""}" data-pestoggle="${key}">${ico("folder", "ac")}<span class="bn">${label}</span>${pill}</div>` +
+    `<div class="bchild" ${open ? "" : "hidden"}>${actions}${rowsHtml || `<div class="bempty sub">${emptyMsg}</div>`}</div>`;
+}
+// Busca e injeta investigações/respostas de UMA reunião no seu container
+// (chamado ao expandir, e ao re-render de uma tema já expandida).
+async function fillMeetingChild(meetingId, meetingRel) {
+  const child = [...B.navPessoal.querySelectorAll("[data-mtgchild]")].find((h) => h.dataset.mtgchild === meetingId);
+  if (!child) return;
+  let inner = "";
+  for (const [asub, akind] of [["investigacoes", "investigacao"], ["respostas", "nota"]]) {
+    let arts = [];
+    try { arts = ((await invoke("brain_list_dir", { rel: `${meetingRel}/artefatos/${asub}` })) || []).filter((a) => !a.dir); }
+    catch (_) {}
+    for (const a of arts) inner += bsPartRow(akind, a.path, a.path, shortName(a.name), a.name, true);
+  }
+  child.innerHTML = inner || `<div class="bempty sub">${t("nada por aqui ainda")}</div>`;
 }
 // Selection of brainstorming parts to send to the fila (ADR-0013). A plain Set of
 // acervo-relative rels; the parts' kinds are read back from the checkbox dataset.
@@ -1633,6 +1782,445 @@ function wirePessoal() {
   B.navPessoal.querySelectorAll("[data-addnota]").forEach((el2) => (el2.onclick = (e) => {
     e.stopPropagation(); promptNewNota(el2.dataset.addnota, el2);
   }));
+  B.navPessoal.querySelectorAll("[data-syncdrive]").forEach((el2) => (el2.onclick = (e) => {
+    e.stopPropagation(); promptSyncTool("drive", el2.dataset.syncdrive);
+  }));
+  B.navPessoal.querySelectorAll("[data-addanexo]").forEach((el2) => (el2.onclick = (e) => {
+    e.stopPropagation();
+    const slug = el2.dataset.addanexo;
+    importAnexoFromComputer(`brainstorming/${slug}/anexos`, () => {
+      bOpen.add(`bsfolder:${slug}:anexos`); loadTemaChildren(slug);
+    });
+  }));
+  B.navPessoal.querySelectorAll("[data-mtgtoggle]").forEach((el2) => (el2.onclick = async (e) => {
+    e.stopPropagation();
+    const id = el2.dataset.mtgtoggle, key = "mtg:" + id;
+    const child = [...B.navPessoal.querySelectorAll("[data-mtgchild]")].find((h) => h.dataset.mtgchild === id);
+    if (!child) return;
+    if (bOpen.has(key)) {
+      bOpen.delete(key); el2.classList.remove("open"); child.hidden = true;
+    } else {
+      bOpen.add(key); el2.classList.add("open"); child.hidden = false;
+      await fillMeetingChild(id, child.dataset.mtgrel);
+      wirePessoal(); markSel();
+    }
+  }));
+}
+
+// ADR-0005: per-source copy for the /loro-sync modal. `required` gates
+// the identifier field before injecting the command — drive is the only
+// source where a blank identifier still means something (a broad search).
+const SYNC_TOOL_COPY = {
+  drive: {
+    title: "Sincronizar reunião externa (Drive)",
+    desc: "busca uma nota do Gemini no Drive e traz o documento inteiro como anexo local, referenciado na nota.",
+    field: "busca ou link (opcional)",
+    placeholder: "ex.: nome da reunião, ou um link do Drive",
+    required: false,
+  },
+  slack: {
+    title: "Sincronizar canal (Slack)",
+    desc: "escreve um resumo de uma mensagem/thread do Slack como anexo local, referenciado na nota.",
+    field: "canal",
+    placeholder: "ex.: #eng-loro",
+    required: true,
+  },
+  jira: {
+    title: "Sincronizar ticket (Jira)",
+    desc: "escreve um resumo de um ticket do Jira (título, status, pontos-chave) como anexo local, referenciado na nota.",
+    field: "chave do ticket ou link",
+    placeholder: "ex.: PROJ-123",
+    required: true,
+  },
+  confluence: {
+    title: "Sincronizar página (Confluence)",
+    desc: "escreve um resumo de uma página do Confluence como anexo local, referenciado na nota.",
+    field: "título da página ou link",
+    placeholder: "ex.: Ata da reunião de sprint",
+    required: true,
+  },
+};
+
+// "sincronizar" (ADR-0005): shared modal for the 4 built-in /loro-sync
+// sources. Without `slug` (Visão Geral entry point), the modal also asks
+// which brainstorming to target — with `slug` (the per-brainstorming button),
+// the target is already known.
+async function promptSyncTool(fonte, slug) {
+  const cfg = SYNC_TOOL_COPY[fonte];
+  if (!cfg) return;
+  let temaField = "";
+  if (!slug) {
+    let temas = [];
+    try { temas = (await invoke("brain_list_brainstorms")) || []; } catch (_) {}
+    if (!temas.length) { toast(t("crie um brainstorming primeiro")); return; }
+    temaField = `<label class="wfield"><span class="mono">${t("tema")}</span>` +
+      `<select id="syncToolTema">` +
+      temas.map((b) => `<option value="${esc(b.slug)}">${esc(b.nome)}</option>`).join("") +
+      `</select></label>`;
+  }
+  openModal(
+    t(cfg.title),
+    `<p class="pmnote mono">${t(cfg.desc)}</p>` + temaField +
+      `<label class="wfield"><span class="mono">${t(cfg.field)}</span>` +
+      `<input id="syncToolInput" type="text" placeholder="${t(cfg.placeholder)}" spellcheck="false"></label>`,
+    t("buscar"),
+    () => {
+      const alvo = slug || (($("syncToolTema") && $("syncToolTema").value) || "");
+      const q = (($("syncToolInput") && $("syncToolInput").value) || "").trim();
+      if (!alvo) { toast(t("informe o tema")); return; }
+      if (cfg.required && !q) { toast(t("informe") + ": " + t(cfg.field)); return; }
+      const cmd = LoroBrainstorm.syncCmd(fonte, alvo, q);
+      if (!cmd) { toast(t("informe o tema")); return; }
+      termRunAgent(cmd);
+      toast(t("busca enviada ao agente do terminal"), 4000);
+    }
+  );
+  const inp = $("syncToolInput"); if (inp) inp.focus();
+}
+// ============================ habilidades (ADR-0005) ============================
+// A "habilidade" (UI label; code keeps the English "tool" per CLAUDE.md §6) is
+// any .md in .claude/commands/ — the filename IS the slash-command. Built-ins
+// (BUILTIN_SKILLS) can be edited but never deleted (brain_delete_tool already
+// refuses them; the UI just hides the option); custom ones have full CRUD.
+const TOOL_BUILTINS = new Set([
+  "loro-context.md", "loro-analyse.md", "loro-question.md",
+  "loro-ask.md", "loro-note.md", "loro-sync.md", "loro-tool.md",
+  "loro-presentation.md", "loro-artifact.md",
+]);
+// Subset offered by the generic "executar habilidade" picker (brainstorming/
+// meeting ⋯ menus): the workflow-specific built-ins already have their own
+// dedicated UI (nova nota, perguntar ao acervo, gerar contexto, analisar/
+// perguntar na reunião) — repeating them here would just be noise. Only the
+// generically "run against an alvo" built-ins + every custom tool show up.
+const TOOL_PICKER_EXCLUDE = new Set([
+  "loro-context.md", "loro-analyse.md", "loro-question.md",
+  "loro-ask.md", "loro-note.md", "loro-tool.md",
+]);
+let toolsSig = "";
+async function refreshTools() {
+  if (!brainTab) return;
+  let files = [];
+  try { files = ((await invoke("brain_list_dir", { rel: ".claude/commands" })) || []).filter((f) => !f.dir); }
+  catch (_) { files = []; }
+  const sig = JSON.stringify(files.map((f) => f.name));
+  if (sig === toolsSig) return;
+  toolsSig = sig;
+  // description cached per file (used as the hover tooltip everywhere — the
+  // picker never renders every description inline, only on :hover/title).
+  const withDesc = await Promise.all(files.map(async (f) => {
+    let desc = "";
+    try {
+      const raw = await invoke("brain_read", { rel: f.path });
+      const m = /description:\s*(.+)/.exec(raw);
+      if (m) desc = m[1].trim();
+    } catch (_) {}
+    return { ...f, builtin: TOOL_BUILTINS.has(f.name), desc };
+  }));
+  renderTools(withDesc);
+}
+function toolRow(f) {
+  const label = shortName(f.name);
+  // puzzle = built-in, star = custom (ADR-0005): the origin is legible from
+  // the icon alone, and neither repeats the section title's bolt; the
+  // "padrão" pill stays as the textual reinforcement.
+  return `<div class="bitem file" data-doc="${esc(f.path)}" title="${esc(f.desc || f.path)}">` +
+    `${ico(f.builtin ? "builtinskill" : "customskill")}<span class="bn">${esc(label)}</span>` +
+    (f.builtin ? `<span class="pill" title="${t("habilidade padrão")}">${t("padrão")}</span>` : "") +
+    `<button class="rowmenu" data-toolmenu="${esc(f.path)}" data-toollabel="${esc(label)}" data-toolbuiltin="${f.builtin ? "1" : ""}" title="${t("ações (usar, editar, pedir à IA, excluir)")}">⋯</button>` +
+    `</div>`;
+}
+let lastToolFiles = [];
+function renderTools(files) {
+  lastToolFiles = files;
+  const nav = $("navTools");
+  if (nav) {
+    nav.innerHTML = files.length
+      ? files.map(toolRow).join("")
+      : `<div class="bempty">${t("nenhuma habilidade ainda — crie uma com IA ou importe uma pronta (＋)")}</div>`;
+  }
+  wireTools();
+}
+function wireTools() {
+  const nav = $("navTools");
+  if (!nav) return;
+  nav.querySelectorAll("[data-doc]").forEach((el2) => {
+    el2.onclick = (e) => { if (e.target.closest("[data-toolmenu]")) return; openDoc(el2.dataset.doc, { preview: true }); };
+    el2.ondblclick = () => openDoc(el2.dataset.doc, { preview: false });
+  });
+  nav.querySelectorAll("[data-toolmenu]").forEach((el2) => (el2.onclick = (e) => {
+    e.stopPropagation();
+    openToolMenu(el2.dataset.toolmenu, el2.dataset.toollabel, el2, !!el2.dataset.toolbuiltin);
+  }));
+}
+// usar / editar / pedir à IA / (excluir, só se não for padrão) — same
+// ⋯-menu spirit as openArtefatoMenu, scoped to a habilidade instead of a nota.
+function openToolMenu(rel, label, anchor, builtin) {
+  B.acervoMenu.hidden = true;
+  B.bMenu.innerHTML =
+    `<div class="fhead">${esc(label)}</div>` +
+    `<div class="fitem2 strong" data-use><span class="fn">▶ ${t("usar")}</span></div>` +
+    `<div class="fitem2" data-edit><span class="fn">✎ ${t("editar")}</span></div>` +
+    `<div class="fitem2" data-ainote><span class="fn">✦ ${t("pedir à IA")}</span></div>` +
+    (builtin
+      ? `<div class="fnote mono">${t("habilidade padrão — não pode ser excluída")}</div>`
+      : `<div class="fitem2 danger" data-del><span class="fn">${t("excluir")}</span></div>`);
+  B.bMenu.querySelector("[data-use]").onclick = () => { closeFloat(); promptUseTool(rel); };
+  B.bMenu.querySelector("[data-edit]").onclick = () => { closeFloat(); openDoc(rel, { preview: false }); };
+  B.bMenu.querySelector("[data-ainote]").onclick = () => { closeFloat(); promptToolAI(rel); };
+  if (!builtin) B.bMenu.querySelector("[data-del]").onclick = () => { closeFloat(); delTool(rel); };
+  placeMenu(anchor);
+}
+async function delTool(rel) {
+  if (!confirm(t("excluir esta habilidade?"))) return;
+  try { await invoke("brain_delete_tool", { rel }); toolsSig = ""; refreshTools(); toast(t("excluída")); }
+  catch (e) { toast(tErr(String(e))); }
+}
+// "usar": reads the tool's own front-matter (description/argument-hint) to
+// prompt for arguments, then just runs "/<slug> <alvo> <args>" — the file
+// itself IS the slash-command, no dedicated runner needed.
+// alvoRel (when given) is the file/topic the habilidade was invoked against:
+// it is a FIXED argument shown as a read-only row, never inside the writable
+// input (owner feedback) — every loro skill takes the alvo as its first
+// token, so it consumes the hint's first token and the remaining tokens are
+// listed for the user to fill in the free-text box.
+async function promptUseTool(rel, alvoRel) {
+  const slug = rel.split("/").pop().replace(/\.md$/, "");
+  let hint = "", desc = "";
+  try {
+    const raw = await invoke("brain_read", { rel });
+    const mHint = /argument-hint:\s*(.+)/.exec(raw);
+    const mDesc = /description:\s*(.+)/.exec(raw);
+    if (mHint) hint = mHint[1].trim();
+    if (mDesc) desc = mDesc[1].trim();
+  } catch (_) {}
+  const fixed = (alvoRel || "").trim();
+  const tokens = hint.match(/<[^>]+>|\[[^\]]+\]/g) || [];
+  const rest = fixed && tokens.length ? tokens.slice(1) : tokens;
+  const restHint = rest.join("  ");
+  openModal(
+    `${t("usar")} /${slug}`,
+    (desc ? `<p class="pmnote mono">${esc(desc)}</p>` : "") +
+      (fixed ? `<div class="wfield"><span class="mono">${t("alvo")}</span><span class="lockval mono" title="${esc(fixed)}">${esc(fixed)}</span></div>` : "") +
+      (restHint ? `<p class="pmnote mono">${t("argumentos")}: ${esc(restHint)}</p>` : "") +
+      `<label class="wfield"><span class="mono">${t("escrever")}</span>` +
+      `<input id="useToolInput" type="text" placeholder="${esc(restHint || t("opcional"))}" spellcheck="false"></label>`,
+    t("rodar"),
+    () => {
+      const args = (($("useToolInput") && $("useToolInput").value) || "").trim();
+      termRunAgent("/" + slug + (fixed ? " " + fixed : "") + (args ? " " + args : ""));
+      toast(t("comando enviado ao agente do terminal"), 4000);
+    }
+  );
+  const inp = $("useToolInput"); if (inp) inp.focus();
+}
+function promptToolAI(rel) {
+  openModal(
+    t("Pedir à IA sobre esta habilidade"),
+    `<p class="pmnote mono">${t("a IA lê a habilidade e aplica o pedido nela mesma — evolui, não apaga.")}</p>` +
+      `<label class="wfield"><span class="mono">${t("pedido")}</span>` +
+      `<input id="toolAiInput" type="text" placeholder="${t("ex.: adicione um passo para validar o input")}" spellcheck="false"></label>`,
+    t("enviar"),
+    () => {
+      const p = (($("toolAiInput") && $("toolAiInput").value) || "").trim();
+      const cmd = LoroBrainstorm.toolCmd(rel, p);
+      if (!cmd) { toast(t("descreva o pedido")); return; }
+      termRunAgent(cmd);
+      toast(t("pedido enviado ao agente do terminal"), 4000);
+    }
+  );
+  const inp = $("toolAiInput"); if (inp) inp.focus();
+}
+function promptNewToolAI() {
+  openModal(
+    t("Nova habilidade (IA)"),
+    `<p class="pmnote mono">${t("descreva o que a habilidade deve fazer — a IA cria a skill; ela aparece na lateral quando terminar.")}</p>` +
+      `<label class="wfield"><span class="mono">${t("descrição")}</span>` +
+      `<input id="newToolInput" type="text" placeholder="${t("ex.: resume um ticket do Jira em 3 bullets")}" spellcheck="false"></label>`,
+    t("criar"),
+    () => {
+      const d = (($("newToolInput") && $("newToolInput").value) || "").trim();
+      const cmd = LoroBrainstorm.newToolCmd(d);
+      if (!cmd) { toast(t("descreva a habilidade")); return; }
+      termRunAgent(cmd);
+      toast(t("pedido enviado ao agente do terminal — a habilidade aparece na lateral"), 4000);
+    }
+  );
+  const inp = $("newToolInput"); if (inp) inp.focus();
+}
+function promptImportTool() {
+  openModal(
+    t("Importar habilidade existente"),
+    `<p class="pmnote mono">${t("cole o conteúdo de uma skill (.md) que você já tem.")}</p>` +
+      `<label class="wfield"><span class="mono">${t("nome")}</span>` +
+      `<input id="importToolName" type="text" placeholder="${t("ex.: resumo-jira")}" spellcheck="false"></label>` +
+      `<label class="wfield"><span class="mono">${t("conteúdo")}</span>` +
+      `<textarea id="importToolBody" rows="8" spellcheck="false" placeholder="---&#10;description: ...&#10;---&#10;&#10;..."></textarea></label>`,
+    t("importar"),
+    async () => {
+      const nome = (($("importToolName") && $("importToolName").value) || "").trim();
+      const conteudo = (($("importToolBody") && $("importToolBody").value) || "").trim();
+      if (!nome || !conteudo) { toast(t("preencha nome e conteúdo")); return; }
+      try {
+        const rel = await invoke("brain_new_tool", { nome, conteudo });
+        toolsSig = ""; refreshTools();
+        toast(t("habilidade importada"));
+        openDoc(rel, { preview: false });
+      } catch (e) { toast(tErr(String(e))); }
+    }
+  );
+  const inp = $("importToolName"); if (inp) inp.focus();
+}
+function openAddToolMenu(anchor) {
+  B.acervoMenu.hidden = true;
+  B.bMenu.innerHTML =
+    `<div class="fitem2 strong" data-ai><span class="fn">✦ ${t("nova habilidade (IA)")}</span></div>` +
+    `<div class="fitem2" data-import><span class="fn">⇩ ${t("importar skill existente")}</span></div>`;
+  B.bMenu.querySelector("[data-ai]").onclick = () => { closeFloat(); promptNewToolAI(); };
+  B.bMenu.querySelector("[data-import]").onclick = () => { closeFloat(); promptImportTool(); };
+  placeMenu(anchor);
+}
+{ const ab = $("addToolBtn"); if (ab) ab.addEventListener("click", (e) => { e.stopPropagation(); openAddToolMenu(ab); }); }
+// ADR-0005: the habilidades section collapses/expands from its own header —
+// with many skills the list stops crowding the sidebar; the caret shows state.
+{
+  const tt = $("toolsToggle"), navT = $("navTools");
+  if (tt && navT) tt.addEventListener("click", () => {
+    navT.hidden = !navT.hidden;
+    tt.classList.toggle("closed", navT.hidden);
+  });
+}
+// Shared "executar habilidade" picker (brainstorming ⋯ and meeting ⋯): a
+// compact dropdown-like list — one row per pickable habilidade, description
+// only on hover (title=), never rendered inline (ADR-0005: avoid a wall of
+// text once there are many). loro-sync.md is special-cased into its 4
+// sources since it is one file covering four distinct identifiers.
+// Flattens lastToolFiles into runnable entries: loro-sync.md expands into its
+// 4 sources (one file, four distinct identifiers); every other pickable
+// habilidade (built-in or custom, minus the 5 workflow-specific ones) is one
+// entry. Shared by the ⋯ menu picker AND the meeting rail dropdown so both
+// stay in sync automatically.
+// Friendly display names for the built-in habilidades — `loro-…` filenames
+// mean nothing to the user (owner feedback); customs keep their own name.
+const TOOL_LABELS = {
+  "loro-presentation.md": "apresentação",
+  "loro-artifact.md": "artefato",
+  "loro-note.md": "nota por IA",
+  "loro-ask.md": "perguntar ao acervo",
+  "loro-analyse.md": "analisar reunião",
+  "loro-question.md": "perguntar à reunião",
+  "loro-context.md": "gerar contexto",
+  "loro-tool.md": "criar habilidade",
+};
+function habilidadeEntriesFrom(files) {
+  const entries = [];
+  for (const f of files) {
+    if (f.name === "loro-sync.md") {
+      for (const fonte of ["drive", "slack", "jira", "confluence"]) {
+        entries.push({ kind: "sync", fonte, label: `${t("sincronizar")}: ${fonte}`, title: f.desc });
+      }
+    } else {
+      const label = TOOL_LABELS[f.name] ? t(TOOL_LABELS[f.name]) : shortName(f.name);
+      entries.push({ kind: "tool", rel: f.path, label, title: f.desc || f.path });
+    }
+  }
+  return entries;
+}
+// Curated: excludes the 5 workflow-specific built-ins (already have dedicated
+// UI) — used by the ⋯ menu picker, which coexists with that dedicated UI.
+function pickableHabilidadeEntries() {
+  return habilidadeEntriesFrom(lastToolFiles.filter((f) => !TOOL_PICKER_EXCLUDE.has(f.name)));
+}
+// Unrestricted: every habilidade, no exclusion — used where there is no
+// separate dedicated UI to coexist with (the meeting rail, ADR-0005).
+function allHabilidadeEntries() {
+  return habilidadeEntriesFrom(lastToolFiles);
+}
+function runHabilidadeEntry(entry, alvoRel) {
+  if (entry.kind === "sync") promptSyncTool(entry.fonte, alvoRel);
+  else promptUseTool(entry.rel, alvoRel);
+}
+// The ONE habilidade control (ADR-0005, owner feedback): a card with the
+// dropdown (friendly names), the SELECTED entry's description always visible
+// below it (option-title hover is unreliable in webviews and hid what each
+// skill does), and an explicit "executar" button — used identically on the
+// doc rail and the meeting rail.
+function habilidadeCardHtml(p) {
+  return `<div class="rail-sec card">` +
+    `<div class="rail-head">${ico("skill")} ${t("habilidade")}</div>` +
+    `<select id="${p}Select" class="mini-select"></select>` +
+    `<p id="${p}Desc" class="rail-desc"></p>` +
+    `<button class="railbtn cta" id="${p}RunBtn">▶ ${t("executar")}</button>` +
+    `</div>`;
+}
+function wireHabilidadeCard(p, alvoRel) {
+  const sel = $(p + "Select"), desc = $(p + "Desc"), btn = $(p + "RunBtn");
+  if (!sel) return;
+  const entries = allHabilidadeEntries();
+  sel.innerHTML = entries.length
+    ? entries.map((e, i) => `<option value="${i}">${esc(e.label)}</option>`).join("")
+    : `<option value="">${t("nenhuma habilidade disponível")}</option>`;
+  const upd = () => { const e2 = entries[Number(sel.value)]; if (desc) desc.textContent = e2 ? e2.title : ""; };
+  sel.onchange = upd; upd();
+  if (btn) btn.onclick = () => {
+    const e2 = entries[Number(sel.value)];
+    const alvo = typeof alvoRel === "function" ? alvoRel() : alvoRel;
+    if (!e2 || !alvo) return;
+    runHabilidadeEntry(e2, alvo);
+  };
+}
+// `all` lifts the workflow-builtin exclusion — used where no dedicated UI
+// coexists (the Visão Geral hero button); alvoRel may be null there (each
+// habilidade then asks for/omits its own target).
+function openHabilidadeMenu(alvoRel, anchor, all) {
+  B.acervoMenu.hidden = true;
+  const entries = all ? allHabilidadeEntries() : pickableHabilidadeEntries();
+  const rows = entries.map((e, i) =>
+    `<div class="fitem2" data-entry="${i}" title="${esc(e.title)}"><span class="fn">${esc(e.label)}</span></div>`).join("");
+  B.bMenu.innerHTML = `<div class="fhead">${t("executar habilidade")}</div>` +
+    (rows || `<div class="fnote mono">${t("nenhuma habilidade disponível")}</div>`);
+  B.bMenu.querySelectorAll("[data-entry]").forEach((el2) => (el2.onclick = () => {
+    closeFloat(); runHabilidadeEntry(entries[Number(el2.dataset.entry)], alvoRel);
+  }));
+  placeMenu(anchor);
+}
+
+// ADR-0005: "＋ do computador" — native file picker → copies the chosen files
+// into an anexos/ folder (brain_import_files). Works for both a brainstorming
+// (destRel = brainstorming/<slug>/anexos) and a context (contextos/<c>/anexos);
+// `after` runs on success (re-open + reload the right tree).
+async function importAnexoFromComputer(destRel, after) {
+  try {
+    const n = await invoke("brain_import_files", { destRel });
+    if (n > 0) {
+      toast(`${n} ${n > 1 ? t("arquivos anexados") : t("arquivo anexado")}`);
+      if (after) after();
+    }
+  } catch (e) { toast(tErr(String(e))); clog("brain_import_files error: " + e); }
+}
+
+// ADR-0005: inline "nova nota" in a context's anexos folder — the context
+// counterpart to promptNewNota, writing via brain_new_note_in and reloading
+// the context children so the note shows immediately.
+function promptNewNoteInContext(name, anchor) {
+  if (notaEditing) return;
+  notaEditing = true;
+  const inp = document.createElement("input");
+  inp.className = "bnewctx";
+  inp.placeholder = t("título da nota (Enter)");
+  anchor.before(inp); inp.focus();
+  const done = () => { inp.remove(); notaEditing = false; };
+  inp.addEventListener("keydown", async (e) => {
+    if (e.key === "Escape") return done();
+    if (e.key !== "Enter") return;
+    const titulo = inp.value.trim();
+    if (!titulo) return done();
+    try {
+      const rel = await invoke("brain_new_note_in", { destRel: `contextos/${name}/anexos`, titulo });
+      done(); bOpen.add(`ctxfolder:${name}:anexos`); loadCtxChildren(name);
+      if (rel) openDoc(rel, { preview: false });
+    } catch (err) { toast(tErr(String(err))); }
+  });
+  inp.addEventListener("blur", done);
 }
 
 // Inline "nova nota" inside a brainstorming (mirrors promptNewContext/promptNewTema).
@@ -1653,7 +2241,7 @@ function promptNewNota(slug, anchor) {
     if (!titulo) return done();
     try {
       const rel = await invoke("brain_new_notebook", { tema: slug, titulo });
-      done(); pessoalSig = ""; refreshPessoal();
+      done(); bOpen.add(`bsfolder:${slug}:notas`); pessoalSig = ""; refreshPessoal();
       if (rel) openDoc(rel, { preview: false });
     } catch (err) { toast(tErr(String(err))); }
   });
@@ -1667,11 +2255,13 @@ function openBsMenu(slug, anchor) {
   B.bMenu.innerHTML =
     `<div class="fhead">${esc(slug)}</div>` +
     `<div class="fitem2 strong" data-ainote><span class="fn">✦ ${t("nota por IA…")}</span></div>` +
+    `<div class="fitem2" data-tools><span class="fn">${ico("skill")} ${t("executar habilidade…")}</span></div>` +
     `<div class="fsep"></div>` +
     `<div class="fitem2" data-ren><span class="fn">${t("renomear")}</span></div>` +
     `<div class="fitem2" data-toqueue><span class="fn">${t("gerar relatório de tudo → fila")}</span></div>` +
     `<div class="fitem2 danger" data-del><span class="fn">${t("apagar brainstorming")}</span></div>`;
   B.bMenu.querySelector("[data-ainote]").onclick = () => { closeFloat(); promptNoteAI(`brainstorming/${slug}/notas`, false); };
+  B.bMenu.querySelector("[data-tools]").onclick = () => openHabilidadeMenu(`brainstorming/${slug}`, anchor);
   B.bMenu.querySelector("[data-ren]").onclick = () => { closeFloat(); promptRenameBs(slug); };
   B.bMenu.querySelector("[data-toqueue]").onclick = () => { closeFloat(); sendBrainstormToQueue(slug, []); };
   B.bMenu.querySelector("[data-del]").onclick = () => { closeFloat(); delPessoal("brainstorming/" + slug, "tema"); };
@@ -1715,17 +2305,26 @@ function openMeetingMenu(rel, id, title, status, anchor) {
   B.bMenu.innerHTML =
     `<div class="fhead">${esc(title)}</div>` +
     `<div class="fitem2 strong${dis ? " off" : ""}" data-analyse><span class="fn">✦ ${t("analisar")}</span></div>` +
-    `<div class="fitem2${dis ? " off" : ""}" data-question><span class="fn">? ${t("perguntar…")}</span></div>` +
+    `<div class="fitem2${ready ? "" : " strong"}" data-question><span class="fn">? ${t("perguntar…")}</span></div>` +
     `<div class="fitem2${dis ? " off" : ""}" data-report><span class="fn">≡ ${t("ver relatório")}</span></div>` +
-    (ready ? "" : `<div class="fnote mono">${t("disponíveis quando a reunião terminar")}</div>`) +
+    `<div class="fitem2${dis ? " off" : ""}" data-queue><span class="fn">${t("enviar para a fila")} →</span></div>` +
+    (ready ? "" : `<div class="fnote mono">${t("analisar, ver relatório e enviar para a fila ficam disponíveis quando a reunião terminar — perguntar já funciona agora")}</div>`) +
+    `<div class="fitem2" data-tools><span class="fn">${ico("skill")} ${t("executar habilidade…")}</span></div>` +
     `<div class="fsep"></div>` +
     `<div class="fitem2" data-ren><span class="fn">✎ ${t("renomear")}</span></div>` +
     `<div class="fitem2 danger" data-del><span class="fn">${t("apagar reunião")}</span></div>`;
   if (ready) {
     B.bMenu.querySelector("[data-analyse]").onclick = () => { closeFloat(); openDoc(`${rel}/reuniao.md`, { preview: false }); runMeetingSkill("analyse", id, null, rel); };
-    B.bMenu.querySelector("[data-question]").onclick = () => { closeFloat(); askMeetingQuestion(id, rel); };
     B.bMenu.querySelector("[data-report]").onclick = () => { closeFloat(); buildAndOpenReport(id); };
+    B.bMenu.querySelector("[data-queue]").onclick = () => {
+      closeFloat();
+      const m = /^brainstorming\/([^/]+)\//.exec(rel);
+      if (!m) { toast(t("abra a reunião para enviar")); return; }
+      sendBrainstormToQueue(m[1], [{ kind: "reuniao", rel }]);
+    };
   }
+  B.bMenu.querySelector("[data-question]").onclick = () => { closeFloat(); askMeetingQuestion(id, rel); };
+  B.bMenu.querySelector("[data-tools]").onclick = () => openHabilidadeMenu(rel, anchor);
   B.bMenu.querySelector("[data-ren]").onclick = () => { closeFloat(); promptRenameMeeting(id, title); };
   B.bMenu.querySelector("[data-del]").onclick = () => { closeFloat(); delPessoal(rel, "reuniao"); };
   placeMenu(anchor);
@@ -1851,9 +2450,14 @@ function renderSelectionBar() {
     bar.id = "bsSelBar"; bar.className = "bsselbar";
     B.navPessoal.after(bar);
   }
-  bar.innerHTML = `<span>${bsSelection.size} ${t("selecionado(s)")}</span>` +
-    `<button class="abtn" id="bsSelSend" title="${t("Gera um relatório consolidado das partes escolhidas e o envia para a fila de geração de contexto")}">${t("enviar para a fila")} →</button>` +
-    `<button class="abtn ghost" id="bsSelClear">${t("limpar")}</button>`;
+  // two clean rows for the narrow sidebar (owner feedback: the three items
+  // wrapping side-by-side read as clutter): count + a quiet "limpar" link on
+  // top, the primary action as a full-width CTA below.
+  const n = bsSelection.size;
+  bar.innerHTML =
+    `<div class="bsselrow"><span class="mono">${n} ${t(n > 1 ? "selecionados" : "selecionado")}</span>` +
+    `<button class="link mono muted" id="bsSelClear">${t("limpar")}</button></div>` +
+    `<button class="railbtn cta" id="bsSelSend" title="${t("Gera um relatório consolidado das partes escolhidas e o envia para a fila de geração de contexto")}">${t("enviar para a fila")} →</button>`;
   $("bsSelSend").onclick = sendSelectionToQueue;
   $("bsSelClear").onclick = () => { bsSelection = new Set(); wirePessoal(); renderSelectionBar(); };
 }
@@ -2214,7 +2818,7 @@ function paintMeetingSurface(id, raw, manifest, status, artefatos) {
       `<div class="mtg-doc">${meetingStatusBar(status)}${preview}` +
         (body.trim() ? mdRender(body) : emptyMsg) +
       `</div>` +
-      `<aside class="mtg-rail">${meetingRailHtml(id, status)}</aside>` +
+      `<aside class="mtg-rail">${meetingRailHtml()}</aside>` +
     `</div>`;
   wireMeetingSurface(id);
   wireDocLinks();
@@ -2226,51 +2830,22 @@ function meetingStatusBar(status) {
   return `<div class="mtg-status ${cls}"><span class="mtg-statusdot"></span><span class="mono">${esc(txt)}</span></div>`;
 }
 
-// ADR-0013: the meeting rail is trimmed to the actions that matter, each made
-// evident and EXPLAINED — no audio (transient/deleted), no artefatos clutter, no
-// cloud/MCP consent, no audit. "analisar" and "responder" run the Claude skill in
-// the terminal (local-first: it reads the context before the internet); "ver
-// relatório" shows the built report; "enviar para a fila" turns this meeting into
-// a consolidated report and puts it in the fila de geração de contexto.
-function meetingRailHtml(id, status) {
-  // primary action first and emphasized: analyse fills the report; the report
-  // is only worth opening after the meeting is done (recording/transcribing →
-  // the button is disabled with the reason spelled out).
-  const ready = status === "done";
-  const action = (btnCls, btnId, label, note, disabled) =>
-    `<div class="mtg-action">` +
-      `<button class="abtn ${btnCls}" id="${btnId}"${disabled ? " disabled" : ""}>${label}</button>` +
-      `<p class="mtg-note mono">${note}</p>` +
-    `</div>`;
-  return `<div class="mtg-railsec mtg-analise">` +
-    `<div class="mtg-railhead mono">${t("o que fazer com esta reunião")}</div>` +
-    action("cta", "mtgAnalyseBtn", t("analisar"),
-      t("O agente lê a transcrição e o contexto local primeiro, aponta tema, decisões, riscos e dúvidas, e escreve o relatório."), !ready) +
-    action("", "mtgQuestionBtn", t("perguntar…"),
-      t("Faça uma pergunta sobre a reunião — a resposta é ancorada no que foi dito e no contexto local."), !ready) +
-    action("ghost", "mtgReportBtn", t("ver relatório"),
-      ready
-        ? t("Abre o relatório desta reunião (resumo, decisões, dúvidas, investigações).")
-        : t("disponível quando a reunião terminar — rode analisar para preenchê-lo."), !ready) +
-    action("", "mtgQueueBtn", `${t("enviar para a fila")} →`,
-      t("Gera um relatório consolidado desta reunião e o coloca na fila de geração de contexto (próximo passo do fluxo)."), !ready) +
-    `</div>`;
+// ADR-0005 (owner request): the meeting rail no longer lists fixed actions
+// (analisar/perguntar/ver relatório/enviar para a fila — all still reachable
+// from the meeting's ⋯ menu) — "o que fazer com esta reunião" is now a
+// single, UNRESTRICTED habilidade dropdown (every skill, including
+// analisar/perguntar's own /loro-analyse and /loro-question), so the rail
+// never hardcodes which actions exist. Options are populated in
+// wireMeetingSurface from the already-cached habilidade list; the bolt icon
+// keeps habilidades visually distinct everywhere else they appear.
+function meetingRailHtml() {
+  // Same habilidade card as the generic doc rail (habilidadeCardHtml) —
+  // "mesmo padrão em todo lugar" (owner request).
+  return habilidadeCardHtml("mtgSkill");
 }
 
 function wireMeetingSurface(id) {
-  const analyseBtn = B.doc.querySelector("#mtgAnalyseBtn");
-  if (analyseBtn) analyseBtn.onclick = () => runMeetingSkill("analyse", id);
-  const questionBtn = B.doc.querySelector("#mtgQuestionBtn");
-  if (questionBtn) questionBtn.onclick = () => askMeetingQuestion(id);
-  const reportBtn = B.doc.querySelector("#mtgReportBtn");
-  if (reportBtn) reportBtn.onclick = () => buildAndOpenReport();
-  const queueBtn = B.doc.querySelector("#mtgQueueBtn");
-  if (queueBtn) queueBtn.onclick = () => {
-    const dir = currentMeetingDir(id);
-    const m = dir && /^brainstorming\/([^/]+)\//.exec(dir);
-    if (!m) { toast(t("abra a reunião para enviar")); return; }
-    sendBrainstormToQueue(m[1], [{ kind: "reuniao", rel: dir }]);
-  };
+  wireHabilidadeCard("mtgSkill", () => currentMeetingDir(id));
 }
 
 // Resolve the acervo-relative meeting dir for a skill run: the active living/
@@ -2490,19 +3065,17 @@ async function renderActive() {
   B.badge.textContent = label; B.badge.className = "mono badge " + cls;
   setDocGit(tab.rel, tab.kind, isGuide);
   if (isGuide) $("bDocActs").hidden = true; else applyDocActions(tab.rel);
-  // ✦ ask-the-AI lives on the note viewer too (owner request): any markdown
-  // file of the non-versioned world except the meeting living surface (which
-  // has its own rail of actions).
-  const aiable = !isGuide && tab.rel.startsWith("brainstorming/") &&
-    tab.rel.endsWith(".md") && !LM.isLiving(tab.rel);
-  $("bAskAi").hidden = !aiable;
-  if (aiable) $("bAskAi").onclick = () => promptNoteAI(tab.rel, true);
+  // ADR-0005 (owner request): habilidade/pedir à IA/versionar live in the
+  // doc's right-side rail, not the header — a meeting's living surface
+  // renders its own rail (paintMeetingSurface/meetingRailHtml) instead.
+  if (!LM.isLiving(tab.rel)) renderDocRail(tab, isGuide);
   // ADR-0010: a meeting living file (reuniao.md) is its own append-only surface —
   // transcript + artefatos rail + análise/consent; no free-form CM6 editing.
   if (LM.isLiving(tab.rel)) {
     B.modes.hidden = true;
     $("bPromoted").hidden = true;
     $("bDocActs").hidden = true;
+    $("bDocRail").hidden = true;
     await renderMeetingLiving(tab, stale);
     if (stale()) return;
     B.wsBody.scrollTop = 0;
@@ -2519,6 +3092,42 @@ async function renderActive() {
   updatePromotedBadge(tab);
   B.wsBody.scrollTop = 0;
   markSel();
+}
+
+// ADR-0005 (owner request): habilidade / pedir à IA / versionar as a right-
+// side rail on the document viewer — the SAME pattern (visible buttons; the
+// habilidade control is a dropdown + ▶ play button, never a menu) used on
+// the meeting surface and the acervo header. Each action shows only when it
+// actually applies to the open doc; the whole rail hides when none do.
+function renderDocRail(tab, isGuide) {
+  const rail = $("bDocRail");
+  if (!rail) return;
+  const isMd = tab.rel.endsWith(".md") && tab.rel !== MANUAL_REL;
+  // "pedir à IA": non-versioned markdown only (evolves a note in place) —
+  // same scope as before, just relocated.
+  const aiable = !isGuide && isMd && tab.rel.startsWith("brainstorming/");
+  // "habilidade": any markdown file except the loop guide/manual.
+  const skillable = !isGuide && isMd;
+  // "versionar": viewing a context file — a shortcut into the same action
+  // as the acervo header's git button.
+  const versionable = !isGuide && tab.kind === "context";
+  if (!aiable && !skillable && !versionable) { rail.hidden = true; rail.innerHTML = ""; return; }
+  rail.hidden = false;
+  // each action is its own bordered card: "pedir à IA" and "versionar" must
+  // never read as a continuation of the habilidade dropdown (owner feedback).
+  rail.innerHTML =
+    (skillable ? habilidadeCardHtml("railSkill") : "") +
+    (aiable ? `<div class="rail-sec card">` +
+      `<button class="railbtn" id="railAskAiBtn">✦ ${t("pedir à IA…")}</button>` +
+      `<p class="rail-desc">${t("aplica um pedido seu sobre este arquivo — evolui, não apaga.")}</p>` +
+    `</div>` : "") +
+    (versionable ? `<div class="rail-sec card">` +
+      `<button class="railbtn" id="railVersionarBtn">⎇ ${t("versionar")}</button>` +
+      `<p class="rail-desc">${t("commita as mudanças deste contexto numa branch rfc/… local.")}</p>` +
+    `</div>` : "");
+  if (skillable) wireHabilidadeCard("railSkill", tab.rel);
+  if (aiable) $("railAskAiBtn").onclick = () => promptNoteAI(tab.rel, true);
+  if (versionable) $("railVersionarBtn").onclick = promptVersionar;
 }
 
 // ADR-0009: a persistent "promovido → <contexto>" badge, read from the source
@@ -2651,6 +3260,12 @@ async function onRefClick(sourceRel, fm, token, anchorEl) {
       const asset = await invoke("brain_read_asset", { rel: res.rel });
       toggleInlineImage(anchorEl, asset.mime, asset.base64, res.rel);
     } catch (e) { toast(t("não abri a imagem")); clog("read_asset error: " + e); }
+    return;
+  }
+  // external ref (loro-sync, e.g. a Drive doc) → OS default browser
+  if (res.tipo === "link") {
+    try { await invoke("brain_open_link", { url: res.rel }); }
+    catch (e) { toast(t("não abri o link")); clog("open_link error: " + e); }
     return;
   }
   // audio / other → OS default app (guarded to the acervo root in Rust)
@@ -2893,9 +3508,13 @@ function openNewAcervo() {
   creatingNew = true;
   B.wizTitle.textContent = t("Novo projeto (acervo)");
   B.nameInput.value = ""; B.ctxInput.value = ""; brainDir = ""; B.dirBtn.textContent = "…";
-  B.autoInput.checked = false; B.gitInput.checked = true;
+  B.gitInput.checked = true;
   B.agentInput.value = "claude";
-  wizColor = ""; wizTemplate = "generico"; wizCtxDirty = false;
+  // language starts at the current UI language; changing it in the wizard
+  // (ADR-0005 §6) switches the UI live and becomes the acervo's gen language
+  if (B.wizLang) B.wizLang.value = settings.uiLang;
+  // default to automático (the previous checkbox defaulted on) — ADR-0005
+  wizColor = ""; wizTemplate = AUTO_TEMPLATE_ID; wizCtxDirty = false;
   drawWizColors();
   loadWizTemplates();
   B.cancelBtn.hidden = false; B.setupErr.hidden = true;
@@ -2915,6 +3534,11 @@ async function loadWizTemplates() {
 function drawWizTemplates() {
   const box = B.wizTemplates;
   box.innerHTML = "";
+  // synthetic "automático" first — its own mode, not a backend preset
+  const auto = document.createElement("option");
+  auto.value = AUTO_TEMPLATE_ID;
+  auto.textContent = t("automático");
+  box.appendChild(auto);
   for (const tpl of wizTemplates) {
     const o = document.createElement("option");
     o.value = tpl.id;
@@ -2925,6 +3549,8 @@ function drawWizTemplates() {
   box.value = wizTemplate;
   box.onchange = () => {
     wizTemplate = box.value;
+    // automático → contexts are optional (the loop creates them); a vertical
+    // prefills its predefined contexts as before.
     const tpl = wizTemplates.find((x) => x.id === wizTemplate);
     if (tpl) B.ctxInput.value = LoroPresets.prefillContexts(B.ctxInput.value, wizCtxDirty, tpl.contexts);
     drawWizHint();
@@ -2932,9 +3558,14 @@ function drawWizTemplates() {
   drawWizHint();
 }
 function drawWizHint() {
-  const sel = wizTemplates.find((x) => x.id === wizTemplate);
   const hint = B.wizTemplateHint;
   hint.innerHTML = "";
+  if (wizTemplate === AUTO_TEMPLATE_ID) {
+    hint.hidden = false;
+    hint.textContent = t("o loop cria e atribui contexto sozinho ao processar a fila — você não precisa definir contextos agora (dá para desligar depois em Configurações).");
+    return;
+  }
+  const sel = wizTemplates.find((x) => x.id === wizTemplate);
   if (!sel) { hint.hidden = true; return; }
   hint.hidden = false;
   hint.append(document.createTextNode(sel.description + " "));
@@ -2955,6 +3586,16 @@ function drawWizHint() {
 B.ctxInput.addEventListener("input", () => { wizCtxDirty = true; });
 B.cancelBtn.addEventListener("click", () => { creatingNew = false; applyAccent(activeColor()); brainRefresh(); });
 function activeColor() { const a = acervos.find((x) => x.id === activeAcervo); return a ? a.color : ""; }
+// ADR-0005 §6: choosing the acervo language in the wizard switches the whole
+// UI live (the wizard itself relabels), so the choice is visible before you
+// commit; it's then sent as the acervo's generation language on create.
+if (B.wizLang) B.wizLang.addEventListener("change", async (e) => {
+  settings.uiLang = e.target.value; persistSettings();
+  try { settings.uiLang = await invoke("ui_set_lang", { lang: e.target.value }); } catch (_) {}
+  if (el.uiLang) el.uiLang.value = settings.uiLang;
+  applyI18n(); rerenderForLang();
+  drawWizTemplates();
+});
 
 // setup / criar acervo
 B.dirBtn.addEventListener("click", async () => {
@@ -2965,15 +3606,20 @@ B.createBtn.addEventListener("click", async () => {
   const contexts = B.ctxInput.value.split(",").map((s) => s.trim()).filter(Boolean);
   B.setupErr.hidden = true;
   try {
+    // ADR-0005: automático is a synthetic picker option → autoContext + generico
+    // seeding; any real template = manual (autoContext off).
+    const auto = wizTemplate === AUTO_TEMPLATE_ID;
     const av = await invoke("brain_setup", {
       dir: brainDir, contexts,
       name: B.nameInput.value.trim() || null,
-      autoContext: B.autoInput.checked,
+      autoContext: auto,
       gitInit: B.gitInput.checked,
       color: wizColor || null,
-      template: wizTemplate || null,
+      template: auto ? "generico" : (wizTemplate || null),
       agent: B.agentInput.value.trim() || null,
-      // ADR-0002 §1: no per-project language — seeds follow the UI language
+      // ADR-0005 §6 (revises ADR-0002 §1): the acervo's generation language is
+      // an explicit wizard choice, not implicitly the UI language.
+      lang: B.wizLang ? B.wizLang.value : null,
     });
     acervos = av.acervos || []; activeAcervo = av.active || "";
     creatingNew = false;
@@ -2987,7 +3633,9 @@ B.createBtn.addEventListener("click", async () => {
 
 // ---- versionar (branch + commit local) → propor mudança (push + PR/RFC) ----
 // O Git fica escondido: o usuário só "versiona" e depois "propõe a mudança".
-B.gitBtn.addEventListener("click", () => {
+// Extraída para função (ADR-0005): o mesmo botão "versionar" também aparece
+// no rail lateral de um documento de contexto, não só no cabeçalho da acervo.
+function promptVersionar() {
   openEditor(
     t("Versionar mudança — descreva em uma linha"),
     "",
@@ -3000,7 +3648,8 @@ B.gitBtn.addEventListener("click", () => {
       if (r.warn) toast(tErr(r.warn), 5000);
     }
   );
-});
+}
+B.gitBtn.addEventListener("click", promptVersionar);
 
 // ADR-0002 §2 — branch picker: see the current branch, switch to another local
 // branch or create a new rfc/. Switching with a dirty tree is blocked by the
@@ -3239,6 +3888,8 @@ async function refreshEnv(force) {
 function renderGhCard() {
   const d = envDoctor;
   B.proposeBtn.hidden = !(d && d.versioningEnabled);
+  // the (i) explaining "propor mudança" shows/hides with the button itself
+  { const ph = $("proposeHelp"); if (ph) ph.hidden = B.proposeBtn.hidden; }
   // opt-in: só mostra o card quando o usuário caminha p/ colaboração (gh instalado
   // ou já há um remoto). Sem isso, o fluxo segue 100% local, sem ruído.
   const heading = d && (d.gh.detail || d.remote.detail);
@@ -3648,7 +4299,12 @@ async function termRunAgent(cmd) {
       scheduleActionRefresh(); // the skill writes files the sidebar must show
       return;
     }
-    if (st && st.open && !st.agentRunning && termReady && !relaunched) {
+    // ADR-0005: term_open already typed the launch line — a fresh session
+    // reports agentRunning:false for a few polls simply because `ps` hasn't
+    // caught up yet. Retyping it during that grace window is the bug (agent
+    // command appearing twice); only relaunch once the grace window passed
+    // and the agent still isn't there (it actually exited).
+    if (st && st.open && !st.agentRunning && !st.justLaunched && termReady && !relaunched) {
       relaunched = true; // reused session where the agent exited: bring it back
       await invoke("term_input", { data: agent + "\n" }).catch(() => {});
     }

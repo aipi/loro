@@ -203,23 +203,37 @@ na raiz do acervo — ele define estrutura, estilo, a fonte oficial da verdade
 (`context.md`), os hotspots e as regras — e siga-o à risca. Trabalhe somente
 dentro desta pasta.
 
-0. Se `inbox/_prompt.md` existir, siga-o ANTES do processamento padrão. Ao
-   terminar, **arquive-o** em `.brain/prompt-history/<AAAA-MM-DD-HHMM>.md` e
-   **remova** `inbox/_prompt.md` (o histórico não é versionado).
+0. Se `inbox/_prompt.md` existir, siga-o ANTES do processamento padrão — por
+   exemplo, se ele pedir para "salvar anexos referenciados no contexto"
+   (ADR-0005, opt-in acionado pelo checkbox de "gerar contexto"): para cada
+   item processado que tiver um `ref` local em `anexos/` (`tipo: doc`,
+   `caminho: acervo://brainstorming/.../anexos/...`), copie esse arquivo
+   para `contextos/<c>/anexos/` (o `<c>` de destino daquele item) e linke-o
+   a partir do `context.md`/`CHANGELOG.md` correspondente. Ao terminar,
+   **arquive** `inbox/_prompt.md` em `.brain/prompt-history/<AAAA-MM-DD-
+   HHMM>.md` e **remova** `inbox/_prompt.md` (o histórico não é versionado).
+0.5. Leia `.loro/settings.json` se existir (`{"autoContext": bool}`) — ausente
+   ou ilegível conta como `true` (padrão). Esse valor é a permissão para criar
+   um contexto NOVO sozinho (ADR-0005); nunca afeta atribuir a um contexto
+   já existente.
 1. Leia `.brain/state.json`; liste `inbox/` e filtre o que ainda não foi processado (ignore `_prompt.md`).
 2. Nada novo? Responda `brain: nada novo` e encerre.
 3. Para cada arquivo novo: se o nome tiver prefixo `<contexto>--`, direcione
    àquele contexto (pode ser hierárquico `area/sub`); senão classifique pelo
-   conteúdo — e se nenhum contexto existente couber, **sugira criar um novo**.
-   Classifique a origem (reunião × documento/nota), gere o registro em `reunioes/`
-   ou `notas/`, acrescente entrada em prosa no `contextos/<c>/CHANGELOG.md`, e
-   **atualize o `contextos/<c>/context.md`**: o consolidado nas seções 1–5, o que
-   ainda estiver em aberto/contraditório como **hotspot** na seção 6. Nunca crie
-   arquivos de ideia. **Nunca referencie o arquivo de reunião** (fonte efêmera).
-   Se o domínio virar um COMPOSTO (DDD), quebre em subdomínios
-   `contextos/<c>/<sub>/` (mesma estrutura, recursiva); o pai vira overview+índice.
-4. Mova o cru para `processed/`, atualize `state.json`, anexe em
-   `.brain/activity.log` e atualize `INDEX.md`.
+   conteúdo. Se nenhum contexto existente couber: com `autoContext: true`,
+   **crie um contexto novo** livremente; com `autoContext: false`, **NÃO
+   crie** — deixe o item em `inbox/` (não mova para `processed/`) e relate ao
+   final que ele precisa de um contexto atribuído manualmente pela pessoa.
+   Quando for criar ou atribuir: classifique a origem (reunião × documento/nota),
+   gere o registro em `reunioes/` ou `notas/`, acrescente entrada em prosa no
+   `contextos/<c>/CHANGELOG.md`, e **atualize o `contextos/<c>/context.md`**: o
+   consolidado nas seções 1–5, o que ainda estiver em aberto/contraditório como
+   **hotspot** na seção 6. Nunca crie arquivos de ideia. **Nunca referencie o
+   arquivo de reunião** (fonte efêmera). Se o domínio virar um COMPOSTO (DDD),
+   quebre em subdomínios `contextos/<c>/<sub>/` (mesma estrutura, recursiva); o
+   pai vira overview+índice.
+4. Mova o cru para `processed/` (exceto os itens deixados pendentes no passo 3),
+   atualize `state.json`, anexe em `.brain/activity.log` e atualize `INDEX.md`.
 5. Respeite estrutura já existente (só complete lacunas; nunca sobrescreva). Não
    abra PRs nem versione: quem propõe mudança é a pessoa, pelos botões do Loro.
 6. Ao final, informe em 1–2 linhas o que fez.
@@ -372,21 +386,36 @@ You are the curator of this knowledge base. Read `AGENTS.md` (or `CLAUDE.md`) at
 the base root — it defines the structure, style, source of truth (`context.md`),
 hotspots and rules — and follow it strictly. Work only inside this folder.
 
-0. If `inbox/_prompt.md` exists, follow it BEFORE default processing; then archive
-   it to `.brain/prompt-history/<YYYY-MM-DD-HHMM>.md` and remove it (not versioned).
+0. If `inbox/_prompt.md` exists, follow it BEFORE default processing — for
+   example, if it asks to "save anexos referenced in the context" (ADR-0005,
+   opt-in via the "gerar contexto" checkbox): for each processed item that
+   has a local ref under `anexos/` (`tipo: doc`, `caminho:
+   acervo://brainstorming/.../anexos/...`), copy that file into
+   `contextos/<c>/anexos/` (that item's destination `<c>`) and link it from
+   the matching `context.md`/`CHANGELOG.md`. When done, archive
+   `inbox/_prompt.md` to `.brain/prompt-history/<YYYY-MM-DD-HHMM>.md` and
+   remove it (not versioned).
+0.5. Read `.loro/settings.json` if present (`{"autoContext": bool}`) — absent or
+   unreadable counts as `true` (default). This is the permission to create a
+   NEW context on its own (ADR-0005); it never affects assigning to an
+   existing context.
 1. Read `.brain/state.json`; list `inbox/` and filter unprocessed (ignore `_prompt.md`).
 2. Nothing new? Reply `brain: nothing new` and stop.
-3. For each new file: honor a `<context>--` prefix; else classify by content, and
-   if no existing context fits, **suggest creating a new one**. Classify (meeting
-   vs note), write the structured record in `reunioes/` or `notas/`, append a prose
-   entry to `contextos/<c>/CHANGELOG.md`, and **update `contextos/<c>/context.md`**:
-   consolidated knowledge in sections 1–5, anything still open/contradictory as a
-   **hotspot** in section 6. Never create idea files. **Never reference the meeting
-   file** (ephemeral, unversioned). If the domain becomes a COMPOSITE (DDD), split
-   it into `contextos/<c>/<sub>/` subdomains (same recursive shape); the parent
-   becomes an overview + index.
-4. Move raw to `processed/`, update `state.json`, append to `.brain/activity.log`,
-   update `INDEX.md`.
+3. For each new file: honor a `<context>--` prefix; else classify by content.
+   If no existing context fits: with `autoContext: true`, **create a new
+   context** freely; with `autoContext: false`, **do NOT create one** — leave
+   the item in `inbox/` (do not move it to `processed/`) and report at the end
+   that it needs a context assigned manually by the person. When creating or
+   assigning: classify (meeting vs note), write the structured record in
+   `reunioes/` or `notas/`, append a prose entry to `contextos/<c>/CHANGELOG.md`,
+   and **update `contextos/<c>/context.md`**: consolidated knowledge in
+   sections 1–5, anything still open/contradictory as a **hotspot** in section
+   6. Never create idea files. **Never reference the meeting file** (ephemeral,
+   unversioned). If the domain becomes a COMPOSITE (DDD), split it into
+   `contextos/<c>/<sub>/` subdomains (same recursive shape); the parent becomes
+   an overview + index.
+4. Move raw to `processed/` (except items left pending in step 3), update
+   `state.json`, append to `.brain/activity.log`, update `INDEX.md`.
 5. Respect existing structure (fill gaps only; never overwrite). Do not open PRs
    or version: the person proposes changes via Loro's buttons.
 6. Finish with a 1–2 line summary of what you did.
@@ -696,6 +725,473 @@ pub fn loro_note_skill(lang: &str) -> &'static str {
     }
 }
 
+// ---- external-source sync (/loro-sync, ADR-0005) ----
+// Attaches an external item as a LOCAL anexo file (brainstorming/<tema>/
+// anexos/) referenced by a note — content lives in the acervo, never in a
+// log (BR-8 stays satisfied: logs/manifests are still content-free; this is
+// the acervo's own working material, exactly like a meeting transcript
+// already is). Sources: drive (Gemini notes — full doc), slack/jira/
+// confluence (agent-written summaries) — each identified directly by the
+// user (channel/key/title/link), never guessed. ADR-0005 supersedes
+// ADR-0005 §4's stricter "link only, never content" framing.
+pub const LORO_SYNC_SKILL: &str = r#"---
+description: Traz um item externo (Drive/Slack/Jira/Confluence) para um anexo local, referenciado numa nota (ADR-0005)
+argument-hint: <fonte:drive|slack|jira|confluence> <alvo-nota-ou-tema> <identificador>
+---
+
+Argumentos: `$ARGUMENTS`
+O PRIMEIRO token é a FONTE; o SEGUNDO é o ALVO (uma nota `.md` ou um tema de
+brainstorming, relativo à raiz do acervo); o RESTO é o IDENTIFICADOR do item
+na fonte — o formato depende da fonte (veja abaixo).
+
+Você é o assistente de sincronização externa do Loro. Trabalhe SOMENTE dentro
+de `brainstorming/` — nunca toque em `contextos/` (mundo versionado). Em toda
+fonte, **NUNCA anexe sem confirmação explícita do usuário** sobre qual item é
+(BR-1); e **NUNCA cole o conteúdo/resumo em log ou manifesto** (BR-8) — ele
+vai só no arquivo de anexo, dentro do acervo local.
+
+Se a fonte não for uma das listadas no `argument-hint`, diga claramente que
+ainda não é suportada e pare — não invente comportamento.
+
+Fonte `drive` (notas do Gemini no Google Drive) — identificador OPCIONAL
+(busca ou link):
+1. Se o identificador for um LINK do Google Drive/Docs (começa com
+   `https://docs.google.com/` ou `https://drive.google.com/`): pule a busca,
+   vá direto para a confirmação usando os metadados desse documento (título,
+   dono).
+2. Caso contrário, busque no Google Drive documentos cujo título contenha
+   "Anotações do Gemini" (use o identificador, se houver, como palavra-chave
+   adicional do título — ex. o nome da reunião). **A busca NUNCA deve
+   restringir por dono do documento** (nada de `owner = 'me'`): reuniões
+   compartilhadas por colegas têm dono diferente do usuário e PRECISAM
+   aparecer no resultado. Se a busca inicial não encontrar o esperado, tente
+   de novo com uma busca mais ampla antes de desistir.
+3. Aceite um candidato SOMENTE se o título contiver "Anotações do Gemini" E
+   (a pasta-mãe for "Meet Recordings" da conta atual OU o dono do documento
+   for outra pessoa). Um documento compartilhado normalmente não expõe
+   pasta-mãe nenhuma para quem não é dono — isso é esperado, não é motivo
+   para rejeitar. Nunca infira pelo conteúdo do documento.
+4. Liste os candidatos (título, data, dono) e peça confirmação. Se nada for
+   encontrado, sugira rodar de novo passando um LINK direto como
+   identificador. **Ao confirmar, exporte o texto do documento INTEIRO**
+   (via o conector do Drive) para o anexo (passo 6).
+
+Fonte `slack` — identificador OBRIGATÓRIO: o nome do canal (ex. `#eng-loro`
+ou `eng-loro`):
+1. Use o conector do Slack disponível para ler as mensagens recentes desse
+   canal (e fixadas/pinned, se houver).
+2. Liste as mensagens candidatas (autor, data, um trecho curto só para
+   identificação visual) e peça ao usuário para confirmar QUAL mensagem/
+   thread representa a reunião ou decisão a trazer. Se o canal não existir
+   ou não houver mensagens relevantes, diga isso claramente em vez de
+   inventar uma.
+3. **Ao confirmar, escreva um RESUMO** da mensagem/thread (nunca copie o
+   texto cru) para o anexo (passo 6).
+
+Fonte `jira` — identificador OBRIGATÓRIO: a chave do ticket (ex. `PROJ-123`)
+ou o link direto do ticket:
+1. Use o conector do Jira/Atlassian disponível para buscar esse ticket
+   exato pela chave (extraindo a chave do link, se um link foi passado).
+2. Mostre o título/resumo e status do ticket encontrado e peça confirmação
+   antes de trazer — mesmo sendo um identificador exato, confirme que é o
+   ticket certo.
+3. **Ao confirmar, escreva um RESUMO** (título, status, pontos-chave — nunca
+   a descrição/comentários inteiros) para o anexo (passo 6).
+
+Fonte `confluence` — identificador OBRIGATÓRIO: o título exato da página ou
+o link direto:
+1. Se for um link, use-o direto. Se for um título, use o conector do
+   Confluence/Atlassian disponível para buscar a página por esse título.
+2. Se houver mais de uma página com título parecido, liste as candidatas
+   (título, espaço, atualizado em) e peça confirmação de qual é a certa.
+3. **Ao confirmar, escreva um RESUMO** do conteúdo da página (nunca a
+   página inteira) para o anexo (passo 6).
+
+6. Em qualquer fonte, ao confirmar: crie
+   `brainstorming/<tema>/anexos/<slug>.md` com front-matter `fonte:
+   drive|slack|jira|confluence`, `link: <link original>`, `data: <data>`
+   (mesmo formato de front-matter das notas existentes) e o
+   conteúdo/resumo no corpo. Depois edite a nota-alvo (crie uma nova nota em
+   `brainstorming/<tema>/notas/` se o alvo for um tema) e acrescente ao
+   `refs:` uma entrada `tipo: doc`, `caminho: acervo://brainstorming/<tema>/
+   anexos/<slug>.md` — uma referência LOCAL, nunca a URL externa direto no
+   `refs:`.
+
+Regras de rigor (ADR-0002 §5):
+- **Nunca assuma premissas** não declaradas: o que não estiver confirmado pelo
+  usuário é incerteza — pergunte, não adivinhe.
+- **Varredura eficiente:** para ler muitos arquivos, delegue a leitura a
+  subagentes (Task) num modelo rápido (ex. Haiku) retornando só o essencial;
+  reserve o modelo principal para a síntese.
+- **Leitura barata (ADR-0004):** comece pelo `INDEX.md` e pelo Sumário (§0) de
+  cada `context.md`; localize IDs estáveis (`D-…`, `H-…`) com busca e leia
+  somente a seção necessária — o arquivo inteiro é o último recurso.
+"#;
+
+pub const LORO_SYNC_SKILL_EN: &str = r#"---
+description: Brings an external item (Drive/Slack/Jira/Confluence) into a local anexo, referenced by a note (ADR-0005)
+argument-hint: <source:drive|slack|jira|confluence> <target-note-or-topic> <identifier>
+---
+
+Arguments: `$ARGUMENTS`
+The FIRST token is the SOURCE; the SECOND is the TARGET (a `.md` note or a
+brainstorming topic, relative to the acervo root); the REST is the item's
+IDENTIFIER in that source — the shape depends on the source (see below).
+
+You are Loro's external-sync assistant. Work ONLY inside `brainstorming/` —
+never touch `contextos/` (the versioned world). For every source, **NEVER
+attach without the user's explicit confirmation** of which item it is
+(BR-1); and **NEVER paste the content/summary into a log or manifest**
+(BR-8) — it only goes into the anexo file, inside the local acervo.
+
+If the source is not one of the ones listed in `argument-hint`, say clearly
+that it is not supported yet and stop — do not invent behavior.
+
+Source `drive` (Gemini notes on Google Drive) — identifier OPTIONAL (a search
+keyword or a link):
+1. If the identifier is a Google Drive/Docs LINK (starts with
+   `https://docs.google.com/` or `https://drive.google.com/`): skip the
+   search and go straight to confirmation using that document's metadata
+   (title, owner).
+2. Otherwise, search Google Drive for documents whose title contains
+   "Anotações do Gemini" (use the identifier, if given, as an extra title
+   keyword — e.g. the meeting's name). **The search must NEVER filter by
+   document owner** (no `owner = 'me'`): meetings shared by colleagues have a
+   different owner than the current user and MUST show up in the results. If
+   the first search does not find what is expected, retry with a broader
+   search before giving up.
+3. Accept a candidate ONLY if the title contains "Anotações do Gemini" AND
+   (the parent folder is "Meet Recordings" on the current account OR the
+   document's owner is someone else). A shared document typically exposes no
+   parent folder at all to a non-owner — that is expected, not a reason to
+   reject. Never infer from the document's content.
+4. List the candidates (title, date, owner) and ask for confirmation. If
+   nothing is found, suggest re-running with a direct link as the
+   identifier. **On confirmation, export the document's FULL text** (via the
+   Drive connector) into the anexo (step 6).
+
+Source `slack` — identifier REQUIRED: the channel name (e.g. `#eng-loro` or
+`eng-loro`):
+1. Use the available Slack connector to read that channel's recent messages
+   (and pinned ones, if any).
+2. List the candidate messages (author, date, a short excerpt for visual
+   identification only) and ask the user to confirm WHICH message/thread
+   represents the meeting or decision to bring in. If the channel does not
+   exist or has no relevant messages, say so plainly instead of inventing
+   one.
+3. **On confirmation, write a SUMMARY** of the message/thread (never copy
+   the raw text) into the anexo (step 6).
+
+Source `jira` — identifier REQUIRED: the ticket key (e.g. `PROJ-123`) or a
+direct ticket link:
+1. Use the available Jira/Atlassian connector to fetch that exact ticket by
+   key (extracting the key from the link, if a link was given).
+2. Show the found ticket's title/summary and status and ask for
+   confirmation before bringing it in — even for an exact identifier,
+   confirm it is the right ticket.
+3. **On confirmation, write a SUMMARY** (title, status, key points — never
+   the full description/comments) into the anexo (step 6).
+
+Source `confluence` — identifier REQUIRED: the page's exact title or a
+direct link:
+1. If it is a link, use it directly. If it is a title, use the available
+   Confluence/Atlassian connector to search for a page with that title.
+2. If more than one page has a similar title, list the candidates (title,
+   space, updated date) and ask which one is correct.
+3. **On confirmation, write a SUMMARY** of the page's content (never the
+   full page) into the anexo (step 6).
+
+6. For any source, on confirmation: create
+   `brainstorming/<topic>/anexos/<slug>.md` with front-matter `fonte:
+   drive|slack|jira|confluence`, `link: <original link>`, `data: <date>`
+   (same front-matter shape as existing notes) and the content/summary in
+   the body. Then edit the target note (create a new note under
+   `brainstorming/<topic>/notas/` if the target is a topic) and append to
+   its `refs:` an entry `tipo: doc`, `caminho: acervo://brainstorming/<topic>/
+   anexos/<slug>.md` — a LOCAL reference, never the external URL directly in
+   `refs:`.
+
+Rigor rules (ADR-0002 §5):
+- **Never assume unstated premises.** Anything not confirmed by the user is an
+  uncertainty — ask, do not guess.
+- **Efficient scanning:** to read many files, delegate reading to subagents
+  (Task) on a fast model (e.g. Haiku) returning only the essentials; keep the
+  main model for synthesis.
+- **Cheap reading (ADR-0004):** start from `INDEX.md` and each `context.md`
+  Summary (§0); locate stable IDs (`D-…`, `H-…`) via search and read only the
+  needed section — the whole file is the last resort.
+"#;
+
+pub fn loro_sync_skill(lang: &str) -> &'static str {
+    if lang == "en" {
+        LORO_SYNC_SKILL_EN
+    } else {
+        LORO_SYNC_SKILL
+    }
+}
+
+// ---- user-authored tools (/loro-tool, ADR-0005 §E) ----
+// A meta-skill: creates or evolves OTHER skills. Same dual create-or-evolve
+// shape as /loro-note, but targeting `.claude/commands/` instead of
+// `brainstorming/.../notas/` — the created file becomes its own slash-command
+// immediately (Claude Code discovers any .md there). Importing an
+// already-written skill (no AI drafting) is a separate path — the app's own
+// "importar skill existente" UI writes the file directly (brain_new_tool),
+// never through this skill.
+pub const LORO_TOOL_SKILL: &str = r#"---
+description: Cria ou evolui uma ferramenta customizada (skill) a partir de uma descrição (ADR-0005)
+argument-hint: <descrição-da-ferramenta> | <ferramenta-existente.md> <pedido>
+---
+
+Argumentos: `$ARGUMENTS`
+
+Você cria/evolui ferramentas customizadas do usuário — skills que viram
+comandos de barra (`/nome-da-ferramenta`) reais assim que o arquivo existe.
+Trabalhe SOMENTE dentro de `.claude/commands/`.
+
+- Se o PRIMEIRO token for o caminho de um `.md` já existente em
+  `.claude/commands/`: é para EVOLUIR essa ferramenta — leia o arquivo e
+  aplique o resto do argumento (o pedido) sobre ele, editando no lugar;
+  preserve o que já funciona, evolua, não apague.
+- Caso contrário: o argumento inteiro é a DESCRIÇÃO de uma ferramenta NOVA.
+  Derive um nome curto em kebab-case a partir da descrição — NUNCA um dos
+  nomes reservados (`loro-context`, `loro-analyse`, `loro-question`,
+  `loro-ask`, `loro-note`, `loro-sync`, `loro-tool`); em colisão com uma
+  ferramenta já existente, acrescente um sufixo. Crie
+  `.claude/commands/<nome>.md` com:
+  - front-matter `description:` (curta, o que a ferramenta faz) e, se a
+    ferramenta precisar de entrada, `argument-hint:`;
+  - um prompt objetivo que descreva o que fazer com `$ARGUMENTS`, no mesmo
+    espírito das outras skills deste acervo (local-first quando fizer
+    sentido; nunca assumir premissas não declaradas).
+- Ao final, diga o nome do comando resultante (`/<nome>`) e uma frase sobre
+  o que ele faz.
+
+Regras de rigor (ADR-0002 §5):
+- **Nunca assuma premissas** não declaradas: se a descrição for vaga sobre o
+  que a ferramenta deve fazer, registre isso no prompt gerado como uma
+  pergunta em aberto, em vez de inventar comportamento.
+- **Varredura eficiente:** para ler muitos arquivos, delegue a leitura a
+  subagentes (Task) num modelo rápido (ex. Haiku) retornando só o essencial;
+  reserve o modelo principal para a síntese.
+- **Leitura barata (ADR-0004):** comece pelo `INDEX.md` e pelo Sumário (§0) de
+  cada `context.md`; localize IDs estáveis (`D-…`, `H-…`) com busca e leia
+  somente a seção necessária — o arquivo inteiro é o último recurso.
+"#;
+
+pub const LORO_TOOL_SKILL_EN: &str = r#"---
+description: Creates or evolves a custom tool (skill) from a description (ADR-0005)
+argument-hint: <tool-description> | <existing-tool.md> <request>
+---
+
+Arguments: `$ARGUMENTS`
+
+You create/evolve the user's custom tools — skills that become real
+slash-commands (`/tool-name`) as soon as the file exists. Work ONLY inside
+`.claude/commands/`.
+
+- If the FIRST token is the path of an existing `.md` in
+  `.claude/commands/`: EVOLVE that tool — read the file and apply the rest
+  of the argument (the request) to it, editing in place; preserve what
+  already works, evolve, do not erase.
+- Otherwise: the whole argument is the DESCRIPTION of a NEW tool. Derive a
+  short kebab-case name from the description — NEVER one of the reserved
+  names (`loro-context`, `loro-analyse`, `loro-question`, `loro-ask`,
+  `loro-note`, `loro-sync`, `loro-tool`); on collision with an existing
+  tool, add a suffix. Create `.claude/commands/<name>.md` with:
+  - a `description:` front-matter field (short, what the tool does) and,
+    if the tool needs input, `argument-hint:`;
+  - an objective prompt describing what to do with `$ARGUMENTS`, in the
+    same spirit as this acervo's other skills (local-first when it makes
+    sense; never assume unstated premises).
+- At the end, state the resulting command's name (`/<name>`) and a
+  sentence about what it does.
+
+Rigor rules (ADR-0002 §5):
+- **Never assume unstated premises.** If the description is vague about
+  what the tool should do, record that in the generated prompt as an open
+  question instead of inventing behavior.
+- **Efficient scanning:** to read many files, delegate reading to subagents
+  (Task) on a fast model (e.g. Haiku) returning only the essentials; keep
+  the main model for synthesis.
+- **Cheap reading (ADR-0004):** start from `INDEX.md` and each `context.md`
+  Summary (§0); locate stable IDs (`D-…`, `H-…`) via search and read only
+  the needed section — the whole file is the last resort.
+"#;
+
+pub fn loro_tool_skill(lang: &str) -> &'static str {
+    if lang == "en" {
+        LORO_TOOL_SKILL_EN
+    } else {
+        LORO_TOOL_SKILL
+    }
+}
+
+// ---- built-in generative habilidades: apresentação / artefato (ADR-0005) ----
+// Both write into anexos/ — brainstorming/<tema>/anexos/ or contextos/<c>/
+// anexos/ depending on the alvo (presentations are one KIND of anexo, not a
+// separate folder — the acervo's brainstorming folders are reunioes/, notas/,
+// anexos/) — and, when the alvo is a specific note, append a `ref` to it
+// (same local-doc ref pattern as /loro-sync's anexos, ADR-0005).
+// Markdown is the default deliverable (any agent can always produce it); a
+// real .pptx/.xlsx is fine if the agent has the means, but never assumed.
+pub const LORO_PRESENTATION_SKILL: &str = r#"---
+description: Gera uma apresentação (deck) a partir de um brainstorming ou contexto (ADR-0005)
+argument-hint: <alvo:tema-ou-contexto-ou-nota> <descrição>
+---
+
+Argumentos: `$ARGUMENTS`
+O PRIMEIRO token é o ALVO (um tema `brainstorming/<tema>`, uma nota dentro
+dele, ou um `contextos/<c>`); o RESTO é a DESCRIÇÃO do que a apresentação
+deve cobrir.
+
+1. O material de saída vai em `anexos/` — `contextos/<c>/anexos/` se o alvo
+   for dentro de `contextos/`, ou `brainstorming/<tema>/anexos/` se for
+   dentro de `brainstorming/` (não existe pasta separada de apresentações;
+   uma apresentação é só mais um tipo de anexo). Crie a pasta se não existir.
+2. Funde-se no conteúdo já existente no alvo (o `context.md`, ou as
+   notas/reuniões do tema) para que a apresentação reflita o que já se sabe
+   — não invente fatos não sustentados pela base.
+3. Gere o deck em markdown (um `## ` por slide é o padrão mais simples e
+   sempre reproduzível); se você tiver como gerar um `.pptx`/`.xlsx` de
+   verdade, pode, mas nunca assuma uma ferramenta que não existe.
+4. Salve como `<pasta-de-saída>/<slug-da-descrição>.md` (ou a extensão
+   real gerada). Se o alvo for uma nota específica (não só um tema/contexto),
+   acrescente ao `refs:` dela uma entrada `tipo: doc`, `caminho:
+   acervo://<caminho-do-arquivo-criado>`.
+5. Ao final, diga onde o material ficou salvo e um resumo de 1 linha do que
+   contém.
+
+Regras de rigor (ADR-0002 §5):
+- **Nunca assuma premissas** não declaradas: se a descrição não bastar para
+  decidir estrutura/conteúdo, pergunte antes de inventar.
+- **Varredura eficiente:** para ler muitos arquivos, delegue a leitura a
+  subagentes (Task) num modelo rápido (ex. Haiku) retornando só o essencial;
+  reserve o modelo principal para a síntese.
+- **Leitura barata (ADR-0004):** comece pelo `INDEX.md` e pelo Sumário (§0) de
+  cada `context.md`; localize IDs estáveis (`D-…`, `H-…`) com busca e leia
+  somente a seção necessária — o arquivo inteiro é o último recurso.
+"#;
+
+pub const LORO_PRESENTATION_SKILL_EN: &str = r#"---
+description: Generates a presentation (deck) from a brainstorming or context (ADR-0005)
+argument-hint: <alvo:topic-or-context-or-note> <description>
+---
+
+Arguments: `$ARGUMENTS`
+The FIRST token is the TARGET (a topic `brainstorming/<topic>`, a note
+inside it, or a `contextos/<c>`); the REST is the DESCRIPTION of what the
+presentation should cover.
+
+1. The output goes in `anexos/` — `contextos/<c>/anexos/` if the target is
+   inside `contextos/`, or `brainstorming/<topic>/anexos/` if inside
+   `brainstorming/` (there is no separate presentations folder; a
+   presentation is just one kind of anexo). Create the folder if absent.
+2. Ground yourself on what already exists at the target (the `context.md`,
+   or the topic's notes/meetings) so the presentation reflects what is
+   already known — never invent facts the base doesn't support.
+3. Generate the deck in markdown (one `## ` per slide is the simplest,
+   always-reproducible default); if you have a way to generate a real
+   `.pptx`/`.xlsx`, you may, but never assume a tool that doesn't exist.
+4. Save as `<output-folder>/<slug-from-description>.md` (or the actual
+   generated extension). If the target is a specific note (not just a
+   topic/context), append to its `refs:` an entry `tipo: doc`, `caminho:
+   acervo://<path-of-the-created-file>`.
+5. At the end, state where the material was saved and a 1-line summary of
+   its contents.
+
+Rigor rules (ADR-0002 §5):
+- **Never assume unstated premises.** If the description doesn't settle
+  structure/content, ask before inventing.
+- **Efficient scanning:** to read many files, delegate reading to subagents
+  (Task) on a fast model (e.g. Haiku) returning only the essentials; keep
+  the main model for synthesis.
+- **Cheap reading (ADR-0004):** start from `INDEX.md` and each `context.md`
+  Summary (§0); locate stable IDs (`D-…`, `H-…`) via search and read only
+  the needed section — the whole file is the last resort.
+"#;
+
+pub fn loro_presentation_skill(lang: &str) -> &'static str {
+    if lang == "en" {
+        LORO_PRESENTATION_SKILL_EN
+    } else {
+        LORO_PRESENTATION_SKILL
+    }
+}
+
+pub const LORO_ARTIFACT_SKILL: &str = r#"---
+description: Cria um artefato (arquivo) a partir de um brainstorming ou contexto, referenciado numa nota (ADR-0005)
+argument-hint: <alvo:nota-tema-ou-contexto> <descrição>
+---
+
+Argumentos: `$ARGUMENTS`
+O PRIMEIRO token é o ALVO (uma nota, um tema `brainstorming/<tema>`, ou um
+`contextos/<c>`); o RESTO é a DESCRIÇÃO do artefato a criar (ex.: um
+diagrama em texto, um script, uma planilha de dados, um documento).
+
+1. Se o alvo for dentro de `contextos/`, o artefato vai em
+   `contextos/<c>/anexos/`; se for dentro de `brainstorming/`, vai em
+   `brainstorming/<tema>/anexos/`. Crie a pasta se não existir.
+2. Crie o arquivo que melhor atende à descrição — sem assumir uma ferramenta
+   de geração que você não tem; markdown/texto é sempre uma saída válida.
+3. Se o alvo for uma nota específica, acrescente ao `refs:` dela uma
+   entrada `tipo: doc`, `caminho: acervo://<caminho-do-artefato-criado>`.
+   Se o alvo for só um tema/contexto (sem nota específica), apenas relate
+   onde o artefato ficou.
+4. Ao final, diga o caminho do artefato e uma frase sobre o que ele contém.
+
+Regras de rigor (ADR-0002 §5):
+- **Nunca assuma premissas** não declaradas: se a descrição for vaga sobre o
+  formato/conteúdo do artefato, pergunte antes de inventar.
+- **Varredura eficiente:** para ler muitos arquivos, delegue a leitura a
+  subagentes (Task) num modelo rápido (ex. Haiku) retornando só o essencial;
+  reserve o modelo principal para a síntese.
+- **Leitura barata (ADR-0004):** comece pelo `INDEX.md` e pelo Sumário (§0) de
+  cada `context.md`; localize IDs estáveis (`D-…`, `H-…`) com busca e leia
+  somente a seção necessária — o arquivo inteiro é o último recurso.
+"#;
+
+pub const LORO_ARTIFACT_SKILL_EN: &str = r#"---
+description: Creates an artifact (file) from a brainstorming or context, referenced by a note (ADR-0005)
+argument-hint: <alvo:note-topic-or-context> <description>
+---
+
+Arguments: `$ARGUMENTS`
+The FIRST token is the TARGET (a note, a topic `brainstorming/<topic>`, or a
+`contextos/<c>`); the REST is the DESCRIPTION of the artifact to create
+(e.g. a text diagram, a script, a data spreadsheet, a document).
+
+1. If the target is inside `contextos/`, the artifact goes in
+   `contextos/<c>/anexos/`; if inside `brainstorming/`, it goes in
+   `brainstorming/<topic>/anexos/`. Create the folder if absent.
+2. Create the file that best fits the description — never assume a
+   generation tool you don't have; markdown/plain text is always a valid
+   output.
+3. If the target is a specific note, append to its `refs:` an entry
+   `tipo: doc`, `caminho: acervo://<path-of-the-created-artifact>`. If the
+   target is just a topic/context (no specific note), just report where
+   the artifact ended up.
+4. At the end, state the artifact's path and a sentence about its content.
+
+Rigor rules (ADR-0002 §5):
+- **Never assume unstated premises.** If the description is vague about the
+  artifact's format/content, ask before inventing.
+- **Efficient scanning:** to read many files, delegate reading to subagents
+  (Task) on a fast model (e.g. Haiku) returning only the essentials; keep
+  the main model for synthesis.
+- **Cheap reading (ADR-0004):** start from `INDEX.md` and each `context.md`
+  Summary (§0); locate stable IDs (`D-…`, `H-…`) via search and read only
+  the needed section — the whole file is the last resort.
+"#;
+
+pub fn loro_artifact_skill(lang: &str) -> &'static str {
+    if lang == "en" {
+        LORO_ARTIFACT_SKILL_EN
+    } else {
+        LORO_ARTIFACT_SKILL
+    }
+}
+
 // ---- general Q&A over the knowledge base (ADR-0013) ----
 //
 // `/loro-ask` answers ANY question from the acervo's versioned contexts (the local
@@ -887,6 +1383,10 @@ mod tests {
                 ("analyse", meeting_analyse_skill(lang)),
                 ("answer", meeting_question_skill(lang)),
                 ("note", loro_note_skill(lang)),
+                ("sync", loro_sync_skill(lang)),
+                ("tool", loro_tool_skill(lang)),
+                ("presentation", loro_presentation_skill(lang)),
+                ("artifact", loro_artifact_skill(lang)),
             ] {
                 assert!(
                     body.contains(no_assume),
@@ -1081,6 +1581,41 @@ mod tests {
             // the bare old form is gone from the AGENTS skill reference
             assert!(!agents.contains("`/brain`"));
             assert!(!agents.contains("commands/brain.md"));
+        }
+    }
+
+    // ADR-0005: /loro-sync now brings content into a local anexo (superseding
+    // ADR-0005 §4's link-only posture) — the note's ref must point at that
+    // local file, never the external URL directly.
+    #[test]
+    fn sync_skill_writes_local_anexo_ref_not_external_url() {
+        for lang in ["pt", "en"] {
+            let skill = loro_sync_skill(lang);
+            assert!(skill.contains("anexos/"));
+            assert!(skill.contains("acervo://brainstorming"));
+            assert!(skill.contains("tipo: doc"));
+        }
+    }
+
+    // ADR-0005: the loop skill documents the opt-in "save anexos" instruction
+    // it may find in _prompt.md — copying anexos/ refs into contextos/<c>/anexos/.
+    #[test]
+    fn loop_skill_documents_optional_anexos_versioning() {
+        for lang in ["pt", "en"] {
+            let skill = brain_skill(lang);
+            assert!(skill.contains("contextos/<c>/anexos/"));
+        }
+    }
+
+    // ADR-0005: the loop skill checks .loro/settings.json's autoContext before
+    // creating a NEW context on its own — off means it must leave the item
+    // pending instead of assuming, in both languages.
+    #[test]
+    fn loop_skill_respects_auto_context_setting() {
+        for lang in ["pt", "en"] {
+            let skill = brain_skill(lang);
+            assert!(skill.contains(".loro/settings.json"));
+            assert!(skill.contains("autoContext"));
         }
     }
 }

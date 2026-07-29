@@ -197,7 +197,10 @@ fn next_ref_id(fm: &str) -> String {
 // Anchor a caminho to the canonical `acervo://` form (BR-independent invariant so
 // promoted refs never dangle into the git-ignored world).
 fn anchor_path(caminho: &str) -> String {
-    if caminho.starts_with("acervo://") {
+    if caminho.starts_with("acervo://")
+        || caminho.starts_with("http://")
+        || caminho.starts_with("https://")
+    {
         caminho.to_string()
     } else {
         format!("acervo://{}", caminho.trim_start_matches('/'))
@@ -394,6 +397,7 @@ fn create_brainstorming(
         "perguntas",
         "notas",
         "relatorios",
+        "anexos",
     ] {
         std::fs::create_dir_all(dir.join(sub)).map_err(|e| e.to_string())?;
     }
@@ -438,6 +442,17 @@ pub struct BrainstormingListItem {
     atualizado_em: String,
 }
 
+// ADR-0005: brainstormings created before anexos/ existed never got that
+// folder — self-heal on every list call (cheap, idempotent, create-if-absent)
+// instead of requiring an explicit migration step. Mirrors the "respect
+// existing structure, fill only gaps" premise already used for skill files
+// (ensure_meeting_skills). Presentations live in anexos/ too (one kind among
+// others) — no separate apresentacoes/ folder; the acervo's three
+// brainstorming folders are reunioes/, notas/, anexos/.
+fn ensure_brainstorming_subfolders(dir: &Path) {
+    let _ = std::fs::create_dir_all(dir.join("anexos"));
+}
+
 fn list_brainstormings(base: &Path) -> Vec<BrainstormingListItem> {
     let mut out: Vec<BrainstormingListItem> = std::fs::read_dir(brainstorming_dir(base))
         .map(|rd| {
@@ -445,6 +460,7 @@ fn list_brainstormings(base: &Path) -> Vec<BrainstormingListItem> {
                 .filter(|e| e.path().is_dir())
                 .filter(|e| e.file_name().to_string_lossy() != "avulso")
                 .map(|e| {
+                    ensure_brainstorming_subfolders(&e.path());
                     let slug = e.file_name().to_string_lossy().to_string();
                     let m = read_meta(&e.path());
                     BrainstormingListItem {
@@ -535,6 +551,123 @@ pub fn brain_list_meetings(slug: String) -> Result<Vec<MeetingListItem>, String>
     Ok(list_meetings(&acervo_base()?, &slug))
 }
 
+// ---- user tools (ADR-0005 §E) -----------------------------------------------
+// A tool is any `.md` in `.claude/commands/` that is NOT one of the 7 built-in
+// skills — the filename IS the slash-command (`minha-ferramenta.md` ->
+// `/minha-ferramenta`). This deny-list is the only thing that keeps a custom
+// tool from shadowing/deleting a built-in one; it must stay in sync with the
+// skill list materialized by ensure_acervo_structure/ensure_meeting_skills.
+pub const BUILTIN_SKILLS: [&str; 9] = [
+    "loro-context.md",
+    "loro-analyse.md",
+    "loro-question.md",
+    "loro-ask.md",
+    "loro-note.md",
+    "loro-sync.md",
+    "loro-tool.md",
+    "loro-presentation.md",
+    "loro-artifact.md",
+];
+
+fn tools_dir(base: &Path) -> PathBuf {
+    base.join(".claude/commands")
+}
+
+// Create a new tool (imported skill content, never AI-drafted here — that
+// path is /loro-tool itself, writing directly via the terminal agent).
+// Non-destructive: refuses a builtin name, never overwrites (suffix on
+// collision, mirroring new_notebook).
+fn new_tool(base: &Path, nome: &str, conteudo: &str) -> Result<String, String> {
+    let slug = sanitize_slug(nome)?;
+    let fname = format!("{slug}.md");
+    if BUILTIN_SKILLS.contains(&fname.as_str()) {
+        return Err("err.tool_name_reserved".into());
+    }
+    let dir = tools_dir(base);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let mut path = dir.join(&fname);
+    let mut n = 1;
+    while path.exists() {
+        n += 1;
+        path = dir.join(format!("{slug}-{n}.md"));
+    }
+    std::fs::write(&path, conteudo).map_err(|e| e.to_string())?;
+    path.strip_prefix(base)
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .map_err(|e| e.to_string())
+}
+
+// Delete a tool. Restricted to `.claude/commands/*.md`, outside the builtin
+// deny-list — never an arbitrary acervo file, never a built-in skill.
+fn delete_tool(base: &Path, rel: &str) -> Result<(), String> {
+    let rel = rel.replace('\\', "/");
+    let name = Path::new(&rel)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
+    if !rel.starts_with(".claude/commands/") || !rel.ends_with(".md") {
+        return Err("err.tool_path_invalid".into());
+    }
+    if BUILTIN_SKILLS.contains(&name) {
+        return Err("err.tool_name_reserved".into());
+    }
+    let p = guarded_existing(base, &rel)?;
+    std::fs::remove_file(&p).map_err(|e| e.to_string())
+}
+
+// ---- anexos / notes in a brainstorming OR a context (ADR-0005) -------------
+// Both the brainstorming and the context now expose an `anexos/` folder that
+// the user can feed from the computer or write a note into. A destination is
+// only ever one of those anexos folders: normalized (no traversal), rooted in
+// `brainstorming/` or `contextos/`, and ending in `anexos`. Returns the
+// absolute dir (created) so both the file import (lib.rs, needs the dialog)
+// and the note creator below share the exact same guard.
+pub fn guarded_anexos_dir(base: &Path, dest_rel: &str) -> Result<PathBuf, String> {
+    let rel = normalize_rel(dest_rel)?;
+    let first = rel.split('/').next().unwrap_or("");
+    if (first != "brainstorming" && first != "contextos") || !rel.ends_with("/anexos") {
+        return Err("err.invalid_anexos_dest".into());
+    }
+    let dir = base.join(&rel);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir)
+}
+
+// Create a note (living front-matter markdown) inside an anexos folder — the
+// context counterpart to new_notebook (which targets a brainstorming's
+// notas/). Non-destructive: never overwrites (suffix on collision).
+fn new_note_in(base: &Path, dest_rel: &str, titulo: &str, today: &str) -> Result<String, String> {
+    let dir = guarded_anexos_dir(base, dest_rel)?;
+    let slug = sanitize_slug(titulo)?;
+    let mut path = dir.join(format!("{slug}.md"));
+    let mut n = 1;
+    while path.exists() {
+        n += 1;
+        path = dir.join(format!("{slug}-{n}.md"));
+    }
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or(&slug);
+    let fm = living_front_matter(stem, "", today);
+    std::fs::write(&path, format!("{fm}# {titulo}\n")).map_err(|e| e.to_string())?;
+    path.strip_prefix(base)
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn brain_new_note_in(dest_rel: String, titulo: String) -> Result<String, String> {
+    new_note_in(&acervo_base()?, &dest_rel, &titulo, &today_iso())
+}
+
+#[tauri::command]
+pub fn brain_new_tool(nome: String, conteudo: String) -> Result<String, String> {
+    new_tool(&acervo_base()?, &nome, &conteudo)
+}
+
+#[tauri::command]
+pub fn brain_delete_tool(rel: String) -> Result<(), String> {
+    delete_tool(&acervo_base()?, &rel)
+}
+
 // Create a notebook (.md) with living front-matter. Under a brainstorming's notas/
 // when one is given, else brainstorming/avulso/<AAAA-MM-DD>-<slug>.md. Non-destructive.
 fn new_notebook(
@@ -590,6 +723,15 @@ pub struct RefResolution {
 // "acervo://<rel>" (canonical) OR a path relative to `source_rel`'s directory.
 // Path-guarded (never escapes the root).
 fn resolve_ref(base: &Path, source_rel: &str, r: &str) -> Result<RefResolution, String> {
+    // External refs (e.g. a Drive doc link) are never resolved against the
+    // acervo root — no local file backs them (loro-sync, BR-8: link only).
+    if r.starts_with("http://") || r.starts_with("https://") {
+        return Ok(RefResolution {
+            rel: r.to_string(),
+            tipo: "link".to_string(),
+            exists: true,
+        });
+    }
     let raw = if let Some(rest) = r.strip_prefix("acervo://") {
         rest.to_string()
     } else if r.starts_with('/') {
@@ -1155,6 +1297,7 @@ fn all_parts_of(base: &Path, slug: &str) -> Vec<SelItem> {
         ("investigacoes", "investigacao"),
         ("perguntas", "pergunta"),
         ("notas", "nota"),
+        ("anexos", "anexo"),
     ] {
         if let Ok(rd) = std::fs::read_dir(root.join(sub)) {
             for e in rd.flatten().filter(|e| e.path().is_file()) {
@@ -1422,6 +1565,26 @@ pub fn brain_open_external(rel: String) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+// An external ref (loro-sync, e.g. a Drive doc link) is only ever http(s) —
+// never a local path, shell metacharacter, or other scheme (js:, file:, …).
+fn is_openable_link(url: &str) -> bool {
+    url.starts_with("http://") || url.starts_with("https://")
+}
+
+// Open an external link (e.g. a Drive doc from a `tipo: drive` ref) in the OS
+// default browser. Restricted to http(s); fixed args, no shell.
+#[tauri::command]
+pub fn brain_open_link(url: String) -> Result<(), String> {
+    if !is_openable_link(&url) {
+        return Err("err.unsupported_link_scheme".into());
+    }
+    std::process::Command::new("open")
+        .arg(&url)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn brain_resolve_ref(source_rel: String, r#ref: String) -> Result<RefResolution, String> {
     resolve_ref(&acervo_base()?, &source_rel, &r#ref)
@@ -1556,6 +1719,29 @@ mod tests {
         assert_eq!(ref_tipo("a/planilha.xlsx"), "other");
     }
 
+    // ADR-0005: a brainstorming created before anexos/ existed (simulated here
+    // by building the old, narrower folder set by hand) must self-heal the
+    // missing folder the next time it's listed — no explicit migration
+    // command required.
+    #[test]
+    fn list_brainstormings_backfills_missing_subfolders() {
+        let base = tmp("bs-backfill");
+        let dir = base.join("brainstorming/legado");
+        for sub in [
+            "reunioes",
+            "investigacoes",
+            "perguntas",
+            "notas",
+            "relatorios",
+        ] {
+            std::fs::create_dir_all(dir.join(sub)).unwrap();
+        }
+        assert!(!dir.join("anexos").exists());
+        let list = list_brainstormings(&base);
+        assert_eq!(list.len(), 1);
+        assert!(dir.join("anexos").is_dir());
+    }
+
     #[test]
     fn create_brainstorming_and_list_and_status() {
         let base = tmp("bs");
@@ -1564,6 +1750,7 @@ mod tests {
         assert_eq!(t.rel, "brainstorming/frota-2026");
         assert!(base.join("brainstorming/frota-2026/reunioes").is_dir());
         assert!(base.join("brainstorming/frota-2026/relatorios").is_dir());
+        assert!(base.join("brainstorming/frota-2026/anexos").is_dir());
         assert!(base.join("brainstorming/frota-2026/indice.md").is_file());
         assert!(base.join("brainstorming/frota-2026/meta.json").is_file());
 
@@ -1680,6 +1867,135 @@ mod tests {
         assert!(!c.exists);
         // traversal past the root is refused
         assert!(resolve_ref(&base, "a/b.md", "../../../etc/passwd").is_err());
+    }
+
+    #[test]
+    fn anchor_path_leaves_http_urls_untouched() {
+        assert_eq!(
+            anchor_path("https://docs.google.com/document/d/ID/edit"),
+            "https://docs.google.com/document/d/ID/edit"
+        );
+        assert_eq!(anchor_path("http://example.com/x"), "http://example.com/x");
+        // local paths still get anchored as before
+        assert_eq!(anchor_path("notas/x.md"), "acervo://notas/x.md");
+    }
+
+    #[test]
+    fn resolve_ref_treats_https_url_as_external_link() {
+        let base = tmp("resolve-link");
+        let r = resolve_ref(
+            &base,
+            "pessoal/temas/x/notas/n.md",
+            "https://docs.google.com/document/d/ID/edit",
+        )
+        .unwrap();
+        assert_eq!(r.rel, "https://docs.google.com/document/d/ID/edit");
+        assert_eq!(r.tipo, "link");
+        assert!(r.exists);
+    }
+
+    #[test]
+    fn add_ref_round_trips_drive_link_without_corrupting_url() {
+        let content = "---\nloro: 1\nid: x\nrefs: []\n---\n\n# Nota\n";
+        let (out, id) = add_ref_to_content(
+            content,
+            "drive",
+            "https://docs.google.com/document/d/ID/edit",
+            None,
+        );
+        assert_eq!(id, "r1");
+        let (fm, _body) = split_front_matter(&out);
+        let refs = parse_refs(&fm.unwrap());
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].tipo, "drive");
+        assert_eq!(
+            refs[0].caminho,
+            "https://docs.google.com/document/d/ID/edit"
+        );
+    }
+
+    #[test]
+    fn is_openable_link_accepts_only_http_and_https() {
+        assert!(is_openable_link(
+            "https://docs.google.com/document/d/ID/edit"
+        ));
+        assert!(is_openable_link("http://example.com"));
+        assert!(!is_openable_link("file:///etc/passwd"));
+        assert!(!is_openable_link("javascript:alert(1)"));
+        assert!(!is_openable_link("notas/x.md"));
+        assert!(!is_openable_link("acervo://notas/x.md"));
+    }
+
+    #[test]
+    fn new_tool_writes_command_file_and_refuses_builtin_names() {
+        let base = tmp("tool-new");
+        let rel = new_tool(
+            &base,
+            "Minha Ferramenta",
+            "---\ndescription: x\n---\n\nfaça x",
+        )
+        .unwrap();
+        assert_eq!(rel, ".claude/commands/minha-ferramenta.md");
+        assert_eq!(
+            std::fs::read_to_string(base.join(&rel)).unwrap(),
+            "---\ndescription: x\n---\n\nfaça x"
+        );
+        // reserved: a builtin skill name is refused
+        assert!(new_tool(&base, "loro-note", "x").is_err());
+        assert!(new_tool(&base, "loro-sync", "x").is_err());
+        assert!(new_tool(&base, "loro-presentation", "x").is_err());
+        assert!(new_tool(&base, "loro-artifact", "x").is_err());
+    }
+
+    #[test]
+    fn new_tool_never_overwrites_existing() {
+        let base = tmp("tool-collide");
+        let a = new_tool(&base, "resumo", "primeira").unwrap();
+        let b = new_tool(&base, "resumo", "segunda").unwrap();
+        assert_ne!(a, b);
+        assert_eq!(std::fs::read_to_string(base.join(&a)).unwrap(), "primeira");
+        assert_eq!(std::fs::read_to_string(base.join(&b)).unwrap(), "segunda");
+    }
+
+    // ADR-0005: anexos folders exist in both worlds; the guard only accepts a
+    // normalized brainstorming/contextos anexos path (no traversal, no other
+    // destination), and note creation is non-destructive.
+    #[test]
+    fn guarded_anexos_dir_accepts_only_anexos_folders() {
+        let base = tmp("anexos-guard");
+        assert!(guarded_anexos_dir(&base, "contextos/frota/anexos").is_ok());
+        assert!(guarded_anexos_dir(&base, "brainstorming/x/anexos").is_ok());
+        // wrong folder / wrong world / traversal are all refused
+        assert!(guarded_anexos_dir(&base, "contextos/frota/notas").is_err());
+        assert!(guarded_anexos_dir(&base, "inbox/anexos").is_err());
+        assert!(guarded_anexos_dir(&base, "contextos/../../etc/anexos").is_err());
+    }
+
+    #[test]
+    fn new_note_in_writes_living_note_and_never_overwrites() {
+        let base = tmp("note-in");
+        let a = new_note_in(&base, "contextos/frota/anexos", "Minha Nota", "2026-07-29").unwrap();
+        assert_eq!(a, "contextos/frota/anexos/minha-nota.md");
+        let txt = std::fs::read_to_string(base.join(&a)).unwrap();
+        assert!(txt.starts_with("---\nloro: 1\n"));
+        assert!(txt.contains("# Minha Nota"));
+        let b = new_note_in(&base, "contextos/frota/anexos", "Minha Nota", "2026-07-29").unwrap();
+        assert_ne!(a, b);
+        // refuses a non-anexos destination
+        assert!(new_note_in(&base, "contextos/frota", "x", "2026-07-29").is_err());
+    }
+
+    #[test]
+    fn delete_tool_refuses_builtin_and_non_command_paths() {
+        let base = tmp("tool-del-guard");
+        std::fs::create_dir_all(base.join(".claude/commands")).unwrap();
+        std::fs::write(base.join(".claude/commands/loro-note.md"), "x").unwrap();
+        std::fs::write(base.join(".claude/commands/minha.md"), "x").unwrap();
+        std::fs::write(base.join("brainstorming/x.md"), "x").unwrap_or(());
+        assert!(delete_tool(&base, ".claude/commands/loro-note.md").is_err());
+        assert!(delete_tool(&base, "brainstorming/x.md").is_err());
+        assert!(delete_tool(&base, ".claude/commands/minha.md").is_ok());
+        assert!(!base.join(".claude/commands/minha.md").exists());
     }
 
     #[test]
@@ -1933,6 +2249,39 @@ mod tests {
         // a meeting NOT selected must not leak in
         assert!(!r.contains("Resumo de 2026-07-27-1000-planejamento"));
         assert!(r.contains("- Partes: 1"));
+    }
+
+    // ADR-0005: anexos/ is a new brainstorming subfolder (presentations live
+    // there too — no separate apresentacoes/ folder) — all_parts_of must
+    // enumerate it (empty selection = "everything") and gather_part's
+    // unknown-kind fallback routes it into "## Notas", with no further code
+    // needed (confirmed by this test, not just by reading).
+    #[test]
+    fn all_parts_of_includes_anexos() {
+        let base = tmp("report-anexos");
+        create_brainstorming(&base, "Frota 2026", None, "2026-07-28").unwrap();
+        std::fs::write(
+            base.join("brainstorming/frota-2026/anexos/ata-drive.md"),
+            "---\nloro: 1\nfonte: drive\n---\n\n# Ata da reunião externa\n\nPontos discutidos no Drive.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            base.join("brainstorming/frota-2026/anexos/deck-v1.md"),
+            "---\nloro: 1\n---\n\n# Deck v1\n\n## Slide 1\n\nProposta inicial.\n",
+        )
+        .unwrap();
+        let rel = build_brainstorm_report(
+            &base,
+            "frota-2026",
+            &[],
+            "2026-07-28",
+            "2026-07-28-1100",
+            "pt",
+        )
+        .unwrap();
+        let r = std::fs::read_to_string(base.join(&rel)).unwrap();
+        assert!(r.contains("Pontos discutidos no Drive."));
+        assert!(r.contains("Proposta inicial."));
     }
 
     #[test]
