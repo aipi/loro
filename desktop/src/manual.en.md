@@ -17,9 +17,24 @@ in a brainstorming; you select what matters and send a report to the queue;
    the folder to generate into and the initial contexts (e.g. `product`,
    `engineering`). Check "version with git" to enable the review flow
    (recommended).
-2. **Dependencies** — Loro warns when whisper (transcription) or a voice model
+2. **Usage template** — pick a ready-made template (Sales, Engineering,
+   Product & management, Learning, Education, Hiring, Healthcare) or the
+   Generic (blank) one. A template prefills the contexts (still editable),
+   appends the vertical's rules to `AGENTS.md` and seeds the queue guide.
+   "Duplicate to customize" copies any template into `~/.loro/templates/`,
+   where you edit the files and it shows up in the wizard. Templates that
+   touch personal data (Sales, Hiring, Healthcare) ship minimization rules —
+   Healthcare warns explicitly: health data is sensitive and the base never
+   replaces the medical record.
+3. **AI agent** — the "AI agent (command)" field sets which CLI the embedded
+   terminal uses for this base: `claude` (default), `gemini`,
+   `ollama run llama3`… The base is just files + convention (`AGENTS.md`),
+   so any agent — including a local model — can work on it; for agents that
+   don't understand slash-commands, Loro sends the skill instructions as
+   plain text.
+4. **Dependencies** — Loro warns when whisper (transcription) or a voice model
    is missing, and installs them from the banner using the embedded terminal.
-3. **Language** — in the gear (⚙), "interface language" switches pt-BR/English.
+5. **Language** — in the gear (⚙), "interface language" switches pt-BR/English.
    Everything the app **generates** (reports, meeting documents, contexts) is
    born in the active interface language.
 

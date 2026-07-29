@@ -706,8 +706,8 @@ function askAcervo() {
       const q = (($("askInput") && $("askInput").value) || "").trim();
       const cmd = LoroBrainstorm.brainAskCmd(q);
       if (!cmd) { toast(t("digite uma pergunta")); return; }
-      termRunClaude(cmd);
-      toast(t("pergunta enviada ao Claude do terminal — a resposta aparece abaixo"), 4000);
+      termRunAgent(cmd);
+      toast(t("pergunta enviada ao agente do terminal — a resposta aparece abaixo"), 4000);
     }
   );
   const inp = $("askInput"); if (inp) inp.focus();
@@ -901,6 +901,7 @@ const B = {
   setup: $("brainSetup"), shell: $("brainShell"),
   dirBtn: $("brainDirBtn"), ctxInput: $("brainCtxInput"), createBtn: $("brainCreateBtn"),
   nameInput: $("brainNameInput"), autoInput: $("brainAuto"), gitInput: $("brainGit"),
+  agentInput: $("brainAgentInput"), wizTemplates: $("wizTemplates"), wizTemplateHint: $("wizTemplateHint"),
   cancelBtn: $("brainCancelBtn"), wizTitle: $("wizTitle"), setupErr: $("brainSetupErr"),
   acervoBtn: $("acervoBtn"), acervoName: $("acervoName"), acervoMenu: $("acervoMenu"),
   gitBtn: $("gitBtn"), branchBtn: $("branchBtn"), proposeBtn: $("proposeBtn"), bMenu: $("bMenu"),
@@ -935,6 +936,9 @@ const fmById = new Map();
 const bOpen = new Set();   // nós expandidos da lateral
 let sideSig = "";          // assinatura p/ não re-renderizar a lateral sem mudança
 let acervos = [], activeAcervo = "", creatingNew = false, gitFiles = {}, wizColor = "";
+// usage template picker state (ADR-0003): selected id, fetched list, and
+// whether the user already edited the contexts field by hand
+let wizTemplate = "generico", wizTemplates = [], ctxDirty = false;
 let lastEnvAcervo = null;
 
 // paleta curada (funciona no claro e no escuro); "" = padrão (teal do tema)
@@ -1030,8 +1034,8 @@ function genContextNow() {
     toast(t("a fila está vazia — envie um relatório ou arquivos antes de gerar contexto"), 5000);
     return;
   }
-  termRunClaude(LoroBrainstorm.brainContextCmd());
-  toast(t("gerando contexto no Claude do terminal — acompanhe abaixo"), 4000);
+  termRunAgent(LoroBrainstorm.brainContextCmd());
+  toast(t("gerando contexto no agente do terminal — acompanhe abaixo"), 4000);
 }
 {
   const gen = $("queueGenCtx");
@@ -2138,8 +2142,8 @@ function runMeetingSkill(kind, id, question) {
   if (!dir) { toast(t("abra a reunião para analisar")); return; }
   const cmd = LM.meetingSkillCmd(kind, dir, question);
   if (!cmd) { toast(t("digite uma pergunta")); return; }
-  termRunClaude(cmd);
-  toast(kind === "answer" ? t("pergunta enviada ao Claude do terminal") : t("análise enviada ao Claude do terminal"), 4000);
+  termRunAgent(cmd);
+  toast(kind === "answer" ? t("pergunta enviada ao agente do terminal") : t("análise enviada ao agente do terminal"), 4000);
   // A skill write is async and IPC-free (no pessoal-changed event), so nudge a
   // couple of tree/surface refreshes to reveal the artefatos it produces.
   scheduleMeetingSkillRefresh(id);
@@ -2710,8 +2714,10 @@ function openNewAcervo() {
   B.wizTitle.textContent = t("Novo projeto (acervo)");
   B.nameInput.value = ""; B.ctxInput.value = ""; brainDir = ""; B.dirBtn.textContent = "…";
   B.autoInput.checked = false; B.gitInput.checked = true;
-  wizColor = "";
+  B.agentInput.value = "claude";
+  wizColor = ""; wizTemplate = "generico"; ctxDirty = false;
   drawWizColors();
+  loadWizTemplates();
   B.cancelBtn.hidden = false; B.setupErr.hidden = true;
   B.setup.hidden = false; B.shell.hidden = true;
   B.nameInput.focus();
@@ -2719,6 +2725,50 @@ function openNewAcervo() {
 function drawWizColors() {
   renderSwatches($("wizColors"), wizColor, (hex) => { wizColor = hex; drawWizColors(); applyAccent(hex); });
 }
+
+// ---- usage template picker (ADR-0003): builtins + ~/.loro/templates --------
+async function loadWizTemplates() {
+  try { wizTemplates = await invoke("brain_list_templates", {}); }
+  catch (e) { wizTemplates = []; clog("brain_list_templates error: " + e); }
+  drawWizTemplates();
+}
+function drawWizTemplates() {
+  const box = B.wizTemplates;
+  box.innerHTML = "";
+  for (const tpl of wizTemplates) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "tplcard" + (tpl.id === wizTemplate ? " on" : "");
+    b.textContent = tpl.name + (tpl.builtin ? "" : " ✎");
+    b.title = tpl.description;
+    b.onclick = () => {
+      wizTemplate = tpl.id;
+      B.ctxInput.value = LoroPresets.prefillContexts(B.ctxInput.value, ctxDirty, tpl.contexts);
+      drawWizTemplates();
+    };
+    box.appendChild(b);
+  }
+  const sel = wizTemplates.find((x) => x.id === wizTemplate);
+  const hint = B.wizTemplateHint;
+  hint.innerHTML = "";
+  if (!sel) { hint.hidden = true; return; }
+  hint.hidden = false;
+  hint.append(document.createTextNode(sel.description + " "));
+  if (sel.id !== "generico") {
+    const dup = document.createElement("button");
+    dup.type = "button"; dup.className = "link mono";
+    dup.textContent = t("duplicar para personalizar");
+    dup.onclick = async () => {
+      try {
+        const dir = await invoke("brain_duplicate_template", { id: sel.id });
+        toast(t("modelo duplicado em") + " " + dir, 5000);
+        await loadWizTemplates();
+      } catch (e) { toast(tErr(String(e))); }
+    };
+    hint.appendChild(dup);
+  }
+}
+B.ctxInput.addEventListener("input", () => { ctxDirty = true; });
 B.cancelBtn.addEventListener("click", () => { creatingNew = false; applyAccent(activeColor()); brainRefresh(); });
 function activeColor() { const a = acervos.find((x) => x.id === activeAcervo); return a ? a.color : ""; }
 
@@ -2737,6 +2787,8 @@ B.createBtn.addEventListener("click", async () => {
       autoContext: B.autoInput.checked,
       gitInit: B.gitInput.checked,
       color: wizColor || null,
+      template: wizTemplate || null,
+      agent: B.agentInput.value.trim() || null,
       // ADR-0002 §1: no per-project language — seeds follow the UI language
     });
     acervos = av.acervos || []; activeAcervo = av.active || "";
@@ -3360,31 +3412,35 @@ function termRun(cmd) {
   send();
 }
 
-// ADR-0002 §4 — runs a SLASH-COMMAND, which only a live Claude understands.
-// Handshake: poll term_status until a `claude` process exists under the PTY
-// shell (relaunching it once if the session was reused after Claude exited),
-// give the TUI a short settle so it doesn't drop pending stdin, then inject.
-// Fails loudly instead of typing into a bare shell.
-async function termRunClaude(cmd) {
+// ADR-0002 §4 / ADR-0003 — runs a skill in the acervo's AI agent. Slash-commands
+// only mean something to Claude; for any other agent the same skill is injected
+// as a plain prompt (LoroPresets.agentInvocation). Handshake: poll term_status
+// until the agent's process exists under the PTY shell (relaunching it once if
+// the session was reused after the agent exited), give the TUI a short settle
+// so it doesn't drop pending stdin, then inject. Fails loudly instead of typing
+// into a bare shell.
+async function termRunAgent(cmd) {
   const cfg = await invoke("brain_get_config").catch(() => null);
   if (!cfg || !cfg.brainDir) { toast(tErr("err.acervo_not_configured")); return; }
+  const agent = await invoke("term_agent").catch(() => "claude");
+  const line = LoroPresets.agentInvocation(agent, cmd);
   setTermPanel(true);
   let relaunched = false;
   for (let tries = 0; tries < 50; tries++) {           // ~15s total
     const st = await invoke("term_status").catch(() => null);
-    if (st && st.open && st.claudeRunning) {
+    if (st && st.open && st.agentRunning) {
       await new Promise((r) => setTimeout(r, tries === 0 ? 0 : 800)); // settle a fresh TUI
-      await invoke("term_input", { data: cmd + "\n" }).catch(() => {});
+      await invoke("term_input", { data: line + "\n" }).catch(() => {});
       return;
     }
-    if (st && st.open && !st.claudeRunning && termReady && !relaunched) {
-      relaunched = true; // reused session where Claude exited: bring it back
-      await invoke("term_input", { data: "claude\n" }).catch(() => {});
+    if (st && st.open && !st.agentRunning && termReady && !relaunched) {
+      relaunched = true; // reused session where the agent exited: bring it back
+      await invoke("term_input", { data: agent + "\n" }).catch(() => {});
     }
     await new Promise((r) => setTimeout(r, 300));
   }
-  toast(t("não foi possível abrir o Claude no terminal — verifique se o CLI está instalado (claude)"), 5000);
-  clog("termRunClaude: claude did not come up; command not injected");
+  toast(t("não foi possível abrir o agente no terminal — verifique se o CLI configurado está instalado"), 5000);
+  clog("termRunAgent: agent did not come up; command not injected");
 }
 
 // ---- setup guiado: o Loro verifica dependências e resolve pelo terminal ----

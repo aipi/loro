@@ -71,6 +71,16 @@ the model: ideas live here, inline, not as separate files.)
 > before any external/MCP source). Direct promotion (`brain_promote`) is retired
 > from the primary path. Recorded in ADR-0001 §6–§9. Open: fate of legacy notas/.
 
+> [!HOTSPOT] Usage templates (presets) & per-acervo agent — vertical skill catalog pending
+> The wizard now offers usage templates (generico, vendas, engenharia, produto,
+> aprendizado, educacao, recrutamento, saude) and a per-acervo AI agent command
+> (any CLI, `claude` default) — ADR-0003. Shipped: structure seeding (contexts,
+> AGENTS.md addendum, queue guide), custom templates in `~/.loro/templates`,
+> agent-agnostic skill injection. Open: the vertical skill *catalog* (e.g.
+> `/brain-mensagem` generating sales follow-ups from an account context),
+> further verticals (legal, …), and a full "Claude"→"agent" wording sweep in
+> descriptive UI copy.
+
 > [!HOTSPOT] Acervo folder language diverges between brain and app (en vs pt)
 > This brain uses English folders (`contexts/`, `meetings/`, `notes/`) as the
 > company harness (docs-in-English convention). The app materializes an acervo in

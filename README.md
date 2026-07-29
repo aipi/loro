@@ -41,7 +41,7 @@ It is two things working together:
 | **Node.js ≥ 18** + **Rust (rustup)** | desktop app (Tauri) | https://nodejs.org · https://rustup.rs |
 | **Python ≥ 3.12** | diarization (optional) | — |
 | **git** + **gh** | optional: knowledge versioning / remote collaboration | opt-in, validated by an in-app doctor |
-| **Claude Code** (`claude`) | optional: the agent loop and meeting AI skills | runs in the embedded terminal, user's own account |
+| **AI agent CLI** (`claude` by default) | optional: the agent loop and meeting AI skills | runs in the embedded terminal, user's own account; configurable per acervo (any CLI, including local models — ADR-0003) |
 
 Models are ggml files under `~/.loro/models` (configurable via `LORO_MODELS_DIR`).
 

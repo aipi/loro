@@ -97,7 +97,9 @@ OS/serde errors may still pass through and are shown untranslated.
 | `save_transcript` | `content` | path or `null` | native save dialog + write |
 | `auto_save` | `content, dir, filename` | path | silent save to the configured folder |
 | `list_capture_devices` | — | `[{index,name}]` | enumerate capture devices (for `-c`) |
-| `brain_get_config` / `brain_setup` / `brain_add_context` / `brain_remove_context` | … | config | acervo config lifecycle |
+| `brain_get_config` / `brain_setup` / `brain_add_context` / `brain_remove_context` | … | config | acervo config lifecycle; `brain_setup` takes `template?` (usage preset id, ADR-0003) and `agent?` (per-acervo AI CLI command, default `claude`) |
+| `brain_list_templates` | `lang?` | `[{id,name,description,contexts,builtin,dir?}]` | usage templates for the wizard (ADR-0003): builtins + `~/.loro/templates`, localized |
+| `brain_duplicate_template` | `id` | dir path | copy a template into `~/.loro/templates` as an editable custom template |
 | `ui_get_lang` / `ui_set_lang` | — / `lang ("pt"\|"en")` | lang | user-level UI language (ADR-0001 §10, ADR-0002 §1: generated content follows it); set relabels the tray live |
 | `brain_status` | — | status | contexts, inbox, processed, activity |
 | `brain_read` | `rel` | content | read a file inside the acervo (path-traversal guarded) |
@@ -127,7 +129,8 @@ Knowledge versioning & collaboration (ADR-0001 §5) — all opt-in, no credentia
 | `env_set_identity` | `name, email` | `()` / err | the one safe wizard fix — sets git identity scoped to the acervo |
 | `brain_version` | `slug, message` | `{branch, result, warn?}` | Versionar (ADR-0002 §2): sync local default with origin (fetch + ff-only, degradable — `warn` = `err.git_offline`/`err.main_diverged`), then `rfc/<slug>` + add + commit (local) |
 | `git_branches` / `git_switch_branch` / `git_create_branch` | — / `branch` / `slug` | `{current, default, branches, dirty}` / branch / branch | branch-first flow (ADR-0002 §2): picker data, switch (blocked on dirty tree), create `rfc/<slug>` off the synced default |
-| `term_status` | — | `{open, claudeRunning}` | readiness handshake (ADR-0002 §4): slash-commands are injected only when a `claude` process lives under the PTY shell |
+| `term_status` | — | `{open, agentRunning}` | readiness handshake (ADR-0002 §4, ADR-0003 §3): skill invocations are injected only when the acervo's agent process lives under the PTY shell |
+| `term_agent` | — | command string | the active acervo's AI agent command (frontend launches it in the PTY; non-Claude agents get skills as plain prompts) |
 | `brain_propose_change` | `title, body` | `{number, url}` | Propor: push the rfc/ branch + `gh pr create` (the RFC); gated |
 | `gh_pr_list` / `gh_pr_status` | — / `number` | PR(s) | read open PRs / one PR's review status via `gh --json` |
 | `brain_notifications` | — | inbox by category | collaboration inbox from open PRs; `connected:false` when local-only |

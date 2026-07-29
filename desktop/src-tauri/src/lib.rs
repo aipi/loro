@@ -23,6 +23,8 @@ mod config;
 use config::*;
 mod templates;
 use templates::*;
+mod presets;
+use presets::*;
 mod git;
 use git::*;
 mod acervo;
@@ -1094,7 +1096,17 @@ fn acervos_view() -> AcervosView {
 }
 
 // Materialize the acervo folder structure (idempotent, non-destructive).
-fn ensure_acervo_structure(base: &Path, ctxs: &[String], lang: &str) -> Result<(), String> {
+// `tpl` is the usage template (preset, ADR-0003) applied only at creation:
+// AGENTS.md vertical addendum, extra skills and the initial queue guide.
+fn ensure_acervo_structure(
+    base: &Path,
+    ctxs: &[String],
+    lang: &str,
+    tpl: Option<&TemplateContent>,
+) -> Result<(), String> {
+    // First setup = no loop state yet. The queue guide (inbox/_prompt.md) is
+    // consumed by the loop, so re-materializations must never re-inject it.
+    let first_setup = !base.join(".brain/state.json").exists();
     for sub in [
         "inbox",
         "processed",
@@ -1127,6 +1139,24 @@ fn ensure_acervo_structure(base: &Path, ctxs: &[String], lang: &str) -> Result<(
             std::fs::write(&p, body).map_err(|e| e.to_string())?;
         }
     }
+    // Vertical extra skills from the usage template (ADR-0003), after the four
+    // standard ones and equally non-destructive.
+    if let Some(tpl) = tpl {
+        for (name, body) in &tpl.skills {
+            let p = base.join(".claude/commands").join(name);
+            if !p.exists() {
+                std::fs::write(&p, body).map_err(|e| e.to_string())?;
+            }
+        }
+        if first_setup {
+            if let Some(prompt) = &tpl.inbox_prompt {
+                let p = base.join("inbox/_prompt.md");
+                if !p.exists() {
+                    std::fs::write(&p, prompt).map_err(|e| e.to_string())?;
+                }
+            }
+        }
+    }
     for c in ctxs {
         seed_context(base, c, lang)?;
     }
@@ -1138,10 +1168,17 @@ fn ensure_acervo_structure(base: &Path, ctxs: &[String], lang: &str) -> Result<(
     if !act.exists() {
         std::fs::write(&act, "").map_err(|e| e.to_string())?;
     }
-    // agnostic instruction file (AGENTS.md); keep any legacy CLAUDE.md untouched
+    // agnostic instruction file (AGENTS.md); keep any legacy CLAUDE.md untouched.
+    // The template contributes an addendum, never a replacement — the default
+    // body carries the loop mechanics the whole model depends on (ADR-0003).
     let agents = base.join("AGENTS.md");
     if !agents.exists() && !base.join("CLAUDE.md").exists() {
-        std::fs::write(&agents, agents_template(ctxs, lang)).map_err(|e| e.to_string())?;
+        let mut body = agents_template(ctxs, lang);
+        if let Some(extra) = tpl.and_then(|t| t.agents_extra.as_deref()) {
+            body.push('\n');
+            body.push_str(extra);
+        }
+        std::fs::write(&agents, body).map_err(|e| e.to_string())?;
     }
     let index = base.join("INDEX.md");
     if !index.exists() {
@@ -1193,6 +1230,7 @@ fn ui_set_lang(lang: String, state: State<AppState>) -> Result<String, String> {
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // mirrors the wizard form 1:1 (IPC contract)
 fn brain_setup(
     dir: String,
     contexts: Vec<String>,
@@ -1201,6 +1239,8 @@ fn brain_setup(
     git_init: Option<bool>,
     color: Option<String>,
     lang: Option<String>,
+    template: Option<String>,
+    agent: Option<String>,
 ) -> Result<AcervosView, String> {
     let dir = if dir.trim().is_empty() {
         default_brain_dir().display().to_string()
@@ -1224,8 +1264,16 @@ fn brain_setup(
     // ADR-0002 §1: generated content follows the UI language; the per-acervo
     // language field is retired (still stored for older tooling, never asked).
     let lang = lang.map(|l| normalize_lang(&l)).unwrap_or_else(ui_lang);
+    // Usage template (ADR-0003): resolve early so an unknown id fails before
+    // any disk write. Only the id is ever logged (BR-8).
+    let template = template
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+        .unwrap_or_else(default_template);
+    let tpl = resolve_template(&template, &lang)?;
+    let agent = normalize_agent(&agent.unwrap_or_default());
     let base = PathBuf::from(&dir);
-    ensure_acervo_structure(&base, &ctxs, &lang)?;
+    ensure_acervo_structure(&base, &ctxs, &lang, Some(&tpl))?;
     if git_init.unwrap_or(false) {
         git_init_repo(&base)?;
     }
@@ -1245,6 +1293,8 @@ fn brain_setup(
         a.name = display_name;
         a.auto_context = auto;
         a.lang = lang;
+        a.template = template;
+        a.agent = agent;
         if !color.is_empty() {
             a.color = color;
         }
@@ -1261,6 +1311,8 @@ fn brain_setup(
             auto_context: auto,
             color,
             lang,
+            template,
+            agent,
         });
         id
     };
@@ -1272,6 +1324,22 @@ fn brain_setup(
 #[tauri::command]
 fn brain_list_acervos() -> AcervosView {
     acervos_view()
+}
+
+// ---- ADR-0003: acervo usage templates (presets) -----------------------------
+#[tauri::command]
+fn brain_list_templates(lang: Option<String>) -> Vec<TemplateInfo> {
+    let lang = lang.map(|l| normalize_lang(&l)).unwrap_or_else(ui_lang);
+    list_templates(&lang)
+}
+
+// Copy a template into ~/.loro/templates as an editable custom template;
+// returns the created directory path.
+#[tauri::command]
+fn brain_duplicate_template(id: String) -> Result<String, String> {
+    let dir = duplicate_template(&id)?;
+    info!(template = %id, "template duplicated"); // id only, never content (BR-8)
+    Ok(dir.display().to_string())
 }
 
 // set the accent color of a project (persisted in the acervo config)
@@ -2925,15 +2993,36 @@ fn term_close(state: State<AppState>) {
     }
 }
 
-// ---- ADR-0002 §4: terminal/Claude readiness handshake ----------------------
-// Slash-commands only mean something to a running Claude. The frontend asks
-// this instead of guessing from terminal output: is the PTY open, and does a
-// `claude` process live under its shell right now?
+// ---- ADR-0002 §4: terminal/agent readiness handshake ------------------------
+// Slash-commands only mean something to a running agent. The frontend asks
+// this instead of guessing from terminal output: is the PTY open, and does the
+// active acervo's agent process live under its shell right now? The agent is
+// per-acervo (ADR-0003) — any CLI, `claude` by default.
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct TermStatus {
     open: bool,
-    claude_running: bool,
+    agent_running: bool,
+}
+
+// Process name to look for: basename of the agent command's first token
+// (e.g. "ollama run llama3" -> "ollama"; "/usr/local/bin/claude" -> "claude").
+fn agent_process_name(agent: &str) -> String {
+    agent
+        .split_whitespace()
+        .next()
+        .unwrap_or("claude")
+        .rsplit('/')
+        .next()
+        .unwrap_or("claude")
+        .to_string()
+}
+
+fn active_agent() -> String {
+    let cfg = read_loro_config();
+    active_acervo(&cfg)
+        .map(|a| normalize_agent(&a.agent))
+        .unwrap_or_else(default_agent)
 }
 
 fn parse_ps_table(out: &str) -> Vec<(u32, u32, String)> {
@@ -2980,10 +3069,11 @@ fn term_status(state: State<AppState>) -> TermStatus {
     let Some(root) = shell_pid else {
         return TermStatus {
             open: false,
-            claude_running: false,
+            agent_running: false,
         };
     };
-    let claude_running = Command::new("ps")
+    let agent_name = agent_process_name(&active_agent());
+    let agent_running = Command::new("ps")
         .args(["-axo", "pid=,ppid=,comm="])
         .output()
         .ok()
@@ -2991,14 +3081,20 @@ fn term_status(state: State<AppState>) -> TermStatus {
             has_descendant_process(
                 &parse_ps_table(&String::from_utf8_lossy(&o.stdout)),
                 root,
-                "claude",
+                &agent_name,
             )
         })
         .unwrap_or(false);
     TermStatus {
         open: true,
-        claude_running,
+        agent_running,
     }
+}
+
+// The agent command of the active acervo (frontend launches it in the PTY).
+#[tauri::command]
+fn term_agent() -> String {
+    active_agent()
 }
 
 pub fn run() {
@@ -3112,6 +3208,8 @@ pub fn run() {
             brain_get_config,
             brain_setup,
             brain_list_acervos,
+            brain_list_templates,
+            brain_duplicate_template,
             brain_set_active,
             brain_set_color,
             brain_remove_acervo,
@@ -3143,6 +3241,7 @@ pub fn run() {
             term_resize,
             term_close,
             term_status,
+            term_agent,
             brain_import,
             brain_delete_inbox,
             brain_write_inbox,
@@ -3521,7 +3620,7 @@ mod tests {
     fn seeding_uses_context_md_and_collaboration_without_brainstorming() {
         let root = std::env::temp_dir().join(format!("loro-seed-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        ensure_acervo_structure(&root, &["frota".into()], "pt").unwrap();
+        ensure_acervo_structure(&root, &["frota".into()], "pt", None).unwrap();
         // the official source of truth is context.md; no guia.md nor brainstorming/
         assert!(root.join("contextos/frota/context.md").is_file());
         assert!(!root.join("contextos/frota/guia.md").exists());
@@ -3530,8 +3629,61 @@ mod tests {
         assert!(root.join(".github/CODEOWNERS").is_file());
         assert!(root.join(".github/pull_request_template.md").is_file());
         // idempotent and non-destructive: running again does not break
-        ensure_acervo_structure(&root, &["frota".into()], "pt").unwrap();
+        ensure_acervo_structure(&root, &["frota".into()], "pt", None).unwrap();
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ---- ADR-0003: usage templates seed AGENTS.md addendum, skills and the
+    // queue guide — non-destructively and only on first setup for the guide.
+    #[test]
+    fn template_seeds_agents_addendum_skills_and_queue_guide() {
+        let root = std::env::temp_dir().join(format!("loro-tpl-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let tpl = TemplateContent {
+            agents_extra: Some("## Regras da vertical: teste\n".into()),
+            inbox_prompt: Some("# Guia da fila — teste\n".into()),
+            skills: vec![("brain-mensagem.md".into(), "corpo da skill".into())],
+        };
+        ensure_acervo_structure(&root, &["contas".into()], "pt", Some(&tpl)).unwrap();
+        let agents = std::fs::read_to_string(root.join("AGENTS.md")).unwrap();
+        // addendum appended after the default body — the loop mechanics survive
+        assert!(agents.contains("Acervo de contextos"));
+        assert!(agents.contains("Regras da vertical: teste"));
+        assert_eq!(
+            std::fs::read_to_string(root.join(".claude/commands/brain-mensagem.md")).unwrap(),
+            "corpo da skill"
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("inbox/_prompt.md")).unwrap(),
+            "# Guia da fila — teste\n"
+        );
+        // the loop consumed the guide; a re-materialization must NOT re-inject it
+        std::fs::remove_file(root.join("inbox/_prompt.md")).unwrap();
+        ensure_acervo_structure(&root, &["contas".into()], "pt", Some(&tpl)).unwrap();
+        assert!(!root.join("inbox/_prompt.md").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn no_template_matches_previous_behavior() {
+        let root = std::env::temp_dir().join(format!("loro-notpl-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        ensure_acervo_structure(&root, &["frota".into()], "pt", None).unwrap();
+        let agents = std::fs::read_to_string(root.join("AGENTS.md")).unwrap();
+        assert_eq!(agents, agents_template(&["frota".into()], "pt"));
+        assert!(!root.join("inbox/_prompt.md").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn agent_process_name_takes_first_token_basename() {
+        assert_eq!(agent_process_name("claude"), "claude");
+        assert_eq!(agent_process_name("ollama run llama3"), "ollama");
+        assert_eq!(
+            agent_process_name("/usr/local/bin/gemini --flash"),
+            "gemini"
+        );
+        assert_eq!(agent_process_name(""), "claude");
     }
 
     #[test]

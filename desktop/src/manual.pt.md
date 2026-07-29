@@ -16,9 +16,24 @@ fila; o botão "gerar contexto" pede ao Claude do terminal que destile a fila em
 1. **Criar o acervo** — na primeira abertura, o assistente pede um nome, a
    pasta onde gerar e os contextos iniciais (ex.: `produto`, `engenharia`).
    Marque "versionar com git" para habilitar o fluxo de revisão (recomendado).
-2. **Dependências** — o Loro avisa se faltar o whisper (transcrição) ou um
+2. **Modelo de uso** — escolha um modelo pronto (Vendas, Engenharia,
+   Produto & gestão, Aprendizado, Educação, Recrutamento, Saúde) ou o
+   Genérico (em branco). O modelo pré-preenche os contextos (você pode
+   editar), adiciona regras da vertical ao `AGENTS.md` e semeia o guia da
+   fila. "Duplicar para personalizar" copia qualquer modelo para
+   `~/.loro/templates/`, onde você edita os arquivos e ele passa a aparecer
+   no assistente. Modelos com dados pessoais (Vendas, Recrutamento, Saúde)
+   trazem regras de minimização — o de Saúde avisa: dados de saúde são
+   sensíveis e o acervo não substitui o prontuário.
+3. **Agente de IA** — o campo "agente de IA (comando)" define qual CLI o
+   terminal embutido usa neste acervo: `claude` (padrão), `gemini`,
+   `ollama run llama3`… O acervo é só arquivos + convenção (`AGENTS.md`),
+   então qualquer agente — inclusive um modelo local — consegue trabalhar
+   nele; para agentes que não entendem slash-commands, o Loro envia as
+   instruções da skill como texto.
+4. **Dependências** — o Loro avisa se faltar o whisper (transcrição) ou um
    modelo de voz, e instala pelos botões do banner usando o terminal embutido.
-3. **Idioma** — na engrenagem (⚙), "idioma da interface" alterna pt-BR/inglês.
+5. **Idioma** — na engrenagem (⚙), "idioma da interface" alterna pt-BR/inglês.
    Tudo que o app **gera** (relatórios, documentos de reunião, contextos)
    nasce no idioma ativo da interface.
 

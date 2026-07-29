@@ -34,6 +34,10 @@
           <label class="wfield"><span class="mono" data-i18n>nome do projeto</span>
             <input id="brainNameInput" type="text" placeholder="ex.: Company, Pessoal" data-i18n-attrs="placeholder" />
           </label>
+          <div class="wfield"><span class="mono" data-i18n>modelo de uso</span>
+            <div id="wizTemplates" class="tplcards"></div>
+            <p id="wizTemplateHint" class="hint tplhint"></p>
+          </div>
           <label class="wfield"><span class="mono" data-i18n>onde gerar</span>
             <button id="brainDirBtn" class="link mono dirbtn">…</button>
           </label>
@@ -45,6 +49,9 @@
             <span data-i18n>modo automático — deixar o loop criar e organizar os contextos</span></label>
           <label class="wtoggle"><input type="checkbox" id="brainGit" checked />
             <span data-i18n>versionar com git (git init nesta pasta)</span></label>
+          <label class="wfield"><span class="mono" data-i18n>agente de IA (comando)</span>
+            <input id="brainAgentInput" type="text" placeholder="claude — ou outro CLI: gemini, ollama run llama3…" data-i18n-attrs="placeholder" />
+          </label>
           <label class="wfield"><span class="mono" data-i18n>cor do projeto</span>
             <div id="wizColors" class="swatches"></div>
           </label>
@@ -384,6 +391,7 @@
     <script src="refs.js"></script>
     <script src="meeting.js"></script>
     <script src="brainstorm.js"></script>
+    <script src="presets.js"></script>
     <script src="audio.js"></script>
     <script src="app.js"></script>
   </body>

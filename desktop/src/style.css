@@ -1011,3 +1011,10 @@ body {
   font-size: 12px;
 }
 .bsselbar span { color: var(--ink); }
+
+/* usage template picker (wizard, ADR-0003) */
+.tplcards { display: flex; flex-wrap: wrap; gap: 6px; }
+.tplcard { font: inherit; padding: 4px 10px; border-radius: 14px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); cursor: pointer; }
+.tplcard:hover { border-color: var(--ink); }
+.tplcard.on { border-color: var(--accent, var(--ink)); box-shadow: 0 0 0 1px var(--accent, var(--ink)) inset; }
+.tplhint { margin: 4px 0 0; }
