@@ -65,6 +65,7 @@ function rerenderForLang() {
   try { updateCfgLabel(); } catch (_) {}
   try { brainRefresh(); } catch (_) {}
   try { renderSelectionBar(); } catch (_) {}
+  try { refreshTabFromDisk(MANUAL_REL); } catch (_) {} // manual follows uiLang
 }
 
 // painel ao vivo (dock): abre/fecha; abre sozinho ao começar a gravar
@@ -101,6 +102,7 @@ const SETTINGS_KEY = "loro-settings";
 const DEFAULTS = {
   model: "large-v3-turbo", lang: "pt", translate: false,
   autoscroll: true, autosave: false, saveDir: "", source: "mic", mode: "live", uiLang: "pt", termSide: false,
+  sideW: 0, // sidebar width in px; 0 = the default CSS clamp (ADR-0002 §6)
 };
 let settings = { ...DEFAULTS };
 function loadSettings() {
@@ -122,8 +124,46 @@ function applySettings() {
   el.pickDir.textContent = settings.saveDir || "…";
   el.pickDir.title = settings.saveDir || t("Escolher pasta de armazenamento");
   if (el.uiLang) el.uiLang.value = settings.uiLang;
+  applySideWidth();
   applyI18n();
 }
+
+// ADR-0002 §6 — sidebar width: 0 keeps the CSS clamp default; any px value is
+// user-chosen (drag grip), clamped to [180, 45vw]. Wide sidebars reveal the
+// per-row metadata line (.bmeta).
+const SIDE_WIDE_AT = 300;
+function applySideWidth() {
+  const root = document.documentElement;
+  if (settings.sideW) root.style.setProperty("--side-w", settings.sideW + "px");
+  else root.style.removeProperty("--side-w");
+  const side = document.querySelector(".bside");
+  if (side) side.classList.toggle("wide", (settings.sideW || 0) >= SIDE_WIDE_AT);
+}
+(function wireSideGrip() {
+  const grip = $("sideGrip");
+  if (!grip) return;
+  grip.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    grip.classList.add("dragging");
+    const side = document.querySelector(".bside");
+    const left = side ? side.getBoundingClientRect().left : 0;
+    const onMove = (ev) => {
+      const w = Math.round(Math.min(Math.max(ev.clientX - left, 180), window.innerWidth * 0.45));
+      settings.sideW = w;
+      applySideWidth();
+    };
+    const onUp = () => {
+      grip.classList.remove("dragging");
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      persistSettings();
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  });
+  // double-click resets to the default clamp width
+  grip.addEventListener("dblclick", () => { settings.sideW = 0; persistSettings(); applySideWidth(); });
+})();
 
 // ---- render ----
 function render() {
@@ -666,7 +706,7 @@ function askAcervo() {
       const q = (($("askInput") && $("askInput").value) || "").trim();
       const cmd = LoroBrainstorm.brainAskCmd(q);
       if (!cmd) { toast(t("digite uma pergunta")); return; }
-      termRun(cmd);
+      termRunClaude(cmd);
       toast(t("pergunta enviada ao Claude do terminal — a resposta aparece abaixo"), 4000);
     }
   );
@@ -819,12 +859,12 @@ function updatePrivacy() {
 // ---- wiring ----
 el.toggle.addEventListener("click", toggle);
 el.cfgBtn.addEventListener("click", openCfg);
+if ($("helpBtn")) $("helpBtn").addEventListener("click", () => openDoc(MANUAL_REL, { preview: false }));
 if (el.uiLang) el.uiLang.addEventListener("change", async (e) => {
   settings.uiLang = e.target.value; persistSettings();
   try { settings.uiLang = await invoke("ui_set_lang", { lang: e.target.value }); } catch (_) {}
   applyI18n();
   rerenderForLang();
-  if ($("brainLang")) $("brainLang").value = settings.uiLang; // default language for new projects
 });
 el.saveBtn.addEventListener("click", save);
 el.discardBtn.addEventListener("click", discard);
@@ -863,7 +903,7 @@ const B = {
   nameInput: $("brainNameInput"), autoInput: $("brainAuto"), gitInput: $("brainGit"),
   cancelBtn: $("brainCancelBtn"), wizTitle: $("wizTitle"), setupErr: $("brainSetupErr"),
   acervoBtn: $("acervoBtn"), acervoName: $("acervoName"), acervoMenu: $("acervoMenu"),
-  gitBtn: $("gitBtn"), proposeBtn: $("proposeBtn"), bMenu: $("bMenu"),
+  gitBtn: $("gitBtn"), branchBtn: $("branchBtn"), proposeBtn: $("proposeBtn"), bMenu: $("bMenu"),
   ghCard: $("ghCard"), ghState: $("ghState"), ghChecks: $("ghChecks"),
   ghNotif: $("ghNotif"), ghCheck: $("ghCheck"),
   navHome: $("navHome"), navQueue: $("navQueue"), navCtx: $("navCtx"),
@@ -984,7 +1024,13 @@ $("guideBtn").addEventListener("click", () => openGuideDoc());
 // queue into versioned contexts. Same terminal-skill pattern as analisar/responder.
 // One function, two entry points: the home card CTA and the sidebar quick action.
 function genContextNow() {
-  termRun(LoroBrainstorm.brainContextCmd());
+  // ADR-0002 §5: an empty queue is refused loudly here, not just by disabled
+  // buttons — there is nothing to generate context FROM, and the user must know.
+  if (!lastSt || !lastSt.inbox || !lastSt.inbox.length) {
+    toast(t("a fila está vazia — envie um relatório ou arquivos antes de gerar contexto"), 5000);
+    return;
+  }
+  termRunClaude(LoroBrainstorm.brainContextCmd());
   toast(t("gerando contexto no Claude do terminal — acompanhe abaixo"), 4000);
 }
 {
@@ -1036,7 +1082,12 @@ async function brainRefresh() {
       B.gitBtn.textContent = g.repo ? (g.pending ? `${t("versionar")} (${g.pending})` : `${t("versionado")} ✓`) : t("iniciar git");
       B.gitBtn.classList.toggle("warm", g.repo && g.pending > 0);
     }
-  }).catch(() => { B.gitBtn.hidden = true; });
+    // ADR-0002 §2: the current branch is always visible; click to switch/create
+    if (B.branchBtn) {
+      B.branchBtn.hidden = !(g.available && g.repo && g.branch);
+      if (g.branch) B.branchBtn.textContent = "⎇ " + g.branch;
+    }
+  }).catch(() => { B.gitBtn.hidden = true; if (B.branchBtn) B.branchBtn.hidden = true; });
   // GitHub: re-verifica o ambiente ao trocar de acervo (rede — só uma vez por acervo)
   if (activeAcervo !== lastEnvAcervo) { lastEnvAcervo = activeAcervo; envChecked = false; }
   refreshEnv();
@@ -1135,6 +1186,23 @@ function ctxDirty(path) {
   const pre = "contextos/" + path + "/";
   return Object.keys(gitFiles).some((p) => p.startsWith(pre));
 }
+// ADR-0002 §6 — expanded sidebar rows: date + textual git status, rendered
+// always but visible only when the sidebar is wide (CSS .bside.wide).
+function gitLabel(path) {
+  const c = gitClass(path);
+  return c === "g-new" ? t("novo") : c === "g-mod" ? t("modificado") : c === "g-del" ? t("removido") : "";
+}
+function bMeta(mtime, path) {
+  const bits = [];
+  if (mtime) {
+    try {
+      bits.push(new Date(mtime).toLocaleDateString(uiLocale(), { day: "2-digit", month: "short", year: "numeric" }));
+    } catch (_) {}
+  }
+  const g = gitLabel(path);
+  if (g) bits.push(g);
+  return bits.length ? `<span class="bmeta mono">${esc(bits.join(" · "))}</span>` : "";
+}
 function gitClass(path) {
   const code = gitFiles[path];
   if (!code) return "";
@@ -1201,7 +1269,7 @@ function renderSidebar(st) {
     ? st.inbox.map((f) => {
         const ed = /\.(md|txt)$/i.test(f.name);
         return `<div class="bitem file unsynced${ed ? " ed" : ""}" data-doc="inbox/${esc(f.name)}"
-          title="${ed ? t("não sincronizado — clique para editar") : t("não sincronizado (aguardando o loop)")}">${ico("file")}<span class="bn">${esc(f.name)}</span>
+          title="${ed ? t("não sincronizado — clique para editar") : t("não sincronizado (aguardando o loop)")}">${ico("file")}<span class="bn">${esc(f.name)}${bMeta(f.mtime, "inbox/" + f.name)}</span>
           <button class="rowmenu" data-qmenu="${esc(f.name)}" data-move="${esc(f.name)}" title="${t("ações")}">⋯</button></div>`;
       }).join("") +
       `<div class="bitem addctx" data-genctx title="${t("Processa a fila com o Claude (/brain-context)")}">▶ ${t("gerar contexto")}</div>`
@@ -1223,7 +1291,7 @@ function renderSidebar(st) {
       return `<div class="bitem grp${gOpen ? " open" : ""}" data-toggle="${gKey}">
           ${ico("folder")}<span class="bn">${esc(m)}</span><span class="pill">${fs.length}</span></div>
         <div class="bchild" ${gOpen ? "" : "hidden"}>` +
-        fs.map((f) => `<div class="bitem file ${gitClass(f.path)}" data-doc="${esc(f.path)}" title="${esc(f.name)}">${ico("file")}<span class="bn">${esc(shortName(f.name))}</span></div>`).join("") +
+        fs.map((f) => `<div class="bitem file ${gitClass(f.path)}" data-doc="${esc(f.path)}" title="${esc(f.name)}">${ico("file")}<span class="bn">${esc(shortName(f.name))}${bMeta(f.mtime, f.path)}</span></div>`).join("") +
         `</div>`;
     }).join("");
     return `<div class="bitem ctx${kOpen ? " open" : ""}" data-toggle="${kKey}">
@@ -1417,7 +1485,14 @@ async function loadTemaChildren(slug) {
   if (!holder) return;
   let meetings = [];
   try { meetings = (await invoke("brain_list_meetings", { slug })) || []; } catch (_) {}
+  let notas = [];
+  try { notas = ((await invoke("brain_list_dir", { rel: `brainstorming/${slug}/notas` })) || []).filter((f) => !f.dir); }
+  catch (_) {}
   let inner = "";
+  // ADR-0002 §6: the whole notes block leads the brainstorming (creation-first),
+  // above the meetings — "＋ nova nota" is the top row.
+  inner += `<div class="bitem addctx" data-addnota="${esc(slug)}" title="${t("Escrever uma nota neste brainstorming")}">＋ ${t("nova nota")}</div>`;
+  for (const f of notas) inner += bsPartRow("nota", f.path, f.path, shortName(f.name), f.name, false);
   for (const m of meetings) {
     // título do manifest (renomeável); cai para o id humanizado quando ausente
     const title = LM.meetingTitleFromManifest({ titulo: m.titulo }, m.id);
@@ -1430,16 +1505,9 @@ async function loadTemaChildren(slug) {
       for (const a of arts) inner += bsPartRow(akind, a.path, a.path, shortName(a.name), a.name, true);
     }
   }
-  let notas = [];
-  try { notas = ((await invoke("brain_list_dir", { rel: `brainstorming/${slug}/notas` })) || []).filter((f) => !f.dir); }
-  catch (_) {}
   if (!meetings.length && !notas.length) {
     inner += `<div class="bempty">${t("vazio — grave uma reunião (●) ou escreva uma nota")}</div>`;
   }
-  if (notas.length) inner += `<div class="bcat">${t("notas")}</div>`;
-  // A criação lidera a lista (creation-first UX, 2026-07-28).
-  inner += `<div class="bitem addctx" data-addnota="${esc(slug)}" title="${t("Escrever uma nota neste brainstorming")}">＋ ${t("nova nota")}</div>`;
-  for (const f of notas) inner += bsPartRow("nota", f.path, f.path, shortName(f.name), f.name, false);
   holder.innerHTML = inner;
   wirePessoal();
   markSel();
@@ -1718,13 +1786,19 @@ function reorderTab(dragId, overId) {
   if (h && ws.tabs[0] && ws.tabs[0].id !== h.id) ws = LoroWorkspace.moveTab(ws, h.id, 0);
   renderTabs();
 }
+// Single point of truth for dropping a tab's live editor state (ADR-0002 §3):
+// the CM6 handle is destroyed BEFORE the maps forget it, so no stale buffer
+// can keep answering for a reused/closed tab id.
+function disposeTabState(id) {
+  const h = cmById.get(id);
+  if (h) { try { h.destroy(); } catch (_) {} }
+  cmById.delete(id); savedById.delete(id); fmById.delete(id);
+}
 function closeTabById(id) {
   const tab = ws.tabs.find((t) => t.id === id);
   if (!tab || tab.rel === HOME_REL) return; // Home is non-closable
   if (tab.dirty && !window.confirm(`${t("Descartar alterações não salvas de")} "${tab.title}"?`)) return;
-  const h = cmById.get(id);
-  if (h) { try { h.destroy(); } catch (_) {} }
-  cmById.delete(id); savedById.delete(id); fmById.delete(id);
+  disposeTabState(id);
   ws = LoroWorkspace.closeTab(ws, id);
   renderTabs(); renderActive();
 }
@@ -1745,9 +1819,7 @@ function closeTabsUnder(prefixOrRel, exact) {
   const doomed = ws.tabs.filter((t) => t.rel !== HOME_REL &&
     (exact ? t.rel === prefixOrRel : t.rel.startsWith(prefixOrRel)));
   doomed.forEach((t) => {
-    const h = cmById.get(t.id);
-    if (h) { try { h.destroy(); } catch (_) {} }
-    cmById.delete(t.id); savedById.delete(t.id); fmById.delete(t.id);
+    disposeTabState(t.id);
     ws = LoroWorkspace.closeTab(ws, t.id);
   });
   if (doomed.length) { renderTabs(); renderActive(); }
@@ -1765,7 +1837,7 @@ function setupWorkspace() {
   cmById.forEach((h) => { try { h.destroy(); } catch (_) {} });
   cmById.clear(); savedById.clear(); fmById.clear();
   ws = LoroWorkspace.empty();
-  ws = LoroWorkspace.openTab(ws, HOME_REL, { preview: false });
+  ws = LoroWorkspace.openTab(ws, HOME_REL, { preview: false }).ws;
   ws = LoroWorkspace.pin(ws, LoroWorkspace.activeTab(ws).id);
   renderTabs(); showHome();
 }
@@ -1773,6 +1845,7 @@ B.navHome.addEventListener("click", openHome);
 
 function docBadge(p, isGuide) {
   if (isGuide) return [t("instruções do loop — aplicadas antes de processar"), "ok"];
+  if (p === MANUAL_REL) return [t("manual do Loro — somente leitura"), "ro"];
   if (p.startsWith("inbox/")) return [t("pendente — será processado pelo loop"), "ok"];
   if (p.endsWith("guia.md")) return [t("formato antigo — migre para context.md"), "warn2"];
   if (p.endsWith("CHANGELOG.md")) return [t("histórico (append-only)"), "ro"];
@@ -1790,7 +1863,14 @@ function setDocGit(p, kind, isGuide) {
 
 const cmTheme = () => (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
 // read a document's raw text (guide-aware; falls back from context.md to guia.md)
+// ADR-0002 §7 — the user manual ships inside the app as a webview asset (one
+// file per language), opened as a read-only studio tab; no IPC involved.
+const MANUAL_REL = "loro://manual";
 async function readDoc(rel) {
+  if (rel === MANUAL_REL) {
+    const r = await fetch(settings.uiLang === "en" ? "manual.en.md" : "manual.pt.md");
+    return await r.text();
+  }
   if (rel === GUIDE_REL) { try { return await invoke("brain_read_guide"); } catch (_) { return ""; } }
   try { return await invoke("brain_read", { rel }); }
   catch (err) {
@@ -1837,12 +1917,12 @@ function saveActive() {
   const h = cmById.get(t.id);
   if (h) saveTab(t.id, h.getValue());
 }
-async function mountEditor(tab) {
+async function mountEditor(tab, stale) {
   let h = cmById.get(tab.id);
   if (!h) {
     let raw;
     try { raw = await readDoc(tab.rel); } catch (e) { toast(t("não foi possível abrir")); clog("readDoc error: " + e); return; }
-    if (ws.activeId !== tab.id) return; // a faster switch won the race
+    if (stale && stale()) return; // a newer render won the race
     savedById.set(tab.id, raw);
     h = window.LoroCM6.create({
       parent: B.editHost,
@@ -1860,14 +1940,14 @@ async function mountEditor(tab) {
   cmById.forEach((hh, id) => { hh.view.dom.style.display = id === tab.id ? "" : "none"; });
   requestAnimationFrame(() => h.focus());
 }
-async function renderView(tab) {
+async function renderView(tab, stale) {
   const h = cmById.get(tab.id);
   let raw;
   if (h) raw = h.getValue(); // an edited-but-not-saved buffer wins over disk
   else {
     try { raw = await readDoc(tab.rel); }
     catch (e) { toast(t("não foi possível abrir")); clog("brain_read error: " + e); return; }
-    if (ws.activeId !== tab.id) return; // a faster switch won the race
+    if (stale && stale()) return; // a newer render won the race
     savedById.set(tab.id, raw);
   }
   const fallback = tab.rel === GUIDE_REL
@@ -1915,7 +1995,7 @@ function renderRefsPanel(fm) {
 // análise section with the per-meeting consent toggle (default OFF; ADR-0011).
 // It stays under pessoal/ (kind "personal"), so LoroWorld hides any Git state and
 // nothing here ever writes into contextos/.
-async function renderMeetingLiving(tab) {
+async function renderMeetingLiving(tab, stale) {
   const id = LM.livingId(tab.rel);
   B.editHost.hidden = true;
   B.doc.hidden = false;
@@ -1924,9 +2004,9 @@ async function renderMeetingLiving(tab) {
   let raw = "", manifest = null;
   try { raw = await readDoc(tab.rel); } catch (_) {}
   try { manifest = await invoke("brain_meeting_manifest", { id }); } catch (_) {}
-  if (ws.activeId !== tab.id) return; // a faster switch won the race
+  if (stale && stale()) return; // a newer render won the race
   const artefatos = await listArtefatos(LM.meetingDir(tab.rel));
-  if (ws.activeId !== tab.id) return;
+  if (stale && stale()) return;
   const status = manifest ? manifest.status : (meeting.id === id ? meeting.phase : "done");
   paintMeetingSurface(id, raw, manifest, status, artefatos);
 }
@@ -2058,7 +2138,7 @@ function runMeetingSkill(kind, id, question) {
   if (!dir) { toast(t("abra a reunião para analisar")); return; }
   const cmd = LM.meetingSkillCmd(kind, dir, question);
   if (!cmd) { toast(t("digite uma pergunta")); return; }
-  termRun(cmd);
+  termRunClaude(cmd);
   toast(kind === "answer" ? t("pergunta enviada ao Claude do terminal") : t("análise enviada ao Claude do terminal"), 4000);
   // A skill write is async and IPC-free (no pessoal-changed event), so nudge a
   // couple of tree/surface refreshes to reveal the artefatos it produces.
@@ -2224,7 +2304,15 @@ function applyDocActions(rel) {
 }
 
 // render the active tab's content into the document pane (view or edit)
+// renderActive is serialized by a generation token (ADR-0002 §3): concurrent
+// calls (rapid tab switches, view/edit toggles) can interleave awaits, so only
+// the LATEST generation may keep going after any await — the winner alone
+// touches editor/doc visibility. Cheaper and stricter than the old per-id
+// guard (covers same-tab re-renders too).
+let renderGen = 0;
 async function renderActive() {
+  const gen = ++renderGen;
+  const stale = () => gen !== renderGen;
   hidePill();
   const tab = activeTab();
   if (!tab || tab.rel === HOME_REL) { showHome(); return; }
@@ -2233,7 +2321,7 @@ async function renderActive() {
   B.docWrap.hidden = false;
   $("bDraftNote").hidden = true;   // the first-edit note is one-time; reset per render
   closeFind();
-  B.crumb.textContent = isGuide ? t("instruções do loop") : tab.rel;
+  B.crumb.textContent = isGuide ? t("instruções do loop") : tab.rel === MANUAL_REL ? t("manual de uso") : tab.rel;
   // permanent world badge (versionado / rascunho), else document-specific badge
   const world = LoroWorld.crumbBadge(tab.kind, settings.uiLang);
   const [label, cls] = world && !isGuide ? [world.label, world.cls] : docBadge(tab.rel, isGuide);
@@ -2246,7 +2334,8 @@ async function renderActive() {
     B.modes.hidden = true;
     $("bPromoted").hidden = true;
     $("bDocActs").hidden = true;
-    await renderMeetingLiving(tab);
+    await renderMeetingLiving(tab, stale);
+    if (stale()) return;
     B.wsBody.scrollTop = 0;
     markSel();
     return;
@@ -2255,8 +2344,9 @@ async function renderActive() {
   B.modes.hidden = !textFile;
   B.viewBtn.classList.toggle("on", tab.mode !== "edit");
   B.editBtn2.classList.toggle("on", tab.mode === "edit");
-  if (textFile && tab.mode === "edit") await mountEditor(tab);
-  else await renderView(tab);
+  if (textFile && tab.mode === "edit") await mountEditor(tab, stale);
+  else await renderView(tab, stale);
+  if (stale()) return;
   updatePromotedBadge(tab);
   B.wsBody.scrollTop = 0;
   markSel();
@@ -2301,7 +2391,7 @@ B.editBtn2.addEventListener("click", () => setActiveMode("edit"));
 
 // abre as "instruções do loop" (inbox/_prompt.md) como uma aba em modo edição
 async function openGuideDoc() {
-  ws = LoroWorkspace.openTab(ws, GUIDE_REL, { preview: false });
+  ws = LoroWorkspace.openTab(ws, GUIDE_REL, { preview: false }).ws;
   ws = LoroWorkspace.setMode(ws, LoroWorkspace.activeTab(ws).id, "edit");
   renderTabs();
   await renderActive();
@@ -2415,7 +2505,11 @@ function toggleInlineImage(anchorEl, mime, base64, rel) {
 // Open (or focus) a document as a workspace tab. Single-click = ephemeral
 // preview (default); pass {preview:false} for double-click / palette / permanent.
 async function openDoc(relPath, opts) {
-  ws = LoroWorkspace.openTab(ws, relPath, opts || { preview: true });
+  const r = LoroWorkspace.openTab(ws, relPath, opts || { preview: true });
+  ws = r.ws;
+  // preview slot reused in place: the old document's live editor state must
+  // die with it, or it keeps answering for the new rel (ADR-0002 §3)
+  if (r.evictedId) disposeTabState(r.evictedId);
   renderTabs();
   await renderActive();
 }
@@ -2424,6 +2518,7 @@ async function openDoc(relPath, opts) {
 // pt-BR command registry (ADR-0008). `run` wires to existing handlers/buttons.
 const COMMANDS = [
   { label: "ir para início", run: () => openHome() },
+  { label: "abrir manual", run: () => openDoc(MANUAL_REL, { preview: false }) },
   { label: "alternar visualizar/editar", run: () => toggleActiveMode() },
   { label: "fechar aba", run: () => closeActiveTab() },
   { label: "reabrir aba", run: () => reopenClosedTab() },
@@ -2642,7 +2737,7 @@ B.createBtn.addEventListener("click", async () => {
       autoContext: B.autoInput.checked,
       gitInit: B.gitInput.checked,
       color: wizColor || null,
-      lang: ($("brainLang") && $("brainLang").value) || "pt",
+      // ADR-0002 §1: no per-project language — seeds follow the UI language
     });
     acervos = av.acervos || []; activeAcervo = av.active || "";
     creatingNew = false;
@@ -2665,9 +2760,53 @@ B.gitBtn.addEventListener("click", () => {
       if (!message) throw t("descreva a mudança");
       const r = await invoke("brain_version", { slug: message, message });
       toast(`${t("versionado em")} ${r.branch}`);
+      // sync degraded (offline / diverged main): tell the user, don't block
+      if (r.warn) toast(tErr(r.warn), 5000);
     }
   );
 });
+
+// ADR-0002 §2 — branch picker: see the current branch, switch to another local
+// branch or create a new rfc/. Switching with a dirty tree is blocked by the
+// backend (err.working_tree_dirty); the remedy is the Versionar button itself.
+async function openBranchPicker() {
+  let info;
+  try { info = await invoke("git_branches"); } catch (e) { toast(tErr(String(e))); return; }
+  const afterSwitch = (branch) => {
+    toast("⎇ " + branch);
+    // the disk changed under the open tabs — reset to Home (acervo-switch pattern)
+    setupWorkspace(); sideSig = ""; brainRefresh();
+  };
+  const rows = (info.branches || []).map((b) => {
+    const cur = b === info.current, def = b === info.default;
+    return `<div class="fitem2${cur ? " on" : ""}" data-branch="${esc(b)}"><span class="fn mono">${cur ? "● " : ""}${esc(b)}${def ? ` (${t("principal")})` : ""}</span></div>`;
+  }).join("");
+  const body = openModal(
+    t("Branch de trabalho"),
+    `<div class="fitem2 muted fstatic">${t("mudanças de conhecimento nascem em branches rfc/ — a principal é protegida")}</div>` +
+      rows +
+      `<div class="fsep"></div><div class="fitem2 add" data-newbranch>＋ ${t("nova branch…")}</div>`,
+    null,
+    null
+  );
+  body.querySelectorAll("[data-branch]").forEach((el2) => (el2.onclick = async () => {
+    closeModal();
+    const b = el2.dataset.branch;
+    if (b === info.current) return;
+    try { afterSwitch(await invoke("git_switch_branch", { branch: b })); }
+    catch (e) { toast(tErr(String(e)), 5000); }
+  }));
+  const nb = body.querySelector("[data-newbranch]");
+  if (nb) nb.onclick = () => {
+    closeModal();
+    openEditor(t("Nova branch — descreva a mudança em uma linha"), "", async (desc) => {
+      const slug = (desc || "").trim();
+      if (!slug) throw t("descreva a mudança");
+      afterSwitch(await invoke("git_create_branch", { slug }));
+    });
+  };
+}
+if (B.branchBtn) B.branchBtn.addEventListener("click", openBranchPicker);
 
 B.proposeBtn.addEventListener("click", () => {
   openEditor(
@@ -2714,9 +2853,7 @@ window.addEventListener("keydown", (e) => { if (e.key === "Escape" && !PM.wrap.h
 function refreshTabFromDisk(rel) {
   const tab = ws.tabs.find((t) => t.rel === rel);
   if (!tab) return;
-  const h = cmById.get(tab.id);
-  if (h) { try { h.destroy(); } catch (_) {} cmById.delete(tab.id); }
-  savedById.delete(tab.id); fmById.delete(tab.id);
+  disposeTabState(tab.id);
   if (ws.activeId === tab.id) renderActive();
 }
 
@@ -3212,7 +3349,7 @@ $("termSide").addEventListener("click", () => {
   settings.termSide = !settings.termSide; persistSettings(); applyTermLayout();
 });
 
-// roda um comando no terminal embutido (abre o painel e digita)
+// roda um comando de SHELL no terminal embutido (abre o painel e digita)
 function termRun(cmd) {
   setTermPanel(true);
   let tries = 0;
@@ -3221,6 +3358,33 @@ function termRun(cmd) {
     if (++tries < 40) setTimeout(send, 250);
   };
   send();
+}
+
+// ADR-0002 §4 — runs a SLASH-COMMAND, which only a live Claude understands.
+// Handshake: poll term_status until a `claude` process exists under the PTY
+// shell (relaunching it once if the session was reused after Claude exited),
+// give the TUI a short settle so it doesn't drop pending stdin, then inject.
+// Fails loudly instead of typing into a bare shell.
+async function termRunClaude(cmd) {
+  const cfg = await invoke("brain_get_config").catch(() => null);
+  if (!cfg || !cfg.brainDir) { toast(tErr("err.acervo_not_configured")); return; }
+  setTermPanel(true);
+  let relaunched = false;
+  for (let tries = 0; tries < 50; tries++) {           // ~15s total
+    const st = await invoke("term_status").catch(() => null);
+    if (st && st.open && st.claudeRunning) {
+      await new Promise((r) => setTimeout(r, tries === 0 ? 0 : 800)); // settle a fresh TUI
+      await invoke("term_input", { data: cmd + "\n" }).catch(() => {});
+      return;
+    }
+    if (st && st.open && !st.claudeRunning && termReady && !relaunched) {
+      relaunched = true; // reused session where Claude exited: bring it back
+      await invoke("term_input", { data: "claude\n" }).catch(() => {});
+    }
+    await new Promise((r) => setTimeout(r, 300));
+  }
+  toast(t("não foi possível abrir o Claude no terminal — verifique se o CLI está instalado (claude)"), 5000);
+  clog("termRunClaude: claude did not come up; command not injected");
 }
 
 // ---- setup guiado: o Loro verifica dependências e resolve pelo terminal ----

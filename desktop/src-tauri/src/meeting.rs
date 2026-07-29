@@ -51,6 +51,15 @@ const ARTIFACT_KINDS: [&str; 8] = [
 // fills them in; the placeholder tells the user exactly how to populate it (no
 // internal ADR reference leaks into a user-facing report).
 const DEFERRED_PROSE: &str = "_(resumo automático — rode “analisar” para preencher)_";
+const DEFERRED_PROSE_EN: &str = "_(automatic summary — run “analyse” to fill it in)_";
+
+fn deferred_prose(lang: &str) -> &'static str {
+    if lang == "en" {
+        DEFERRED_PROSE_EN
+    } else {
+        DEFERRED_PROSE
+    }
+}
 
 // ---- base + per-meeting serialization ---------------------------------------
 
@@ -479,47 +488,87 @@ fn fmt_timecode(t_ms: Option<u64>) -> String {
 // noise) and the empty-count blocks were dropped everywhere. v1 seeds
 // Resumo/Decisões/Dúvidas from MARKERS ONLY and never invents prose (BR-8 safe:
 // it emits marker types + timecodes, never transcript text).
-fn assemble_notebook(m: &Manifest) -> String {
+// The notebook is born in the active UI language (ADR-0002 §1); anything but
+// "en" falls back to pt, the original.
+fn assemble_notebook(m: &Manifest, lang: &str) -> String {
+    let en = lang == "en";
+    let prose = deferred_prose(lang);
     let mut out = String::new();
 
-    // Cabeçalho
     out.push_str(&format!("# {}\n\n", m.titulo));
-    out.push_str("## Cabeçalho\n\n");
+    out.push_str(if en {
+        "## Header\n\n"
+    } else {
+        "## Cabeçalho\n\n"
+    });
     // ADR-0013: the header is trimmed to what the reader needs — no
     // modelo/idioma/consentimento (audio is transient, inference is local-first).
-    out.push_str(&format!("- Título: {}\n", m.titulo));
+    out.push_str(&format!(
+        "- {}: {}\n",
+        if en { "Title" } else { "Título" },
+        m.titulo
+    ));
     out.push_str(&format!("- Brainstorming: {}\n", m.tema));
-    out.push_str(&format!("- Data: {}\n\n", m.criado_em));
+    out.push_str(&format!(
+        "- {}: {}\n\n",
+        if en { "Date" } else { "Data" },
+        m.criado_em
+    ));
 
-    // Resumo (deferred prose)
-    out.push_str("## Resumo\n\n");
-    out.push_str(DEFERRED_PROSE);
+    // Summary (deferred prose)
+    out.push_str(if en {
+        "## Summary\n\n"
+    } else {
+        "## Resumo\n\n"
+    });
+    out.push_str(prose);
     out.push_str("\n\n");
 
-    // Decisões / Dúvidas & Respostas — seeded from markers only
-    out.push_str("## Decisões\n\n");
-    out.push_str(DEFERRED_PROSE);
+    // Decisions / Q&A — seeded from markers only
+    out.push_str(if en {
+        "## Decisions\n\n"
+    } else {
+        "## Decisões\n\n"
+    });
+    out.push_str(prose);
     out.push('\n');
-    push_marker_bullets(&mut out, m, "decisao", "Decisão");
+    push_marker_bullets(
+        &mut out,
+        m,
+        "decisao",
+        if en { "Decision" } else { "Decisão" },
+        lang,
+    );
     out.push('\n');
 
-    out.push_str("## Dúvidas & Respostas\n\n");
-    out.push_str(DEFERRED_PROSE);
+    out.push_str(if en {
+        "## Questions & Answers\n\n"
+    } else {
+        "## Dúvidas & Respostas\n\n"
+    });
+    out.push_str(prose);
     out.push('\n');
-    push_marker_bullets(&mut out, m, "duvida", "Dúvida");
+    push_marker_bullets(
+        &mut out,
+        m,
+        "duvida",
+        if en { "Question" } else { "Dúvida" },
+        lang,
+    );
     out.push('\n');
 
     out
 }
 
-fn push_marker_bullets(out: &mut String, m: &Manifest, tipo: &str, label: &str) {
+fn push_marker_bullets(out: &mut String, m: &Manifest, tipo: &str, label: &str, lang: &str) {
+    let at = if lang == "en" { "at" } else { "em" };
     for mk in m.marcadores.iter().filter(|x| x.tipo == tipo) {
         match &mk.r#ref {
             Some(r) => out.push_str(&format!(
-                "- {label} em {} (ref: {r})\n",
+                "- {label} {at} {} (ref: {r})\n",
                 fmt_timecode(mk.t_ms)
             )),
-            None => out.push_str(&format!("- {label} em {}\n", fmt_timecode(mk.t_ms))),
+            None => out.push_str(&format!("- {label} {at} {}\n", fmt_timecode(mk.t_ms))),
         }
     }
 }
@@ -1019,7 +1068,7 @@ pub fn brain_meeting_build_notebook(app: AppHandle, id: String) -> Result<BuildO
         manifest.marcadores = fold_markers_file(&dir, &manifest.marcadores);
         let _ = std::fs::remove_file(&sidecar);
     }
-    let notebook = assemble_notebook(&manifest);
+    let notebook = assemble_notebook(&manifest, &crate::config::ui_lang());
     std::fs::write(dir.join("relatorio.md"), notebook).map_err(|e| e.to_string())?;
 
     manifest.status = "done".into();
@@ -1606,7 +1655,7 @@ mod tests {
             }],
             ..Default::default()
         };
-        let nb = assemble_notebook(&m);
+        let nb = assemble_notebook(&m, "pt");
 
         for h in [
             "## Cabeçalho",
@@ -1650,6 +1699,38 @@ mod tests {
         assert!(nb.contains("Dúvida em 00:05"));
     }
 
+    // ADR-0002 §1 — the notebook is born in the active UI language.
+    #[test]
+    fn notebook_is_english_when_lang_is_en() {
+        let m = Manifest {
+            titulo: "Kickoff".into(),
+            tema: "fleet-2026".into(),
+            criado_em: "2026-07-28".into(),
+            marcadores: vec![Marker {
+                tipo: "decisao".into(),
+                t_ms: Some(65_000),
+                r#ref: None,
+            }],
+            ..Default::default()
+        };
+        let nb = assemble_notebook(&m, "en");
+        for h in [
+            "## Header",
+            "## Summary",
+            "## Decisions",
+            "## Questions & Answers",
+        ] {
+            assert!(nb.contains(h), "missing section {h}");
+        }
+        assert!(!nb.contains("## Resumo") && !nb.contains("## Cabeçalho"));
+        assert!(nb.contains("- Title: Kickoff"));
+        assert!(nb.contains("- Brainstorming: fleet-2026"));
+        assert!(nb.contains("automatic summary"));
+        assert!(nb.contains("Decision at 01:05"));
+        // unknown languages fall back to pt
+        assert!(assemble_notebook(&m, "fr").contains("## Resumo"));
+    }
+
     #[test]
     fn build_notebook_command_core_sets_status_done() {
         let base = tmp("build");
@@ -1657,7 +1738,7 @@ mod tests {
         append_one(&c.dir, "[00:00] abertura").unwrap();
         // mirror brain_meeting_build_notebook's core (no AppHandle)
         let mut m = manifest_read(&c.dir).unwrap();
-        let nb = assemble_notebook(&m);
+        let nb = assemble_notebook(&m, "pt");
         std::fs::write(c.dir.join("relatorio.md"), nb).unwrap();
         m.status = "done".into();
         manifest_write(&c.dir, &m).unwrap();

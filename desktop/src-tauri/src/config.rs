@@ -175,20 +175,6 @@ pub fn write_loro_config(cfg: &LoroConfig) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
-// language of the active acervo ("pt" default) — drives templates.
-pub fn active_lang() -> String {
-    let cfg = read_loro_config();
-    active_acervo(&cfg)
-        .map(|a| {
-            if a.lang.is_empty() {
-                "pt".into()
-            } else {
-                a.lang.clone()
-            }
-        })
-        .unwrap_or_else(|| "pt".into())
-}
-
 pub fn active_acervo(cfg: &LoroConfig) -> Option<&Acervo> {
     cfg.acervos
         .iter()

@@ -61,25 +61,30 @@
   // Open (or focus) a document. Single-click opens an ephemeral preview tab;
   // only one preview exists at a time and the next preview open reuses its slot.
   // Opening a preview rel permanently promotes it (preview -> permanent).
+  //
+  // Returns { ws, evictedId } (ADR-0002 §3): when the preview slot is reused
+  // in place, its old document is gone but the tab ID survives — the caller
+  // MUST dispose any live editor state keyed by evictedId, or the old buffer
+  // keeps answering for the new document.
   function openTab(ws, rel, opts) {
     const preview = opts && "preview" in opts ? !!opts.preview : true;
     const existing = ws.tabs.find((t) => t.rel === rel);
     if (existing) {
       const ws2 = !preview && existing.preview ? patchTab(ws, existing.id, { preview: false }) : ws;
-      return setActive(ws2, existing.id);
+      return { ws: setActive(ws2, existing.id), evictedId: null };
     }
     if (preview) {
       const prev = ws.tabs.find((t) => t.preview);
       if (prev) {
         // reuse the preview slot in place: keep id + position, swap the content
         const tabs = ws.tabs.map((t) => (t.id === prev.id ? makeTab(prev.id, rel, true) : t));
-        return setActive({ ...ws, tabs }, prev.id);
+        return { ws: setActive({ ...ws, tabs }, prev.id), evictedId: prev.id };
       }
     }
     const seq = ws.seq + 1;
     const id = "t" + seq;
     const tabs = [...ws.tabs, makeTab(id, rel, preview)];
-    return setActive({ ...ws, tabs, seq }, id);
+    return { ws: setActive({ ...ws, tabs, seq }, id), evictedId: null };
   }
 
   // Close a tab, remember its rel on the reopen stack, and pick the next active
@@ -101,11 +106,12 @@
   }
 
   // Pop the most recently closed rel and reopen it as a permanent tab.
+  // Keeps the plain-ws contract: permanent opens never evict the preview slot.
   function reopenClosed(ws) {
     if (!ws.closed.length) return ws;
     const closed = ws.closed.slice(0, -1);
     const rel = ws.closed[ws.closed.length - 1];
-    return openTab({ ...ws, closed }, rel, { preview: false });
+    return openTab({ ...ws, closed }, rel, { preview: false }).ws;
   }
 
   // Entering edit mode promotes a preview tab to permanent (ADR-0008).

@@ -16,6 +16,7 @@
           <span class="brand mono">loro<span id="dot" class="dot" aria-hidden="true"></span></span>
         </div>
         <div class="cluster">
+          <button id="helpBtn" class="iconbtn mono" title="Manual de uso" aria-label="Manual de uso" data-i18n-attrs="title,aria-label">?</button>
           <button id="cfgBtn" class="iconbtn" title="Configurações" aria-label="Configurações" data-i18n-attrs="title,aria-label">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 00.12-.61l-1.92-3.32a.49.49 0 00-.59-.22l-2.39.96a7.03 7.03 0 00-1.62-.94l-.36-2.54a.48.48 0 00-.48-.41h-3.84a.48.48 0 00-.48.41l-.36 2.54c-.59.24-1.13.56-1.62.94l-2.39-.96a.49.49 0 00-.59.22L2.74 8.87a.49.49 0 00.12.61l2.03 1.58c-.05.3-.07.62-.07.94 0 .33.02.64.07.94l-2.03 1.58a.49.49 0 00-.12.61l1.92 3.32c.13.22.39.3.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.48-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.49.49 0 00-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1112 8.4a3.6 3.6 0 010 7.2z"/></svg>
           </button>
@@ -32,12 +33,6 @@
           <p class="lead" data-i18n>Um acervo é um projeto-cérebro (ex.: Company, pessoal…). O Loro estrutura o que você fala/escreve em contextos.</p>
           <label class="wfield"><span class="mono" data-i18n>nome do projeto</span>
             <input id="brainNameInput" type="text" placeholder="ex.: Company, Pessoal" data-i18n-attrs="placeholder" />
-          </label>
-          <label class="wfield"><span class="mono" data-i18n>idioma do projeto</span>
-            <select id="brainLang">
-              <option value="pt" data-i18n>português</option>
-              <option value="en" data-i18n>english</option>
-            </select>
           </label>
           <label class="wfield"><span class="mono" data-i18n>onde gerar</span>
             <button id="brainDirBtn" class="link mono dirbtn">…</button>
@@ -92,6 +87,7 @@
             <div class="bgroup"><span data-i18n>fontes</span></div>
             <div id="navSources" class="btree"></div>
           </aside>
+          <div id="sideGrip" class="sidegrip" aria-hidden="true"></div>
 
           <section class="bmain" id="bMain">
             <!-- faixa de abas (studio) — não rola; ADR-0008 -->
@@ -112,6 +108,7 @@
                 </div>
                 <span class="cluster">
                   <button id="askBtn" class="abtn" title="Responde qualquer dúvida a partir dos contextos do acervo (e MCP, se preciso)" data-i18n data-i18n-attrs="title">perguntar ao acervo</button>
+                  <button id="branchBtn" class="pulse mono gitbtn" hidden title="Escolher ou criar a branch de trabalho" data-i18n-attrs="title"></button>
                   <button id="gitBtn" class="pulse mono gitbtn" hidden data-i18n>versionar</button>
                   <button id="proposeBtn" class="pulse mono gitbtn" hidden title="Publicar a mudança como um Pull Request (RFC) para revisão" data-i18n data-i18n-attrs="title">propor mudança</button>
                 </span>
