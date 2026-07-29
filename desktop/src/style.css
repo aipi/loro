@@ -580,6 +580,16 @@ body {
   font-size: 13px; cursor: pointer; padding: 0;
 }
 .rowmenu:hover { color: var(--accent); border-color: var(--accent); }
+/* colapsa investigações/respostas de uma reunião (fechado por padrão) */
+.rowtoggle {
+  flex: none; margin-left: 6px;
+  width: 20px; height: 20px; line-height: 1;
+  border: none; background: none; color: var(--muted);
+  font-size: 10px; cursor: pointer; padding: 0;
+  transition: transform .12s ease;
+}
+.rowtoggle.open { transform: rotate(90deg); }
+.rowtoggle:hover { color: var(--accent); }
 .fitem2.ditem .fn, .fitem2.danger .fn { color: var(--red); }
 .fitem2 .fn { flex: 1 1 auto; }
 .fitem2 .rowmenu { margin-left: auto; width: 22px; height: 18px; }
@@ -677,6 +687,8 @@ body {
 .qfoot .link { font-size: 10.5px; }
 .rowsplit { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
 .hfoot { margin-top: auto; padding-top: 12px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.toolsrow { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.toolsrow:empty { margin-top: 0; }
 .qrow { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line); }
 .qrow:last-of-type { border-bottom: none; }
 .qname { font-size: 11px; color: var(--ink); cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

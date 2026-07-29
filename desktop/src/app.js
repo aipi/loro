@@ -1531,15 +1531,19 @@ function renderTemaNode(t) {
 // segmentação em quatro pastas era atrito, não estrutura.
 // A selectable part row: a checkbox (data-bssel/data-bskind) + the open target.
 // A meeting row carries a ⋯ menu (renomear/apagar); files keep the plain ×.
-function bsPartRow(kind, openRel, selRel, label, title, indent, meetingId, meetingStatus) {
+function bsPartRow(kind, openRel, selRel, label, title, indent, meetingId, meetingStatus, mopen) {
   const act = meetingId
-    ? `<button class="rowmenu" data-mtgmenu="${esc(selRel)}" data-mtgid="${esc(meetingId)}" data-mtgtitle="${esc(label)}" data-mtgstatus="${esc(meetingStatus || "")}" title="${t("ações da reunião (analisar, perguntar, relatório…)")}">⋯</button>`
+    ? `<button class="rowtoggle${mopen ? " open" : ""}" data-mtgtoggle="${esc(meetingId)}" title="${t("mostrar/ocultar investigações e respostas")}">▸</button>` +
+      `<button class="rowmenu" data-mtgmenu="${esc(selRel)}" data-mtgid="${esc(meetingId)}" data-mtgtitle="${esc(label)}" data-mtgstatus="${esc(meetingStatus || "")}" title="${t("ações da reunião (analisar, perguntar, relatório…)")}">⋯</button>`
     : `<button class="rowmenu" data-artmenu="${esc(selRel)}" data-artlabel="${esc(label)}" title="${t("ações (renomear, apagar)")}">⋯</button>`;
   const icon = kind === "reuniao" ? "meeting" : kind === "nota" ? "note" : "file";
   return `<div class="bitem file${indent ? " bsub" : ""}" data-doc="${esc(openRel)}" title="${esc(title)}">` +
     `<input type="checkbox" class="bschk" data-bssel="${esc(selRel)}" data-bskind="${kind}" title="${t("selecionar para a fila")}">` +
     `${ico(icon)}<span class="bn">${esc(label)}</span>` + act + `</div>`;
 }
+// Investigações/respostas de cada reunião são carregadas sob demanda (fechado
+// por padrão) — a lateral crescia demais listando tudo sempre expandido, e a
+// maior parte fica sem uso na maioria das sessões (feedback do owner).
 async function loadTemaChildren(slug) {
   const holder = [...B.navPessoal.querySelectorAll("[data-temachild]")].find((h) => h.dataset.temachild === slug);
   if (!holder) return;
@@ -1563,13 +1567,10 @@ async function loadTemaChildren(slug) {
     // título do manifest (renomeável); cai para o id humanizado quando ausente
     const title = LM.meetingTitleFromManifest({ titulo: m.titulo }, m.id);
     const label = title === m.id ? LM.meetingLabel(m.id, settings.uiLang) : title;
-    inner += bsPartRow("reuniao", `${m.rel}/reuniao.md`, m.rel, label, m.id, false, m.id, m.status);
-    for (const [asub, akind] of [["investigacoes", "investigacao"], ["respostas", "nota"]]) {
-      let arts = [];
-      try { arts = ((await invoke("brain_list_dir", { rel: `${m.rel}/artefatos/${asub}` })) || []).filter((a) => !a.dir); }
-      catch (_) {}
-      for (const a of arts) inner += bsPartRow(akind, a.path, a.path, shortName(a.name), a.name, true);
-    }
+    const mkey = "mtg:" + m.id, mopen = bOpen.has(mkey);
+    inner += bsPartRow("reuniao", `${m.rel}/reuniao.md`, m.rel, label, m.id, false, m.id, m.status, mopen);
+    inner += `<div class="bchild" data-mtgchild="${esc(m.id)}" data-mtgrel="${esc(m.rel)}" ${mopen ? "" : "hidden"}></div>`;
+    if (mopen) await fillMeetingChild(m.id, m.rel);
   }
   if (!meetings.length && !notas.length) {
     inner += `<div class="bempty">${t("vazio — grave uma reunião (●) ou escreva uma nota")}</div>`;
@@ -1577,6 +1578,20 @@ async function loadTemaChildren(slug) {
   holder.innerHTML = inner;
   wirePessoal();
   markSel();
+}
+// Busca e injeta investigações/respostas de UMA reunião no seu container
+// (chamado ao expandir, e ao re-render de uma tema já expandida).
+async function fillMeetingChild(meetingId, meetingRel) {
+  const child = [...B.navPessoal.querySelectorAll("[data-mtgchild]")].find((h) => h.dataset.mtgchild === meetingId);
+  if (!child) return;
+  let inner = "";
+  for (const [asub, akind] of [["investigacoes", "investigacao"], ["respostas", "nota"]]) {
+    let arts = [];
+    try { arts = ((await invoke("brain_list_dir", { rel: `${meetingRel}/artefatos/${asub}` })) || []).filter((a) => !a.dir); }
+    catch (_) {}
+    for (const a of arts) inner += bsPartRow(akind, a.path, a.path, shortName(a.name), a.name, true);
+  }
+  child.innerHTML = inner || `<div class="bempty sub">${t("nada por aqui ainda")}</div>`;
 }
 // Selection of brainstorming parts to send to the fila (ADR-0013). A plain Set of
 // acervo-relative rels; the parts' kinds are read back from the checkbox dataset.
@@ -1635,31 +1650,95 @@ function wirePessoal() {
     e.stopPropagation(); promptNewNota(el2.dataset.addnota, el2);
   }));
   B.navPessoal.querySelectorAll("[data-syncdrive]").forEach((el2) => (el2.onclick = (e) => {
-    e.stopPropagation(); promptSyncDrive(el2.dataset.syncdrive);
+    e.stopPropagation(); promptSyncTool("drive", el2.dataset.syncdrive);
+  }));
+  B.navPessoal.querySelectorAll("[data-mtgtoggle]").forEach((el2) => (el2.onclick = async (e) => {
+    e.stopPropagation();
+    const id = el2.dataset.mtgtoggle, key = "mtg:" + id;
+    const child = [...B.navPessoal.querySelectorAll("[data-mtgchild]")].find((h) => h.dataset.mtgchild === id);
+    if (!child) return;
+    if (bOpen.has(key)) {
+      bOpen.delete(key); el2.classList.remove("open"); child.hidden = true;
+    } else {
+      bOpen.add(key); el2.classList.add("open"); child.hidden = false;
+      await fillMeetingChild(id, child.dataset.mtgrel);
+      wirePessoal(); markSel();
+    }
   }));
 }
 
-// "sincronizar reunião" (ADR-0005): the search/link field is optional — left
-// blank, the skill searches broadly by the Gemini title pattern; filled, it
-// either narrows that search (a keyword) or names the document directly (a
-// Drive link), which matters when the default search misses a shared meeting.
-function promptSyncDrive(slug) {
+// ADR-0005/0006: per-source copy for the /loro-sync modal. `required` gates
+// the identifier field before injecting the command — drive is the only
+// source where a blank identifier still means something (a broad search).
+const SYNC_TOOL_COPY = {
+  drive: {
+    title: "Sincronizar reunião externa (Drive)",
+    desc: "busca uma nota do Gemini no Drive e anexa só título/link à nota — nunca lê o conteúdo.",
+    field: "busca ou link (opcional)",
+    placeholder: "ex.: nome da reunião, ou um link do Drive",
+    required: false,
+  },
+  slack: {
+    title: "Sincronizar canal (Slack)",
+    desc: "anexa uma mensagem/thread de um canal do Slack como referência — só título/link/data, nunca o texto.",
+    field: "canal",
+    placeholder: "ex.: #eng-loro",
+    required: true,
+  },
+  jira: {
+    title: "Sincronizar ticket (Jira)",
+    desc: "anexa um ticket do Jira como referência — só título/link, nunca a descrição/comentários.",
+    field: "chave do ticket ou link",
+    placeholder: "ex.: PROJ-123",
+    required: true,
+  },
+  confluence: {
+    title: "Sincronizar página (Confluence)",
+    desc: "anexa uma página do Confluence como referência — só título/link, nunca o conteúdo.",
+    field: "título da página ou link",
+    placeholder: "ex.: Ata da reunião de sprint",
+    required: true,
+  },
+};
+
+// "sincronizar" (ADR-0005/0006): shared modal for the 4 built-in /loro-sync
+// sources. Without `slug` (Visão Geral entry point), the modal also asks
+// which brainstorming to target — with `slug` (the per-brainstorming button),
+// the target is already known.
+async function promptSyncTool(fonte, slug) {
+  const cfg = SYNC_TOOL_COPY[fonte];
+  if (!cfg) return;
+  let temaField = "";
+  if (!slug) {
+    let temas = [];
+    try { temas = (await invoke("brain_list_brainstorms")) || []; } catch (_) {}
+    if (!temas.length) { toast(t("crie um brainstorming primeiro")); return; }
+    temaField = `<label class="wfield"><span class="mono">${t("tema")}</span>` +
+      `<select id="syncToolTema">` +
+      temas.map((b) => `<option value="${esc(b.slug)}">${esc(b.nome)}</option>`).join("") +
+      `</select></label>`;
+  }
   openModal(
-    t("Sincronizar reunião externa (Drive)"),
-    `<p class="pmnote mono">${t("busca uma nota do Gemini no Drive e anexa só título/link à nota — nunca lê o conteúdo.")}</p>` +
-      `<label class="wfield"><span class="mono">${t("busca ou link (opcional)")}</span>` +
-      `<input id="syncDriveInput" type="text" placeholder="${t("ex.: nome da reunião, ou um link do Drive")}" spellcheck="false"></label>`,
+    t(cfg.title),
+    `<p class="pmnote mono">${t(cfg.desc)}</p>` + temaField +
+      `<label class="wfield"><span class="mono">${t(cfg.field)}</span>` +
+      `<input id="syncToolInput" type="text" placeholder="${t(cfg.placeholder)}" spellcheck="false"></label>`,
     t("buscar"),
     () => {
-      const q = (($("syncDriveInput") && $("syncDriveInput").value) || "").trim();
-      const cmd = LoroBrainstorm.syncCmd("drive", slug, q);
+      const alvo = slug || (($("syncToolTema") && $("syncToolTema").value) || "");
+      const q = (($("syncToolInput") && $("syncToolInput").value) || "").trim();
+      if (!alvo) { toast(t("informe o tema")); return; }
+      if (cfg.required && !q) { toast(t("informe") + ": " + t(cfg.field)); return; }
+      const cmd = LoroBrainstorm.syncCmd(fonte, alvo, q);
       if (!cmd) { toast(t("informe o tema")); return; }
       termRunAgent(cmd);
       toast(t("busca enviada ao agente do terminal"), 4000);
     }
   );
-  const inp = $("syncDriveInput"); if (inp) inp.focus();
+  const inp = $("syncToolInput"); if (inp) inp.focus();
 }
+document.querySelectorAll("#toolsCard [data-tool]").forEach((el2) =>
+  el2.addEventListener("click", () => promptSyncTool(el2.dataset.tool)));
 
 // Inline "nova nota" inside a brainstorming (mirrors promptNewContext/promptNewTema).
 // Writes brainstorming/<slug>/notas/<slug>.md via brain_new_notebook and opens it.
@@ -1741,17 +1820,17 @@ function openMeetingMenu(rel, id, title, status, anchor) {
   B.bMenu.innerHTML =
     `<div class="fhead">${esc(title)}</div>` +
     `<div class="fitem2 strong${dis ? " off" : ""}" data-analyse><span class="fn">✦ ${t("analisar")}</span></div>` +
-    `<div class="fitem2${dis ? " off" : ""}" data-question><span class="fn">? ${t("perguntar…")}</span></div>` +
+    `<div class="fitem2${ready ? "" : " strong"}" data-question><span class="fn">? ${t("perguntar…")}</span></div>` +
     `<div class="fitem2${dis ? " off" : ""}" data-report><span class="fn">≡ ${t("ver relatório")}</span></div>` +
-    (ready ? "" : `<div class="fnote mono">${t("disponíveis quando a reunião terminar")}</div>`) +
+    (ready ? "" : `<div class="fnote mono">${t("analisar e ver relatório ficam disponíveis quando a reunião terminar — perguntar já funciona agora")}</div>`) +
     `<div class="fsep"></div>` +
     `<div class="fitem2" data-ren><span class="fn">✎ ${t("renomear")}</span></div>` +
     `<div class="fitem2 danger" data-del><span class="fn">${t("apagar reunião")}</span></div>`;
   if (ready) {
     B.bMenu.querySelector("[data-analyse]").onclick = () => { closeFloat(); openDoc(`${rel}/reuniao.md`, { preview: false }); runMeetingSkill("analyse", id, null, rel); };
-    B.bMenu.querySelector("[data-question]").onclick = () => { closeFloat(); askMeetingQuestion(id, rel); };
     B.bMenu.querySelector("[data-report]").onclick = () => { closeFloat(); buildAndOpenReport(id); };
   }
+  B.bMenu.querySelector("[data-question]").onclick = () => { closeFloat(); askMeetingQuestion(id, rel); };
   B.bMenu.querySelector("[data-ren]").onclick = () => { closeFloat(); promptRenameMeeting(id, title); };
   B.bMenu.querySelector("[data-del]").onclick = () => { closeFloat(); delPessoal(rel, "reuniao"); };
   placeMenu(anchor);
@@ -2263,6 +2342,10 @@ function meetingRailHtml(id, status) {
   // is only worth opening after the meeting is done (recording/transcribing →
   // the button is disabled with the reason spelled out).
   const ready = status === "done";
+  // "perguntar" has no technical dependency on the finished report — the living
+  // notebook already accretes text while recording — so it stays enabled
+  // throughout, and is the highlighted (.cta) action while the meeting is
+  // still active, since "analisar" isn't usable yet at that point.
   const action = (btnCls, btnId, label, note, disabled) =>
     `<div class="mtg-action">` +
       `<button class="abtn ${btnCls}" id="${btnId}"${disabled ? " disabled" : ""}>${label}</button>` +
@@ -2272,8 +2355,8 @@ function meetingRailHtml(id, status) {
     `<div class="mtg-railhead mono">${t("o que fazer com esta reunião")}</div>` +
     action("cta", "mtgAnalyseBtn", t("analisar"),
       t("O agente lê a transcrição e o contexto local primeiro, aponta tema, decisões, riscos e dúvidas, e escreve o relatório."), !ready) +
-    action("", "mtgQuestionBtn", t("perguntar…"),
-      t("Faça uma pergunta sobre a reunião — a resposta é ancorada no que foi dito e no contexto local."), !ready) +
+    action(ready ? "" : "cta", "mtgQuestionBtn", t("perguntar…"),
+      t("Faça uma pergunta sobre a reunião — a resposta é ancorada no que foi dito e no contexto local. Funciona mesmo com a reunião ainda em andamento."), false) +
     action("ghost", "mtgReportBtn", t("ver relatório"),
       ready
         ? t("Abre o relatório desta reunião (resumo, decisões, dúvidas, investigações).")
