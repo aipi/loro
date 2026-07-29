@@ -476,6 +476,12 @@ body {
   border: 1px solid var(--line); border-radius: 8px; padding: 8px 14px; cursor: pointer;
 }
 .abtn:hover { border-color: var(--accent); color: var(--accent); }
+/* icon inside a hero .abtn (executar habilidade): centered with the label and
+   inheriting the button's color — .nico's sidebar defaults (baseline inline,
+   muted) misaligned it here */
+.bhero .abtn { display: inline-flex; align-items: center; gap: 6px; }
+.bhero .abtn .nico { color: inherit; }
+.bhero .abtn .nico svg { width: 13px; height: 13px; }
 /* CTA do fluxo (gerar contexto · enviar para a fila): o passo seguinte é o único
    botão "cheio" da vizinhança — hierarquia por cor, não por tamanho. */
 .abtn.cta {
@@ -964,11 +970,13 @@ body {
    artefatos + bloco de análise/consentimento. Reaproveita os tokens do tema. */
 .mtg-surface { display: flex; align-items: flex-start; gap: 20px; }
 .mtg-doc { flex: 1 1 auto; min-width: 0; }
+/* same width and breakpoint as .doc-rail — the habilidade card must sit in
+   the SAME place whether the open tab is a meeting or a plain document */
 .mtg-rail {
-  flex: 0 0 214px; position: sticky; top: 0;
+  flex: 0 0 220px; position: sticky; top: 0;
   display: flex; flex-direction: column; gap: 14px;
 }
-@media (max-width: 720px) {
+@media (max-width: 900px) {
   .mtg-surface { flex-direction: column; }
   .mtg-rail { flex-basis: auto; width: 100%; position: static; }
 }
