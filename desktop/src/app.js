@@ -1261,6 +1261,9 @@ const ICONS = {
   note: "M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h10l6-6V5c0-1.1-.9-2-2-2zm-5 14v-4h4l-4 4z",
   file: "M6 2c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6H6zm7 7V3.5L18.5 9H13z",
   archive: "M20.54 5.23l-1.39-1.68C18.88 3.21 18.47 3 18 3H6c-.47 0-.88.21-1.16.55L3.46 5.23C3.17 5.57 3 6.02 3 6.5V19c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V6.5c0-.48-.17-.93-.46-1.27zM12 17.5L6.5 12H10v-2h4v2h3.5L12 17.5zM5.12 5l.81-1h12l.94 1H5.12z",
+  // habilidades (ADR-0007) — a bolt, the same icon language as the rest of
+  // this set (no emoji: 🧰 read inconsistently across platforms/fonts).
+  skill: "M11 21l1-9H7l6-11-1 9h5l-6 11z",
 };
 function ico(name, extra = "") {
   const d = ICONS[name] || ICONS.file;
@@ -1846,7 +1849,7 @@ async function refreshTools() {
 function toolRow(f) {
   const label = shortName(f.name);
   return `<div class="bitem file" data-doc="${esc(f.path)}" title="${esc(f.desc || f.path)}">` +
-    `${ico("file")}<span class="bn">${esc(label)}</span>` +
+    `${ico("skill")}<span class="bn">${esc(label)}</span>` +
     (f.builtin ? `<span class="pill" title="${t("habilidade padrão")}">${t("padrão")}</span>` : "") +
     `<button class="rowmenu" data-toolmenu="${esc(f.path)}" data-toollabel="${esc(label)}" data-toolbuiltin="${f.builtin ? "1" : ""}" title="${t("ações (usar, editar, pedir à IA, excluir)")}">⋯</button>` +
     `</div>`;
@@ -2064,7 +2067,7 @@ function openBsMenu(slug, anchor) {
   B.bMenu.innerHTML =
     `<div class="fhead">${esc(slug)}</div>` +
     `<div class="fitem2 strong" data-ainote><span class="fn">✦ ${t("nota por IA…")}</span></div>` +
-    `<div class="fitem2" data-tools><span class="fn">🧰 ${t("executar habilidade…")}</span></div>` +
+    `<div class="fitem2" data-tools><span class="fn">${ico("skill")} ${t("executar habilidade…")}</span></div>` +
     `<div class="fsep"></div>` +
     `<div class="fitem2" data-ren><span class="fn">${t("renomear")}</span></div>` +
     `<div class="fitem2" data-toqueue><span class="fn">${t("gerar relatório de tudo → fila")}</span></div>` +
@@ -2117,7 +2120,7 @@ function openMeetingMenu(rel, id, title, status, anchor) {
     `<div class="fitem2${ready ? "" : " strong"}" data-question><span class="fn">? ${t("perguntar…")}</span></div>` +
     `<div class="fitem2${dis ? " off" : ""}" data-report><span class="fn">≡ ${t("ver relatório")}</span></div>` +
     (ready ? "" : `<div class="fnote mono">${t("analisar e ver relatório ficam disponíveis quando a reunião terminar — perguntar já funciona agora")}</div>`) +
-    `<div class="fitem2" data-tools><span class="fn">🧰 ${t("executar habilidade…")}</span></div>` +
+    `<div class="fitem2" data-tools><span class="fn">${ico("skill")} ${t("executar habilidade…")}</span></div>` +
     `<div class="fsep"></div>` +
     `<div class="fitem2" data-ren><span class="fn">✎ ${t("renomear")}</span></div>` +
     `<div class="fitem2 danger" data-del><span class="fn">${t("apagar reunião")}</span></div>`;
@@ -2927,6 +2930,13 @@ async function renderActive() {
     tab.rel.endsWith(".md") && !LM.isLiving(tab.rel);
   $("bAskAi").hidden = !aiable;
   if (aiable) $("bAskAi").onclick = () => promptNoteAI(tab.rel, true);
+  // ADR-0007 (owner request): every markdown file gets "executar habilidade"
+  // at the top of the viewer — a meeting's living surface already has its
+  // own dropdown in the rail, so it's excluded here to avoid a duplicate.
+  const skillable = !isGuide && tab.rel !== MANUAL_REL &&
+    tab.rel.endsWith(".md") && !LM.isLiving(tab.rel);
+  $("bRunSkill").hidden = !skillable;
+  if (skillable) $("bRunSkill").onclick = (e) => openHabilidadeMenu(tab.rel, e.currentTarget);
   // ADR-0010: a meeting living file (reuniao.md) is its own append-only surface —
   // transcript + artefatos rail + análise/consent; no free-form CM6 editing.
   if (LM.isLiving(tab.rel)) {

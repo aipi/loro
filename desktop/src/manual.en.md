@@ -196,7 +196,7 @@ generation time. An acervo may hold documents in both languages if you switch.
 **What is a "custom habilidade"?** A skill you author yourself — either by
 describing what it should do (the AI writes it) or by importing one you
 already have. It becomes a real slash-command (`/habilidade-name`) and shows
-up in the sidebar's "🧰 habilidades" section; run it via a brainstorming's or
+up in the sidebar's "habilidades" section; run it via a brainstorming's or
 meeting's ⋯ menu ("executar habilidade…").
 
 **Can I delete a built-in habilidade (sync, presentation, artifact)?** No —

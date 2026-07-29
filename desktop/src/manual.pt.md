@@ -194,7 +194,7 @@ da geração. Um acervo pode conter documentos nos dois idiomas se você alterna
 **O que é uma "habilidade customizada"?** Uma skill que você mesmo cria —
 descrevendo o que ela deve fazer (a IA escreve) ou importando uma que você já
 tem. Vira um comando de barra de verdade (`/nome-da-habilidade`) e aparece na
-seção "🧰 habilidades" da lateral; roda pelo menu ⋯ ("executar habilidade…")
+seção "habilidades" da lateral; roda pelo menu ⋯ ("executar habilidade…")
 de um brainstorming ou reunião.
 
 **Posso apagar uma habilidade padrão (sincronizar, apresentação, artefato)?**

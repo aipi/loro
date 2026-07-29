@@ -96,7 +96,7 @@
 
             <!-- Ferramentas (ADR-0006): skills customizadas do usuário — qualquer
                  .md em .claude/commands/ que não seja um dos 7 built-ins. -->
-            <div class="bgroup"><span><span data-i18n>🧰 habilidades</span> <button class="ghelp" data-tip="Ações do agente de IA — as padrão (sincronizar, apresentação, artefato) você pode editar mas não excluir; as suas você cria do zero. Rode uma pelo menu ⋯ de um brainstorming/reunião ('executar habilidade')." aria-label="O que são as habilidades?" data-i18n-attrs="data-tip,aria-label">ⓘ</button></span><button id="addToolBtn" class="gadd" title="Nova habilidade" data-i18n-attrs="title">＋</button></div>
+            <div class="bgroup"><span><span class="nico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 21l1-9H7l6-11-1 9h5l-6 11z"/></svg></span> <span data-i18n>habilidades</span> <button class="ghelp" data-tip="Ações do agente de IA — as padrão (sincronizar, apresentação, artefato) você pode editar mas não excluir; as suas você cria do zero. Rode uma pelo menu ⋯ de um brainstorming/reunião ('executar habilidade')." aria-label="O que são as habilidades?" data-i18n-attrs="data-tip,aria-label">ⓘ</button></span><button id="addToolBtn" class="gadd" title="Nova habilidade" data-i18n-attrs="title">＋</button></div>
             <div id="navTools" class="btree"></div>
 
             <div class="bgroup"><span data-i18n>fontes</span></div>
@@ -196,6 +196,7 @@
                 <span id="bGit" class="mono badge" hidden></span>
                 <span id="bPromoted" class="mono badge ok promoted" hidden></span>
                 <button id="bAskAi" class="mini act ai" hidden title="a IA lê este arquivo e aplica seu pedido nele (evolui, não apaga)" data-i18n-attrs="title">✦ <span data-i18n>pedir à IA…</span></button>
+                <button id="bRunSkill" class="mini act" hidden title="executar uma habilidade tendo este arquivo como alvo" data-i18n-attrs="title"><span class="nico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 21l1-9H7l6-11-1 9h5l-6 11z"/></svg></span> <span data-i18n>executar habilidade…</span></button>
                 <span id="bDocActs" class="cluster" hidden>
                   <button id="bMoveDoc" class="mini act" title="mover para outro contexto ou projeto" data-i18n data-i18n-attrs="title">⇢ mover</button>
                   <button id="bDelDoc" class="mini act danger" title="apagar da fila" data-i18n data-i18n-attrs="title">apagar</button>
