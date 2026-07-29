@@ -5,7 +5,7 @@ description: >
   organized by domain. Route here anything about the tool: capture, the acervo/
   brain, the loop, UI, packaging, and Loro's own product & architecture decisions.
 archetypes: [product, engineering, design]
-updated: 2026-07-24
+updated: 2026-07-29
 ---
 
 # loro — source of truth
@@ -14,6 +14,22 @@ updated: 2026-07-24
 > approved**. A change proposal is an **RFC = branch + Pull Request** applied
 > directly to this file — merging makes it the new truth. There are no proposal
 > documents; open questions live below as hotspots.
+
+## Summary
+
+_Quick-read card (ADR-0004): 1 line per section + key IDs. Read this first;
+open only the section you need._
+
+- **What Loro is** — a companion that captures speech locally and builds a
+  per-domain context base for people and AI.
+- **Core premises** — earned context, archetypes over areas, interpretation
+  lenses, self-contained & non-destructive.
+- **How it works** — capture → inbox → loop files by domain → person promotes.
+- **Business rules** — BR-1 local inference · BR-8 content-free logs ·
+  BR-9 no credentials.
+- **Hotspots** — H-1 Knowledge Studio flow · H-2 usage templates & vertical
+  skill catalog · H-3 en/pt folder divergence · H-4 CODEOWNERS enforcement ·
+  H-5 end-user packaging.
 
 ## What Loro is
 A **companion** (not a replacement for agents) that captures speech 100% locally
@@ -57,7 +73,7 @@ history) are unversioned; only approved content is source of truth.
 Evolution points not yet consolidated — the origin of the next RFCs. (Dogfooding
 the model: ideas live here, inline, not as separate files.)
 
-> [!HOTSPOT] Knowledge Studio: the Brainstorming → Fila → Contexto flow
+> [!HOTSPOT] H-1 — Knowledge Studio: the Brainstorming → Fila → Contexto flow
 > The product is a VS Code-like studio (multi-tab, command palette, CodeMirror 6,
 > ADR-0001 §6) organized around ONE sequential, visible flow (ADR-0001 §7):
 > **Brainstorming → Fila → Contexto**. A *brainstorming* (`brainstorming/<slug>/`,
@@ -71,7 +87,7 @@ the model: ideas live here, inline, not as separate files.)
 > before any external/MCP source). Direct promotion (`brain_promote`) is retired
 > from the primary path. Recorded in ADR-0001 §6–§9. Open: fate of legacy notas/.
 
-> [!HOTSPOT] Usage templates (presets) & per-acervo agent — vertical skill catalog pending
+> [!HOTSPOT] H-2 — Usage templates (presets) & per-acervo agent — vertical skill catalog pending
 > The wizard now offers usage templates (generico, vendas, engenharia, produto,
 > aprendizado, educacao, recrutamento, saude) and a per-acervo AI agent command
 > (any CLI, `claude` default) — ADR-0003. Shipped: structure seeding (contexts,
@@ -81,7 +97,7 @@ the model: ideas live here, inline, not as separate files.)
 > further verticals (legal, …), and a full "Claude"→"agent" wording sweep in
 > descriptive UI copy.
 
-> [!HOTSPOT] Acervo folder language diverges between brain and app (en vs pt)
+> [!HOTSPOT] H-3 — Acervo folder language diverges between brain and app (en vs pt)
 > This brain uses English folders (`contexts/`, `meetings/`, `notes/`) as the
 > company harness (docs-in-English convention). The app materializes an acervo in
 > Portuguese (`contextos/`, `reunioes/`, `notas/`) and its reader walks
@@ -89,12 +105,12 @@ the model: ideas live here, inline, not as separate files.)
 > keep the brain English; the en/pt unification of the acervo contract is deferred
 > to its own RFC (it changes the app's folder contract).
 
-> [!HOTSPOT] CODEOWNERS enforcement when the brain is not its own repo
+> [!HOTSPOT] H-4 — CODEOWNERS enforcement when the brain is not its own repo
 > Approval (ADR-0001 §5) relies on GitHub CODEOWNERS + branch protection. The
 > dogfooding brain lives inside the app repo, so a `brain/CODEOWNERS` is only
 > illustrative — GitHub reads CODEOWNERS at the repo root/`.github`/`docs`.
 > Open: extract the brain to its own repo, or map ownership at the app-repo root?
 
-> [!HOTSPOT] End-user packaging & cross-OS setup (carried over)
+> [!HOTSPOT] H-5 — End-user packaging & cross-OS setup (carried over)
 > Whisper packaging for end users; Windows/Linux system-audio setup; the
 > experimentation mode for still-undefined domains.

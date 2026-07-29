@@ -175,6 +175,12 @@ Path resolution: `LORO_HOME` (exported by `loro.sh`) or a sensible default;
   moves raw to `processed/`, updates state. Suggests a new context when none fits,
   and splits a composite domain into recursive `contextos/<c>/<sub>/` subdomains
   (parent becomes overview + index), up to `MAX_CONTEXT_DEPTH` levels (ADR-0001 §4).
+- **Efficient-reading layer (ADR-0004):** every `context.md` opens with a
+  regenerated **Summary card** (§0); decisions carry stable IDs
+  (`D-YYYY-MM-DD-<slug>`), hotspots carry `H-<n>`, and the `INDEX.md` line is
+  enriched (description · updated date · hotspot range) so agents route without
+  opening files. The generated `AGENTS.md` and every skill teach the protocol:
+  index → card → ID search → targeted section read.
 - **Knowledge versioning (ADR-0001 §5), Git hidden behind two buttons:** *Versionar*
   → `brain_version` creates `rfc/<slug>` off the default branch and commits the
   working changes locally (Git only). *Propor mudança* → `brain_propose_change`

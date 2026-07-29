@@ -84,6 +84,9 @@ palette: `Cmd/Ctrl+Shift+P` → "Loro tour".
   drop `.md`/`.txt` files straight into it).
 - **▶ generate context** runs `/loro-context` in the terminal Claude, which
   structures the material into `contextos/<c>/context.md` (+ CHANGELOG).
+- Each `context.md` opens with a **Summary** (1 line per section + `D-…`/`H-…`
+  IDs), regenerated on every update — it keeps reading cheap for people and
+  agents; decisions and hotspots get stable, searchable IDs.
 - With an **empty** queue the button warns and does not run: there is nothing
   to generate from.
 
