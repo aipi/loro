@@ -94,3 +94,7 @@ See `docs/adr/0001-baseline.md` §3 for the full posture.
 `make test` · `make lint` · `make build` · `make test-docker` (see `Makefile`).
 Contribution rules and the AI-agent workflow are in `CONTRIBUTING.md` and
 `CLAUDE.md`. The desktop app's UI details: `desktop/README.md`.
+
+## License
+
+Apache-2.0 — see [LICENSE](LICENSE).
