@@ -38,6 +38,8 @@
             <select id="wizTemplates"></select>
           </label>
           <p id="wizTemplateHint" class="hint tplhint"></p>
+          <label class="wtoggle"><input type="checkbox" id="brainAuto" checked />
+            <span data-i18n>modo automático — o loop pode criar e atribuir contexto sozinho ao processar a fila (dá para desligar depois em Configurações)</span></label>
           <label class="wfield"><span class="mono" data-i18n>onde gerar</span>
             <button id="brainDirBtn" class="link mono dirbtn">…</button>
           </label>
@@ -45,8 +47,6 @@
             <input id="brainCtxInput" type="text"
               placeholder="ex.: produto-a, plataforma, engenharia/frontend" data-i18n-attrs="placeholder" />
           </label>
-          <label class="wtoggle"><input type="checkbox" id="brainAuto" />
-            <span data-i18n>modo automático — deixar o loop criar e organizar os contextos</span></label>
           <label class="wtoggle"><input type="checkbox" id="brainGit" checked />
             <span data-i18n>versionar com git (git init nesta pasta)</span></label>
           <label class="wfield"><span class="mono" data-i18n>agente de IA (comando)</span>
@@ -381,6 +381,8 @@
           <div class="field"><span class="mono" data-i18n>pasta</span>
             <span id="acervoDir" class="mono dirinfo">—</span>
           </div>
+          <label class="opt"><input type="checkbox" id="cfgAutoContext" /> <span data-i18n>modo automático — o loop pode criar e atribuir contexto sozinho ao processar a fila</span></label>
+          <p class="hint" data-i18n>desligado: quando nada existente couber, o loop deixa o item na fila e pede para você atribuir o contexto</p>
           <p class="hint"><span data-i18n>contextos regenerados pelo loop em</span> <span class="mono">contextos/&lt;c&gt;/index.html</span></p>
         </div>
       </div>

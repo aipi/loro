@@ -1279,6 +1279,7 @@ fn brain_setup(
     let agent = normalize_agent(&agent.unwrap_or_default());
     let base = PathBuf::from(&dir);
     ensure_acervo_structure(&base, &ctxs, &lang, Some(&tpl))?;
+    write_acervo_settings(&base, auto)?;
     if git_init.unwrap_or(false) {
         git_init_repo(&base)?;
     }
@@ -1329,6 +1330,22 @@ fn brain_setup(
 #[tauri::command]
 fn brain_list_acervos() -> AcervosView {
     acervos_view()
+}
+
+// ADR-0006: post-creation toggle (Configurações) for the active acervo's
+// autoContext — updates the global config (so the "auto" pill stays accurate)
+// AND the local .loro/settings.json marker the /loro-context skill reads.
+#[tauri::command]
+fn brain_set_auto_context(value: bool) -> Result<(), String> {
+    let mut cfg = read_loro_config();
+    let dir = active_acervo(&cfg)
+        .map(|a| a.dir.clone())
+        .ok_or("acervo not configured")?;
+    if let Some(a) = cfg.acervos.iter_mut().find(|a| a.dir == dir) {
+        a.auto_context = value;
+    }
+    write_loro_config(&cfg)?;
+    write_acervo_settings(&PathBuf::from(&dir), value)
 }
 
 // ---- ADR-0003: acervo usage templates (presets) -----------------------------
@@ -3230,6 +3247,7 @@ pub fn run() {
             brain_get_config,
             brain_setup,
             brain_list_acervos,
+            brain_set_auto_context,
             brain_list_templates,
             brain_duplicate_template,
             brain_set_active,

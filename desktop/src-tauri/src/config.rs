@@ -147,6 +147,22 @@ mod tests {
         assert_eq!(normalize_agent(" gemini "), "gemini");
     }
 
+    // ADR-0006: the local marker the /loro-context skill reads, distinct from
+    // the global multi-acervo config.
+    #[test]
+    fn write_acervo_settings_writes_readable_local_marker() {
+        let dir = std::env::temp_dir().join(format!("loro-cfg-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        write_acervo_settings(&dir, true).unwrap();
+        let txt = std::fs::read_to_string(dir.join(".loro/settings.json")).unwrap();
+        assert!(txt.contains(r#""autoContext": true"#));
+        write_acervo_settings(&dir, false).unwrap();
+        let txt = std::fs::read_to_string(dir.join(".loro/settings.json")).unwrap();
+        assert!(txt.contains(r#""autoContext": false"#));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn normalize_lang_accepts_only_pt_and_en() {
         assert_eq!(normalize_lang("en"), "en");
@@ -235,6 +251,29 @@ pub fn write_loro_config(cfg: &LoroConfig) -> Result<(), String> {
     std::fs::write(
         &p,
         serde_json::to_string_pretty(cfg).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())
+}
+
+// Per-acervo local marker (ADR-0006), distinct from the global
+// ~/.loro/config.json (which lists every acervo): lets the /loro-context
+// skill read just THIS acervo's autoContext setting from inside its own
+// working directory, without exposing the global config to the terminal
+// agent. Written at brain_setup and whenever the Settings toggle changes.
+#[derive(serde::Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AcervoSettings {
+    #[serde(default)]
+    pub auto_context: bool,
+}
+
+pub fn write_acervo_settings(base: &Path, auto_context: bool) -> Result<(), String> {
+    let dir = base.join(".loro");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let settings = AcervoSettings { auto_context };
+    std::fs::write(
+        dir.join("settings.json"),
+        serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?,
     )
     .map_err(|e| e.to_string())
 }

@@ -206,20 +206,28 @@ dentro desta pasta.
 0. Se `inbox/_prompt.md` existir, siga-o ANTES do processamento padrão. Ao
    terminar, **arquive-o** em `.brain/prompt-history/<AAAA-MM-DD-HHMM>.md` e
    **remova** `inbox/_prompt.md` (o histórico não é versionado).
+0.5. Leia `.loro/settings.json` se existir (`{"autoContext": bool}`) — ausente
+   ou ilegível conta como `true` (padrão). Esse valor é a permissão para criar
+   um contexto NOVO sozinho (ADR-0006); nunca afeta atribuir a um contexto
+   já existente.
 1. Leia `.brain/state.json`; liste `inbox/` e filtre o que ainda não foi processado (ignore `_prompt.md`).
 2. Nada novo? Responda `brain: nada novo` e encerre.
 3. Para cada arquivo novo: se o nome tiver prefixo `<contexto>--`, direcione
    àquele contexto (pode ser hierárquico `area/sub`); senão classifique pelo
-   conteúdo — e se nenhum contexto existente couber, **sugira criar um novo**.
-   Classifique a origem (reunião × documento/nota), gere o registro em `reunioes/`
-   ou `notas/`, acrescente entrada em prosa no `contextos/<c>/CHANGELOG.md`, e
-   **atualize o `contextos/<c>/context.md`**: o consolidado nas seções 1–5, o que
-   ainda estiver em aberto/contraditório como **hotspot** na seção 6. Nunca crie
-   arquivos de ideia. **Nunca referencie o arquivo de reunião** (fonte efêmera).
-   Se o domínio virar um COMPOSTO (DDD), quebre em subdomínios
-   `contextos/<c>/<sub>/` (mesma estrutura, recursiva); o pai vira overview+índice.
-4. Mova o cru para `processed/`, atualize `state.json`, anexe em
-   `.brain/activity.log` e atualize `INDEX.md`.
+   conteúdo. Se nenhum contexto existente couber: com `autoContext: true`,
+   **crie um contexto novo** livremente; com `autoContext: false`, **NÃO
+   crie** — deixe o item em `inbox/` (não mova para `processed/`) e relate ao
+   final que ele precisa de um contexto atribuído manualmente pela pessoa.
+   Quando for criar ou atribuir: classifique a origem (reunião × documento/nota),
+   gere o registro em `reunioes/` ou `notas/`, acrescente entrada em prosa no
+   `contextos/<c>/CHANGELOG.md`, e **atualize o `contextos/<c>/context.md`**: o
+   consolidado nas seções 1–5, o que ainda estiver em aberto/contraditório como
+   **hotspot** na seção 6. Nunca crie arquivos de ideia. **Nunca referencie o
+   arquivo de reunião** (fonte efêmera). Se o domínio virar um COMPOSTO (DDD),
+   quebre em subdomínios `contextos/<c>/<sub>/` (mesma estrutura, recursiva); o
+   pai vira overview+índice.
+4. Mova o cru para `processed/` (exceto os itens deixados pendentes no passo 3),
+   atualize `state.json`, anexe em `.brain/activity.log` e atualize `INDEX.md`.
 5. Respeite estrutura já existente (só complete lacunas; nunca sobrescreva). Não
    abra PRs nem versione: quem propõe mudança é a pessoa, pelos botões do Loro.
 6. Ao final, informe em 1–2 linhas o que fez.
@@ -374,19 +382,27 @@ hotspots and rules — and follow it strictly. Work only inside this folder.
 
 0. If `inbox/_prompt.md` exists, follow it BEFORE default processing; then archive
    it to `.brain/prompt-history/<YYYY-MM-DD-HHMM>.md` and remove it (not versioned).
+0.5. Read `.loro/settings.json` if present (`{"autoContext": bool}`) — absent or
+   unreadable counts as `true` (default). This is the permission to create a
+   NEW context on its own (ADR-0006); it never affects assigning to an
+   existing context.
 1. Read `.brain/state.json`; list `inbox/` and filter unprocessed (ignore `_prompt.md`).
 2. Nothing new? Reply `brain: nothing new` and stop.
-3. For each new file: honor a `<context>--` prefix; else classify by content, and
-   if no existing context fits, **suggest creating a new one**. Classify (meeting
-   vs note), write the structured record in `reunioes/` or `notas/`, append a prose
-   entry to `contextos/<c>/CHANGELOG.md`, and **update `contextos/<c>/context.md`**:
-   consolidated knowledge in sections 1–5, anything still open/contradictory as a
-   **hotspot** in section 6. Never create idea files. **Never reference the meeting
-   file** (ephemeral, unversioned). If the domain becomes a COMPOSITE (DDD), split
-   it into `contextos/<c>/<sub>/` subdomains (same recursive shape); the parent
-   becomes an overview + index.
-4. Move raw to `processed/`, update `state.json`, append to `.brain/activity.log`,
-   update `INDEX.md`.
+3. For each new file: honor a `<context>--` prefix; else classify by content.
+   If no existing context fits: with `autoContext: true`, **create a new
+   context** freely; with `autoContext: false`, **do NOT create one** — leave
+   the item in `inbox/` (do not move it to `processed/`) and report at the end
+   that it needs a context assigned manually by the person. When creating or
+   assigning: classify (meeting vs note), write the structured record in
+   `reunioes/` or `notas/`, append a prose entry to `contextos/<c>/CHANGELOG.md`,
+   and **update `contextos/<c>/context.md`**: consolidated knowledge in
+   sections 1–5, anything still open/contradictory as a **hotspot** in section
+   6. Never create idea files. **Never reference the meeting file** (ephemeral,
+   unversioned). If the domain becomes a COMPOSITE (DDD), split it into
+   `contextos/<c>/<sub>/` subdomains (same recursive shape); the parent becomes
+   an overview + index.
+4. Move raw to `processed/` (except items left pending in step 3), update
+   `state.json`, append to `.brain/activity.log`, update `INDEX.md`.
 5. Respect existing structure (fill gaps only; never overwrite). Do not open PRs
    or version: the person proposes changes via Loro's buttons.
 6. Finish with a 1–2 line summary of what you did.
@@ -1274,6 +1290,18 @@ mod tests {
             // the bare old form is gone from the AGENTS skill reference
             assert!(!agents.contains("`/brain`"));
             assert!(!agents.contains("commands/brain.md"));
+        }
+    }
+
+    // ADR-0006: the loop skill checks .loro/settings.json's autoContext before
+    // creating a NEW context on its own — off means it must leave the item
+    // pending instead of assuming, in both languages.
+    #[test]
+    fn loop_skill_respects_auto_context_setting() {
+        for lang in ["pt", "en"] {
+            let skill = brain_skill(lang);
+            assert!(skill.contains(".loro/settings.json"));
+            assert!(skill.contains("autoContext"));
         }
     }
 }

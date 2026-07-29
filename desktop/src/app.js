@@ -847,6 +847,9 @@ async function openCfg() {
   const cur = acervos.find((a) => a.id === activeAcervo);
   $("cfgProj").textContent = cur ? cur.name : "—";
   drawProjColors(cur);
+  // ADR-0006: autoContext tem efeito real no loop — dá para desligar aqui
+  const autoCtx = $("cfgAutoContext");
+  if (autoCtx) autoCtx.checked = !!(cur && cur.autoContext);
   // sem pasta escolhida: mostra o destino padrão real (inbox do acervo)
   if (!settings.saveDir) {
     try { el.pickDir.textContent = await invoke("default_save_dir"); } catch (_) {}
@@ -866,6 +869,16 @@ function drawProjColors(cur) {
 }
 function closeCfg() { cfgWrap.hidden = true; }
 cfgClose.addEventListener("click", closeCfg);
+{
+  const autoCtx = $("cfgAutoContext");
+  if (autoCtx) autoCtx.addEventListener("change", async () => {
+    try {
+      await invoke("brain_set_auto_context", { value: autoCtx.checked });
+      const cur = acervos.find((a) => a.id === activeAcervo);
+      if (cur) cur.autoContext = autoCtx.checked;
+    } catch (e) { toast(tErr(String(e))); autoCtx.checked = !autoCtx.checked; }
+  });
+}
 cfgWrap.addEventListener("click", (e) => { if (e.target === cfgWrap) closeCfg(); });
 window.addEventListener("keydown", (e) => { if (e.key === "Escape" && !cfgWrap.hidden) closeCfg(); });
 
@@ -3008,7 +3021,7 @@ function openNewAcervo() {
   creatingNew = true;
   B.wizTitle.textContent = t("Novo projeto (acervo)");
   B.nameInput.value = ""; B.ctxInput.value = ""; brainDir = ""; B.dirBtn.textContent = "…";
-  B.autoInput.checked = false; B.gitInput.checked = true;
+  B.autoInput.checked = true; B.gitInput.checked = true;
   B.agentInput.value = "claude";
   wizColor = ""; wizTemplate = "generico"; wizCtxDirty = false;
   drawWizColors();
