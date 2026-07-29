@@ -66,9 +66,12 @@ quando quiser pela paleta: `Cmd/Ctrl+Shift+P` → "apresentação do Loro".
 
 - O **＋** no cabeçalho da seção cria um brainstorming (espaço privado para
   um tema); o **＋** da seção contextos cria um contexto.
-- Dentro dele (expanda o brainstorming na lateral): **＋ nova nota** para
-  escrever, e **● gravar reunião** para gravar uma **reunião** ligada ao tema
-  (também na paleta `Cmd/Ctrl+Shift+P` → "nova reunião").
+- Dentro dele (expanda o brainstorming na lateral): cada pasta tem sua
+  própria ação de criação no topo — **notas** → **＋ nova nota**;
+  **reuniões** → **● gravar reunião** (também na paleta `Cmd/Ctrl+Shift+P`
+  → "nova reunião"); **anexos** → **⇄ sincronizar** (traz de Drive/Slack/
+  Jira/Confluence) e **＋ do computador** (abre o seletor de arquivos e copia
+  um `.pdf`/`.xlsx`/imagem que você já tem para os anexos do tema).
 - **✦ nota por IA** (menu ⋯ do brainstorming) cria uma nota a partir de um
   pedido seu; **✦ pedir à IA** (menu ⋯ de uma nota/análise **e no rail à
   direita de qualquer arquivo aberto**) aplica um pedido sobre o conteúdo

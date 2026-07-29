@@ -1617,18 +1617,12 @@ async function loadTemaChildren(slug) {
   try { anexos = ((await invoke("brain_list_dir", { rel: `brainstorming/${slug}/anexos` })) || []).filter((f) => !f.dir); }
   catch (_) {}
   let inner = "";
-  // ADR-0002 §6: the whole notes block leads the brainstorming (creation-first),
-  // above the meetings — "＋ nova nota" is the top row.
-  // creation-first but compact: one row, two half-width actions (nota/reunião)
-  // — two full rows polluted every expanded brainstorming (owner feedback).
-  inner += `<div class="bsadd">` +
-    `<button class="bsaddbtn" data-addnota="${esc(slug)}" title="${t("Escrever uma nota neste brainstorming")}">＋ ${t("nova nota")}</button>` +
-    `<button class="bsaddbtn rec2" data-addmeeting="${esc(slug)}" title="${t("Gravar uma reunião neste brainstorming (áudio 100% local)")}">● ${t("gravar reunião")}</button>` +
-    `<button class="bsaddbtn" data-syncdrive="${esc(slug)}" title="${t("Trazer uma nota de reunião externa (Google Drive/Gemini) para os anexos deste tema")}">⇄ ${t("sincronizar reunião")}</button>` +
-    `</div>`;
   // ADR-0007 (owner request): a pasta de verdade precisa estar visível na UI —
   // três grupos com ícone de pasta (reuniões/notas/anexos), cada um
-  // colapsável (mesmo padrão `data-pestoggle` já usado para "avulso").
+  // colapsável (mesmo padrão `data-pestoggle` já usado para "avulso"). Cada
+  // pasta traz sua PRÓPRIA ação de criação no topo do corpo (owner request:
+  // "cada botão poderá existir dentro de cada uma das pastas"):
+  //   reuniões → ● gravar · notas → ＋ nova · anexos → ⇄ sincronizar + ＋ do computador.
   let reunioesRows = "";
   const pendingMeetingFills = [];
   for (const m of meetings) {
@@ -1642,9 +1636,14 @@ async function loadTemaChildren(slug) {
   }
   const notasRows = notas.map((f) => bsPartRow("nota", f.path, f.path, shortName(f.name), f.name, true)).join("");
   const anexosRows = anexos.map((f) => bsPartRow("anexo", f.path, f.path, shortName(f.name), f.name, true)).join("");
-  inner += folderGroupHtml(`bsfolder:${slug}:reunioes`, t("reuniões"), meetings.length, reunioesRows, t("nenhuma reunião ainda"));
-  inner += folderGroupHtml(`bsfolder:${slug}:notas`, t("notas"), notas.length, notasRows, t("nenhuma nota ainda"));
-  inner += folderGroupHtml(`bsfolder:${slug}:anexos`, t("anexos"), anexos.length, anexosRows, t("nenhum anexo ainda"));
+  const reunioesActions = `<button class="bsaddbtn rec2" data-addmeeting="${esc(slug)}" title="${t("Gravar uma reunião neste brainstorming (áudio 100% local)")}">● ${t("gravar reunião")}</button>`;
+  const notasActions = `<button class="bsaddbtn" data-addnota="${esc(slug)}" title="${t("Escrever uma nota neste brainstorming")}">＋ ${t("nova nota")}</button>`;
+  const anexosActions =
+    `<button class="bsaddbtn" data-syncdrive="${esc(slug)}" title="${t("Trazer uma nota de reunião externa (Google Drive/Gemini) para os anexos deste tema")}">⇄ ${t("sincronizar")}</button>` +
+    `<button class="bsaddbtn" data-addanexo="${esc(slug)}" title="${t("Adicionar um arquivo do computador aos anexos deste tema")}">＋ ${t("do computador")}</button>`;
+  inner += folderGroupHtml(`bsfolder:${slug}:reunioes`, t("reuniões"), meetings.length, reunioesRows, t("nenhuma reunião ainda"), reunioesActions);
+  inner += folderGroupHtml(`bsfolder:${slug}:notas`, t("notas"), notas.length, notasRows, t("nenhuma nota ainda"), notasActions);
+  inner += folderGroupHtml(`bsfolder:${slug}:anexos`, t("anexos"), anexos.length, anexosRows, t("nenhum anexo ainda"), anexosActions);
   holder.innerHTML = inner;
   wirePessoal();
   // fillMeetingChild queries the live DOM — must run AFTER innerHTML is set,
@@ -1654,12 +1653,15 @@ async function loadTemaChildren(slug) {
 }
 // A collapsible folder group in the sidebar (reuniões/notas/anexos) — a real
 // folder icon + label + count, expand/collapse via the same [data-pestoggle]
-// wiring already used for "avulso" (wirePessoal, no new JS needed there).
-function folderGroupHtml(key, label, count, rowsHtml, emptyMsg) {
+// wiring already used for "avulso" (wirePessoal, no new JS needed there). The
+// folder's own creation action(s) sit at the top of its body, so each button
+// lives inside the folder it acts on (ADR-0007, owner request).
+function folderGroupHtml(key, label, count, rowsHtml, emptyMsg, actionsHtml) {
   const open = bOpen.has(key);
   const pill = count ? `<span class="pill">${count}</span>` : "";
+  const actions = actionsHtml ? `<div class="bsadd">${actionsHtml}</div>` : "";
   return `<div class="bitem ctx${open ? " open" : ""}" data-pestoggle="${key}">${ico("folder", "ac")}<span class="bn">${label}</span>${pill}</div>` +
-    `<div class="bchild" ${open ? "" : "hidden"}>${rowsHtml || `<div class="bempty sub">${emptyMsg}</div>`}</div>`;
+    `<div class="bchild" ${open ? "" : "hidden"}>${actions}${rowsHtml || `<div class="bempty sub">${emptyMsg}</div>`}</div>`;
 }
 // Busca e injeta investigações/respostas de UMA reunião no seu container
 // (chamado ao expandir, e ao re-render de uma tema já expandida).
@@ -1733,6 +1735,9 @@ function wirePessoal() {
   }));
   B.navPessoal.querySelectorAll("[data-syncdrive]").forEach((el2) => (el2.onclick = (e) => {
     e.stopPropagation(); promptSyncTool("drive", el2.dataset.syncdrive);
+  }));
+  B.navPessoal.querySelectorAll("[data-addanexo]").forEach((el2) => (el2.onclick = (e) => {
+    e.stopPropagation(); importAnexoFromComputer(el2.dataset.addanexo);
   }));
   B.navPessoal.querySelectorAll("[data-mtgtoggle]").forEach((el2) => (el2.onclick = async (e) => {
     e.stopPropagation();
@@ -2061,6 +2066,20 @@ function openHabilidadeMenu(alvoRel, anchor) {
   placeMenu(anchor);
 }
 
+// ADR-0007: "＋ do computador" — native file picker → copies the chosen
+// files into brainstorming/<slug>/anexos/ (brain_import_anexos). Re-opens the
+// anexos folder and reloads the tema so the new files show immediately.
+async function importAnexoFromComputer(slug) {
+  try {
+    const n = await invoke("brain_import_anexos", { slug });
+    if (n > 0) {
+      bOpen.add(`bsfolder:${slug}:anexos`);
+      toast(`${n} ${n > 1 ? t("arquivos anexados") : t("arquivo anexado")}`);
+      loadTemaChildren(slug);
+    }
+  } catch (e) { toast(tErr(String(e))); clog("brain_import_anexos error: " + e); }
+}
+
 // Inline "nova nota" inside a brainstorming (mirrors promptNewContext/promptNewTema).
 // Writes brainstorming/<slug>/notas/<slug>.md via brain_new_notebook and opens it.
 let notaEditing = false;
@@ -2079,7 +2098,7 @@ function promptNewNota(slug, anchor) {
     if (!titulo) return done();
     try {
       const rel = await invoke("brain_new_notebook", { tema: slug, titulo });
-      done(); pessoalSig = ""; refreshPessoal();
+      done(); bOpen.add(`bsfolder:${slug}:notas`); pessoalSig = ""; refreshPessoal();
       if (rel) openDoc(rel, { preview: false });
     } catch (err) { toast(tErr(String(err))); }
   });

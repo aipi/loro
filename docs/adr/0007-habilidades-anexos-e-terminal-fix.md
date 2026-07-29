@@ -146,6 +146,18 @@ Dois ajustes de UI pedidos após uso real:
   soltas sem nenhuma indicação visual de que pertenciam a pastas
   diferentes. Cada grupo mostra sua contagem e permanece visível mesmo
   vazio, deixando a estrutura sempre legível.
+- **Ação de criação dentro de cada pasta.** Os três botões que antes ficavam
+  numa linha única no topo do brainstorming agora vivem no topo do corpo da
+  pasta a que pertencem (`folderGroupHtml` recebe `actionsHtml`): reuniões →
+  **● gravar reunião**, notas → **＋ nova nota**, anexos → **⇄ sincronizar**
+  \+ **＋ do computador**. O botão fica onde o resultado dele vai aparecer.
+- **"＋ do computador" nos anexos.** Novo `brain_import_anexos(slug)` abre o
+  seletor de arquivos nativo (mesma base do `brain_import`, via
+  `tauri_plugin_dialog`) e copia os arquivos escolhidos direto para
+  `brainstorming/<slug>/anexos/`, mantendo o nome original (com sufixo
+  numérico em colisão, nunca sobrescreve). Diferente do `/loro-sync` (que
+  traz de fontes externas via o agente), este é o caminho local puro — o
+  usuário anexa um `.pdf`/`.xlsx`/imagem que já tem na máquina.
 - Corrigido manualmente um acervo real (`../turbo`, fora deste repositório)
   que estava com uma versão antiga: faltavam `loro-tool.md`,
   `loro-presentation.md`, `loro-artifact.md`, e `loro-sync.md` era a versão

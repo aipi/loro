@@ -2788,6 +2788,60 @@ async fn brain_import(app: AppHandle, context: Option<String>) -> Result<usize, 
     Ok(n)
 }
 
+// ADR-0007: import files from the computer straight into a brainstorming's
+// anexos/ folder (owner request: "add o pesquisar a partir do computador").
+// Mirrors brain_import, but the destination is the topic's anexos/ (not the
+// inbox), filenames are kept as-is (anexos are arbitrary files — pdf/xlsx/
+// images), and collisions get a numeric suffix instead of clobbering.
+#[tauri::command]
+async fn brain_import_anexos(app: AppHandle, slug: String) -> Result<usize, String> {
+    let cfg = read_brain_config().ok_or("err.acervo_not_configured")?;
+    if !valid_context(&slug) {
+        return Err("err.invalid_brainstorm".into());
+    }
+    let dialog = app.dialog().clone();
+    let files = tauri::async_runtime::spawn_blocking(move || dialog.file().blocking_pick_files())
+        .await
+        .map_err(|e| e.to_string())?;
+    let Some(files) = files else { return Ok(0) };
+    let dir = PathBuf::from(&cfg.brain_dir)
+        .join("brainstorming")
+        .join(&slug)
+        .join("anexos");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let mut n = 0;
+    for f in files {
+        let src = PathBuf::from(f.to_string());
+        let Some(name) = src.file_name().map(|s| s.to_string_lossy().to_string()) else {
+            continue;
+        };
+        // never overwrite: on collision, insert a numeric suffix before the ext
+        let mut dest = dir.join(&name);
+        if dest.exists() {
+            let stem = std::path::Path::new(&name)
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| name.clone());
+            let ext = std::path::Path::new(&name)
+                .extension()
+                .map(|e| format!(".{}", e.to_string_lossy()))
+                .unwrap_or_default();
+            let mut i = 2;
+            loop {
+                let cand = dir.join(format!("{stem}-{i}{ext}"));
+                if !cand.exists() {
+                    dest = cand;
+                    break;
+                }
+                i += 1;
+            }
+        }
+        std::fs::copy(&src, &dest).map_err(|e| format!("{name}: {e}"))?;
+        n += 1;
+    }
+    Ok(n)
+}
+
 // Import explicit file paths into the active acervo's inbox (used by external
 // drag-and-drop of one or more files onto the queue).
 #[tauri::command]
@@ -3339,6 +3393,7 @@ pub fn run() {
             term_status,
             term_agent,
             brain_import,
+            brain_import_anexos,
             brain_delete_inbox,
             brain_write_inbox,
             brain_send_report_to_queue,

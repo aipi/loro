@@ -67,9 +67,12 @@ palette: `Cmd/Ctrl+Shift+P` → "Loro tour".
 
 - The **＋** in the section header creates a brainstorming (a private space
   for a topic); the contexts section's **＋** creates a context.
-- Inside it (expand the brainstorming in the sidebar): **＋ new note** to
-  write, and **● record meeting** to record a **meeting** tied to the topic
-  (also in the palette `Cmd/Ctrl+Shift+P` → "nova reunião").
+- Inside it (expand the brainstorming in the sidebar): each folder has its
+  own creation action at the top — **notas** → **＋ new note**; **reuniões**
+  → **● record meeting** (also in the palette `Cmd/Ctrl+Shift+P` → "nova
+  reunião"); **anexos** → **⇄ sync** (brings from Drive/Slack/Jira/
+  Confluence) and **＋ from computer** (opens the file picker and copies a
+  `.pdf`/`.xlsx`/image you already have into the topic's anexos).
 - **✦ AI note** (the brainstorming's ⋯ menu) creates a note from your
   request; **✦ ask the AI** (a note's/analysis' ⋯ menu **and the right-side
   rail of any open file**) applies a request to the existing content — the
