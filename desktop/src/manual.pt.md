@@ -147,6 +147,17 @@ poluir a tela quando houver muitas.
   **editar** (abre o arquivo bruto), **pedir à IA** (peça para evoluir a
   habilidade, preservando o que já funciona) e **excluir** (só para as
   customizadas).
+- Na lateral, o ícone diz a origem: **⚡ raio** = habilidade padrão,
+  **★ estrela** = customizada. Clique no título da seção "habilidades" para
+  **recolher/exibir** a lista inteira (o caret ▾/▸ mostra o estado).
+
+## Contextos também têm anexos
+
+Cada contexto tem sua pasta **anexos/**, sempre visível na árvore — com
+**＋ nova nota** (escreve uma nota que nasce dentro do contexto) e **＋ do
+computador** (seletor de arquivos). Diferente dos anexos de brainstorming,
+os anexos de um contexto são **versionados junto com ele** (entram no fluxo
+de versionar/propor mudança normalmente).
 
 ## Fila → gerar contexto
 

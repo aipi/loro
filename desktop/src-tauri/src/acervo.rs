@@ -615,6 +615,49 @@ fn delete_tool(base: &Path, rel: &str) -> Result<(), String> {
     std::fs::remove_file(&p).map_err(|e| e.to_string())
 }
 
+// ---- anexos / notes in a brainstorming OR a context (ADR-0007) -------------
+// Both the brainstorming and the context now expose an `anexos/` folder that
+// the user can feed from the computer or write a note into. A destination is
+// only ever one of those anexos folders: normalized (no traversal), rooted in
+// `brainstorming/` or `contextos/`, and ending in `anexos`. Returns the
+// absolute dir (created) so both the file import (lib.rs, needs the dialog)
+// and the note creator below share the exact same guard.
+pub fn guarded_anexos_dir(base: &Path, dest_rel: &str) -> Result<PathBuf, String> {
+    let rel = normalize_rel(dest_rel)?;
+    let first = rel.split('/').next().unwrap_or("");
+    if (first != "brainstorming" && first != "contextos") || !rel.ends_with("/anexos") {
+        return Err("err.invalid_anexos_dest".into());
+    }
+    let dir = base.join(&rel);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir)
+}
+
+// Create a note (living front-matter markdown) inside an anexos folder — the
+// context counterpart to new_notebook (which targets a brainstorming's
+// notas/). Non-destructive: never overwrites (suffix on collision).
+fn new_note_in(base: &Path, dest_rel: &str, titulo: &str, today: &str) -> Result<String, String> {
+    let dir = guarded_anexos_dir(base, dest_rel)?;
+    let slug = sanitize_slug(titulo)?;
+    let mut path = dir.join(format!("{slug}.md"));
+    let mut n = 1;
+    while path.exists() {
+        n += 1;
+        path = dir.join(format!("{slug}-{n}.md"));
+    }
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or(&slug);
+    let fm = living_front_matter(stem, "", today);
+    std::fs::write(&path, format!("{fm}# {titulo}\n")).map_err(|e| e.to_string())?;
+    path.strip_prefix(base)
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn brain_new_note_in(dest_rel: String, titulo: String) -> Result<String, String> {
+    new_note_in(&acervo_base()?, &dest_rel, &titulo, &today_iso())
+}
+
 #[tauri::command]
 pub fn brain_new_tool(nome: String, conteudo: String) -> Result<String, String> {
     new_tool(&acervo_base()?, &nome, &conteudo)
@@ -1912,6 +1955,34 @@ mod tests {
         assert_ne!(a, b);
         assert_eq!(std::fs::read_to_string(base.join(&a)).unwrap(), "primeira");
         assert_eq!(std::fs::read_to_string(base.join(&b)).unwrap(), "segunda");
+    }
+
+    // ADR-0007: anexos folders exist in both worlds; the guard only accepts a
+    // normalized brainstorming/contextos anexos path (no traversal, no other
+    // destination), and note creation is non-destructive.
+    #[test]
+    fn guarded_anexos_dir_accepts_only_anexos_folders() {
+        let base = tmp("anexos-guard");
+        assert!(guarded_anexos_dir(&base, "contextos/frota/anexos").is_ok());
+        assert!(guarded_anexos_dir(&base, "brainstorming/x/anexos").is_ok());
+        // wrong folder / wrong world / traversal are all refused
+        assert!(guarded_anexos_dir(&base, "contextos/frota/notas").is_err());
+        assert!(guarded_anexos_dir(&base, "inbox/anexos").is_err());
+        assert!(guarded_anexos_dir(&base, "contextos/../../etc/anexos").is_err());
+    }
+
+    #[test]
+    fn new_note_in_writes_living_note_and_never_overwrites() {
+        let base = tmp("note-in");
+        let a = new_note_in(&base, "contextos/frota/anexos", "Minha Nota", "2026-07-29").unwrap();
+        assert_eq!(a, "contextos/frota/anexos/minha-nota.md");
+        let txt = std::fs::read_to_string(base.join(&a)).unwrap();
+        assert!(txt.starts_with("---\nloro: 1\n"));
+        assert!(txt.contains("# Minha Nota"));
+        let b = new_note_in(&base, "contextos/frota/anexos", "Minha Nota", "2026-07-29").unwrap();
+        assert_ne!(a, b);
+        // refuses a non-anexos destination
+        assert!(new_note_in(&base, "contextos/frota", "x", "2026-07-29").is_err());
     }
 
     #[test]

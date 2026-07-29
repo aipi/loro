@@ -145,6 +145,17 @@ doesn't clutter the screen once there are many.
   (in the sidebar) has a **⋯** menu with **use**, **edit** (opens the raw
   file), **ask the AI** (evolve it, preserving what already works) and
   **delete** (custom ones only).
+- In the sidebar, the icon tells the origin: **⚡ bolt** = built-in,
+  **★ star** = custom. Click the "habilidades" section title to
+  **collapse/expand** the whole list (the ▾/▸ caret shows the state).
+
+## Contexts have anexos too
+
+Every context has its own **anexos/** folder, always visible in the tree —
+with **＋ new note** (writes a note born inside the context) and **＋ from
+computer** (file picker). Unlike brainstorming anexos, a context's anexos
+are **versioned with it** (they flow through version/propose change
+normally).
 
 ## Queue → generate context
 

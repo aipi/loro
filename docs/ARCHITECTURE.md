@@ -104,7 +104,8 @@ OS/serde errors may still pass through and are shown untranslated.
 | `brain_status` | — | status | contexts, inbox, processed, activity |
 | `brain_read` | `rel` | content | read a file inside the acervo (path-traversal guarded) |
 | `brain_import` | `context?` | count | copy files into the inbox (prefix `<ctx>--`) |
-| `brain_import_anexos` | `slug` | count | native file picker → copy chosen files into `brainstorming/<slug>/anexos/` (ADR-0007) |
+| `brain_import_files` | `destRel` | count | native file picker → copy chosen files into an `anexos/` folder — a brainstorming's or a context's (guarded, ADR-0007) |
+| `brain_new_note_in` | `destRel, titulo` | rel | create a living-front-matter note inside an `anexos/` folder (context counterpart of `brain_new_notebook`, ADR-0007) |
 | `brain_delete_inbox` | `name` | `()` | delete an unprocessed queue item |
 | `brain_set_auto_context` | `value: bool` | `()` | post-creation toggle (Settings) for autoContext — global config + local `.loro/settings.json` (ADR-0006 §3) |
 | `brain_new_tool` / `brain_delete_tool` | `nome, conteudo` / `rel` | rel / `()` | create (imported skill content) or delete a custom habilidade — any `.claude/commands/*.md` outside the 9 built-in skills (ADR-0006/0007) |

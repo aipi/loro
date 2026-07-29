@@ -412,6 +412,17 @@ body {
   text-transform: none; letter-spacing: 0;
 }
 .ghelp:hover, .ghelp:focus-visible { opacity: 1; color: var(--accent); }
+/* ADR-0007: collapsible section header (habilidades) — the label itself is the
+   toggle, inheriting the .bgroup typography; the caret telegraphs state. */
+.bgtoggle {
+  appearance: none; background: none; border: none; padding: 0;
+  font: inherit; color: inherit; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 4px;
+  text-transform: inherit; letter-spacing: inherit;
+}
+.bgtoggle:hover, .bgtoggle:focus-visible { color: var(--accent); }
+.seccaret { display: inline-block; font-size: 8px; transition: transform .12s ease; }
+.bgtoggle.closed .seccaret { transform: rotate(-90deg); }
 .tipbox {
   position: fixed; z-index: 95; max-width: 300px;
   background: var(--panel); color: var(--ink);
@@ -1088,6 +1099,10 @@ body {
   color: var(--muted); font-size: 13px; line-height: 1; padding: 1px 6px; cursor: pointer; }
 .gadd:hover, .gadd:focus-visible { color: var(--accent); border-color: var(--line); }
 .bsadd { display: flex; gap: 4px; padding: 2px 8px 4px; }
+/* inside a folder group (ADR-0007): the creation row aligns with the rows it
+   creates, with a touch of air so it reads as the folder's toolbar */
+.bchild .bsadd { padding: 4px 4px 6px 2px; }
+.bempty.sub { padding: 2px 10px 6px; font-size: 10px; }
 .bsaddbtn { flex: 1; min-width: 0; background: none; border: 1px dashed var(--line); border-radius: 6px;
   font-family: var(--mono); font-size: 10px; letter-spacing: .04em; color: var(--muted);
   padding: 3px 4px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

@@ -1264,6 +1264,9 @@ const ICONS = {
   // habilidades (ADR-0007) — a bolt, the same icon language as the rest of
   // this set (no emoji: 🧰 read inconsistently across platforms/fonts).
   skill: "M11 21l1-9H7l6-11-1 9h5l-6 11z",
+  // custom habilidade — a star, so a user-authored skill reads differently
+  // from a built-in one (bolt) at a glance.
+  customskill: "M12 2l2.9 6.3 6.9.8-5.1 4.7 1.4 6.8-6.1-3.4-6.1 3.4 1.4-6.8-5.1-4.7 6.9-.8z",
 };
 function ico(name, extra = "") {
   const d = ICONS[name] || ICONS.file;
@@ -1436,6 +1439,25 @@ function wireSidebar() {
     if (bOpen.has(key)) bOpen.delete(key); else bOpen.add(key);
     sideSig = ""; renderSidebar(lastSt); markSel();
   }));
+  // ADR-0007: folder groups (folderGroupHtml) in the context tree toggle via
+  // [data-pestoggle] just like in the brainstorming tree — expand/collapse the
+  // next sibling (.bchild) in place, no full re-render.
+  B.navCtx.querySelectorAll("[data-pestoggle]").forEach((el2) => (el2.onclick = () => {
+    const key = el2.dataset.pestoggle, child = el2.nextElementSibling;
+    if (bOpen.has(key)) { bOpen.delete(key); el2.classList.remove("open"); if (child) child.hidden = true; }
+    else { bOpen.add(key); el2.classList.add("open"); if (child) child.hidden = false; }
+  }));
+  // ADR-0007: a context's anexos folder actions — create a note / import files.
+  B.navCtx.querySelectorAll("[data-ctxaddnota]").forEach((el2) => (el2.onclick = (e) => {
+    e.stopPropagation(); promptNewNoteInContext(el2.dataset.ctxaddnota, el2);
+  }));
+  B.navCtx.querySelectorAll("[data-ctxaddanexo]").forEach((el2) => (el2.onclick = (e) => {
+    e.stopPropagation();
+    const name = el2.dataset.ctxaddanexo;
+    importAnexoFromComputer(`contextos/${name}/anexos`, () => {
+      bOpen.add(`ctxfolder:${name}:anexos`); loadCtxChildren(name);
+    });
+  }));
   wireDrag();
 }
 
@@ -1483,6 +1505,7 @@ async function loadCtxChildren(name) {
   entries.sort((a, b) => order(a.name) - order(b.name) || a.name.localeCompare(b.name));
   let html = "";
   for (const en of entries) {
+    if (en.name === "anexos") continue; // ADR-0007: renderizado explicitamente abaixo, sempre visível
     if (en.dir) {
       if (ctxSet.has(name + "/" + en.name)) continue; // subdomínio: já está na árvore
       let files = [];
@@ -1495,6 +1518,17 @@ async function loadCtxChildren(name) {
       html += `<div class="bitem file ${gitClass(en.path)}" data-doc="${esc(en.path)}">${ico(fileIcon(en.name, false))}<span class="bn">${esc(pretty[en.name] || en.name)}</span></div>`;
     }
   }
+  // ADR-0007: um contexto também tem uma pasta `anexos/` — sempre visível, com
+  // as mesmas ações de um brainstorming (＋ nova nota, ＋ do computador),
+  // versionadas junto com o contexto.
+  let anexos = [];
+  try { anexos = ((await invoke("brain_list_dir", { rel: `contextos/${name}/anexos` })) || []).filter((f) => !f.dir); }
+  catch (_) {}
+  const anexRows = anexos.map((f) => `<div class="bitem file ${gitClass(f.path)}" data-doc="${esc(f.path)}" title="${esc(f.name)}">${ico("file")}<span class="bn">${esc(shortName(f.name))}</span></div>`).join("");
+  const anexActions =
+    `<button class="bsaddbtn" data-ctxaddnota="${esc(name)}" title="${t("Escrever uma nota nos anexos deste contexto")}">＋ ${t("nova nota")}</button>` +
+    `<button class="bsaddbtn" data-ctxaddanexo="${esc(name)}" title="${t("Adicionar um arquivo do computador aos anexos deste contexto")}">＋ ${t("do computador")}</button>`;
+  html += folderGroupHtml(`ctxfolder:${name}:anexos`, t("anexos"), anexos.length, anexRows, t("nenhum anexo ainda"), anexActions);
   holder.innerHTML = html || `<div class="bempty">${t("vazio")}</div>`;
   wireSidebar();
   markSel();
@@ -1737,7 +1771,11 @@ function wirePessoal() {
     e.stopPropagation(); promptSyncTool("drive", el2.dataset.syncdrive);
   }));
   B.navPessoal.querySelectorAll("[data-addanexo]").forEach((el2) => (el2.onclick = (e) => {
-    e.stopPropagation(); importAnexoFromComputer(el2.dataset.addanexo);
+    e.stopPropagation();
+    const slug = el2.dataset.addanexo;
+    importAnexoFromComputer(`brainstorming/${slug}/anexos`, () => {
+      bOpen.add(`bsfolder:${slug}:anexos`); loadTemaChildren(slug);
+    });
   }));
   B.navPessoal.querySelectorAll("[data-mtgtoggle]").forEach((el2) => (el2.onclick = async (e) => {
     e.stopPropagation();
@@ -1867,8 +1905,10 @@ async function refreshTools() {
 }
 function toolRow(f) {
   const label = shortName(f.name);
+  // bolt = built-in, star = custom (ADR-0007): the origin is legible from the
+  // icon alone; the "padrão" pill stays as the textual reinforcement.
   return `<div class="bitem file" data-doc="${esc(f.path)}" title="${esc(f.desc || f.path)}">` +
-    `${ico("skill")}<span class="bn">${esc(label)}</span>` +
+    `${ico(f.builtin ? "skill" : "customskill")}<span class="bn">${esc(label)}</span>` +
     (f.builtin ? `<span class="pill" title="${t("habilidade padrão")}">${t("padrão")}</span>` : "") +
     `<button class="rowmenu" data-toolmenu="${esc(f.path)}" data-toollabel="${esc(label)}" data-toolbuiltin="${f.builtin ? "1" : ""}" title="${t("ações (usar, editar, pedir à IA, excluir)")}">⋯</button>` +
     `</div>`;
@@ -2016,6 +2056,15 @@ function openAddToolMenu(anchor) {
   placeMenu(anchor);
 }
 { const ab = $("addToolBtn"); if (ab) ab.addEventListener("click", (e) => { e.stopPropagation(); openAddToolMenu(ab); }); }
+// ADR-0007: the habilidades section collapses/expands from its own header —
+// with many skills the list stops crowding the sidebar; the caret shows state.
+{
+  const tt = $("toolsToggle"), navT = $("navTools");
+  if (tt && navT) tt.addEventListener("click", () => {
+    navT.hidden = !navT.hidden;
+    tt.classList.toggle("closed", navT.hidden);
+  });
+}
 // Shared "executar habilidade" picker (brainstorming ⋯ and meeting ⋯): a
 // compact dropdown-like list — one row per pickable habilidade, description
 // only on hover (title=), never rendered inline (ADR-0007: avoid a wall of
@@ -2066,18 +2115,43 @@ function openHabilidadeMenu(alvoRel, anchor) {
   placeMenu(anchor);
 }
 
-// ADR-0007: "＋ do computador" — native file picker → copies the chosen
-// files into brainstorming/<slug>/anexos/ (brain_import_anexos). Re-opens the
-// anexos folder and reloads the tema so the new files show immediately.
-async function importAnexoFromComputer(slug) {
+// ADR-0007: "＋ do computador" — native file picker → copies the chosen files
+// into an anexos/ folder (brain_import_files). Works for both a brainstorming
+// (destRel = brainstorming/<slug>/anexos) and a context (contextos/<c>/anexos);
+// `after` runs on success (re-open + reload the right tree).
+async function importAnexoFromComputer(destRel, after) {
   try {
-    const n = await invoke("brain_import_anexos", { slug });
+    const n = await invoke("brain_import_files", { destRel });
     if (n > 0) {
-      bOpen.add(`bsfolder:${slug}:anexos`);
       toast(`${n} ${n > 1 ? t("arquivos anexados") : t("arquivo anexado")}`);
-      loadTemaChildren(slug);
+      if (after) after();
     }
-  } catch (e) { toast(tErr(String(e))); clog("brain_import_anexos error: " + e); }
+  } catch (e) { toast(tErr(String(e))); clog("brain_import_files error: " + e); }
+}
+
+// ADR-0007: inline "nova nota" in a context's anexos folder — the context
+// counterpart to promptNewNota, writing via brain_new_note_in and reloading
+// the context children so the note shows immediately.
+function promptNewNoteInContext(name, anchor) {
+  if (notaEditing) return;
+  notaEditing = true;
+  const inp = document.createElement("input");
+  inp.className = "bnewctx";
+  inp.placeholder = t("título da nota (Enter)");
+  anchor.before(inp); inp.focus();
+  const done = () => { inp.remove(); notaEditing = false; };
+  inp.addEventListener("keydown", async (e) => {
+    if (e.key === "Escape") return done();
+    if (e.key !== "Enter") return;
+    const titulo = inp.value.trim();
+    if (!titulo) return done();
+    try {
+      const rel = await invoke("brain_new_note_in", { destRel: `contextos/${name}/anexos`, titulo });
+      done(); bOpen.add(`ctxfolder:${name}:anexos`); loadCtxChildren(name);
+      if (rel) openDoc(rel, { preview: false });
+    } catch (err) { toast(tErr(String(err))); }
+  });
+  inp.addEventListener("blur", done);
 }
 
 // Inline "nova nota" inside a brainstorming (mirrors promptNewContext/promptNewTema).

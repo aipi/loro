@@ -151,13 +151,27 @@ Dois ajustes de UI pedidos após uso real:
   pasta a que pertencem (`folderGroupHtml` recebe `actionsHtml`): reuniões →
   **● gravar reunião**, notas → **＋ nova nota**, anexos → **⇄ sincronizar**
   \+ **＋ do computador**. O botão fica onde o resultado dele vai aparecer.
-- **"＋ do computador" nos anexos.** Novo `brain_import_anexos(slug)` abre o
+- **"＋ do computador" nos anexos.** `brain_import_files(destRel)` abre o
   seletor de arquivos nativo (mesma base do `brain_import`, via
-  `tauri_plugin_dialog`) e copia os arquivos escolhidos direto para
-  `brainstorming/<slug>/anexos/`, mantendo o nome original (com sufixo
-  numérico em colisão, nunca sobrescreve). Diferente do `/loro-sync` (que
-  traz de fontes externas via o agente), este é o caminho local puro — o
-  usuário anexa um `.pdf`/`.xlsx`/imagem que já tem na máquina.
+  `tauri_plugin_dialog`) e copia os arquivos escolhidos direto para uma
+  pasta `anexos/` — de um brainstorming OU de um contexto — mantendo o nome
+  original (com sufixo numérico em colisão, nunca sobrescreve). O destino é
+  validado por `guarded_anexos_dir` (só um caminho normalizado
+  `brainstorming/…/anexos` ou `contextos/…/anexos`). Diferente do
+  `/loro-sync` (que traz de fontes externas via o agente), este é o caminho
+  local puro — o usuário anexa um `.pdf`/`.xlsx`/imagem que já tem na máquina.
+- **Anexos do contexto na UI, com nota própria.** A pasta `anexos/` de um
+  contexto agora é sempre visível na árvore (mesmo `folderGroupHtml` do
+  brainstorming), com **＋ nova nota** (`brain_new_note_in` — o equivalente
+  de `brain_new_notebook` para dentro de um `anexos/`) e **＋ do
+  computador**. Anexos de contexto são versionados junto com o contexto —
+  independem do checkbox de "gerar contexto" (§6), que só cobre a cópia
+  automática feita pelo loop.
+- **Habilidades: seção colapsável + ícones por origem.** O cabeçalho da
+  seção "habilidades" vira um toggle (caret ▾/▸) para recolher/exibir a
+  lista — com muitas skills ela parava de caber. Ícones diferenciam a
+  origem à primeira vista: **raio** = padrão (built-in), **estrela** =
+  customizada (a pill "padrão" continua como reforço textual).
 - Corrigido manualmente um acervo real (`../turbo`, fora deste repositório)
   que estava com uma versão antiga: faltavam `loro-tool.md`,
   `loro-presentation.md`, `loro-artifact.md`, e `loro-sync.md` era a versão
