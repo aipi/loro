@@ -45,6 +45,35 @@ test("groupByCategory buckets by categoria, uncategorized last", () => {
   assert.deepStrictEqual(B.groupByCategory(null), []);
 });
 
+test("filterAndCapTemas filters by nome/slug (case-insensitive)", () => {
+  const temas = [
+    { slug: "frota-2026", nome: "Frota 2026", atualizadoEm: "2026-07-01" },
+    { slug: "vendas-q3", nome: "Vendas Q3", atualizadoEm: "2026-07-02" },
+  ];
+  const r = B.filterAndCapTemas(temas, "FROTA", false, 10);
+  assert.strictEqual(r.hiddenCount, 0);
+  assert.deepStrictEqual(r.items.map((t) => t.slug), ["frota-2026"]);
+  assert.deepStrictEqual(B.filterAndCapTemas(temas, "q3", false, 10).items.map((t) => t.slug), ["vendas-q3"]);
+  assert.deepStrictEqual(B.filterAndCapTemas(temas, "nada-aqui", false, 10).items, []);
+});
+
+test("filterAndCapTemas caps to the most recent when no query and over cap", () => {
+  const temas = [
+    { slug: "a", nome: "A", atualizadoEm: "2026-07-01" },
+    { slug: "b", nome: "B", atualizadoEm: "2026-07-03" },
+    { slug: "c", nome: "C", atualizadoEm: "2026-07-02" },
+  ];
+  const capped = B.filterAndCapTemas(temas, "", false, 2);
+  assert.strictEqual(capped.hiddenCount, 1);
+  assert.deepStrictEqual(capped.items.map((t) => t.slug), ["b", "c"]);
+  // showAll lifts the cap entirely
+  const all = B.filterAndCapTemas(temas, "", true, 2);
+  assert.strictEqual(all.hiddenCount, 0);
+  assert.strictEqual(all.items.length, 3);
+  // under the cap: no-op regardless of showAll
+  assert.strictEqual(B.filterAndCapTemas(temas, "", false, 10).hiddenCount, 0);
+});
+
 test("selection model toggles rels and maps to backend SelItems in parts order", () => {
   const parts = [
     { kind: "reuniao", rel: "brainstorming/x/reunioes/m1" },

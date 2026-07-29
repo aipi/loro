@@ -394,6 +394,15 @@ body {
   font-family: var(--mono); font-size: 9.5px; letter-spacing: .1em;
   text-transform: uppercase; color: var(--muted); margin: 16px 8px 4px;
 }
+/* ADR-0007: search/filter for a long brainstorming list — only shown once
+   there are enough temas to make the tree hard to scan (see renderPessoal). */
+.sidefilter {
+  display: block; width: calc(100% - 16px); margin: 0 8px 6px;
+  padding: 5px 8px; font-size: 11.5px; font-family: var(--sans);
+  border: 1px solid var(--line); border-radius: 6px;
+  background: var(--panel); color: var(--ink);
+}
+.sidefilter:focus { outline: none; border-color: var(--accent); }
 /* (i) explicando cada mundo/passo: botão que abre um tooltip clicável (.tipbox).
    O title nativo era tímido demais — o (i) agora tem ação. */
 .ghelp {

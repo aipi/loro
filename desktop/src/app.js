@@ -1506,6 +1506,12 @@ let pessoalSig = "";
 // A brainstorming groups reuniões/investigações/perguntas/notas; it can carry an
 // optional categoria (UI-only grouping). Selection of parts -> one consolidated
 // report -> the fila (see bsSelection / sendSelectionToQueue).
+// ADR-0007: above this many brainstormings the always-expanded tree gets hard
+// to scan — the search box appears and the list caps to the most recent
+// until the user searches or asks to see all (owner feedback).
+const PESSOAL_FILTER_THRESHOLD = 8;
+let pessoalRawTemas = [], pessoalRawAvulso = [];
+let pessoalFilterQuery = "", pessoalShowAll = false;
 async function refreshPessoal() {
   if (!brainTab) return;
   let temas = [], avulso = [];
@@ -1515,9 +1521,14 @@ async function refreshPessoal() {
   const sig = JSON.stringify([temas, avulso.map((f) => f.name)]);
   if (sig === pessoalSig) return;
   pessoalSig = sig;
+  pessoalRawTemas = temas; pessoalRawAvulso = avulso;
   renderPessoal(temas, avulso);
 }
-function renderPessoal(temas, avulso) {
+function renderPessoal(allTemas, avulso) {
+  const filterEl = $("pessoalFilter");
+  if (filterEl) filterEl.hidden = allTemas.length <= PESSOAL_FILTER_THRESHOLD;
+  const { items: temas, hiddenCount } = LoroBrainstorm.filterAndCapTemas(
+    allTemas, pessoalFilterQuery, pessoalShowAll, PESSOAL_FILTER_THRESHOLD);
   // creation moved to the section header (＋, wired once at boot) — full-width
   // creation rows polluted the tree (owner feedback 2026-07-28)
   let html = "";
@@ -1529,6 +1540,9 @@ function renderPessoal(temas, avulso) {
       }
       html += grp.items.map(renderTemaNode).join("");
     }
+    if (hiddenCount > 0) {
+      html += `<div class="bitem file" data-showalltemas>${ico("file")}<span class="bn">▾ ${t("ver todos")} (${allTemas.length})</span></div>`;
+    }
     if (avulso.length) {
       const key = "pes:avulso", open = bOpen.has(key);
       html += `<div class="bitem ctx${open ? " open" : ""}" data-pestoggle="${key}">${ico("note", "ac")}<span class="bn">${t("avulso")}</span><span class="pill">${avulso.length}</span></div>` +
@@ -1536,12 +1550,24 @@ function renderPessoal(temas, avulso) {
         avulso.map((f) => `<div class="bitem file" data-doc="${esc(f.path)}" title="${esc(f.name)}">${ico("file")}<span class="bn">${esc(shortName(f.name))}</span></div>`).join("") +
         `</div>`;
     }
+  } else if (pessoalFilterQuery) {
+    html += `<div class="bempty">${t("nenhum brainstorming encontrado para")} "${esc(pessoalFilterQuery)}"</div>`;
   } else {
     html += `<div class="bempty">${t("nenhum brainstorming ainda — crie o primeiro para reunir reuniões e notas")}</div>`;
   }
   B.navPessoal.innerHTML = html;
   wirePessoal();
+  B.navPessoal.querySelectorAll("[data-showalltemas]").forEach((el2) => (el2.onclick = () => {
+    pessoalShowAll = true; renderPessoal(pessoalRawTemas, pessoalRawAvulso);
+  }));
   for (const t of temas) if (bOpen.has("pes:tema:" + t.slug)) loadTemaChildren(t.slug);
+}
+{
+  const fi = $("pessoalFilter");
+  if (fi) fi.addEventListener("input", () => {
+    pessoalFilterQuery = fi.value; pessoalShowAll = false;
+    renderPessoal(pessoalRawTemas, pessoalRawAvulso);
+  });
 }
 function renderTemaNode(t) {
   const key = "pes:tema:" + t.slug, open = bOpen.has(key);
