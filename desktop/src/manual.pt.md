@@ -83,6 +83,9 @@ quando quiser pela paleta: `Cmd/Ctrl+Shift+P` → "apresentação do Loro".
   (ou solte arquivos `.md`/`.txt` direto na fila).
 - **▶ gerar contexto** roda `/loro-context` no Claude do terminal, que
   estrutura o material em `contextos/<c>/context.md` (+ CHANGELOG).
+- Cada `context.md` abre com um **Sumário** (1 linha por seção + IDs `D-…`/`H-…`),
+  regenerado a cada atualização — é ele que deixa a leitura barata para pessoas
+  e agentes; decisões e hotspots ganham IDs estáveis, localizáveis por busca.
 - Com a fila **vazia**, o botão avisa e não roda: não há de onde gerar.
 
 ## Versionar e propor mudança (RFC = PR)
