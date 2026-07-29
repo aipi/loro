@@ -722,7 +722,12 @@ async function buildAndOpenReport(explicitId) {
   let id = explicitId || meeting.id;
   if (!id) { const rel = currentRel(); id = rel ? (LM.livingId(rel) || LM.reportId(rel)) : null; }
   if (!id) { toast(t("abra uma reunião para gerar o relatório")); return; }
-  try { const r = await invoke("brain_meeting_build_notebook", { id }); if (r && r.rel) openDoc(r.rel, { preview: false }); toast(t("relatório pronto")); }
+  try {
+    const r = await invoke("brain_meeting_build_notebook", { id });
+    if (r && r.rel) openDoc(r.rel, { preview: false });
+    toast(t("relatório pronto"));
+    pessoalSig = ""; refreshPessoal();
+  }
   catch (e) { toast(t("não montei o relatório") + ": " + tErr(String(e))); clog("build_notebook error: " + e); }
 }
 
@@ -3491,6 +3496,29 @@ function termRun(cmd) {
   send();
 }
 
+// ---- post-action auto-refresh (owner feedback 2026-07-28) ------------------
+// Skills run asynchronously in the terminal agent, and the sidebar's signature
+// only tracks the brainstorming LIST — artifacts the agent writes (analyses,
+// answers, report sections) never change it. After any injected action, force
+// a refresh burst: every 5s for 2 minutes, sig cleared so expanded children
+// (meetings + artefatos) reload. Skipped while the user types in a sidebar
+// inline input, so a re-render never eats a half-written note title.
+let actionRefreshTimer = null, actionRefreshUntil = 0;
+function scheduleActionRefresh(ms = 120000) {
+  actionRefreshUntil = Date.now() + ms;
+  if (actionRefreshTimer) return;
+  actionRefreshTimer = setInterval(() => {
+    if (Date.now() > actionRefreshUntil) {
+      clearInterval(actionRefreshTimer); actionRefreshTimer = null; return;
+    }
+    const focused = document.activeElement;
+    if (focused && focused.closest && focused.closest(".bside") &&
+        (focused.tagName === "INPUT" || focused.tagName === "TEXTAREA")) return;
+    pessoalSig = ""; refreshPessoal();
+    sideSig = ""; brainRefresh();
+  }, 5000);
+}
+
 // ADR-0002 §4 / ADR-0003 — runs a skill in the acervo's AI agent. Slash-commands
 // only mean something to Claude; for any other agent the same skill is injected
 // as a plain prompt (LoroPresets.agentInvocation). Handshake: poll term_status
@@ -3510,6 +3538,7 @@ async function termRunAgent(cmd) {
     if (st && st.open && st.agentRunning) {
       await new Promise((r) => setTimeout(r, tries === 0 ? 0 : 800)); // settle a fresh TUI
       await invoke("term_input", { data: line + "\n" }).catch(() => {});
+      scheduleActionRefresh(); // the skill writes files the sidebar must show
       return;
     }
     if (st && st.open && !st.agentRunning && termReady && !relaunched) {
