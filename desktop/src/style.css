@@ -285,6 +285,9 @@ body {
 }
 .mini:hover { color: var(--accent); }
 .mini.rm:hover { color: var(--red); }
+/* the AI action reads in the accent color at rest (owner request) */
+.mini.ai { color: var(--accent); }
+.mini.ai:hover { color: var(--ink); }
 .card .pill {
   font-family: var(--mono); font-size: 10px; flex: none;
   background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent);
