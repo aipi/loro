@@ -696,6 +696,198 @@ pub fn loro_note_skill(lang: &str) -> &'static str {
     }
 }
 
+// ---- external-source sync (/loro-sync, ADR-0005/0006) ----
+// Attaches an external item (never its full content) as a `ref` on a
+// brainstorming note. Sources: drive (Gemini notes), slack (a channel
+// message), jira (a ticket), confluence (a page) — each identified directly
+// by the user (channel/key/title/link), never guessed. The command stays
+// generic so a future source needs no rename, only a new branch here.
+pub const LORO_SYNC_SKILL: &str = r#"---
+description: Anexa um item externo (Drive/Slack/Jira/Confluence) como referência numa nota do acervo (ADR-0005/0006)
+argument-hint: <fonte:drive|slack|jira|confluence> <alvo-nota-ou-tema> <identificador>
+---
+
+Argumentos: `$ARGUMENTS`
+O PRIMEIRO token é a FONTE; o SEGUNDO é o ALVO (uma nota `.md` ou um tema de
+brainstorming, relativo à raiz do acervo); o RESTO é o IDENTIFICADOR do item
+na fonte — o formato depende da fonte (veja abaixo).
+
+Você é o assistente de sincronização externa do Loro. Trabalhe SOMENTE dentro
+de `brainstorming/` — nunca toque em `contextos/` (mundo versionado). Em toda
+fonte, **NUNCA leia, baixe ou cole o conteúdo/corpo do item na nota** — só
+título, link e data (BR-8); e **NUNCA anexe sem confirmação explícita do
+usuário** sobre qual item é (BR-1).
+
+Se a fonte não for uma das listadas no `argument-hint`, diga claramente que
+ainda não é suportada e pare — não invente comportamento.
+
+Fonte `drive` (notas do Gemini no Google Drive) — identificador OPCIONAL
+(busca ou link):
+1. Se o identificador for um LINK do Google Drive/Docs (começa com
+   `https://docs.google.com/` ou `https://drive.google.com/`): pule a busca,
+   vá direto para a confirmação usando só os metadados desse documento
+   (título, dono).
+2. Caso contrário, busque no Google Drive documentos cujo título contenha
+   "Anotações do Gemini" (use o identificador, se houver, como palavra-chave
+   adicional do título — ex. o nome da reunião). **A busca NUNCA deve
+   restringir por dono do documento** (nada de `owner = 'me'`): reuniões
+   compartilhadas por colegas têm dono diferente do usuário e PRECISAM
+   aparecer no resultado. Se a busca inicial não encontrar o esperado, tente
+   de novo com uma busca mais ampla antes de desistir.
+3. Aceite um candidato SOMENTE se o título contiver "Anotações do Gemini" E
+   (a pasta-mãe for "Meet Recordings" da conta atual OU o dono do documento
+   for outra pessoa). Um documento compartilhado normalmente não expõe
+   pasta-mãe nenhuma para quem não é dono — isso é esperado, não é motivo
+   para rejeitar. Nunca infira pelo conteúdo do documento.
+4. Liste os candidatos (título, data, dono) e peça confirmação. Se nada for
+   encontrado, sugira rodar de novo passando um LINK direto como
+   identificador. Ao confirmar, grave `tipo: drive`, `caminho: <link>`.
+
+Fonte `slack` — identificador OBRIGATÓRIO: o nome do canal (ex. `#eng-loro`
+ou `eng-loro`):
+1. Use o conector do Slack disponível para ler as mensagens recentes desse
+   canal (e fixadas/pinned, se houver).
+2. Liste as mensagens candidatas (autor, data, um trecho curto só para
+   identificação visual — não é para copiar na nota) e peça ao usuário para
+   confirmar QUAL mensagem/thread representa a reunião ou decisão a anexar.
+   Se o canal não existir ou não houver mensagens relevantes, diga isso
+   claramente em vez de inventar uma.
+3. Ao confirmar, grave `tipo: slack`, `caminho: <link permanente da
+   mensagem/thread>` (o "copy link" do Slack). Nunca cole o texto da
+   mensagem no corpo da nota.
+
+Fonte `jira` — identificador OBRIGATÓRIO: a chave do ticket (ex. `PROJ-123`)
+ou o link direto do ticket:
+1. Use o conector do Jira/Atlassian disponível para buscar esse ticket
+   exato pela chave (extraindo a chave do link, se um link foi passado).
+2. Mostre o título/resumo e status do ticket encontrado e peça confirmação
+   antes de anexar — mesmo sendo um identificador exato, confirme que é o
+   ticket certo.
+3. Ao confirmar, grave `tipo: jira`, `caminho: <link do ticket>`. Nunca cole
+   a descrição/comentários do ticket na nota.
+
+Fonte `confluence` — identificador OBRIGATÓRIO: o título exato da página ou
+o link direto:
+1. Se for um link, use-o direto. Se for um título, use o conector do
+   Confluence/Atlassian disponível para buscar a página por esse título.
+2. Se houver mais de uma página com título parecido, liste as candidatas
+   (título, espaço, atualizado em) e peça confirmação de qual é a certa.
+3. Ao confirmar, grave `tipo: confluence`, `caminho: <link da página>`.
+   Nunca cole o conteúdo da página na nota.
+
+Em qualquer fonte, ao confirmar: edite o arquivo `.md` da nota-alvo (crie uma
+nova nota em `brainstorming/<tema>/notas/` se o alvo for um tema, seguindo o
+mesmo front-matter das notas existentes) e acrescente ao `refs:` a entrada
+correspondente.
+
+Regras de rigor (ADR-0002 §5):
+- **Nunca assuma premissas** não declaradas: o que não estiver confirmado pelo
+  usuário é incerteza — pergunte, não adivinhe.
+- **Varredura eficiente:** para ler muitos arquivos, delegue a leitura a
+  subagentes (Task) num modelo rápido (ex. Haiku) retornando só o essencial;
+  reserve o modelo principal para a síntese.
+- **Leitura barata (ADR-0004):** comece pelo `INDEX.md` e pelo Sumário (§0) de
+  cada `context.md`; localize IDs estáveis (`D-…`, `H-…`) com busca e leia
+  somente a seção necessária — o arquivo inteiro é o último recurso.
+"#;
+
+pub const LORO_SYNC_SKILL_EN: &str = r#"---
+description: Attaches an external item (Drive/Slack/Jira/Confluence) as a reference on an acervo note (ADR-0005/0006)
+argument-hint: <source:drive|slack|jira|confluence> <target-note-or-topic> <identifier>
+---
+
+Arguments: `$ARGUMENTS`
+The FIRST token is the SOURCE; the SECOND is the TARGET (a `.md` note or a
+brainstorming topic, relative to the acervo root); the REST is the item's
+IDENTIFIER in that source — the shape depends on the source (see below).
+
+You are Loro's external-sync assistant. Work ONLY inside `brainstorming/` —
+never touch `contextos/` (the versioned world). For every source, **NEVER
+read, download, or paste the item's content/body into the note** — only
+title, link, and date (BR-8); and **NEVER attach without the user's explicit
+confirmation** of which item it is (BR-1).
+
+If the source is not one of the ones listed in `argument-hint`, say clearly
+that it is not supported yet and stop — do not invent behavior.
+
+Source `drive` (Gemini notes on Google Drive) — identifier OPTIONAL (a search
+keyword or a link):
+1. If the identifier is a Google Drive/Docs LINK (starts with
+   `https://docs.google.com/` or `https://drive.google.com/`): skip the
+   search and go straight to confirmation using only that document's
+   metadata (title, owner).
+2. Otherwise, search Google Drive for documents whose title contains
+   "Anotações do Gemini" (use the identifier, if given, as an extra title
+   keyword — e.g. the meeting's name). **The search must NEVER filter by
+   document owner** (no `owner = 'me'`): meetings shared by colleagues have a
+   different owner than the current user and MUST show up in the results. If
+   the first search does not find what is expected, retry with a broader
+   search before giving up.
+3. Accept a candidate ONLY if the title contains "Anotações do Gemini" AND
+   (the parent folder is "Meet Recordings" on the current account OR the
+   document's owner is someone else). A shared document typically exposes no
+   parent folder at all to a non-owner — that is expected, not a reason to
+   reject. Never infer from the document's content.
+4. List the candidates (title, date, owner) and ask for confirmation. If
+   nothing is found, suggest re-running with a direct link as the
+   identifier. On confirmation, record `tipo: drive`, `caminho: <link>`.
+
+Source `slack` — identifier REQUIRED: the channel name (e.g. `#eng-loro` or
+`eng-loro`):
+1. Use the available Slack connector to read that channel's recent messages
+   (and pinned ones, if any).
+2. List the candidate messages (author, date, a short excerpt for visual
+   identification only — not to be copied into the note) and ask the user to
+   confirm WHICH message/thread represents the meeting or decision to
+   attach. If the channel does not exist or has no relevant messages, say so
+   plainly instead of inventing one.
+3. On confirmation, record `tipo: slack`, `caminho: <the message/thread's
+   permanent link>` (Slack's "copy link"). Never paste the message text into
+   the note's body.
+
+Source `jira` — identifier REQUIRED: the ticket key (e.g. `PROJ-123`) or a
+direct ticket link:
+1. Use the available Jira/Atlassian connector to fetch that exact ticket by
+   key (extracting the key from the link, if a link was given).
+2. Show the found ticket's title/summary and status and ask for
+   confirmation before attaching — even for an exact identifier, confirm it
+   is the right ticket.
+3. On confirmation, record `tipo: jira`, `caminho: <ticket link>`. Never
+   paste the ticket's description/comments into the note.
+
+Source `confluence` — identifier REQUIRED: the page's exact title or a
+direct link:
+1. If it is a link, use it directly. If it is a title, use the available
+   Confluence/Atlassian connector to search for a page with that title.
+2. If more than one page has a similar title, list the candidates (title,
+   space, updated date) and ask which one is correct.
+3. On confirmation, record `tipo: confluence`, `caminho: <page link>`. Never
+   paste the page's content into the note.
+
+For any source, on confirmation: edit the target note's `.md` file (create a
+new note under `brainstorming/<topic>/notas/` if the target is a topic,
+following the same front-matter as existing notes) and append the matching
+entry to `refs:`.
+
+Rigor rules (ADR-0002 §5):
+- **Never assume unstated premises.** Anything not confirmed by the user is an
+  uncertainty — ask, do not guess.
+- **Efficient scanning:** to read many files, delegate reading to subagents
+  (Task) on a fast model (e.g. Haiku) returning only the essentials; keep the
+  main model for synthesis.
+- **Cheap reading (ADR-0004):** start from `INDEX.md` and each `context.md`
+  Summary (§0); locate stable IDs (`D-…`, `H-…`) via search and read only the
+  needed section — the whole file is the last resort.
+"#;
+
+pub fn loro_sync_skill(lang: &str) -> &'static str {
+    if lang == "en" {
+        LORO_SYNC_SKILL_EN
+    } else {
+        LORO_SYNC_SKILL
+    }
+}
+
 // ---- general Q&A over the knowledge base (ADR-0013) ----
 //
 // `/loro-ask` answers ANY question from the acervo's versioned contexts (the local
@@ -887,6 +1079,7 @@ mod tests {
                 ("analyse", meeting_analyse_skill(lang)),
                 ("answer", meeting_question_skill(lang)),
                 ("note", loro_note_skill(lang)),
+                ("sync", loro_sync_skill(lang)),
             ] {
                 assert!(
                     body.contains(no_assume),

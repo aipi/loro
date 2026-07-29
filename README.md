@@ -6,7 +6,7 @@ versioned, per-domain knowledge base that both **people and AI** can use as
 context. Speech is transcribed **entirely on your machine** (whisper.cpp); no
 audio or text ever leaves the device by default.
 
-It is two things working together:
+It is three things working together:
 
 1. **A capture tool** — live transcription (mic, system audio, or both sides of
    a video meeting with zero driver setup), as a desktop app and a CLI (`loro.sh`).
@@ -23,6 +23,14 @@ It is two things working together:
    RFC = branch + Pull Request, with Git completely hidden behind two buttons
    ("Versionar" / "Propor mudança"). The result is a portable **context harness**:
    a folder of per-domain truth any agent or teammate can read.
+3. **An AI-agent automation layer** — Loro wraps an AI agent CLI (`claude` by
+   default, any CLI — ADR-0003) in an embedded terminal, and turns its skills
+   into one-click UI instead of typed commands: buttons and a command palette
+   (`Cmd/Ctrl+Shift+P`) inject `/loro-ask`, `/loro-note`, `/loro-context`,
+   `/loro-sync` (external sources — Drive/Slack/Jira/Confluence, ADR-0005/0006)
+   and the meeting `/loro-analyse`/`/loro-question` skills. The capture tool
+   and the knowledge base are what the automations act on; this layer is how
+   the user reaches them.
 
 > Docs: the brain domain `loro` (**`brain/contexts/loro/context.md`**, what/why —
 > this repo dogfoods its own model), **`docs/ARCHITECTURE.md`** (how),

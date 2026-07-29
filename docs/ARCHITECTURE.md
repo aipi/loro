@@ -181,6 +181,15 @@ Path resolution: `LORO_HOME` (exported by `loro.sh`) or a sensible default;
   enriched (description · updated date · hotspot range) so agents route without
   opening files. The generated `AGENTS.md` and every skill teach the protocol:
   index → card → ID search → targeted section read.
+- **External-source sync (`/loro-sync`, ADR-0005):** attaches an external
+  meeting note (v1: a Gemini note on Google Drive) to a brainstorming note as
+  a `tipo: drive` ref (title + link only — never the transcript body, BR-8).
+  Runs as a terminal-Claude skill like `/loro-note`, using the terminal
+  agent's own connector access (ambient-credential model, ADR-0004 baseline)
+  — the Tauri app never talks to Google's API or stores a token. Always an
+  explicit, user-triggered invocation (BR-1); the agent validates candidates
+  by title pattern + folder/owner heuristic and asks for confirmation before
+  attaching.
 - **Knowledge versioning (ADR-0001 §5), Git hidden behind two buttons:** *Versionar*
   → `brain_version` creates `rfc/<slug>` off the default branch and commits the
   working changes locally (Git only). *Propor mudança* → `brain_propose_change`
@@ -225,3 +234,4 @@ All technical decisions are consolidated in the single **`docs/adr/0001-baseline
 | Meetings | living file + notebook report, transient audio | ADR-0001 §8 |
 | Meeting AI | terminal-Claude skills, local-first | ADR-0001 §9 |
 | Doc language | English | ADR-0001 |
+| External-source sync | `/loro-sync <fonte>`, ambient terminal-agent connector, link-only refs | ADR-0005 |

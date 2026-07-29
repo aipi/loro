@@ -76,6 +76,19 @@ quando quiser pela paleta: `Cmd/Ctrl+Shift+P` → "apresentação do Loro".
   paleta `Cmd/Ctrl+Shift+P` ou pelos botões); depois rode **analisar** para o
   Claude preencher o relatório da reunião.
 - Nada do brainstorming é versionado nem sai da máquina.
+- **⇄ sincronizar reunião** anexa a nota de uma reunião externa (por enquanto,
+  notas do Gemini no Google Drive) como referência numa nota do acervo — só
+  título, link e data; o conteúdo do documento nunca é lido, baixado ou
+  colado. Roda `/loro-sync drive <tema>` no terminal, que lista candidatos
+  (pelo título "Anotações do Gemini" + pasta "Meet Recordings", ou por serem
+  compartilhados por outra pessoa) e pede sua confirmação antes de anexar. O
+  botão abre um campo opcional de **busca ou link**: deixe em branco para uma
+  busca ampla, digite uma palavra do título (ex. nome da reunião) para
+  filtrar, ou cole o link do documento do Drive para pular a busca. Reuniões
+  compartilhadas por colegas não têm pasta própria no seu Drive — isso é
+  esperado, elas ainda são aceitas pelo critério de dono.
+  **Pré-requisito:** o agente do terminal precisa ter o conector do Google
+  Drive já configurado/autenticado — o Loro não gerencia essa credencial.
 
 ## Fila → gerar contexto
 

@@ -77,6 +77,19 @@ palette: `Cmd/Ctrl+Shift+P` → "Loro tour".
   (via the palette `Cmd/Ctrl+Shift+P` or the buttons); then run **analyse** so
   Claude fills in the meeting report.
 - Nothing in a brainstorming is versioned or leaves the machine.
+- **⇄ sync meeting** attaches an external meeting note (for now, Gemini notes
+  on Google Drive) as a reference on an acervo note — only title, link and
+  date; the document's content is never read, downloaded or pasted. It runs
+  `/loro-sync drive <topic>` in the terminal, which lists candidates (by the
+  "Anotações do Gemini" title pattern + "Meet Recordings" folder, or by being
+  shared by someone else) and asks for your confirmation before attaching.
+  The button opens an optional **search or link** field: leave it blank for a
+  broad search, type a title keyword (e.g. the meeting's name) to narrow it,
+  or paste the Drive document's link to skip the search entirely. Meetings
+  shared by colleagues have no folder of their own in your Drive — that is
+  expected, they are still accepted by the owner criterion.
+  **Prerequisite:** the terminal agent must already have the Google Drive
+  connector configured/authenticated — Loro does not manage that credential.
 
 ## Queue → generate context
 

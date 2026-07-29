@@ -21,7 +21,8 @@ _Quick-read card (ADR-0004): 1 line per section + key IDs. Read this first;
 open only the section you need._
 
 - **What Loro is** — a companion that captures speech locally and builds a
-  per-domain context base for people and AI.
+  per-domain context base for people and AI; it also wraps an AI agent CLI
+  in one-click automations (buttons/palette) instead of typed commands.
 - **Core premises** — earned context, archetypes over areas, interpretation
   lenses, self-contained & non-destructive.
 - **How it works** — capture → inbox → loop files by domain → person promotes.
@@ -36,6 +37,15 @@ A **companion** (not a replacement for agents) that captures speech 100% locally
 and turns what is discussed into a per-domain context base — usable by people and
 AI. It is a project-management philosophy on top of a personal/team brain, made
 one's own via a customizable `AGENTS.md`.
+
+Loro is also an **AI-agent wrapper/automation tool**: it embeds an AI agent CLI
+(`claude` by default, any CLI — ADR-0003) in a terminal inside the app, and
+turns that agent's skills into one-click UI — buttons and a command palette
+(`Cmd/Ctrl+Shift+P`) that inject the right slash-command (`/loro-ask`,
+`/loro-note`, `/loro-context`, `/loro-sync`, meeting `/loro-analyse`/
+`/loro-question`) instead of the user typing or remembering one. The capture
+tool and the knowledge base are what the automations act on; the automation
+layer is how the user reaches them.
 
 ## Core premises
 - **Ideas are cheap; context is earned.** Brainstorming is constant and free;

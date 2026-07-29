@@ -107,3 +107,19 @@ test("noteCmd targets a folder (create) or a note file (evolve)", () => {
   assert.strictEqual(noteCmd("", "x"), null);
   assert.strictEqual(noteCmd("brainstorming/vendas/notas", "  "), null);
 });
+
+test("syncCmd builds /loro-sync <fonte> <alvo> [busca-ou-link], null when either is empty", () => {
+  const { syncCmd } = require("../src/brainstorm.js");
+  assert.strictEqual(syncCmd("drive", "vendas"), "/loro-sync drive vendas");
+  assert.strictEqual(syncCmd("  drive  ", "  vendas  "), "/loro-sync drive vendas");
+  assert.strictEqual(syncCmd("", "vendas"), null);
+  assert.strictEqual(syncCmd("drive", ""), null);
+  // optional third arg: a title keyword or a direct Drive link
+  assert.strictEqual(syncCmd("drive", "vendas", "BARAD DUR"),
+    "/loro-sync drive vendas BARAD DUR");
+  assert.strictEqual(
+    syncCmd("drive", "vendas", "https://docs.google.com/document/d/ID/edit"),
+    "/loro-sync drive vendas https://docs.google.com/document/d/ID/edit"
+  );
+  assert.strictEqual(syncCmd("drive", "vendas", "  "), "/loro-sync drive vendas");
+});

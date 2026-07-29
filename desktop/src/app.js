@@ -1556,6 +1556,7 @@ async function loadTemaChildren(slug) {
   inner += `<div class="bsadd">` +
     `<button class="bsaddbtn" data-addnota="${esc(slug)}" title="${t("Escrever uma nota neste brainstorming")}">＋ ${t("nova nota")}</button>` +
     `<button class="bsaddbtn rec2" data-addmeeting="${esc(slug)}" title="${t("Gravar uma reunião neste brainstorming (áudio 100% local)")}">● ${t("gravar reunião")}</button>` +
+    `<button class="bsaddbtn" data-syncdrive="${esc(slug)}" title="${t("Anexar uma nota de reunião externa (Google Drive/Gemini), sem ler o conteúdo")}">⇄ ${t("sincronizar reunião")}</button>` +
     `</div>`;
   for (const f of notas) inner += bsPartRow("nota", f.path, f.path, shortName(f.name), f.name, false);
   for (const m of meetings) {
@@ -1633,6 +1634,31 @@ function wirePessoal() {
   B.navPessoal.querySelectorAll("[data-addnota]").forEach((el2) => (el2.onclick = (e) => {
     e.stopPropagation(); promptNewNota(el2.dataset.addnota, el2);
   }));
+  B.navPessoal.querySelectorAll("[data-syncdrive]").forEach((el2) => (el2.onclick = (e) => {
+    e.stopPropagation(); promptSyncDrive(el2.dataset.syncdrive);
+  }));
+}
+
+// "sincronizar reunião" (ADR-0005): the search/link field is optional — left
+// blank, the skill searches broadly by the Gemini title pattern; filled, it
+// either narrows that search (a keyword) or names the document directly (a
+// Drive link), which matters when the default search misses a shared meeting.
+function promptSyncDrive(slug) {
+  openModal(
+    t("Sincronizar reunião externa (Drive)"),
+    `<p class="pmnote mono">${t("busca uma nota do Gemini no Drive e anexa só título/link à nota — nunca lê o conteúdo.")}</p>` +
+      `<label class="wfield"><span class="mono">${t("busca ou link (opcional)")}</span>` +
+      `<input id="syncDriveInput" type="text" placeholder="${t("ex.: nome da reunião, ou um link do Drive")}" spellcheck="false"></label>`,
+    t("buscar"),
+    () => {
+      const q = (($("syncDriveInput") && $("syncDriveInput").value) || "").trim();
+      const cmd = LoroBrainstorm.syncCmd("drive", slug, q);
+      if (!cmd) { toast(t("informe o tema")); return; }
+      termRunAgent(cmd);
+      toast(t("busca enviada ao agente do terminal"), 4000);
+    }
+  );
+  const inp = $("syncDriveInput"); if (inp) inp.focus();
 }
 
 // Inline "nova nota" inside a brainstorming (mirrors promptNewContext/promptNewTema).
@@ -2651,6 +2677,12 @@ async function onRefClick(sourceRel, fm, token, anchorEl) {
       const asset = await invoke("brain_read_asset", { rel: res.rel });
       toggleInlineImage(anchorEl, asset.mime, asset.base64, res.rel);
     } catch (e) { toast(t("não abri a imagem")); clog("read_asset error: " + e); }
+    return;
+  }
+  // external ref (loro-sync, e.g. a Drive doc) → OS default browser
+  if (res.tipo === "link") {
+    try { await invoke("brain_open_link", { url: res.rel }); }
+    catch (e) { toast(t("não abri o link")); clog("open_link error: " + e); }
     return;
   }
   // audio / other → OS default app (guarded to the acervo root in Rust)

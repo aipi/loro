@@ -1136,6 +1136,7 @@ fn ensure_acervo_structure(
         ),
         (".claude/commands/loro-ask.md", brain_ask_skill(lang)),
         (".claude/commands/loro-note.md", loro_note_skill(lang)),
+        (".claude/commands/loro-sync.md", loro_sync_skill(lang)),
     ] {
         let p = base.join(rel);
         if !p.exists() {
@@ -2020,6 +2021,10 @@ fn migrate_acervo(base: &Path, apply: bool, lang: &str) -> Result<MigrationRepor
             ".claude/commands/loro-note.md",
             loro_note_skill(lang).to_string(),
         ),
+        (
+            ".claude/commands/loro-sync.md",
+            loro_sync_skill(lang).to_string(),
+        ),
     ] {
         let p = base.join(rel);
         if !p.exists() {
@@ -2889,6 +2894,7 @@ fn ensure_meeting_skills(base: &Path, lang: &str) {
         ),
         (".claude/commands/loro-ask.md", brain_ask_skill(lang)),
         (".claude/commands/loro-note.md", loro_note_skill(lang)),
+        (".claude/commands/loro-sync.md", loro_sync_skill(lang)),
     ] {
         let p = base.join(rel);
         if !p.exists() {
@@ -3280,6 +3286,7 @@ pub fn run() {
             brain_new_notebook,
             brain_read_asset,
             brain_open_external,
+            brain_open_link,
             brain_resolve_ref,
             brain_add_ref,
             brain_promote,

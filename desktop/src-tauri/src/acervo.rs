@@ -197,7 +197,10 @@ fn next_ref_id(fm: &str) -> String {
 // Anchor a caminho to the canonical `acervo://` form (BR-independent invariant so
 // promoted refs never dangle into the git-ignored world).
 fn anchor_path(caminho: &str) -> String {
-    if caminho.starts_with("acervo://") {
+    if caminho.starts_with("acervo://")
+        || caminho.starts_with("http://")
+        || caminho.starts_with("https://")
+    {
         caminho.to_string()
     } else {
         format!("acervo://{}", caminho.trim_start_matches('/'))
@@ -590,6 +593,15 @@ pub struct RefResolution {
 // "acervo://<rel>" (canonical) OR a path relative to `source_rel`'s directory.
 // Path-guarded (never escapes the root).
 fn resolve_ref(base: &Path, source_rel: &str, r: &str) -> Result<RefResolution, String> {
+    // External refs (e.g. a Drive doc link) are never resolved against the
+    // acervo root — no local file backs them (loro-sync, BR-8: link only).
+    if r.starts_with("http://") || r.starts_with("https://") {
+        return Ok(RefResolution {
+            rel: r.to_string(),
+            tipo: "link".to_string(),
+            exists: true,
+        });
+    }
     let raw = if let Some(rest) = r.strip_prefix("acervo://") {
         rest.to_string()
     } else if r.starts_with('/') {
@@ -1422,6 +1434,26 @@ pub fn brain_open_external(rel: String) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+// An external ref (loro-sync, e.g. a Drive doc link) is only ever http(s) —
+// never a local path, shell metacharacter, or other scheme (js:, file:, …).
+fn is_openable_link(url: &str) -> bool {
+    url.starts_with("http://") || url.starts_with("https://")
+}
+
+// Open an external link (e.g. a Drive doc from a `tipo: drive` ref) in the OS
+// default browser. Restricted to http(s); fixed args, no shell.
+#[tauri::command]
+pub fn brain_open_link(url: String) -> Result<(), String> {
+    if !is_openable_link(&url) {
+        return Err("err.unsupported_link_scheme".into());
+    }
+    std::process::Command::new("open")
+        .arg(&url)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn brain_resolve_ref(source_rel: String, r#ref: String) -> Result<RefResolution, String> {
     resolve_ref(&acervo_base()?, &source_rel, &r#ref)
@@ -1680,6 +1712,63 @@ mod tests {
         assert!(!c.exists);
         // traversal past the root is refused
         assert!(resolve_ref(&base, "a/b.md", "../../../etc/passwd").is_err());
+    }
+
+    #[test]
+    fn anchor_path_leaves_http_urls_untouched() {
+        assert_eq!(
+            anchor_path("https://docs.google.com/document/d/ID/edit"),
+            "https://docs.google.com/document/d/ID/edit"
+        );
+        assert_eq!(anchor_path("http://example.com/x"), "http://example.com/x");
+        // local paths still get anchored as before
+        assert_eq!(anchor_path("notas/x.md"), "acervo://notas/x.md");
+    }
+
+    #[test]
+    fn resolve_ref_treats_https_url_as_external_link() {
+        let base = tmp("resolve-link");
+        let r = resolve_ref(
+            &base,
+            "pessoal/temas/x/notas/n.md",
+            "https://docs.google.com/document/d/ID/edit",
+        )
+        .unwrap();
+        assert_eq!(r.rel, "https://docs.google.com/document/d/ID/edit");
+        assert_eq!(r.tipo, "link");
+        assert!(r.exists);
+    }
+
+    #[test]
+    fn add_ref_round_trips_drive_link_without_corrupting_url() {
+        let content = "---\nloro: 1\nid: x\nrefs: []\n---\n\n# Nota\n";
+        let (out, id) = add_ref_to_content(
+            content,
+            "drive",
+            "https://docs.google.com/document/d/ID/edit",
+            None,
+        );
+        assert_eq!(id, "r1");
+        let (fm, _body) = split_front_matter(&out);
+        let refs = parse_refs(&fm.unwrap());
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].tipo, "drive");
+        assert_eq!(
+            refs[0].caminho,
+            "https://docs.google.com/document/d/ID/edit"
+        );
+    }
+
+    #[test]
+    fn is_openable_link_accepts_only_http_and_https() {
+        assert!(is_openable_link(
+            "https://docs.google.com/document/d/ID/edit"
+        ));
+        assert!(is_openable_link("http://example.com"));
+        assert!(!is_openable_link("file:///etc/passwd"));
+        assert!(!is_openable_link("javascript:alert(1)"));
+        assert!(!is_openable_link("notas/x.md"));
+        assert!(!is_openable_link("acervo://notas/x.md"));
     }
 
     #[test]

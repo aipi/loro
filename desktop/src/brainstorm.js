@@ -111,10 +111,22 @@
     return d && p ? "/loro-note " + d + " " + p : null;
   }
 
+  // /loro-sync <fonte> <alvo> [busca-ou-link]: first token is the source (v1:
+  // "drive" only), second is the target note/topic, optional third narrows the
+  // search (a title keyword) or names the document directly (a Drive link) —
+  // useful when the default title search misses a shared meeting. Returns
+  // null when source or target is empty.
+  function syncCmd(source, target, query) {
+    const s = String(source == null ? "" : source).replace(/\s+/g, " ").trim();
+    const t = String(target == null ? "" : target).replace(/\s+/g, " ").trim();
+    const q = String(query == null ? "" : query).replace(/\s+/g, " ").trim();
+    return s && t ? "/loro-sync " + s + " " + t + (q ? " " + q : "") : null;
+  }
+
   return {
     STAGES, stages,
     groupByCategory,
     emptySelection, toggleSelection, selectedItems,
-    reportInboxName, brainContextCmd, brainAskCmd, noteCmd,
+    reportInboxName, brainContextCmd, brainAskCmd, noteCmd, syncCmd,
   };
 });
