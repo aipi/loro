@@ -427,7 +427,7 @@ body {
   text-transform: inherit; letter-spacing: inherit;
 }
 .bgtoggle:hover, .bgtoggle:focus-visible { color: var(--accent); }
-.seccaret { display: inline-block; font-size: 8px; transition: transform .12s ease; }
+.seccaret { display: inline-block; font-size: 11px; line-height: 1; transition: transform .12s ease; }
 .bgtoggle.closed .seccaret { transform: rotate(-90deg); }
 .tipbox {
   position: fixed; z-index: 95; max-width: 300px;
@@ -642,16 +642,19 @@ body {
   font-size: 13px; cursor: pointer; padding: 0;
 }
 .rowmenu:hover { color: var(--accent); border-color: var(--accent); }
-/* colapsa investigações/respostas de uma reunião (fechado por padrão) */
+/* colapsa investigações/respostas de uma reunião (fechado por padrão) —
+   button-shaped like .rowmenu so it visibly IS a control, not decoration;
+   the square rotates invisibly (symmetric), only the glyph appears to turn */
 .rowtoggle {
   flex: none; margin-left: 6px;
-  width: 20px; height: 20px; line-height: 1;
-  border: none; background: none; color: var(--muted);
-  font-size: 10px; cursor: pointer; padding: 0;
+  width: 22px; height: 22px; line-height: 1;
+  border: 1px solid var(--line); border-radius: 6px;
+  background: var(--panel); color: var(--muted);
+  font-size: 12px; cursor: pointer; padding: 0;
   transition: transform .12s ease;
 }
 .rowtoggle.open { transform: rotate(90deg); }
-.rowtoggle:hover { color: var(--accent); }
+.rowtoggle:hover { color: var(--accent); border-color: var(--accent); }
 .fitem2.ditem .fn, .fitem2.danger .fn { color: var(--red); }
 .fitem2 .fn { flex: 1 1 auto; }
 .fitem2 .rowmenu { margin-left: auto; width: 22px; height: 18px; }

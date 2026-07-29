@@ -146,9 +146,10 @@ doesn't clutter the screen once there are many.
   (in the sidebar) has a **⋯** menu with **use**, **edit** (opens the raw
   file), **ask the AI** (evolve it, preserving what already works) and
   **delete** (custom ones only).
-- In the sidebar, the icon tells the origin: **⚡ bolt** = built-in,
-  **★ star** = custom. Click the "habilidades" section title to
-  **collapse/expand** the whole list (the ▾/▸ caret shows the state).
+- In the sidebar, the icon tells the origin: **🧩 puzzle piece** = built-in,
+  **★ star** = custom (the **⚡ bolt** marks the section and the habilidade
+  controls). Click the "habilidades" section title to **collapse/expand**
+  the whole list (the ▾/▸ caret shows the state).
 
 ## Contexts have anexos too
 

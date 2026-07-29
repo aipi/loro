@@ -149,8 +149,9 @@ poluir a tela quando houver muitas.
   **editar** (abre o arquivo bruto), **pedir à IA** (peça para evoluir a
   habilidade, preservando o que já funciona) e **excluir** (só para as
   customizadas).
-- Na lateral, o ícone diz a origem: **⚡ raio** = habilidade padrão,
-  **★ estrela** = customizada. Clique no título da seção "habilidades" para
+- Na lateral, o ícone diz a origem: **🧩 peça** = habilidade padrão,
+  **★ estrela** = customizada (o **⚡ raio** marca a seção e os controles de
+  habilidade). Clique no título da seção "habilidades" para
   **recolher/exibir** a lista inteira (o caret ▾/▸ mostra o estado).
 
 ## Contextos também têm anexos

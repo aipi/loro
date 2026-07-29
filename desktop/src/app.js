@@ -1261,11 +1261,13 @@ const ICONS = {
   note: "M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h10l6-6V5c0-1.1-.9-2-2-2zm-5 14v-4h4l-4 4z",
   file: "M6 2c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6H6zm7 7V3.5L18.5 9H13z",
   archive: "M20.54 5.23l-1.39-1.68C18.88 3.21 18.47 3 18 3H6c-.47 0-.88.21-1.16.55L3.46 5.23C3.17 5.57 3 6.02 3 6.5V19c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V6.5c0-.48-.17-.93-.46-1.27zM12 17.5L6.5 12H10v-2h4v2h3.5L12 17.5zM5.12 5l.81-1h12l.94 1H5.12z",
-  // habilidades (ADR-0007) — a bolt, the same icon language as the rest of
-  // this set (no emoji: 🧰 read inconsistently across platforms/fonts).
+  // habilidades (ADR-0007) — a bolt marks the CONCEPT (section title, rail
+  // cards); file rows use their own icons below so the title never looks
+  // like just another row (no emoji: 🧰 read inconsistently across fonts).
   skill: "M11 21l1-9H7l6-11-1 9h5l-6 11z",
-  // custom habilidade — a star, so a user-authored skill reads differently
-  // from a built-in one (bolt) at a glance.
+  // built-in habilidade file — a puzzle piece (ships with the app).
+  builtinskill: "M20.5 11H19V7c0-1.1-.9-2-2-2h-4V3.5C13 2.12 11.88 1 10.5 1S8 2.12 8 3.5V5H4c-1.1 0-1.99.9-1.99 2v3.8H3.5c1.49 0 2.7 1.21 2.7 2.7s-1.21 2.7-2.7 2.7H2V20c0 1.1.9 2 2 2h3.8v-1.5c0-1.49 1.21-2.7 2.7-2.7 1.49 0 2.7 1.21 2.7 2.7V22H17c1.1 0 2-.9 2-2v-4h1.5c1.38 0 2.5-1.12 2.5-2.5S21.88 11 20.5 11z",
+  // custom habilidade file — a star (authored by the user).
   customskill: "M12 2l2.9 6.3 6.9.8-5.1 4.7 1.4 6.8-6.1-3.4-6.1 3.4 1.4-6.8-5.1-4.7 6.9-.8z",
 };
 function ico(name, extra = "") {
@@ -1908,10 +1910,11 @@ async function refreshTools() {
 }
 function toolRow(f) {
   const label = shortName(f.name);
-  // bolt = built-in, star = custom (ADR-0007): the origin is legible from the
-  // icon alone; the "padrão" pill stays as the textual reinforcement.
+  // puzzle = built-in, star = custom (ADR-0007): the origin is legible from
+  // the icon alone, and neither repeats the section title's bolt; the
+  // "padrão" pill stays as the textual reinforcement.
   return `<div class="bitem file" data-doc="${esc(f.path)}" title="${esc(f.desc || f.path)}">` +
-    `${ico(f.builtin ? "skill" : "customskill")}<span class="bn">${esc(label)}</span>` +
+    `${ico(f.builtin ? "builtinskill" : "customskill")}<span class="bn">${esc(label)}</span>` +
     (f.builtin ? `<span class="pill" title="${t("habilidade padrão")}">${t("padrão")}</span>` : "") +
     `<button class="rowmenu" data-toolmenu="${esc(f.path)}" data-toollabel="${esc(label)}" data-toolbuiltin="${f.builtin ? "1" : ""}" title="${t("ações (usar, editar, pedir à IA, excluir)")}">⋯</button>` +
     `</div>`;
