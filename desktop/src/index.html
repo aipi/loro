@@ -34,6 +34,12 @@
           <label class="wfield"><span class="mono" data-i18n>nome do projeto</span>
             <input id="brainNameInput" type="text" placeholder="ex.: Company, Pessoal" data-i18n-attrs="placeholder" />
           </label>
+          <label class="wfield"><span class="mono" data-i18n>idioma</span>
+            <select id="wizLang">
+              <option value="pt" data-i18n>português</option>
+              <option value="en" data-i18n>english</option>
+            </select>
+          </label>
           <label class="wfield"><span class="mono" data-i18n>modelo de uso</span>
             <select id="wizTemplates"></select>
           </label>
@@ -92,7 +98,7 @@
             <div class="bgroup"><span><span data-i18n>3 · contextos</span> <button class="ghelp" data-tip="Passo 3 — o conhecimento oficial do negócio: versionado, revisado (RFC = PR) e compartilhado com o time." aria-label="O que são contextos?" data-i18n-attrs="data-tip,aria-label">ⓘ</button></span><button id="addCtxBtn" class="gadd" title="Criar um novo contexto" data-i18n-attrs="title">＋</button></div>
             <div id="navCtx" class="btree"></div>
 
-            <!-- Ferramentas (ADR-0006): skills customizadas do usuário — qualquer
+            <!-- Ferramentas (ADR-0005): skills customizadas do usuário — qualquer
                  .md em .claude/commands/ que não seja um dos 7 built-ins. -->
             <div class="bgroup"><span><button class="bgtoggle" id="toolsToggle" title="Recolher/expandir habilidades" data-i18n-attrs="title"><span class="seccaret">▾</span> <span class="nico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 4h5v8l-2.5-1.5L6 12V4z"/></svg></span> <span data-i18n>habilidades</span></button> <button class="ghelp" data-tip="Ações do agente de IA — as padrão (sincronizar, apresentação, artefato) você pode editar mas não excluir; as suas você cria do zero. Rode uma pelo menu ⋯ de um brainstorming/reunião ('executar habilidade')." aria-label="O que são as habilidades?" data-i18n-attrs="data-tip,aria-label">ⓘ</button></span><button id="addToolBtn" class="gadd" title="Nova habilidade" data-i18n-attrs="title">＋</button></div>
             <div id="navTools" class="btree"></div>
@@ -222,7 +228,7 @@
                   <!-- editor fiel CodeMirror 6 (ADR-0008); um handle por aba, montado aqui -->
                   <div id="bEditHost" class="edithost" hidden></div>
                 </div>
-                <!-- rail de ações do documento (ADR-0007): habilidade (dropdown + ▶),
+                <!-- rail de ações do documento (ADR-0005): habilidade (dropdown + ▶),
                      pedir à IA, versionar — o mesmo padrão em todo lugar onde essas
                      ações existem (aqui, na reunião, e no cabeçalho do acervo). -->
                 <aside id="bDocRail" class="doc-rail" hidden></aside>

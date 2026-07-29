@@ -205,7 +205,7 @@ dentro desta pasta.
 
 0. Se `inbox/_prompt.md` existir, siga-o ANTES do processamento padrão — por
    exemplo, se ele pedir para "salvar anexos referenciados no contexto"
-   (ADR-0007, opt-in acionado pelo checkbox de "gerar contexto"): para cada
+   (ADR-0005, opt-in acionado pelo checkbox de "gerar contexto"): para cada
    item processado que tiver um `ref` local em `anexos/` (`tipo: doc`,
    `caminho: acervo://brainstorming/.../anexos/...`), copie esse arquivo
    para `contextos/<c>/anexos/` (o `<c>` de destino daquele item) e linke-o
@@ -214,7 +214,7 @@ dentro desta pasta.
    HHMM>.md` e **remova** `inbox/_prompt.md` (o histórico não é versionado).
 0.5. Leia `.loro/settings.json` se existir (`{"autoContext": bool}`) — ausente
    ou ilegível conta como `true` (padrão). Esse valor é a permissão para criar
-   um contexto NOVO sozinho (ADR-0006); nunca afeta atribuir a um contexto
+   um contexto NOVO sozinho (ADR-0005); nunca afeta atribuir a um contexto
    já existente.
 1. Leia `.brain/state.json`; liste `inbox/` e filtre o que ainda não foi processado (ignore `_prompt.md`).
 2. Nada novo? Responda `brain: nada novo` e encerre.
@@ -387,7 +387,7 @@ the base root — it defines the structure, style, source of truth (`context.md`
 hotspots and rules — and follow it strictly. Work only inside this folder.
 
 0. If `inbox/_prompt.md` exists, follow it BEFORE default processing — for
-   example, if it asks to "save anexos referenced in the context" (ADR-0007,
+   example, if it asks to "save anexos referenced in the context" (ADR-0005,
    opt-in via the "gerar contexto" checkbox): for each processed item that
    has a local ref under `anexos/` (`tipo: doc`, `caminho:
    acervo://brainstorming/.../anexos/...`), copy that file into
@@ -397,7 +397,7 @@ hotspots and rules — and follow it strictly. Work only inside this folder.
    remove it (not versioned).
 0.5. Read `.loro/settings.json` if present (`{"autoContext": bool}`) — absent or
    unreadable counts as `true` (default). This is the permission to create a
-   NEW context on its own (ADR-0006); it never affects assigning to an
+   NEW context on its own (ADR-0005); it never affects assigning to an
    existing context.
 1. Read `.brain/state.json`; list `inbox/` and filter unprocessed (ignore `_prompt.md`).
 2. Nothing new? Reply `brain: nothing new` and stop.
@@ -725,17 +725,17 @@ pub fn loro_note_skill(lang: &str) -> &'static str {
     }
 }
 
-// ---- external-source sync (/loro-sync, ADR-0005/0006/0007) ----
+// ---- external-source sync (/loro-sync, ADR-0005) ----
 // Attaches an external item as a LOCAL anexo file (brainstorming/<tema>/
 // anexos/) referenced by a note — content lives in the acervo, never in a
 // log (BR-8 stays satisfied: logs/manifests are still content-free; this is
 // the acervo's own working material, exactly like a meeting transcript
 // already is). Sources: drive (Gemini notes — full doc), slack/jira/
 // confluence (agent-written summaries) — each identified directly by the
-// user (channel/key/title/link), never guessed. ADR-0007 supersedes
+// user (channel/key/title/link), never guessed. ADR-0005 supersedes
 // ADR-0005 §4's stricter "link only, never content" framing.
 pub const LORO_SYNC_SKILL: &str = r#"---
-description: Traz um item externo (Drive/Slack/Jira/Confluence) para um anexo local, referenciado numa nota (ADR-0005/0006/0007)
+description: Traz um item externo (Drive/Slack/Jira/Confluence) para um anexo local, referenciado numa nota (ADR-0005)
 argument-hint: <fonte:drive|slack|jira|confluence> <alvo-nota-ou-tema> <identificador>
 ---
 
@@ -829,7 +829,7 @@ Regras de rigor (ADR-0002 §5):
 "#;
 
 pub const LORO_SYNC_SKILL_EN: &str = r#"---
-description: Brings an external item (Drive/Slack/Jira/Confluence) into a local anexo, referenced by a note (ADR-0005/0006/0007)
+description: Brings an external item (Drive/Slack/Jira/Confluence) into a local anexo, referenced by a note (ADR-0005)
 argument-hint: <source:drive|slack|jira|confluence> <target-note-or-topic> <identifier>
 ---
 
@@ -930,7 +930,7 @@ pub fn loro_sync_skill(lang: &str) -> &'static str {
     }
 }
 
-// ---- user-authored tools (/loro-tool, ADR-0006 §E) ----
+// ---- user-authored tools (/loro-tool, ADR-0005 §E) ----
 // A meta-skill: creates or evolves OTHER skills. Same dual create-or-evolve
 // shape as /loro-note, but targeting `.claude/commands/` instead of
 // `brainstorming/.../notas/` — the created file becomes its own slash-command
@@ -939,7 +939,7 @@ pub fn loro_sync_skill(lang: &str) -> &'static str {
 // "importar skill existente" UI writes the file directly (brain_new_tool),
 // never through this skill.
 pub const LORO_TOOL_SKILL: &str = r#"---
-description: Cria ou evolui uma ferramenta customizada (skill) a partir de uma descrição (ADR-0006)
+description: Cria ou evolui uma ferramenta customizada (skill) a partir de uma descrição (ADR-0005)
 argument-hint: <descrição-da-ferramenta> | <ferramenta-existente.md> <pedido>
 ---
 
@@ -980,7 +980,7 @@ Regras de rigor (ADR-0002 §5):
 "#;
 
 pub const LORO_TOOL_SKILL_EN: &str = r#"---
-description: Creates or evolves a custom tool (skill) from a description (ADR-0006)
+description: Creates or evolves a custom tool (skill) from a description (ADR-0005)
 argument-hint: <tool-description> | <existing-tool.md> <request>
 ---
 
@@ -1027,16 +1027,16 @@ pub fn loro_tool_skill(lang: &str) -> &'static str {
     }
 }
 
-// ---- built-in generative habilidades: apresentação / artefato (ADR-0007) ----
+// ---- built-in generative habilidades: apresentação / artefato (ADR-0005) ----
 // Both write into anexos/ — brainstorming/<tema>/anexos/ or contextos/<c>/
 // anexos/ depending on the alvo (presentations are one KIND of anexo, not a
 // separate folder — the acervo's brainstorming folders are reunioes/, notas/,
 // anexos/) — and, when the alvo is a specific note, append a `ref` to it
-// (same local-doc ref pattern as /loro-sync's anexos, ADR-0006/0007).
+// (same local-doc ref pattern as /loro-sync's anexos, ADR-0005).
 // Markdown is the default deliverable (any agent can always produce it); a
 // real .pptx/.xlsx is fine if the agent has the means, but never assumed.
 pub const LORO_PRESENTATION_SKILL: &str = r#"---
-description: Gera uma apresentação (deck) a partir de um brainstorming ou contexto (ADR-0007)
+description: Gera uma apresentação (deck) a partir de um brainstorming ou contexto (ADR-0005)
 argument-hint: <alvo:tema-ou-contexto-ou-nota> <descrição>
 ---
 
@@ -1074,7 +1074,7 @@ Regras de rigor (ADR-0002 §5):
 "#;
 
 pub const LORO_PRESENTATION_SKILL_EN: &str = r#"---
-description: Generates a presentation (deck) from a brainstorming or context (ADR-0007)
+description: Generates a presentation (deck) from a brainstorming or context (ADR-0005)
 argument-hint: <alvo:topic-or-context-or-note> <description>
 ---
 
@@ -1120,7 +1120,7 @@ pub fn loro_presentation_skill(lang: &str) -> &'static str {
 }
 
 pub const LORO_ARTIFACT_SKILL: &str = r#"---
-description: Cria um artefato (arquivo) a partir de um brainstorming ou contexto, referenciado numa nota (ADR-0007)
+description: Cria um artefato (arquivo) a partir de um brainstorming ou contexto, referenciado numa nota (ADR-0005)
 argument-hint: <alvo:nota-tema-ou-contexto> <descrição>
 ---
 
@@ -1152,7 +1152,7 @@ Regras de rigor (ADR-0002 §5):
 "#;
 
 pub const LORO_ARTIFACT_SKILL_EN: &str = r#"---
-description: Creates an artifact (file) from a brainstorming or context, referenced by a note (ADR-0007)
+description: Creates an artifact (file) from a brainstorming or context, referenced by a note (ADR-0005)
 argument-hint: <alvo:note-topic-or-context> <description>
 ---
 
@@ -1584,7 +1584,7 @@ mod tests {
         }
     }
 
-    // ADR-0007: /loro-sync now brings content into a local anexo (superseding
+    // ADR-0005: /loro-sync now brings content into a local anexo (superseding
     // ADR-0005 §4's link-only posture) — the note's ref must point at that
     // local file, never the external URL directly.
     #[test]
@@ -1597,7 +1597,7 @@ mod tests {
         }
     }
 
-    // ADR-0007: the loop skill documents the opt-in "save anexos" instruction
+    // ADR-0005: the loop skill documents the opt-in "save anexos" instruction
     // it may find in _prompt.md — copying anexos/ refs into contextos/<c>/anexos/.
     #[test]
     fn loop_skill_documents_optional_anexos_versioning() {
@@ -1607,7 +1607,7 @@ mod tests {
         }
     }
 
-    // ADR-0006: the loop skill checks .loro/settings.json's autoContext before
+    // ADR-0005: the loop skill checks .loro/settings.json's autoContext before
     // creating a NEW context on its own — off means it must leave the item
     // pending instead of assuming, in both languages.
     #[test]

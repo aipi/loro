@@ -104,11 +104,11 @@ OS/serde errors may still pass through and are shown untranslated.
 | `brain_status` | — | status | contexts, inbox, processed, activity |
 | `brain_read` | `rel` | content | read a file inside the acervo (path-traversal guarded) |
 | `brain_import` | `context?` | count | copy files into the inbox (prefix `<ctx>--`) |
-| `brain_import_files` | `destRel` | count | native file picker → copy chosen files into an `anexos/` folder — a brainstorming's or a context's (guarded, ADR-0007) |
-| `brain_new_note_in` | `destRel, titulo` | rel | create a living-front-matter note inside an `anexos/` folder (context counterpart of `brain_new_notebook`, ADR-0007) |
+| `brain_import_files` | `destRel` | count | native file picker → copy chosen files into an `anexos/` folder — a brainstorming's or a context's (guarded, ADR-0005) |
+| `brain_new_note_in` | `destRel, titulo` | rel | create a living-front-matter note inside an `anexos/` folder (context counterpart of `brain_new_notebook`, ADR-0005) |
 | `brain_delete_inbox` | `name` | `()` | delete an unprocessed queue item |
-| `brain_set_auto_context` | `value: bool` | `()` | post-creation toggle (Settings) for autoContext — global config + local `.loro/settings.json` (ADR-0006 §3) |
-| `brain_new_tool` / `brain_delete_tool` | `nome, conteudo` / `rel` | rel / `()` | create (imported skill content) or delete a custom habilidade — any `.claude/commands/*.md` outside the 9 built-in skills (ADR-0006/0007) |
+| `brain_set_auto_context` | `value: bool` | `()` | post-creation toggle (Settings) for autoContext — global config + local `.loro/settings.json` (ADR-0005 §3) |
+| `brain_new_tool` / `brain_delete_tool` | `nome, conteudo` / `rel` | rel / `()` | create (imported skill content) or delete a custom habilidade — any `.claude/commands/*.md` outside the 9 built-in skills (ADR-0005) |
 
 Brainstorming world + the fila → contexto flow (ADR-0001 §7):
 
@@ -185,7 +185,7 @@ Path resolution: `LORO_HOME` (exported by `loro.sh`) or a sensible default;
   enriched (description · updated date · hotspot range) so agents route without
   opening files. The generated `AGENTS.md` and every skill teach the protocol:
   index → card → ID search → targeted section read.
-- **External-source sync (`/loro-sync`, ADR-0005/0006/0007):** brings an
+- **External-source sync (`/loro-sync`, ADR-0005):** brings an
   external item — a Gemini note on Google Drive (full document), a Slack
   channel message, a Jira ticket, or a Confluence page (agent-written
   summaries) — into a LOCAL anexo file (`brainstorming/<tema>/anexos/`),
@@ -197,8 +197,8 @@ Path resolution: `LORO_HOME` (exported by `loro.sh`) or a sensible default;
   (BR-1); the agent confirms the exact item before bringing it in; content
   lives only in the acervo's own material, never in a log (BR-8).
   Reachable from a brainstorming's sidebar or a meeting's `⋯` menu
-  ("executar habilidade…", ADR-0007).
-- **Habilidades (built-in + custom, ADR-0006/0007):** any `.claude/
+  ("executar habilidade…", ADR-0005).
+- **Habilidades (built-in + custom, ADR-0005):** any `.claude/
   commands/*.md` is a "habilidade" (UI label; code says `tool`) — the
   filename IS the slash-command. 9 built-ins ship with the acervo
   (`/loro-context`, `/loro-analyse`, `/loro-question`, `/loro-ask`,
@@ -261,7 +261,7 @@ All technical decisions are consolidated in the single **`docs/adr/0001-baseline
 | Meetings | living file + notebook report, transient audio | ADR-0001 §8 |
 | Meeting AI | terminal-Claude skills, local-first | ADR-0001 §9 |
 | Doc language | English | ADR-0001 |
-| External-source sync | `/loro-sync <fonte>` (drive/slack/jira/confluence) → local anexo + ref, ambient terminal-agent connector | ADR-0005/0006/0007 |
-| Habilidades (built-in + custom) | any `.claude/commands/*.md`; 9 built-ins, editable-not-deletable; `/loro-tool` (AI-drafted) or direct import for custom ones | ADR-0006/0007 |
-| `autoContext` | per-acervo `.loro/settings.json` gate on the loop creating a brand-new context; toggle in wizard + Settings | ADR-0006 |
-| Terminal launch/status | `active_agent()` used for auto-launch (not hardcoded); `justLaunched` grace window avoids retyping into a live session | ADR-0007 |
+| External-source sync | `/loro-sync <fonte>` (drive/slack/jira/confluence) → local anexo + ref, ambient terminal-agent connector | ADR-0005 |
+| Habilidades (built-in + custom) | any `.claude/commands/*.md`; 9 built-ins, editable-not-deletable; `/loro-tool` (AI-drafted) or direct import for custom ones | ADR-0005 |
+| `autoContext` | per-acervo `.loro/settings.json` gate on the loop creating a brand-new context; toggle in wizard + Settings | ADR-0005 |
+| Terminal launch/status | `active_agent()` used for auto-launch (not hardcoded); `justLaunched` grace window avoids retyping into a live session | ADR-0005 |

@@ -91,7 +91,7 @@ struct TermSession {
     writer: Box<dyn Write + Send>,
     master: Box<dyn portable_pty::MasterPty + Send>,
     child: Box<dyn portable_pty::Child + Send + Sync>,
-    // when the agent auto-launch line was written (ADR-0007): term_status uses
+    // when the agent auto-launch line was written (ADR-0005): term_status uses
     // this to tell "still starting up" apart from "never came up", so the
     // frontend doesn't retype the launch command into a session that already
     // has it in flight (ps-based detection lags a live process by ~1 poll).
@@ -972,7 +972,7 @@ fn valid_segment(s: &str) -> bool {
 
 // a context name may be hierarchical (e.g. "engineering/frontend"), up to 3
 // levels; each segment is a lowercase slug. Guards against path traversal.
-// A domain is recursive (ADR-0006): a context is itself a domain with
+// A domain is recursive (ADR-0005): a context is itself a domain with
 // context.md + CHANGELOG.md that MAY contain subdomain folders in the same shape.
 // The bound is a safety limit against pathological trees, not the old 3-level cap.
 const MAX_CONTEXT_DEPTH: usize = 6;
@@ -1346,7 +1346,7 @@ fn brain_list_acervos() -> AcervosView {
     acervos_view()
 }
 
-// ADR-0006: post-creation toggle (Configurações) for the active acervo's
+// ADR-0005: post-creation toggle (Configurações) for the active acervo's
 // autoContext — updates the global config (so the "auto" pill stays accurate)
 // AND the local .loro/settings.json marker the /loro-context skill reads.
 #[tauri::command]
@@ -2526,7 +2526,7 @@ fn quickopen_kind(rel: &str) -> &'static str {
 }
 
 // Recursive walk producing every text-ish file by full rel path. Unlike the
-// ADR-0007 display tree this does NOT skip subdomain dirs — the palette indexes
+// ADR-0005 display tree this does NOT skip subdomain dirs — the palette indexes
 // everything. Pure over `base` so it is testable without a running app.
 fn list_all_in(base: &Path) -> Vec<FileHit> {
     let mut out = Vec::new();
@@ -2788,7 +2788,7 @@ async fn brain_import(app: AppHandle, context: Option<String>) -> Result<usize, 
     Ok(n)
 }
 
-// ADR-0007: import files from the computer straight into an anexos/ folder —
+// ADR-0005: import files from the computer straight into an anexos/ folder —
 // a brainstorming's OR a context's (owner request: "no contexto ... consiga
 // add a partir do computador"). Mirrors brain_import, but the destination is
 // an anexos/ folder (not the inbox), filenames are kept as-is (anexos are
@@ -3052,7 +3052,7 @@ fn term_open(app: AppHandle, state: State<AppState>, cols: u16, rows: u16) -> Re
     // that only a running agent understands. The login shell sources the profile
     // (real PATH) before reading this stdin, so the agent command resolves; if
     // it is not installed the shell just prints "command not found" and stays
-    // usable. Uses the ACTIVE acervo's configured agent (ADR-0007) — this used
+    // usable. Uses the ACTIVE acervo's configured agent (ADR-0005) — this used
     // to hardcode "claude", breaking any acervo configured with another CLI.
     let launched_at = std::time::Instant::now();
     if in_acervo {
@@ -3131,7 +3131,7 @@ fn term_close(state: State<AppState>) {
 struct TermStatus {
     open: bool,
     agent_running: bool,
-    // ADR-0007: true for a short grace window right after term_open wrote the
+    // ADR-0005: true for a short grace window right after term_open wrote the
     // launch line — `ps`-based detection lags a freshly spawned process by at
     // least one poll, so the frontend must not treat "not detected yet" as
     // "never launched" and retype the agent command into a session that
@@ -3678,7 +3678,7 @@ mod tests {
 
     #[test]
     fn list_contexts_is_recursive_and_beyond_three_levels() {
-        // ADR-0006: recursive domain — parent with context.md + nested subdomains
+        // ADR-0005: recursive domain — parent with context.md + nested subdomains
         let root = std::env::temp_dir().join(format!("loro-rec-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let with_ctx = [
@@ -3843,7 +3843,7 @@ mod tests {
         assert_eq!(agent_process_name(""), "claude");
     }
 
-    // ADR-0007: the grace window that stops termRunAgent from retyping the
+    // ADR-0005: the grace window that stops termRunAgent from retyping the
     // agent launch line into a session that already has it in flight.
     #[test]
     fn is_within_grace_holds_for_a_short_window_only() {
@@ -4018,7 +4018,7 @@ mod tests {
         assert!(valid_context("frota"));
         assert!(valid_context("engineering/frontend"));
         assert!(valid_context("engineering/sre/platform"));
-        assert!(valid_context("frota/eletrica/piloto/pods/sp/zona-leste")); // 6 levels ok (ADR-0006)
+        assert!(valid_context("frota/eletrica/piloto/pods/sp/zona-leste")); // 6 levels ok (ADR-0005)
         assert!(!valid_context("a/b/c/d/e/f/g")); // > MAX_CONTEXT_DEPTH (7) levels
         assert!(!valid_context("Engineering/frontend")); // uppercase
         assert!(!valid_context("a//b")); // empty segment

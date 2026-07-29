@@ -442,7 +442,7 @@ pub struct BrainstormingListItem {
     atualizado_em: String,
 }
 
-// ADR-0007: brainstormings created before anexos/ existed never got that
+// ADR-0005: brainstormings created before anexos/ existed never got that
 // folder — self-heal on every list call (cheap, idempotent, create-if-absent)
 // instead of requiring an explicit migration step. Mirrors the "respect
 // existing structure, fill only gaps" premise already used for skill files
@@ -551,7 +551,7 @@ pub fn brain_list_meetings(slug: String) -> Result<Vec<MeetingListItem>, String>
     Ok(list_meetings(&acervo_base()?, &slug))
 }
 
-// ---- user tools (ADR-0006 §E) -----------------------------------------------
+// ---- user tools (ADR-0005 §E) -----------------------------------------------
 // A tool is any `.md` in `.claude/commands/` that is NOT one of the 7 built-in
 // skills — the filename IS the slash-command (`minha-ferramenta.md` ->
 // `/minha-ferramenta`). This deny-list is the only thing that keeps a custom
@@ -615,7 +615,7 @@ fn delete_tool(base: &Path, rel: &str) -> Result<(), String> {
     std::fs::remove_file(&p).map_err(|e| e.to_string())
 }
 
-// ---- anexos / notes in a brainstorming OR a context (ADR-0007) -------------
+// ---- anexos / notes in a brainstorming OR a context (ADR-0005) -------------
 // Both the brainstorming and the context now expose an `anexos/` folder that
 // the user can feed from the computer or write a note into. A destination is
 // only ever one of those anexos folders: normalized (no traversal), rooted in
@@ -1719,7 +1719,7 @@ mod tests {
         assert_eq!(ref_tipo("a/planilha.xlsx"), "other");
     }
 
-    // ADR-0007: a brainstorming created before anexos/ existed (simulated here
+    // ADR-0005: a brainstorming created before anexos/ existed (simulated here
     // by building the old, narrower folder set by hand) must self-heal the
     // missing folder the next time it's listed — no explicit migration
     // command required.
@@ -1957,7 +1957,7 @@ mod tests {
         assert_eq!(std::fs::read_to_string(base.join(&b)).unwrap(), "segunda");
     }
 
-    // ADR-0007: anexos folders exist in both worlds; the guard only accepts a
+    // ADR-0005: anexos folders exist in both worlds; the guard only accepts a
     // normalized brainstorming/contextos anexos path (no traversal, no other
     // destination), and note creation is non-destructive.
     #[test]
@@ -2251,7 +2251,7 @@ mod tests {
         assert!(r.contains("- Partes: 1"));
     }
 
-    // ADR-0007: anexos/ is a new brainstorming subfolder (presentations live
+    // ADR-0005: anexos/ is a new brainstorming subfolder (presentations live
     // there too — no separate apresentacoes/ folder) — all_parts_of must
     // enumerate it (empty selection = "everything") and gather_part's
     // unknown-kind fallback routes it into "## Notas", with no further code

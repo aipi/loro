@@ -226,8 +226,11 @@ duplo na divisória volta ao padrão.
 **Uma aba mostrou conteúdo de outro arquivo.** Isso era um defeito antigo do
 editor, corrigido — se voltar a acontecer, abra um issue com os passos.
 
-**Em que idioma o conteúdo é gerado?** No idioma ativo da interface no momento
-da geração. Um acervo pode conter documentos nos dois idiomas se você alternar.
+**Em que idioma o conteúdo é gerado?** No idioma que você escolheu ao criar o
+acervo (pt-BR ou inglês) — a interface inteira segue essa escolha. Dá para
+trocar depois na engrenagem (⚙); um acervo pode conter documentos nos dois
+idiomas se você alternar. As pastas no disco (`reunioes/`, `notas/`,
+`anexos/`, `contextos/`) ficam sempre em português, independente do idioma.
 
 **O que é uma "habilidade customizada"?** Uma skill que você mesmo cria —
 descrevendo o que ela deve fazer (a IA escreve) ou importando uma que você já

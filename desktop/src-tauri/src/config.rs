@@ -147,7 +147,7 @@ mod tests {
         assert_eq!(normalize_agent(" gemini "), "gemini");
     }
 
-    // ADR-0006: the local marker the /loro-context skill reads, distinct from
+    // ADR-0005: the local marker the /loro-context skill reads, distinct from
     // the global multi-acervo config.
     #[test]
     fn write_acervo_settings_writes_readable_local_marker() {
@@ -255,7 +255,7 @@ pub fn write_loro_config(cfg: &LoroConfig) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
-// Per-acervo local marker (ADR-0006), distinct from the global
+// Per-acervo local marker (ADR-0005), distinct from the global
 // ~/.loro/config.json (which lists every acervo): lets the /loro-context
 // skill read just THIS acervo's autoContext setting from inside its own
 // working directory, without exposing the global config to the terminal

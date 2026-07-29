@@ -847,7 +847,7 @@ async function openCfg() {
   const cur = acervos.find((a) => a.id === activeAcervo);
   $("cfgProj").textContent = cur ? cur.name : "—";
   drawProjColors(cur);
-  // ADR-0006: autoContext tem efeito real no loop — dá para desligar aqui
+  // ADR-0005: autoContext tem efeito real no loop — dá para desligar aqui
   const autoCtx = $("cfgAutoContext");
   if (autoCtx) autoCtx.checked = !!(cur && cur.autoContext);
   // sem pasta escolhida: mostra o destino padrão real (inbox do acervo)
@@ -942,7 +942,7 @@ const B = {
   main: $("brain"),
   setup: $("brainSetup"), shell: $("brainShell"),
   dirBtn: $("brainDirBtn"), ctxInput: $("brainCtxInput"), createBtn: $("brainCreateBtn"),
-  nameInput: $("brainNameInput"), gitInput: $("brainGit"),
+  nameInput: $("brainNameInput"), gitInput: $("brainGit"), wizLang: $("wizLang"),
   agentInput: $("brainAgentInput"), wizTemplates: $("wizTemplates"), wizTemplateHint: $("wizTemplateHint"),
   cancelBtn: $("brainCancelBtn"), wizTitle: $("wizTitle"), setupErr: $("brainSetupErr"),
   acervoBtn: $("acervoBtn"), acervoName: $("acervoName"), acervoMenu: $("acervoMenu"),
@@ -980,7 +980,7 @@ let sideSig = "";          // assinatura p/ não re-renderizar a lateral sem mud
 let acervos = [], activeAcervo = "", creatingNew = false, gitFiles = {}, wizColor = "";
 // usage template picker state (ADR-0003): selected id, fetched list, and
 // whether the user already edited the contexts field by hand.
-// ADR-0006/0007: "automático" is a synthetic FIRST option of the same
+// ADR-0005: "automático" is a synthetic FIRST option of the same
 // picker (owner decision) — mutually exclusive with the verticals: it means
 // autoContext=true + generico seeding (no predefined contexts; the loop
 // creates/assigns them). No separate checkbox in the wizard anymore.
@@ -1094,7 +1094,7 @@ B.editSave.addEventListener("click", async () => {
   catch (e) { toast(tErr(String(e))); clog("editor save error: " + e); }
 });
 $("guideBtn").addEventListener("click", () => openGuideDoc());
-// ADR-0007 (owner request): the hero's "perguntar ao acervo" button became the
+// ADR-0005 (owner request): the hero's "perguntar ao acervo" button became the
 // generic "executar habilidade" picker — perguntar ao acervo is one entry in
 // it (and stays on the palette, ⌘⌥Q). Unrestricted list: on the Visão Geral
 // there is no other dedicated UI to avoid duplicating.
@@ -1103,7 +1103,7 @@ $("guideBtn").addEventListener("click", () => openGuideDoc());
 // into the terminal Claude (the /loro-context loop), which processes the whole
 // queue into versioned contexts. Same terminal-skill pattern as analisar/responder.
 // One function, two entry points: the home card CTA and the sidebar quick action.
-// ADR-0007: "salvar anexos" is opt-in per run — reuses the existing _prompt.md
+// ADR-0005: "salvar anexos" is opt-in per run — reuses the existing _prompt.md
 // guide plumbing (brain_read_guide/brain_write_guide) instead of new backend
 // surface; the loop already archives/clears _prompt.md after each run (step 0
 // of /loro-context), so this instruction is naturally one-shot.
@@ -1194,7 +1194,7 @@ async function brainRefresh() {
   const sig = JSON.stringify([st.inbox.map((f) => f.name), st.contexts, st.reunioes.length, st.notas.length]);
   if (sig !== sideSig) { sideSig = sig; renderSidebar(st); }
   refreshPessoal();   // ADR-0009: produção (mundo pessoal) — self-gated por assinatura
-  refreshTools();     // ADR-0006: ferramentas customizadas — self-gated por assinatura
+  refreshTools();     // ADR-0005: ferramentas customizadas — self-gated por assinatura
   markSel();
 }
 
@@ -1270,7 +1270,7 @@ const ICONS = {
   note: "M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h10l6-6V5c0-1.1-.9-2-2-2zm-5 14v-4h4l-4 4z",
   file: "M6 2c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6H6zm7 7V3.5L18.5 9H13z",
   archive: "M20.54 5.23l-1.39-1.68C18.88 3.21 18.47 3 18 3H6c-.47 0-.88.21-1.16.55L3.46 5.23C3.17 5.57 3 6.02 3 6.5V19c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V6.5c0-.48-.17-.93-.46-1.27zM12 17.5L6.5 12H10v-2h4v2h3.5L12 17.5zM5.12 5l.81-1h12l.94 1H5.12z",
-  // habilidades (ADR-0007) — a book with a bookmark marks the CONCEPT
+  // habilidades (ADR-0005) — a book with a bookmark marks the CONCEPT
   // (section title, rail cards), matching Claude's own skills icon (owner
   // request); file rows use their own icons below so the title never looks
   // like just another row.
@@ -1350,7 +1350,7 @@ function renderCtxNode(node) {
   const icon = node.isCtx ? ico("context", "ac") : ico("folder", "ac");
   const nctx = node.isCtx ? (lastSt ? lastSt.contexts : []).find((c) => c.name === node.path) : null;
   // em vez da contagem de entradas do CHANGELOG (confundia), um ponto quando há
-  // mudança não commitada na subárvore deste contexto (ADR-0007).
+  // mudança não commitada na subárvore deste contexto (ADR-0005).
   const dot = ctxDirty(node.path) ? `<span class="gdot" title="${t("mudanças não commitadas")}">●</span>` : "";
   const pills = (node.isCtx && nctx && nctx.seeded === false
     ? `<span class="pill soft" title="${t("pasta nova — clique para estruturar")}">${t("novo")}</span>` : "") + dot;
@@ -1454,7 +1454,7 @@ function wireSidebar() {
     if (bOpen.has(key)) bOpen.delete(key); else bOpen.add(key);
     sideSig = ""; renderSidebar(lastSt); markSel();
   }));
-  // ADR-0007: folder groups (folderGroupHtml) in the context tree toggle via
+  // ADR-0005: folder groups (folderGroupHtml) in the context tree toggle via
   // [data-pestoggle] just like in the brainstorming tree — expand/collapse the
   // next sibling (.bchild) in place, no full re-render.
   B.navCtx.querySelectorAll("[data-pestoggle]").forEach((el2) => (el2.onclick = () => {
@@ -1462,7 +1462,7 @@ function wireSidebar() {
     if (bOpen.has(key)) { bOpen.delete(key); el2.classList.remove("open"); if (child) child.hidden = true; }
     else { bOpen.add(key); el2.classList.add("open"); if (child) child.hidden = false; }
   }));
-  // ADR-0007: a context's anexos folder actions — create a note / import files.
+  // ADR-0005: a context's anexos folder actions — create a note / import files.
   B.navCtx.querySelectorAll("[data-ctxaddnota]").forEach((el2) => (el2.onclick = (e) => {
     e.stopPropagation(); promptNewNoteInContext(el2.dataset.ctxaddnota, el2);
   }));
@@ -1513,14 +1513,14 @@ async function loadCtxChildren(name) {
   let entries = [];
   try { entries = await invoke("brain_list_dir", { rel: "contextos/" + name }); } catch (_) { return; }
   // subpastas que já são subdomínios (contextos) aparecem na ÁRVORE de contextos;
-  // não as repetimos aqui como "pasta" — visualização única (ADR-0007).
+  // não as repetimos aqui como "pasta" — visualização única (ADR-0005).
   const ctxSet = new Set((lastSt && lastSt.contexts ? lastSt.contexts : []).map((c) => c.name));
   const pretty = { "context.md": t("contexto"), "guia.md": t("guia do domínio"), "CHANGELOG.md": t("histórico"), CODEOWNERS: t("donos"), brainstorming: "brainstorming", incubadora: "brainstorming", referencias: t("referências") };
   const order = (n) => n === "context.md" ? 0 : n === "guia.md" ? 0 : n === "CHANGELOG.md" ? 1 : n === "referencias" ? 2 : 3;
   entries.sort((a, b) => order(a.name) - order(b.name) || a.name.localeCompare(b.name));
   let html = "";
   for (const en of entries) {
-    if (en.name === "anexos") continue; // ADR-0007: renderizado explicitamente abaixo, sempre visível
+    if (en.name === "anexos") continue; // ADR-0005: renderizado explicitamente abaixo, sempre visível
     if (en.dir) {
       if (ctxSet.has(name + "/" + en.name)) continue; // subdomínio: já está na árvore
       let files = [];
@@ -1533,7 +1533,7 @@ async function loadCtxChildren(name) {
       html += `<div class="bitem file ${gitClass(en.path)}" data-doc="${esc(en.path)}">${ico(fileIcon(en.name, false))}<span class="bn">${esc(pretty[en.name] || en.name)}</span></div>`;
     }
   }
-  // ADR-0007: um contexto também tem uma pasta `anexos/` — sempre visível, com
+  // ADR-0005: um contexto também tem uma pasta `anexos/` — sempre visível, com
   // as mesmas ações de um brainstorming (＋ nova nota, ＋ do computador),
   // versionadas junto com o contexto.
   let anexos = [];
@@ -1558,7 +1558,7 @@ let pessoalSig = "";
 // A brainstorming groups reuniões/investigações/perguntas/notas; it can carry an
 // optional categoria (UI-only grouping). Selection of parts -> one consolidated
 // report -> the fila (see bsSelection / sendSelectionToQueue).
-// ADR-0007: above this many brainstormings the always-expanded tree gets hard
+// ADR-0005: above this many brainstormings the always-expanded tree gets hard
 // to scan — the search box appears and the list caps to the most recent
 // until the user searches or asks to see all (owner feedback).
 const PESSOAL_FILTER_THRESHOLD = 8;
@@ -1658,7 +1658,7 @@ async function loadTemaChildren(slug) {
   let notas = [];
   try { notas = ((await invoke("brain_list_dir", { rel: `brainstorming/${slug}/notas` })) || []).filter((f) => !f.dir); }
   catch (_) {}
-  // ADR-0007: three brainstorming folders — reunioes/, notas/, anexos/.
+  // ADR-0005: three brainstorming folders — reunioes/, notas/, anexos/.
   // anexos/ is fed by a habilidade (sincronizar, apresentação, artefato) or
   // by the user dropping files straight into the real folder on disk — no
   // dedicated "importar" UI for that second path.
@@ -1666,7 +1666,7 @@ async function loadTemaChildren(slug) {
   try { anexos = ((await invoke("brain_list_dir", { rel: `brainstorming/${slug}/anexos` })) || []).filter((f) => !f.dir); }
   catch (_) {}
   let inner = "";
-  // ADR-0007 (owner request): a pasta de verdade precisa estar visível na UI —
+  // ADR-0005 (owner request): a pasta de verdade precisa estar visível na UI —
   // três grupos com ícone de pasta (reuniões/notas/anexos), cada um
   // colapsável (mesmo padrão `data-pestoggle` já usado para "avulso"). Cada
   // pasta traz sua PRÓPRIA ação de criação no topo do corpo (owner request:
@@ -1704,7 +1704,7 @@ async function loadTemaChildren(slug) {
 // folder icon + label + count, expand/collapse via the same [data-pestoggle]
 // wiring already used for "avulso" (wirePessoal, no new JS needed there). The
 // folder's own creation action(s) sit at the top of its body, so each button
-// lives inside the folder it acts on (ADR-0007, owner request).
+// lives inside the folder it acts on (ADR-0005, owner request).
 function folderGroupHtml(key, label, count, rowsHtml, emptyMsg, actionsHtml) {
   const open = bOpen.has(key);
   const pill = count ? `<span class="pill">${count}</span>` : "";
@@ -1807,7 +1807,7 @@ function wirePessoal() {
   }));
 }
 
-// ADR-0005/0006: per-source copy for the /loro-sync modal. `required` gates
+// ADR-0005: per-source copy for the /loro-sync modal. `required` gates
 // the identifier field before injecting the command — drive is the only
 // source where a blank identifier still means something (a broad search).
 const SYNC_TOOL_COPY = {
@@ -1841,7 +1841,7 @@ const SYNC_TOOL_COPY = {
   },
 };
 
-// "sincronizar" (ADR-0005/0006): shared modal for the 4 built-in /loro-sync
+// "sincronizar" (ADR-0005): shared modal for the 4 built-in /loro-sync
 // sources. Without `slug` (Visão Geral entry point), the modal also asks
 // which brainstorming to target — with `slug` (the per-brainstorming button),
 // the target is already known.
@@ -1877,7 +1877,7 @@ async function promptSyncTool(fonte, slug) {
   );
   const inp = $("syncToolInput"); if (inp) inp.focus();
 }
-// ============================ habilidades (ADR-0006/0007) ============================
+// ============================ habilidades (ADR-0005) ============================
 // A "habilidade" (UI label; code keeps the English "tool" per CLAUDE.md §6) is
 // any .md in .claude/commands/ — the filename IS the slash-command. Built-ins
 // (BUILTIN_SKILLS) can be edited but never deleted (brain_delete_tool already
@@ -1920,7 +1920,7 @@ async function refreshTools() {
 }
 function toolRow(f) {
   const label = shortName(f.name);
-  // puzzle = built-in, star = custom (ADR-0007): the origin is legible from
+  // puzzle = built-in, star = custom (ADR-0005): the origin is legible from
   // the icon alone, and neither repeats the section title's bolt; the
   // "padrão" pill stays as the textual reinforcement.
   return `<div class="bitem file" data-doc="${esc(f.path)}" title="${esc(f.desc || f.path)}">` +
@@ -2080,7 +2080,7 @@ function openAddToolMenu(anchor) {
   placeMenu(anchor);
 }
 { const ab = $("addToolBtn"); if (ab) ab.addEventListener("click", (e) => { e.stopPropagation(); openAddToolMenu(ab); }); }
-// ADR-0007: the habilidades section collapses/expands from its own header —
+// ADR-0005: the habilidades section collapses/expands from its own header —
 // with many skills the list stops crowding the sidebar; the caret shows state.
 {
   const tt = $("toolsToggle"), navT = $("navTools");
@@ -2091,7 +2091,7 @@ function openAddToolMenu(anchor) {
 }
 // Shared "executar habilidade" picker (brainstorming ⋯ and meeting ⋯): a
 // compact dropdown-like list — one row per pickable habilidade, description
-// only on hover (title=), never rendered inline (ADR-0007: avoid a wall of
+// only on hover (title=), never rendered inline (ADR-0005: avoid a wall of
 // text once there are many). loro-sync.md is special-cased into its 4
 // sources since it is one file covering four distinct identifiers.
 // Flattens lastToolFiles into runnable entries: loro-sync.md expands into its
@@ -2131,7 +2131,7 @@ function pickableHabilidadeEntries() {
   return habilidadeEntriesFrom(lastToolFiles.filter((f) => !TOOL_PICKER_EXCLUDE.has(f.name)));
 }
 // Unrestricted: every habilidade, no exclusion — used where there is no
-// separate dedicated UI to coexist with (the meeting rail, ADR-0007).
+// separate dedicated UI to coexist with (the meeting rail, ADR-0005).
 function allHabilidadeEntries() {
   return habilidadeEntriesFrom(lastToolFiles);
 }
@@ -2139,7 +2139,7 @@ function runHabilidadeEntry(entry, alvoRel) {
   if (entry.kind === "sync") promptSyncTool(entry.fonte, alvoRel);
   else promptUseTool(entry.rel, alvoRel);
 }
-// The ONE habilidade control (ADR-0007, owner feedback): a card with the
+// The ONE habilidade control (ADR-0005, owner feedback): a card with the
 // dropdown (friendly names), the SELECTED entry's description always visible
 // below it (option-title hover is unreliable in webviews and hid what each
 // skill does), and an explicit "executar" button — used identically on the
@@ -2184,7 +2184,7 @@ function openHabilidadeMenu(alvoRel, anchor, all) {
   placeMenu(anchor);
 }
 
-// ADR-0007: "＋ do computador" — native file picker → copies the chosen files
+// ADR-0005: "＋ do computador" — native file picker → copies the chosen files
 // into an anexos/ folder (brain_import_files). Works for both a brainstorming
 // (destRel = brainstorming/<slug>/anexos) and a context (contextos/<c>/anexos);
 // `after` runs on success (re-open + reload the right tree).
@@ -2198,7 +2198,7 @@ async function importAnexoFromComputer(destRel, after) {
   } catch (e) { toast(tErr(String(e))); clog("brain_import_files error: " + e); }
 }
 
-// ADR-0007: inline "nova nota" in a context's anexos folder — the context
+// ADR-0005: inline "nova nota" in a context's anexos folder — the context
 // counterpart to promptNewNota, writing via brain_new_note_in and reloading
 // the context children so the note shows immediately.
 function promptNewNoteInContext(name, anchor) {
@@ -2830,7 +2830,7 @@ function meetingStatusBar(status) {
   return `<div class="mtg-status ${cls}"><span class="mtg-statusdot"></span><span class="mono">${esc(txt)}</span></div>`;
 }
 
-// ADR-0007 (owner request): the meeting rail no longer lists fixed actions
+// ADR-0005 (owner request): the meeting rail no longer lists fixed actions
 // (analisar/perguntar/ver relatório/enviar para a fila — all still reachable
 // from the meeting's ⋯ menu) — "o que fazer com esta reunião" is now a
 // single, UNRESTRICTED habilidade dropdown (every skill, including
@@ -3065,7 +3065,7 @@ async function renderActive() {
   B.badge.textContent = label; B.badge.className = "mono badge " + cls;
   setDocGit(tab.rel, tab.kind, isGuide);
   if (isGuide) $("bDocActs").hidden = true; else applyDocActions(tab.rel);
-  // ADR-0007 (owner request): habilidade/pedir à IA/versionar live in the
+  // ADR-0005 (owner request): habilidade/pedir à IA/versionar live in the
   // doc's right-side rail, not the header — a meeting's living surface
   // renders its own rail (paintMeetingSurface/meetingRailHtml) instead.
   if (!LM.isLiving(tab.rel)) renderDocRail(tab, isGuide);
@@ -3094,7 +3094,7 @@ async function renderActive() {
   markSel();
 }
 
-// ADR-0007 (owner request): habilidade / pedir à IA / versionar as a right-
+// ADR-0005 (owner request): habilidade / pedir à IA / versionar as a right-
 // side rail on the document viewer — the SAME pattern (visible buttons; the
 // habilidade control is a dropdown + ▶ play button, never a menu) used on
 // the meeting surface and the acervo header. Each action shows only when it
@@ -3510,7 +3510,10 @@ function openNewAcervo() {
   B.nameInput.value = ""; B.ctxInput.value = ""; brainDir = ""; B.dirBtn.textContent = "…";
   B.gitInput.checked = true;
   B.agentInput.value = "claude";
-  // default to automático (the previous checkbox defaulted on) — ADR-0007
+  // language starts at the current UI language; changing it in the wizard
+  // (ADR-0005 §6) switches the UI live and becomes the acervo's gen language
+  if (B.wizLang) B.wizLang.value = settings.uiLang;
+  // default to automático (the previous checkbox defaulted on) — ADR-0005
   wizColor = ""; wizTemplate = AUTO_TEMPLATE_ID; wizCtxDirty = false;
   drawWizColors();
   loadWizTemplates();
@@ -3583,6 +3586,16 @@ function drawWizHint() {
 B.ctxInput.addEventListener("input", () => { wizCtxDirty = true; });
 B.cancelBtn.addEventListener("click", () => { creatingNew = false; applyAccent(activeColor()); brainRefresh(); });
 function activeColor() { const a = acervos.find((x) => x.id === activeAcervo); return a ? a.color : ""; }
+// ADR-0005 §6: choosing the acervo language in the wizard switches the whole
+// UI live (the wizard itself relabels), so the choice is visible before you
+// commit; it's then sent as the acervo's generation language on create.
+if (B.wizLang) B.wizLang.addEventListener("change", async (e) => {
+  settings.uiLang = e.target.value; persistSettings();
+  try { settings.uiLang = await invoke("ui_set_lang", { lang: e.target.value }); } catch (_) {}
+  if (el.uiLang) el.uiLang.value = settings.uiLang;
+  applyI18n(); rerenderForLang();
+  drawWizTemplates();
+});
 
 // setup / criar acervo
 B.dirBtn.addEventListener("click", async () => {
@@ -3593,7 +3606,7 @@ B.createBtn.addEventListener("click", async () => {
   const contexts = B.ctxInput.value.split(",").map((s) => s.trim()).filter(Boolean);
   B.setupErr.hidden = true;
   try {
-    // ADR-0007: automático is a synthetic picker option → autoContext + generico
+    // ADR-0005: automático is a synthetic picker option → autoContext + generico
     // seeding; any real template = manual (autoContext off).
     const auto = wizTemplate === AUTO_TEMPLATE_ID;
     const av = await invoke("brain_setup", {
@@ -3604,7 +3617,9 @@ B.createBtn.addEventListener("click", async () => {
       color: wizColor || null,
       template: auto ? "generico" : (wizTemplate || null),
       agent: B.agentInput.value.trim() || null,
-      // ADR-0002 §1: no per-project language — seeds follow the UI language
+      // ADR-0005 §6 (revises ADR-0002 §1): the acervo's generation language is
+      // an explicit wizard choice, not implicitly the UI language.
+      lang: B.wizLang ? B.wizLang.value : null,
     });
     acervos = av.acervos || []; activeAcervo = av.active || "";
     creatingNew = false;
@@ -3618,7 +3633,7 @@ B.createBtn.addEventListener("click", async () => {
 
 // ---- versionar (branch + commit local) → propor mudança (push + PR/RFC) ----
 // O Git fica escondido: o usuário só "versiona" e depois "propõe a mudança".
-// Extraída para função (ADR-0007): o mesmo botão "versionar" também aparece
+// Extraída para função (ADR-0005): o mesmo botão "versionar" também aparece
 // no rail lateral de um documento de contexto, não só no cabeçalho da acervo.
 function promptVersionar() {
   openEditor(
@@ -4284,7 +4299,7 @@ async function termRunAgent(cmd) {
       scheduleActionRefresh(); // the skill writes files the sidebar must show
       return;
     }
-    // ADR-0007: term_open already typed the launch line — a fresh session
+    // ADR-0005: term_open already typed the launch line — a fresh session
     // reports agentRunning:false for a few polls simply because `ps` hasn't
     // caught up yet. Retyping it during that grace window is the bug (agent
     // command appearing twice); only relaunch once the grace window passed

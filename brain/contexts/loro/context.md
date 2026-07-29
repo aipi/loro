@@ -40,12 +40,18 @@ one's own via a customizable `AGENTS.md`.
 
 Loro is also an **AI-agent wrapper/automation tool**: it embeds an AI agent CLI
 (`claude` by default, any CLI — ADR-0003) in a terminal inside the app, and
-turns that agent's skills into one-click UI — buttons and a command palette
-(`Cmd/Ctrl+Shift+P`) that inject the right slash-command (`/loro-ask`,
-`/loro-note`, `/loro-context`, `/loro-sync`, meeting `/loro-analyse`/
-`/loro-question`) instead of the user typing or remembering one. The capture
-tool and the knowledge base are what the automations act on; the automation
-layer is how the user reaches them.
+turns that agent's skills — called **habilidades** — into one-click UI instead
+of typed/remembered slash-commands. They run from a picker (friendly names,
+always-visible descriptions) on the Visão Geral, a brainstorming/meeting `⋯`
+menu, or the right-side actions rail of any open file. Nine ship built-in
+(`/loro-context`, `/loro-ask`, `/loro-analyse`, `/loro-question`,
+`/loro-note`, `/loro-sync`, `/loro-presentation`, `/loro-artifact`,
+`/loro-tool`); the user can author custom ones (AI-drafted or imported) and
+edit built-ins (never delete them). External material comes in through
+`/loro-sync` (Drive doc, or a Slack/Jira/Confluence summary) as a **local
+anexo** — the app never holds a credential (BR-9); the agent uses its own
+connectors. The capture tool and the knowledge base are what the automations
+act on; the automation layer is how the user reaches them (ADR-0005).
 
 ## Core premises
 - **Ideas are cheap; context is earned.** Brainstorming is constant and free;
@@ -104,15 +110,15 @@ the model: ideas live here, inline, not as separate files.)
 > AGENTS.md addendum, queue guide), custom templates in `~/.loro/templates`,
 > agent-agnostic skill injection. Open: further built-in verticals (legal, …)
 > and a full "Claude"→"agent" wording sweep in descriptive UI copy. The
-> vertical skill *catalog* item is superseded by ADR-0006's custom tools
+> vertical skill *catalog* item is superseded by ADR-0005's custom tools
 > (`/loro-tool`): rather than Loro shipping every vertical skill, the user
 > authors their own (AI-drafted or imported) and it appears in the
 > "🧰 habilidades" list, run via "⋯ → executar habilidade" from a
-> brainstorming or meeting (ADR-0007 moved it off the Visão Geral to keep
+> brainstorming or meeting (ADR-0005 moved it off the Visão Geral to keep
 > the home screen from accumulating cards).
 
 > [!HOTSPOT] H-6 — External-source sync & habilidades: scope of what gets attached
-> ADR-0005/0006/0007 shipped `/loro-sync` (Drive/Slack/Jira/Confluence) and
+> ADR-0005 shipped `/loro-sync` (Drive/Slack/Jira/Confluence) and
 > user-authored habilidades (`/loro-tool`, plus built-in `/loro-presentation`/
 > `/loro-artifact`) as a "🧰 habilidades" surface (sidebar + "executar
 > habilidade" picker). Sync now brings CONTENT into a local anexo
@@ -131,10 +137,12 @@ the model: ideas live here, inline, not as separate files.)
 > [!HOTSPOT] H-3 — Acervo folder language diverges between brain and app (en vs pt)
 > This brain uses English folders (`contexts/`, `meetings/`, `notes/`) as the
 > company harness (docs-in-English convention). The app materializes an acervo in
-> Portuguese (`contextos/`, `reunioes/`, `notas/`) and its reader walks
-> `contextos/`, so the app cannot open this brain directly today. Decided for now:
-> keep the brain English; the en/pt unification of the acervo contract is deferred
-> to its own RFC (it changes the app's folder contract).
+> Portuguese (`contextos/`, `reunioes/`, `notas/`, `anexos/`) and its reader walks
+> `contextos/`, so the app cannot open this brain directly today. ADR-0005 §6
+> added a per-acervo **language choice** at creation (pt-BR / English) that
+> drives the UI and generated *content* — but the on-disk **folder names stay
+> Portuguese** regardless (the reader depends on them). Open: the en/pt
+> unification of the folder contract itself is still deferred to its own RFC.
 
 > [!HOTSPOT] H-4 — CODEOWNERS enforcement when the brain is not its own repo
 > Approval (ADR-0001 §5) relies on GitHub CODEOWNERS + branch protection. The

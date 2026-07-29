@@ -227,8 +227,11 @@ the divider to reset.
 **A tab showed another file's content.** That was an old editor defect, now
 fixed — if it ever happens again, open an issue with the steps.
 
-**Which language is content generated in?** The interface language active at
-generation time. An acervo may hold documents in both languages if you switch.
+**Which language is content generated in?** The language you chose when
+creating the acervo (pt-BR or English) — the whole UI follows it. You can
+switch later in the gear (⚙); an acervo may hold documents in both languages
+if you switch. The on-disk folders (`reunioes/`, `notas/`, `anexos/`,
+`contextos/`) stay Portuguese regardless of language.
 
 **What is a "custom habilidade"?** A skill you author yourself — either by
 describing what it should do (the AI writes it) or by importing one you

@@ -54,7 +54,7 @@
     return cats.map(function (c) { return { categoria: c, items: map.get(c) }; });
   }
 
-  // ADR-0007: with many brainstormings the always-expanded tree got unreadable
+  // ADR-0005: with many brainstormings the always-expanded tree got unreadable
   // — a search box replaces it. A query filters by nome/slug; with no query,
   // caps to the `cap` most recently updated (unless `showAll`), reporting how
   // many were hidden so the caller can render a "ver todos (N)" row.
