@@ -1668,18 +1668,83 @@ fn brain_notifications() -> Notifications {
 struct VersionOutcome {
     branch: String,
     result: String,
+    warn: Option<String>,
 }
 
-// "Versionar": create rfc/<slug> off the default branch and commit the working
-// changes there. Local only — needs git, never the network.
+// Sync outcomes the user should see as a warning (the flow still proceeds —
+// branch-first degrades, ADR-0002 §2). NoRemote is the pure-local case: no warn.
+fn sync_warn(outcome: &SyncOutcome) -> Option<String> {
+    match outcome {
+        SyncOutcome::Offline => Some("err.git_offline".into()),
+        SyncOutcome::Diverged => Some("err.main_diverged".into()),
+        _ => None,
+    }
+}
+
+// "Versionar": sync the default branch (best effort), create rfc/<slug> off it
+// and commit the working changes there. Local git only on the write path.
 #[tauri::command]
 fn brain_version(slug: String, message: String) -> Result<VersionOutcome, String> {
     let cfg = read_brain_config().ok_or("err.acervo_not_configured")?;
     let base = PathBuf::from(&cfg.brain_dir);
     let slug = sanitize_slug(&slug)?;
+    let warn = sync_warn(&sync_default_branch(&base));
     let branch = create_branch(&base, &slug)?;
     let result = stage_and_commit(&base, message)?;
-    Ok(VersionOutcome { branch, result })
+    Ok(VersionOutcome {
+        branch,
+        result,
+        warn,
+    })
+}
+
+// ---- branch-first IPC (ADR-0002 §2): list / switch / create ----------------
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BranchesInfo {
+    current: Option<String>,
+    default: String,
+    branches: Vec<String>,
+    dirty: bool,
+}
+
+fn acervo_repo_base() -> Result<PathBuf, String> {
+    let cfg = read_brain_config().ok_or("err.acervo_not_configured")?;
+    let base = PathBuf::from(&cfg.brain_dir);
+    if !base.join(".git").is_dir() {
+        return Err("err.git_repo_required".into());
+    }
+    Ok(base)
+}
+
+#[tauri::command]
+fn git_branches() -> Result<BranchesInfo, String> {
+    let base = acervo_repo_base()?;
+    Ok(BranchesInfo {
+        current: current_branch(&base),
+        default: local_default_branch(&base),
+        branches: list_branches(&base)?,
+        dirty: is_dirty(&base),
+    })
+}
+
+#[tauri::command]
+fn git_switch_branch(branch: String) -> Result<String, String> {
+    let base = acervo_repo_base()?;
+    switch_branch(&base, &branch)?;
+    Ok(current_branch(&base).unwrap_or(branch))
+}
+
+// Create (or resume) rfc/<slug>. Sync degrades: whatever the outcome, the
+// branch is created off the freshest local default available.
+#[tauri::command]
+fn git_create_branch(slug: String) -> Result<String, String> {
+    let cfg = read_brain_config().ok_or("err.acervo_not_configured")?;
+    let base = PathBuf::from(&cfg.brain_dir);
+    let slug = sanitize_slug(&slug)?;
+    let _ = sync_default_branch(&base);
+    create_branch(&base, &slug)
 }
 
 // "Propor mudança": push the current rfc/ branch and open the PR (the RFC).
@@ -3069,6 +3134,9 @@ pub fn run() {
             brain_notifications,
             brain_version,
             brain_propose_change,
+            git_branches,
+            git_switch_branch,
+            git_create_branch,
             brain_migrate,
             term_open,
             term_input,

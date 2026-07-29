@@ -903,7 +903,7 @@ const B = {
   nameInput: $("brainNameInput"), autoInput: $("brainAuto"), gitInput: $("brainGit"),
   cancelBtn: $("brainCancelBtn"), wizTitle: $("wizTitle"), setupErr: $("brainSetupErr"),
   acervoBtn: $("acervoBtn"), acervoName: $("acervoName"), acervoMenu: $("acervoMenu"),
-  gitBtn: $("gitBtn"), proposeBtn: $("proposeBtn"), bMenu: $("bMenu"),
+  gitBtn: $("gitBtn"), branchBtn: $("branchBtn"), proposeBtn: $("proposeBtn"), bMenu: $("bMenu"),
   ghCard: $("ghCard"), ghState: $("ghState"), ghChecks: $("ghChecks"),
   ghNotif: $("ghNotif"), ghCheck: $("ghCheck"),
   navHome: $("navHome"), navQueue: $("navQueue"), navCtx: $("navCtx"),
@@ -1082,7 +1082,12 @@ async function brainRefresh() {
       B.gitBtn.textContent = g.repo ? (g.pending ? `${t("versionar")} (${g.pending})` : `${t("versionado")} ✓`) : t("iniciar git");
       B.gitBtn.classList.toggle("warm", g.repo && g.pending > 0);
     }
-  }).catch(() => { B.gitBtn.hidden = true; });
+    // ADR-0002 §2: the current branch is always visible; click to switch/create
+    if (B.branchBtn) {
+      B.branchBtn.hidden = !(g.available && g.repo && g.branch);
+      if (g.branch) B.branchBtn.textContent = "⎇ " + g.branch;
+    }
+  }).catch(() => { B.gitBtn.hidden = true; if (B.branchBtn) B.branchBtn.hidden = true; });
   // GitHub: re-verifica o ambiente ao trocar de acervo (rede — só uma vez por acervo)
   if (activeAcervo !== lastEnvAcervo) { lastEnvAcervo = activeAcervo; envChecked = false; }
   refreshEnv();
@@ -2755,9 +2760,53 @@ B.gitBtn.addEventListener("click", () => {
       if (!message) throw t("descreva a mudança");
       const r = await invoke("brain_version", { slug: message, message });
       toast(`${t("versionado em")} ${r.branch}`);
+      // sync degraded (offline / diverged main): tell the user, don't block
+      if (r.warn) toast(tErr(r.warn), 5000);
     }
   );
 });
+
+// ADR-0002 §2 — branch picker: see the current branch, switch to another local
+// branch or create a new rfc/. Switching with a dirty tree is blocked by the
+// backend (err.working_tree_dirty); the remedy is the Versionar button itself.
+async function openBranchPicker() {
+  let info;
+  try { info = await invoke("git_branches"); } catch (e) { toast(tErr(String(e))); return; }
+  const afterSwitch = (branch) => {
+    toast("⎇ " + branch);
+    // the disk changed under the open tabs — reset to Home (acervo-switch pattern)
+    setupWorkspace(); sideSig = ""; brainRefresh();
+  };
+  const rows = (info.branches || []).map((b) => {
+    const cur = b === info.current, def = b === info.default;
+    return `<div class="fitem2${cur ? " on" : ""}" data-branch="${esc(b)}"><span class="fn mono">${cur ? "● " : ""}${esc(b)}${def ? ` (${t("principal")})` : ""}</span></div>`;
+  }).join("");
+  const body = openModal(
+    t("Branch de trabalho"),
+    `<div class="fitem2 muted fstatic">${t("mudanças de conhecimento nascem em branches rfc/ — a principal é protegida")}</div>` +
+      rows +
+      `<div class="fsep"></div><div class="fitem2 add" data-newbranch>＋ ${t("nova branch…")}</div>`,
+    null,
+    null
+  );
+  body.querySelectorAll("[data-branch]").forEach((el2) => (el2.onclick = async () => {
+    closeModal();
+    const b = el2.dataset.branch;
+    if (b === info.current) return;
+    try { afterSwitch(await invoke("git_switch_branch", { branch: b })); }
+    catch (e) { toast(tErr(String(e)), 5000); }
+  }));
+  const nb = body.querySelector("[data-newbranch]");
+  if (nb) nb.onclick = () => {
+    closeModal();
+    openEditor(t("Nova branch — descreva a mudança em uma linha"), "", async (desc) => {
+      const slug = (desc || "").trim();
+      if (!slug) throw t("descreva a mudança");
+      afterSwitch(await invoke("git_create_branch", { slug }));
+    });
+  };
+}
+if (B.branchBtn) B.branchBtn.addEventListener("click", openBranchPicker);
 
 B.proposeBtn.addEventListener("click", () => {
   openEditor(
