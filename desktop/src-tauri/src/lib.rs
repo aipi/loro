@@ -91,6 +91,11 @@ struct TermSession {
     writer: Box<dyn Write + Send>,
     master: Box<dyn portable_pty::MasterPty + Send>,
     child: Box<dyn portable_pty::Child + Send + Sync>,
+    // when the agent auto-launch line was written (ADR-0007): term_status uses
+    // this to tell "still starting up" apart from "never came up", so the
+    // frontend doesn't retype the launch command into a session that already
+    // has it in flight (ps-based detection lags a live process by ~1 poll).
+    launched_at: std::time::Instant,
 }
 
 // ---- structured logging (tracing) -----------------------------------------
@@ -2970,11 +2975,14 @@ fn term_open(app: AppHandle, state: State<AppState>, cols: u16, rows: u16) -> Re
     let mut writer = pair.master.take_writer().map_err(|e| e.to_string())?;
     // Auto-launch the terminal agent so the /loro-* skills (analisar/perguntar/
     // ask/gerar contexto) work out of the box — the buttons inject slash commands
-    // that only a running Claude understands. The login shell sources the profile
-    // (real PATH) before reading this stdin, so `claude` resolves; if it is not
-    // installed the shell just prints "command not found" and stays usable.
+    // that only a running agent understands. The login shell sources the profile
+    // (real PATH) before reading this stdin, so the agent command resolves; if
+    // it is not installed the shell just prints "command not found" and stays
+    // usable. Uses the ACTIVE acervo's configured agent (ADR-0007) — this used
+    // to hardcode "claude", breaking any acervo configured with another CLI.
+    let launched_at = std::time::Instant::now();
     if in_acervo {
-        let _ = writer.write_all(b"claude\n");
+        let _ = writer.write_all(format!("{}\n", active_agent()).as_bytes());
         let _ = writer.flush();
     }
     let apph = app.clone();
@@ -2999,6 +3007,7 @@ fn term_open(app: AppHandle, state: State<AppState>, cols: u16, rows: u16) -> Re
         writer,
         master: pair.master,
         child,
+        launched_at,
     });
     info!(target: "term", "terminal opened");
     Ok(())
@@ -3048,6 +3057,18 @@ fn term_close(state: State<AppState>) {
 struct TermStatus {
     open: bool,
     agent_running: bool,
+    // ADR-0007: true for a short grace window right after term_open wrote the
+    // launch line — `ps`-based detection lags a freshly spawned process by at
+    // least one poll, so the frontend must not treat "not detected yet" as
+    // "never launched" and retype the agent command into a session that
+    // already has it in flight.
+    just_launched: bool,
+}
+
+const TERM_LAUNCH_GRACE: std::time::Duration = std::time::Duration::from_secs(6);
+
+fn is_within_grace(elapsed: std::time::Duration) -> bool {
+    elapsed < TERM_LAUNCH_GRACE
 }
 
 // Process name to look for: basename of the agent command's first token
@@ -3105,18 +3126,22 @@ fn has_descendant_process(table: &[(u32, u32, String)], root: u32, name: &str) -
 
 #[tauri::command]
 fn term_status(state: State<AppState>) -> TermStatus {
-    let shell_pid = state
-        .term
-        .lock()
-        .unwrap()
-        .as_ref()
-        .and_then(|s| s.child.process_id());
-    let Some(root) = shell_pid else {
+    let guard = state.term.lock().unwrap();
+    let Some(session) = guard.as_ref() else {
         return TermStatus {
             open: false,
             agent_running: false,
+            just_launched: false,
         };
     };
+    let Some(root) = session.child.process_id() else {
+        return TermStatus {
+            open: false,
+            agent_running: false,
+            just_launched: false,
+        };
+    };
+    let just_launched = is_within_grace(session.launched_at.elapsed());
     let agent_name = agent_process_name(&active_agent());
     let agent_running = Command::new("ps")
         .args(["-axo", "pid=,ppid=,comm="])
@@ -3133,6 +3158,7 @@ fn term_status(state: State<AppState>) -> TermStatus {
     TermStatus {
         open: true,
         agent_running,
+        just_launched,
     }
 }
 
@@ -3739,6 +3765,16 @@ mod tests {
             "gemini"
         );
         assert_eq!(agent_process_name(""), "claude");
+    }
+
+    // ADR-0007: the grace window that stops termRunAgent from retyping the
+    // agent launch line into a session that already has it in flight.
+    #[test]
+    fn is_within_grace_holds_for_a_short_window_only() {
+        assert!(is_within_grace(std::time::Duration::from_secs(0)));
+        assert!(is_within_grace(std::time::Duration::from_secs(5)));
+        assert!(!is_within_grace(std::time::Duration::from_secs(6)));
+        assert!(!is_within_grace(std::time::Duration::from_secs(30)));
     }
 
     #[test]

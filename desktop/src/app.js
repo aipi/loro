@@ -3968,7 +3968,12 @@ async function termRunAgent(cmd) {
       scheduleActionRefresh(); // the skill writes files the sidebar must show
       return;
     }
-    if (st && st.open && !st.agentRunning && termReady && !relaunched) {
+    // ADR-0007: term_open already typed the launch line — a fresh session
+    // reports agentRunning:false for a few polls simply because `ps` hasn't
+    // caught up yet. Retyping it during that grace window is the bug (agent
+    // command appearing twice); only relaunch once the grace window passed
+    // and the agent still isn't there (it actually exited).
+    if (st && st.open && !st.agentRunning && !st.justLaunched && termReady && !relaunched) {
       relaunched = true; // reused session where the agent exited: bring it back
       await invoke("term_input", { data: agent + "\n" }).catch(() => {});
     }
