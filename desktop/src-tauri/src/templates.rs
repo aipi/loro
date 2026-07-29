@@ -1001,6 +1001,169 @@ pub fn loro_tool_skill(lang: &str) -> &'static str {
     }
 }
 
+// ---- built-in generative habilidades: apresentação / artefato (ADR-0007) ----
+// Both write into an anexos-style folder — brainstorming/<tema>/apresentacoes/
+// or /anexos/ when the alvo is a brainstorming (tema or nota inside it),
+// contextos/<c>/anexos/ when the alvo is a context — and, when the alvo is a
+// specific note, append a `ref` to it (same local-doc ref pattern as
+// /loro-sync's anexos, ADR-0006/0007). Markdown is the default deliverable
+// (any agent can always produce it); a real .pptx/.xlsx is fine if the agent
+// has the means, but never assumed.
+pub const LORO_PRESENTATION_SKILL: &str = r#"---
+description: Gera uma apresentação (deck) a partir de um brainstorming ou contexto (ADR-0007)
+argument-hint: <alvo:tema-ou-contexto-ou-nota> <descrição>
+---
+
+Argumentos: `$ARGUMENTS`
+O PRIMEIRO token é o ALVO (um tema `brainstorming/<tema>`, uma nota dentro
+dele, ou um `contextos/<c>`); o RESTO é a DESCRIÇÃO do que a apresentação
+deve cobrir.
+
+1. Se o alvo for dentro de `contextos/`, o material de saída vai em
+   `contextos/<c>/anexos/`; se for dentro de `brainstorming/`, vai em
+   `brainstorming/<tema>/apresentacoes/`. Crie a pasta se não existir.
+2. Funde-se no conteúdo já existente no alvo (o `context.md`, ou as
+   notas/reuniões do tema) para que a apresentação reflita o que já se sabe
+   — não invente fatos não sustentados pela base.
+3. Gere o deck em markdown (um `## ` por slide é o padrão mais simples e
+   sempre reproduzível); se você tiver como gerar um `.pptx`/`.xlsx` de
+   verdade, pode, mas nunca assuma uma ferramenta que não existe.
+4. Salve como `<pasta-de-saída>/<slug-da-descrição>.md` (ou a extensão
+   real gerada). Se o alvo for uma nota específica (não só um tema/contexto),
+   acrescente ao `refs:` dela uma entrada `tipo: doc`, `caminho:
+   acervo://<caminho-do-arquivo-criado>`.
+5. Ao final, diga onde o material ficou salvo e um resumo de 1 linha do que
+   contém.
+
+Regras de rigor (ADR-0002 §5):
+- **Nunca assuma premissas** não declaradas: se a descrição não bastar para
+  decidir estrutura/conteúdo, pergunte antes de inventar.
+- **Varredura eficiente:** para ler muitos arquivos, delegue a leitura a
+  subagentes (Task) num modelo rápido (ex. Haiku) retornando só o essencial;
+  reserve o modelo principal para a síntese.
+- **Leitura barata (ADR-0004):** comece pelo `INDEX.md` e pelo Sumário (§0) de
+  cada `context.md`; localize IDs estáveis (`D-…`, `H-…`) com busca e leia
+  somente a seção necessária — o arquivo inteiro é o último recurso.
+"#;
+
+pub const LORO_PRESENTATION_SKILL_EN: &str = r#"---
+description: Generates a presentation (deck) from a brainstorming or context (ADR-0007)
+argument-hint: <alvo:topic-or-context-or-note> <description>
+---
+
+Arguments: `$ARGUMENTS`
+The FIRST token is the TARGET (a topic `brainstorming/<topic>`, a note
+inside it, or a `contextos/<c>`); the REST is the DESCRIPTION of what the
+presentation should cover.
+
+1. If the target is inside `contextos/`, the output goes in
+   `contextos/<c>/anexos/`; if inside `brainstorming/`, it goes in
+   `brainstorming/<topic>/apresentacoes/`. Create the folder if absent.
+2. Ground yourself on what already exists at the target (the `context.md`,
+   or the topic's notes/meetings) so the presentation reflects what is
+   already known — never invent facts the base doesn't support.
+3. Generate the deck in markdown (one `## ` per slide is the simplest,
+   always-reproducible default); if you have a way to generate a real
+   `.pptx`/`.xlsx`, you may, but never assume a tool that doesn't exist.
+4. Save as `<output-folder>/<slug-from-description>.md` (or the actual
+   generated extension). If the target is a specific note (not just a
+   topic/context), append to its `refs:` an entry `tipo: doc`, `caminho:
+   acervo://<path-of-the-created-file>`.
+5. At the end, state where the material was saved and a 1-line summary of
+   its contents.
+
+Rigor rules (ADR-0002 §5):
+- **Never assume unstated premises.** If the description doesn't settle
+  structure/content, ask before inventing.
+- **Efficient scanning:** to read many files, delegate reading to subagents
+  (Task) on a fast model (e.g. Haiku) returning only the essentials; keep
+  the main model for synthesis.
+- **Cheap reading (ADR-0004):** start from `INDEX.md` and each `context.md`
+  Summary (§0); locate stable IDs (`D-…`, `H-…`) via search and read only
+  the needed section — the whole file is the last resort.
+"#;
+
+pub fn loro_presentation_skill(lang: &str) -> &'static str {
+    if lang == "en" {
+        LORO_PRESENTATION_SKILL_EN
+    } else {
+        LORO_PRESENTATION_SKILL
+    }
+}
+
+pub const LORO_ARTIFACT_SKILL: &str = r#"---
+description: Cria um artefato (arquivo) a partir de um brainstorming ou contexto, referenciado numa nota (ADR-0007)
+argument-hint: <alvo:nota-tema-ou-contexto> <descrição>
+---
+
+Argumentos: `$ARGUMENTS`
+O PRIMEIRO token é o ALVO (uma nota, um tema `brainstorming/<tema>`, ou um
+`contextos/<c>`); o RESTO é a DESCRIÇÃO do artefato a criar (ex.: um
+diagrama em texto, um script, uma planilha de dados, um documento).
+
+1. Se o alvo for dentro de `contextos/`, o artefato vai em
+   `contextos/<c>/anexos/`; se for dentro de `brainstorming/`, vai em
+   `brainstorming/<tema>/anexos/`. Crie a pasta se não existir.
+2. Crie o arquivo que melhor atende à descrição — sem assumir uma ferramenta
+   de geração que você não tem; markdown/texto é sempre uma saída válida.
+3. Se o alvo for uma nota específica, acrescente ao `refs:` dela uma
+   entrada `tipo: doc`, `caminho: acervo://<caminho-do-artefato-criado>`.
+   Se o alvo for só um tema/contexto (sem nota específica), apenas relate
+   onde o artefato ficou.
+4. Ao final, diga o caminho do artefato e uma frase sobre o que ele contém.
+
+Regras de rigor (ADR-0002 §5):
+- **Nunca assuma premissas** não declaradas: se a descrição for vaga sobre o
+  formato/conteúdo do artefato, pergunte antes de inventar.
+- **Varredura eficiente:** para ler muitos arquivos, delegue a leitura a
+  subagentes (Task) num modelo rápido (ex. Haiku) retornando só o essencial;
+  reserve o modelo principal para a síntese.
+- **Leitura barata (ADR-0004):** comece pelo `INDEX.md` e pelo Sumário (§0) de
+  cada `context.md`; localize IDs estáveis (`D-…`, `H-…`) com busca e leia
+  somente a seção necessária — o arquivo inteiro é o último recurso.
+"#;
+
+pub const LORO_ARTIFACT_SKILL_EN: &str = r#"---
+description: Creates an artifact (file) from a brainstorming or context, referenced by a note (ADR-0007)
+argument-hint: <alvo:note-topic-or-context> <description>
+---
+
+Arguments: `$ARGUMENTS`
+The FIRST token is the TARGET (a note, a topic `brainstorming/<topic>`, or a
+`contextos/<c>`); the REST is the DESCRIPTION of the artifact to create
+(e.g. a text diagram, a script, a data spreadsheet, a document).
+
+1. If the target is inside `contextos/`, the artifact goes in
+   `contextos/<c>/anexos/`; if inside `brainstorming/`, it goes in
+   `brainstorming/<topic>/anexos/`. Create the folder if absent.
+2. Create the file that best fits the description — never assume a
+   generation tool you don't have; markdown/plain text is always a valid
+   output.
+3. If the target is a specific note, append to its `refs:` an entry
+   `tipo: doc`, `caminho: acervo://<path-of-the-created-artifact>`. If the
+   target is just a topic/context (no specific note), just report where
+   the artifact ended up.
+4. At the end, state the artifact's path and a sentence about its content.
+
+Rigor rules (ADR-0002 §5):
+- **Never assume unstated premises.** If the description is vague about the
+  artifact's format/content, ask before inventing.
+- **Efficient scanning:** to read many files, delegate reading to subagents
+  (Task) on a fast model (e.g. Haiku) returning only the essentials; keep
+  the main model for synthesis.
+- **Cheap reading (ADR-0004):** start from `INDEX.md` and each `context.md`
+  Summary (§0); locate stable IDs (`D-…`, `H-…`) via search and read only
+  the needed section — the whole file is the last resort.
+"#;
+
+pub fn loro_artifact_skill(lang: &str) -> &'static str {
+    if lang == "en" {
+        LORO_ARTIFACT_SKILL_EN
+    } else {
+        LORO_ARTIFACT_SKILL
+    }
+}
+
 // ---- general Q&A over the knowledge base (ADR-0013) ----
 //
 // `/loro-ask` answers ANY question from the acervo's versioned contexts (the local
@@ -1194,6 +1357,8 @@ mod tests {
                 ("note", loro_note_skill(lang)),
                 ("sync", loro_sync_skill(lang)),
                 ("tool", loro_tool_skill(lang)),
+                ("presentation", loro_presentation_skill(lang)),
+                ("artifact", loro_artifact_skill(lang)),
             ] {
                 assert!(
                     body.contains(no_assume),

@@ -1759,6 +1759,7 @@ async function promptSyncTool(fonte, slug) {
 const TOOL_BUILTINS = new Set([
   "loro-context.md", "loro-analyse.md", "loro-question.md",
   "loro-ask.md", "loro-note.md", "loro-sync.md", "loro-tool.md",
+  "loro-presentation.md", "loro-artifact.md",
 ]);
 // Subset offered by the generic "executar habilidade" picker (brainstorming/
 // meeting ⋯ menus): the workflow-specific built-ins already have their own

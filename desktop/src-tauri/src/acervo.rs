@@ -544,7 +544,7 @@ pub fn brain_list_meetings(slug: String) -> Result<Vec<MeetingListItem>, String>
 // `/minha-ferramenta`). This deny-list is the only thing that keeps a custom
 // tool from shadowing/deleting a built-in one; it must stay in sync with the
 // skill list materialized by ensure_acervo_structure/ensure_meeting_skills.
-pub const BUILTIN_SKILLS: [&str; 7] = [
+pub const BUILTIN_SKILLS: [&str; 9] = [
     "loro-context.md",
     "loro-analyse.md",
     "loro-question.md",
@@ -552,6 +552,8 @@ pub const BUILTIN_SKILLS: [&str; 7] = [
     "loro-note.md",
     "loro-sync.md",
     "loro-tool.md",
+    "loro-presentation.md",
+    "loro-artifact.md",
 ];
 
 fn tools_dir(base: &Path) -> PathBuf {
@@ -1860,6 +1862,8 @@ mod tests {
         // reserved: a builtin skill name is refused
         assert!(new_tool(&base, "loro-note", "x").is_err());
         assert!(new_tool(&base, "loro-sync", "x").is_err());
+        assert!(new_tool(&base, "loro-presentation", "x").is_err());
+        assert!(new_tool(&base, "loro-artifact", "x").is_err());
     }
 
     #[test]

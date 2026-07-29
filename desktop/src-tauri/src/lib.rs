@@ -1143,6 +1143,14 @@ fn ensure_acervo_structure(
         (".claude/commands/loro-note.md", loro_note_skill(lang)),
         (".claude/commands/loro-sync.md", loro_sync_skill(lang)),
         (".claude/commands/loro-tool.md", loro_tool_skill(lang)),
+        (
+            ".claude/commands/loro-presentation.md",
+            loro_presentation_skill(lang),
+        ),
+        (
+            ".claude/commands/loro-artifact.md",
+            loro_artifact_skill(lang),
+        ),
     ] {
         let p = base.join(rel);
         if !p.exists() {
@@ -2052,6 +2060,14 @@ fn migrate_acervo(base: &Path, apply: bool, lang: &str) -> Result<MigrationRepor
             ".claude/commands/loro-tool.md",
             loro_tool_skill(lang).to_string(),
         ),
+        (
+            ".claude/commands/loro-presentation.md",
+            loro_presentation_skill(lang).to_string(),
+        ),
+        (
+            ".claude/commands/loro-artifact.md",
+            loro_artifact_skill(lang).to_string(),
+        ),
     ] {
         let p = base.join(rel);
         if !p.exists() {
@@ -2923,6 +2939,14 @@ fn ensure_meeting_skills(base: &Path, lang: &str) {
         (".claude/commands/loro-note.md", loro_note_skill(lang)),
         (".claude/commands/loro-sync.md", loro_sync_skill(lang)),
         (".claude/commands/loro-tool.md", loro_tool_skill(lang)),
+        (
+            ".claude/commands/loro-presentation.md",
+            loro_presentation_skill(lang),
+        ),
+        (
+            ".claude/commands/loro-artifact.md",
+            loro_artifact_skill(lang),
+        ),
     ] {
         let p = base.join(rel);
         if !p.exists() {
