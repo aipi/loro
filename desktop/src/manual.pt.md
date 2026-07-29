@@ -77,10 +77,12 @@ quando quiser pela paleta: `Cmd/Ctrl+Shift+P` → "apresentação do Loro".
   direita de qualquer arquivo aberto**) aplica um pedido sobre o conteúdo
   existente — a IA evolui, nunca apaga.
 - **Rail de ações à direita do arquivo:** ao abrir qualquer nota/documento,
-  a lateral direita mostra botões visíveis — **habilidade** (dropdown +
-  ▶, escolha e execute sem abrir menu), **pedir à IA…**, e **versionar**
-  (quando o arquivo é de um contexto). Mesmo padrão em todo lugar onde essas
-  três ações existem — reunião, documento comum, cabeçalho do acervo.
+  a lateral direita mostra cartões de ação separados — **habilidade** (um
+  dropdown com nomes amigáveis; a descrição da habilidade selecionada fica
+  sempre visível logo abaixo, e **▶ executar** roda sobre o arquivo aberto),
+  **pedir à IA…**, e **versionar** (quando o arquivo é de um contexto).
+  Mesmo padrão em todo lugar onde essas ações existem — reunião, documento
+  comum, cabeçalho do acervo.
 - As ações **analisar**, **perguntar…**, **ver relatório** e **enviar para a
   fila** ficam no menu **⋯** da reunião na lateral. **Perguntar** funciona já
   durante a gravação; as outras três habilitam quando a reunião termina (o

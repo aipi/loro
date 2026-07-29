@@ -77,11 +77,12 @@ palette: `Cmd/Ctrl+Shift+P` → "Loro tour".
   request; **✦ ask the AI** (a note's/analysis' ⋯ menu **and the right-side
   rail of any open file**) applies a request to the existing content — the
   AI evolves it, never erases.
-- **Right-side actions rail:** opening any note/document shows visible
-  buttons on the right — **habilidade** (dropdown + ▶, pick and run without
-  opening a menu), **ask the AI…**, and **version** (when the file is part
-  of a context). Same pattern everywhere these three actions exist —
-  meeting, regular document, acervo header.
+- **Right-side actions rail:** opening any note/document shows separate
+  action cards on the right — **habilidade** (a dropdown with friendly
+  names; the selected habilidade's description stays visible right below
+  it, and **▶ executar** runs it against the open file), **ask the AI…**,
+  and **version** (when the file is part of a context). Same pattern
+  everywhere these actions exist — meeting, regular document, acervo header.
 - The **analyse**, **ask…**, **view report** and **send to queue** actions
   live in the meeting's **⋯** menu in the sidebar. **Ask…** already works
   while the meeting is still recording; the other three enable once the

@@ -516,6 +516,12 @@ body {
   .doc-rail { flex-basis: auto; width: 100%; position: static; }
 }
 .rail-sec { display: flex; flex-direction: column; gap: 6px; }
+/* each rail action is its own bordered card so neighbors never read as one
+   sequential flow (owner feedback: "pedir à IA parece sequencial ao dropdown") */
+.rail-sec.card { border: 1px solid var(--line); border-radius: 10px; padding: 10px 10px 12px; background: var(--panel); }
+/* the SELECTED habilidade's description, always visible (option-title hover
+   is unreliable in webviews); min-height keeps the card from jumping */
+.rail-desc { font-size: 10.5px; line-height: 1.5; color: var(--muted); margin: 0; min-height: 2.4em; }
 .rail-head { font-family: var(--mono); font-size: 9.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); display: flex; align-items: center; gap: 6px; }
 .rail-row { display: flex; gap: 6px; align-items: center; }
 .rail-row .mini-select { flex: 1; min-width: 0; }

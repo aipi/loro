@@ -2075,15 +2075,28 @@ function openAddToolMenu(anchor) {
 // habilidade (built-in or custom, minus the 5 workflow-specific ones) is one
 // entry. Shared by the ⋯ menu picker AND the meeting rail dropdown so both
 // stay in sync automatically.
+// Friendly display names for the built-in habilidades — `loro-…` filenames
+// mean nothing to the user (owner feedback); customs keep their own name.
+const TOOL_LABELS = {
+  "loro-presentation.md": "apresentação",
+  "loro-artifact.md": "artefato",
+  "loro-note.md": "nota por IA",
+  "loro-ask.md": "perguntar ao acervo",
+  "loro-analyse.md": "analisar reunião",
+  "loro-question.md": "perguntar à reunião",
+  "loro-context.md": "gerar contexto",
+  "loro-tool.md": "criar habilidade",
+};
 function habilidadeEntriesFrom(files) {
   const entries = [];
   for (const f of files) {
     if (f.name === "loro-sync.md") {
       for (const fonte of ["drive", "slack", "jira", "confluence"]) {
-        entries.push({ kind: "sync", fonte, label: fonte, title: f.desc });
+        entries.push({ kind: "sync", fonte, label: `${t("sincronizar")}: ${fonte}`, title: f.desc });
       }
     } else {
-      entries.push({ kind: "tool", rel: f.path, label: shortName(f.name), title: f.desc || f.path });
+      const label = TOOL_LABELS[f.name] ? t(TOOL_LABELS[f.name]) : shortName(f.name);
+      entries.push({ kind: "tool", rel: f.path, label, title: f.desc || f.path });
     }
   }
   return entries;
@@ -2101,6 +2114,35 @@ function allHabilidadeEntries() {
 function runHabilidadeEntry(entry, alvoRel) {
   if (entry.kind === "sync") promptSyncTool(entry.fonte, alvoRel);
   else promptUseTool(entry.rel, alvoRel);
+}
+// The ONE habilidade control (ADR-0007, owner feedback): a card with the
+// dropdown (friendly names), the SELECTED entry's description always visible
+// below it (option-title hover is unreliable in webviews and hid what each
+// skill does), and an explicit "executar" button — used identically on the
+// doc rail and the meeting rail.
+function habilidadeCardHtml(p) {
+  return `<div class="rail-sec card">` +
+    `<div class="rail-head">${ico("skill")} ${t("habilidade")}</div>` +
+    `<select id="${p}Select" class="mini-select"></select>` +
+    `<p id="${p}Desc" class="rail-desc"></p>` +
+    `<button class="railbtn cta" id="${p}RunBtn">▶ ${t("executar")}</button>` +
+    `</div>`;
+}
+function wireHabilidadeCard(p, alvoRel) {
+  const sel = $(p + "Select"), desc = $(p + "Desc"), btn = $(p + "RunBtn");
+  if (!sel) return;
+  const entries = allHabilidadeEntries();
+  sel.innerHTML = entries.length
+    ? entries.map((e, i) => `<option value="${i}">${esc(e.label)}</option>`).join("")
+    : `<option value="">${t("nenhuma habilidade disponível")}</option>`;
+  const upd = () => { const e2 = entries[Number(sel.value)]; if (desc) desc.textContent = e2 ? e2.title : ""; };
+  sel.onchange = upd; upd();
+  if (btn) btn.onclick = () => {
+    const e2 = entries[Number(sel.value)];
+    const alvo = typeof alvoRel === "function" ? alvoRel() : alvoRel;
+    if (!e2 || !alvo) return;
+    runHabilidadeEntry(e2, alvo);
+  };
 }
 function openHabilidadeMenu(alvoRel, anchor) {
   B.acervoMenu.hidden = true;
@@ -2765,33 +2807,13 @@ function meetingStatusBar(status) {
 // wireMeetingSurface from the already-cached habilidade list; the bolt icon
 // keeps habilidades visually distinct everywhere else they appear.
 function meetingRailHtml() {
-  // Same rail-sec/rail-row/railbtn classes as the generic doc rail
-  // (renderDocRail) — "mesmo padrão em todo lugar" (owner request).
-  return `<div class="rail-sec">` +
-    `<div class="rail-head">${ico("skill")} ${t("habilidade")}</div>` +
-    `<div class="rail-row">` +
-      `<select id="mtgSkillSelect" class="mini-select"></select>` +
-      `<button class="railbtn icon cta" id="mtgSkillRunBtn" title="${t("executar")}">▶</button>` +
-    `</div>` +
-    `<p class="mtg-note mono">${t("escolha uma habilidade para executar sobre esta reunião — passe o mouse nas opções para ver a descrição")}</p>` +
-    `</div>`;
+  // Same habilidade card as the generic doc rail (habilidadeCardHtml) —
+  // "mesmo padrão em todo lugar" (owner request).
+  return habilidadeCardHtml("mtgSkill");
 }
 
 function wireMeetingSurface(id) {
-  const skillSel = B.doc.querySelector("#mtgSkillSelect");
-  if (skillSel) {
-    const entries = allHabilidadeEntries();
-    skillSel.innerHTML = entries.length
-      ? entries.map((e, i) => `<option value="${i}" title="${esc(e.title)}">${esc(e.label)}</option>`).join("")
-      : `<option value="">${t("nenhuma habilidade disponível")}</option>`;
-    const runBtn = B.doc.querySelector("#mtgSkillRunBtn");
-    if (runBtn) runBtn.onclick = () => {
-      const entry = entries[Number(skillSel.value)];
-      const dir = currentMeetingDir(id);
-      if (!entry || !dir) return;
-      runHabilidadeEntry(entry, dir);
-    };
-  }
+  wireHabilidadeCard("mtgSkill", () => currentMeetingDir(id));
 }
 
 // Resolve the acervo-relative meeting dir for a skill run: the active living/
@@ -3059,31 +3081,19 @@ function renderDocRail(tab, isGuide) {
   const versionable = !isGuide && tab.kind === "context";
   if (!aiable && !skillable && !versionable) { rail.hidden = true; rail.innerHTML = ""; return; }
   rail.hidden = false;
+  // each action is its own bordered card: "pedir à IA" and "versionar" must
+  // never read as a continuation of the habilidade dropdown (owner feedback).
   rail.innerHTML =
-    (skillable ? `<div class="rail-sec">` +
-      `<div class="rail-head">${ico("skill")} ${t("habilidade")}</div>` +
-      `<div class="rail-row">` +
-        `<select id="railSkillSelect" class="mini-select"></select>` +
-        `<button class="railbtn icon cta" id="railSkillRunBtn" title="${t("executar")}">▶</button>` +
-      `</div>` +
-    `</div>` : "") +
-    (aiable ? `<div class="rail-sec">` +
+    (skillable ? habilidadeCardHtml("railSkill") : "") +
+    (aiable ? `<div class="rail-sec card">` +
       `<button class="railbtn" id="railAskAiBtn">✦ ${t("pedir à IA…")}</button>` +
+      `<p class="rail-desc">${t("aplica um pedido seu sobre este arquivo — evolui, não apaga.")}</p>` +
     `</div>` : "") +
-    (versionable ? `<div class="rail-sec">` +
+    (versionable ? `<div class="rail-sec card">` +
       `<button class="railbtn" id="railVersionarBtn">⎇ ${t("versionar")}</button>` +
+      `<p class="rail-desc">${t("commita as mudanças deste contexto numa branch rfc/… local.")}</p>` +
     `</div>` : "");
-  if (skillable) {
-    const sel = $("railSkillSelect");
-    const entries = allHabilidadeEntries();
-    sel.innerHTML = entries.length
-      ? entries.map((e, i) => `<option value="${i}" title="${esc(e.title)}">${esc(e.label)}</option>`).join("")
-      : `<option value="">${t("nenhuma habilidade disponível")}</option>`;
-    $("railSkillRunBtn").onclick = () => {
-      const entry = entries[Number(sel.value)];
-      if (entry) runHabilidadeEntry(entry, tab.rel);
-    };
-  }
+  if (skillable) wireHabilidadeCard("railSkill", tab.rel);
   if (aiable) $("railAskAiBtn").onclick = () => promptNoteAI(tab.rel, true);
   if (versionable) $("railVersionarBtn").onclick = promptVersionar;
 }
