@@ -85,10 +85,11 @@
 
 - A bilingual user manual (`manual.pt.md` / `manual.en.md`, FAQ + step-by-step
   for every flow) ships **inside the app bundle** and opens as a studio tab
-  (rendered with the existing markdown reader) via a help button; language
-  follows `uiLang`. A dedicated `read_bundled_doc` command reads only
-  packaged assets (no path traversal) since `brain_read` is sandboxed to the
-  acervo.
+  (rendered with the existing markdown reader) via the `?` help button and the
+  command palette; language follows `uiLang` (switching re-reads it). It is
+  fetched as a same-origin webview asset — simpler and safer than the
+  originally sketched `read_bundled_doc` IPC command (no new backend surface,
+  no path-traversal exposure; `brain_read` stays sandboxed to the acervo).
 - **Process rule:** every feature addition must evaluate updating the manual,
   this ADR series, README and ARCHITECTURE (CLAUDE.md §8 step; also enforced
   by the release checklist skill).

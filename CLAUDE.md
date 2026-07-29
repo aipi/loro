@@ -112,8 +112,12 @@ business logic in the Tauri `run()` wiring.
 5. Write a failing test.
 6. Implement the minimum to pass.
 7. Refactor; comment only the *why*.
-8. Record a non-trivial decision in `docs/adr/0001-baseline.md`.
-9. Run `make test` and `make lint`; ensure the app still works (`LORO_SELFTEST=1`).
+8. Record a non-trivial decision in the ADR series (`docs/adr/`).
+9. **Docs sweep (ADR-0002 §7):** for every feature added or changed, evaluate
+   and update the in-app manual (`desktop/src/manual.pt.md` + `manual.en.md`),
+   the ADR, `README.md` and `docs/ARCHITECTURE.md`. Structural docs are never
+   optional; the manual is updated whenever user-visible behavior changes.
+10. Run `make test` and `make lint`; ensure the app still works (`LORO_SELFTEST=1`).
 
 ## 9. What this file does NOT do
 

@@ -65,6 +65,7 @@ function rerenderForLang() {
   try { updateCfgLabel(); } catch (_) {}
   try { brainRefresh(); } catch (_) {}
   try { renderSelectionBar(); } catch (_) {}
+  try { refreshTabFromDisk(MANUAL_REL); } catch (_) {} // manual follows uiLang
 }
 
 // painel ao vivo (dock): abre/fecha; abre sozinho ao começar a gravar
@@ -858,6 +859,7 @@ function updatePrivacy() {
 // ---- wiring ----
 el.toggle.addEventListener("click", toggle);
 el.cfgBtn.addEventListener("click", openCfg);
+if ($("helpBtn")) $("helpBtn").addEventListener("click", () => openDoc(MANUAL_REL, { preview: false }));
 if (el.uiLang) el.uiLang.addEventListener("change", async (e) => {
   settings.uiLang = e.target.value; persistSettings();
   try { settings.uiLang = await invoke("ui_set_lang", { lang: e.target.value }); } catch (_) {}
@@ -1838,6 +1840,7 @@ B.navHome.addEventListener("click", openHome);
 
 function docBadge(p, isGuide) {
   if (isGuide) return [t("instruções do loop — aplicadas antes de processar"), "ok"];
+  if (p === MANUAL_REL) return [t("manual do Loro — somente leitura"), "ro"];
   if (p.startsWith("inbox/")) return [t("pendente — será processado pelo loop"), "ok"];
   if (p.endsWith("guia.md")) return [t("formato antigo — migre para context.md"), "warn2"];
   if (p.endsWith("CHANGELOG.md")) return [t("histórico (append-only)"), "ro"];
@@ -1855,7 +1858,14 @@ function setDocGit(p, kind, isGuide) {
 
 const cmTheme = () => (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
 // read a document's raw text (guide-aware; falls back from context.md to guia.md)
+// ADR-0002 §7 — the user manual ships inside the app as a webview asset (one
+// file per language), opened as a read-only studio tab; no IPC involved.
+const MANUAL_REL = "loro://manual";
 async function readDoc(rel) {
+  if (rel === MANUAL_REL) {
+    const r = await fetch(settings.uiLang === "en" ? "manual.en.md" : "manual.pt.md");
+    return await r.text();
+  }
   if (rel === GUIDE_REL) { try { return await invoke("brain_read_guide"); } catch (_) { return ""; } }
   try { return await invoke("brain_read", { rel }); }
   catch (err) {
@@ -2306,7 +2316,7 @@ async function renderActive() {
   B.docWrap.hidden = false;
   $("bDraftNote").hidden = true;   // the first-edit note is one-time; reset per render
   closeFind();
-  B.crumb.textContent = isGuide ? t("instruções do loop") : tab.rel;
+  B.crumb.textContent = isGuide ? t("instruções do loop") : tab.rel === MANUAL_REL ? t("manual de uso") : tab.rel;
   // permanent world badge (versionado / rascunho), else document-specific badge
   const world = LoroWorld.crumbBadge(tab.kind, settings.uiLang);
   const [label, cls] = world && !isGuide ? [world.label, world.cls] : docBadge(tab.rel, isGuide);
@@ -2503,6 +2513,7 @@ async function openDoc(relPath, opts) {
 // pt-BR command registry (ADR-0008). `run` wires to existing handlers/buttons.
 const COMMANDS = [
   { label: "ir para início", run: () => openHome() },
+  { label: "abrir manual", run: () => openDoc(MANUAL_REL, { preview: false }) },
   { label: "alternar visualizar/editar", run: () => toggleActiveMode() },
   { label: "fechar aba", run: () => closeActiveTab() },
   { label: "reabrir aba", run: () => reopenClosedTab() },
