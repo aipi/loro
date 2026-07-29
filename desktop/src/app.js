@@ -101,6 +101,7 @@ const SETTINGS_KEY = "loro-settings";
 const DEFAULTS = {
   model: "large-v3-turbo", lang: "pt", translate: false,
   autoscroll: true, autosave: false, saveDir: "", source: "mic", mode: "live", uiLang: "pt", termSide: false,
+  sideW: 0, // sidebar width in px; 0 = the default CSS clamp (ADR-0002 §6)
 };
 let settings = { ...DEFAULTS };
 function loadSettings() {
@@ -122,8 +123,46 @@ function applySettings() {
   el.pickDir.textContent = settings.saveDir || "…";
   el.pickDir.title = settings.saveDir || t("Escolher pasta de armazenamento");
   if (el.uiLang) el.uiLang.value = settings.uiLang;
+  applySideWidth();
   applyI18n();
 }
+
+// ADR-0002 §6 — sidebar width: 0 keeps the CSS clamp default; any px value is
+// user-chosen (drag grip), clamped to [180, 45vw]. Wide sidebars reveal the
+// per-row metadata line (.bmeta).
+const SIDE_WIDE_AT = 300;
+function applySideWidth() {
+  const root = document.documentElement;
+  if (settings.sideW) root.style.setProperty("--side-w", settings.sideW + "px");
+  else root.style.removeProperty("--side-w");
+  const side = document.querySelector(".bside");
+  if (side) side.classList.toggle("wide", (settings.sideW || 0) >= SIDE_WIDE_AT);
+}
+(function wireSideGrip() {
+  const grip = $("sideGrip");
+  if (!grip) return;
+  grip.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    grip.classList.add("dragging");
+    const side = document.querySelector(".bside");
+    const left = side ? side.getBoundingClientRect().left : 0;
+    const onMove = (ev) => {
+      const w = Math.round(Math.min(Math.max(ev.clientX - left, 180), window.innerWidth * 0.45));
+      settings.sideW = w;
+      applySideWidth();
+    };
+    const onUp = () => {
+      grip.classList.remove("dragging");
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      persistSettings();
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  });
+  // double-click resets to the default clamp width
+  grip.addEventListener("dblclick", () => { settings.sideW = 0; persistSettings(); applySideWidth(); });
+})();
 
 // ---- render ----
 function render() {
@@ -1140,6 +1179,23 @@ function ctxDirty(path) {
   const pre = "contextos/" + path + "/";
   return Object.keys(gitFiles).some((p) => p.startsWith(pre));
 }
+// ADR-0002 §6 — expanded sidebar rows: date + textual git status, rendered
+// always but visible only when the sidebar is wide (CSS .bside.wide).
+function gitLabel(path) {
+  const c = gitClass(path);
+  return c === "g-new" ? t("novo") : c === "g-mod" ? t("modificado") : c === "g-del" ? t("removido") : "";
+}
+function bMeta(mtime, path) {
+  const bits = [];
+  if (mtime) {
+    try {
+      bits.push(new Date(mtime).toLocaleDateString(uiLocale(), { day: "2-digit", month: "short", year: "numeric" }));
+    } catch (_) {}
+  }
+  const g = gitLabel(path);
+  if (g) bits.push(g);
+  return bits.length ? `<span class="bmeta mono">${esc(bits.join(" · "))}</span>` : "";
+}
 function gitClass(path) {
   const code = gitFiles[path];
   if (!code) return "";
@@ -1206,7 +1262,7 @@ function renderSidebar(st) {
     ? st.inbox.map((f) => {
         const ed = /\.(md|txt)$/i.test(f.name);
         return `<div class="bitem file unsynced${ed ? " ed" : ""}" data-doc="inbox/${esc(f.name)}"
-          title="${ed ? t("não sincronizado — clique para editar") : t("não sincronizado (aguardando o loop)")}">${ico("file")}<span class="bn">${esc(f.name)}</span>
+          title="${ed ? t("não sincronizado — clique para editar") : t("não sincronizado (aguardando o loop)")}">${ico("file")}<span class="bn">${esc(f.name)}${bMeta(f.mtime, "inbox/" + f.name)}</span>
           <button class="rowmenu" data-qmenu="${esc(f.name)}" data-move="${esc(f.name)}" title="${t("ações")}">⋯</button></div>`;
       }).join("") +
       `<div class="bitem addctx" data-genctx title="${t("Processa a fila com o Claude (/brain-context)")}">▶ ${t("gerar contexto")}</div>`
@@ -1228,7 +1284,7 @@ function renderSidebar(st) {
       return `<div class="bitem grp${gOpen ? " open" : ""}" data-toggle="${gKey}">
           ${ico("folder")}<span class="bn">${esc(m)}</span><span class="pill">${fs.length}</span></div>
         <div class="bchild" ${gOpen ? "" : "hidden"}>` +
-        fs.map((f) => `<div class="bitem file ${gitClass(f.path)}" data-doc="${esc(f.path)}" title="${esc(f.name)}">${ico("file")}<span class="bn">${esc(shortName(f.name))}</span></div>`).join("") +
+        fs.map((f) => `<div class="bitem file ${gitClass(f.path)}" data-doc="${esc(f.path)}" title="${esc(f.name)}">${ico("file")}<span class="bn">${esc(shortName(f.name))}${bMeta(f.mtime, f.path)}</span></div>`).join("") +
         `</div>`;
     }).join("");
     return `<div class="bitem ctx${kOpen ? " open" : ""}" data-toggle="${kKey}">
@@ -1422,7 +1478,14 @@ async function loadTemaChildren(slug) {
   if (!holder) return;
   let meetings = [];
   try { meetings = (await invoke("brain_list_meetings", { slug })) || []; } catch (_) {}
+  let notas = [];
+  try { notas = ((await invoke("brain_list_dir", { rel: `brainstorming/${slug}/notas` })) || []).filter((f) => !f.dir); }
+  catch (_) {}
   let inner = "";
+  // ADR-0002 §6: the whole notes block leads the brainstorming (creation-first),
+  // above the meetings — "＋ nova nota" is the top row.
+  inner += `<div class="bitem addctx" data-addnota="${esc(slug)}" title="${t("Escrever uma nota neste brainstorming")}">＋ ${t("nova nota")}</div>`;
+  for (const f of notas) inner += bsPartRow("nota", f.path, f.path, shortName(f.name), f.name, false);
   for (const m of meetings) {
     // título do manifest (renomeável); cai para o id humanizado quando ausente
     const title = LM.meetingTitleFromManifest({ titulo: m.titulo }, m.id);
@@ -1435,16 +1498,9 @@ async function loadTemaChildren(slug) {
       for (const a of arts) inner += bsPartRow(akind, a.path, a.path, shortName(a.name), a.name, true);
     }
   }
-  let notas = [];
-  try { notas = ((await invoke("brain_list_dir", { rel: `brainstorming/${slug}/notas` })) || []).filter((f) => !f.dir); }
-  catch (_) {}
   if (!meetings.length && !notas.length) {
     inner += `<div class="bempty">${t("vazio — grave uma reunião (●) ou escreva uma nota")}</div>`;
   }
-  if (notas.length) inner += `<div class="bcat">${t("notas")}</div>`;
-  // A criação lidera a lista (creation-first UX, 2026-07-28).
-  inner += `<div class="bitem addctx" data-addnota="${esc(slug)}" title="${t("Escrever uma nota neste brainstorming")}">＋ ${t("nova nota")}</div>`;
-  for (const f of notas) inner += bsPartRow("nota", f.path, f.path, shortName(f.name), f.name, false);
   holder.innerHTML = inner;
   wirePessoal();
   markSel();

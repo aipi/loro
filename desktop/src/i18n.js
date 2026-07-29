@@ -154,6 +154,7 @@
     // ---- UI strings (msgid = pt-BR source string) ----
     "não foi possível abrir o Claude no terminal — verifique se o CLI está instalado (claude)": "could not open Claude in the terminal — check that the CLI is installed (claude)",
     "a fila está vazia — envie um relatório ou arquivos antes de gerar contexto": "the queue is empty — send a report or files before generating context",
+    "removido": "deleted",
     "Sem categoria": "Uncategorized",
     "_Sem instruções ainda. Escreva orientações que o loop seguirá antes de processar a fila._": "_No instructions yet. Write guidance the loop will follow before processing the queue._",
     "; a colaboração usa": "; collaboration uses",
