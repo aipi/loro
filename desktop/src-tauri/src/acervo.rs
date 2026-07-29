@@ -443,6 +443,17 @@ pub struct BrainstormingListItem {
     atualizado_em: String,
 }
 
+// ADR-0007: brainstormings created before apresentacoes/anexos existed never
+// got those folders — self-heal on every list call (cheap, idempotent,
+// create-if-absent) instead of requiring an explicit migration step. Mirrors
+// the "respect existing structure, fill only gaps" premise already used for
+// skill files (ensure_meeting_skills).
+fn ensure_brainstorming_subfolders(dir: &Path) {
+    for sub in ["apresentacoes", "anexos"] {
+        let _ = std::fs::create_dir_all(dir.join(sub));
+    }
+}
+
 fn list_brainstormings(base: &Path) -> Vec<BrainstormingListItem> {
     let mut out: Vec<BrainstormingListItem> = std::fs::read_dir(brainstorming_dir(base))
         .map(|rd| {
@@ -450,6 +461,7 @@ fn list_brainstormings(base: &Path) -> Vec<BrainstormingListItem> {
                 .filter(|e| e.path().is_dir())
                 .filter(|e| e.file_name().to_string_lossy() != "avulso")
                 .map(|e| {
+                    ensure_brainstorming_subfolders(&e.path());
                     let slug = e.file_name().to_string_lossy().to_string();
                     let m = read_meta(&e.path());
                     BrainstormingListItem {
@@ -1664,6 +1676,31 @@ mod tests {
         assert_eq!(ref_tipo("a/chart.png"), "image");
         assert_eq!(ref_tipo("a/audio.wav"), "audio");
         assert_eq!(ref_tipo("a/planilha.xlsx"), "other");
+    }
+
+    // ADR-0007: a brainstorming created before apresentacoes/anexos existed
+    // (simulated here by building the old, narrower folder set by hand) must
+    // self-heal the missing folders the next time it's listed — no explicit
+    // migration command required.
+    #[test]
+    fn list_brainstormings_backfills_missing_subfolders() {
+        let base = tmp("bs-backfill");
+        let dir = base.join("brainstorming/legado");
+        for sub in [
+            "reunioes",
+            "investigacoes",
+            "perguntas",
+            "notas",
+            "relatorios",
+        ] {
+            std::fs::create_dir_all(dir.join(sub)).unwrap();
+        }
+        assert!(!dir.join("apresentacoes").exists());
+        assert!(!dir.join("anexos").exists());
+        let list = list_brainstormings(&base);
+        assert_eq!(list.len(), 1);
+        assert!(dir.join("apresentacoes").is_dir());
+        assert!(dir.join("anexos").is_dir());
     }
 
     #[test]

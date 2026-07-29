@@ -975,6 +975,8 @@ body {
 .mtg-action { display: flex; flex-direction: column; gap: 5px; }
 .mtg-action + .mtg-action { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
 .mtg-action .mtg-note { margin: 0; }
+.mtg-skillrow { display: flex; gap: 6px; align-items: center; }
+.mtg-skillrow .mini-select { flex: 1; min-width: 0; }
 
 /* ai_doctor posture (ADR-0011): honest booleans only, never a secret (BR-9). */
 .mtg-aistatus {

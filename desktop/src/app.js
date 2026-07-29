@@ -1996,20 +1996,39 @@ function openAddToolMenu(anchor) {
 // only on hover (title=), never rendered inline (ADR-0007: avoid a wall of
 // text once there are many). loro-sync.md is special-cased into its 4
 // sources since it is one file covering four distinct identifiers.
+// Flattens lastToolFiles into runnable entries: loro-sync.md expands into its
+// 4 sources (one file, four distinct identifiers); every other pickable
+// habilidade (built-in or custom, minus the 5 workflow-specific ones) is one
+// entry. Shared by the ⋯ menu picker AND the meeting rail dropdown so both
+// stay in sync automatically.
+function pickableHabilidadeEntries() {
+  const entries = [];
+  for (const f of lastToolFiles) {
+    if (TOOL_PICKER_EXCLUDE.has(f.name)) continue;
+    if (f.name === "loro-sync.md") {
+      for (const fonte of ["drive", "slack", "jira", "confluence"]) {
+        entries.push({ kind: "sync", fonte, label: fonte, title: f.desc });
+      }
+    } else {
+      entries.push({ kind: "tool", rel: f.path, label: shortName(f.name), title: f.desc || f.path });
+    }
+  }
+  return entries;
+}
+function runHabilidadeEntry(entry, alvoRel) {
+  if (entry.kind === "sync") promptSyncTool(entry.fonte, alvoRel);
+  else promptUseTool(entry.rel);
+}
 function openHabilidadeMenu(alvoRel, anchor) {
   B.acervoMenu.hidden = true;
-  const pickable = lastToolFiles.filter((f) => !TOOL_PICKER_EXCLUDE.has(f.name));
-  const rows = pickable.map((f) => {
-    if (f.name === "loro-sync.md") {
-      return ["drive", "slack", "jira", "confluence"].map((fonte) =>
-        `<div class="fitem2" data-src="${fonte}" title="${esc(f.desc)}"><span class="fn">${fonte}</span></div>`).join("");
-    }
-    return `<div class="fitem2" data-tool="${esc(f.path)}" title="${esc(f.desc || f.path)}"><span class="fn">${esc(shortName(f.name))}</span></div>`;
-  }).join("");
+  const entries = pickableHabilidadeEntries();
+  const rows = entries.map((e, i) =>
+    `<div class="fitem2" data-entry="${i}" title="${esc(e.title)}"><span class="fn">${esc(e.label)}</span></div>`).join("");
   B.bMenu.innerHTML = `<div class="fhead">${t("executar habilidade")}</div>` +
     (rows || `<div class="fnote mono">${t("nenhuma habilidade disponível")}</div>`);
-  B.bMenu.querySelectorAll("[data-src]").forEach((el2) => (el2.onclick = () => { closeFloat(); promptSyncTool(el2.dataset.src, alvoRel); }));
-  B.bMenu.querySelectorAll("[data-tool]").forEach((el2) => (el2.onclick = () => { closeFloat(); promptUseTool(el2.dataset.tool); }));
+  B.bMenu.querySelectorAll("[data-entry]").forEach((el2) => (el2.onclick = () => {
+    closeFloat(); runHabilidadeEntry(entries[Number(el2.dataset.entry)], alvoRel);
+  }));
   placeMenu(anchor);
 }
 
@@ -2640,6 +2659,17 @@ function meetingRailHtml(id, status) {
         : t("disponível quando a reunião terminar — rode analisar para preenchê-lo."), !ready) +
     action("", "mtgQueueBtn", `${t("enviar para a fila")} →`,
       t("Gera um relatório consolidado desta reunião e o coloca na fila de geração de contexto (próximo passo do fluxo)."), !ready) +
+    // ADR-0007: habilidades directly in "o que fazer com esta reunião" — a
+    // single compact dropdown (options populated in wireMeetingSurface from
+    // the already-cached habilidade list), never every description inline;
+    // hover an option (native title) to see what it does.
+    `<div class="mtg-action mtg-skillpick">` +
+      `<div class="mtg-skillrow">` +
+        `<select id="mtgSkillSelect" class="mini-select"></select>` +
+        `<button class="abtn" id="mtgSkillRunBtn">▶ ${t("usar")}</button>` +
+      `</div>` +
+      `<p class="mtg-note mono">${t("executa uma habilidade sobre esta reunião — passe o mouse nas opções para ver a descrição")}</p>` +
+    `</div>` +
     `</div>`;
 }
 
@@ -2657,6 +2687,20 @@ function wireMeetingSurface(id) {
     if (!m) { toast(t("abra a reunião para enviar")); return; }
     sendBrainstormToQueue(m[1], [{ kind: "reuniao", rel: dir }]);
   };
+  const skillSel = B.doc.querySelector("#mtgSkillSelect");
+  if (skillSel) {
+    const entries = pickableHabilidadeEntries();
+    skillSel.innerHTML = entries.length
+      ? entries.map((e, i) => `<option value="${i}" title="${esc(e.title)}">${esc(e.label)}</option>`).join("")
+      : `<option value="">${t("nenhuma habilidade disponível")}</option>`;
+    const runBtn = B.doc.querySelector("#mtgSkillRunBtn");
+    if (runBtn) runBtn.onclick = () => {
+      const entry = entries[Number(skillSel.value)];
+      const dir = currentMeetingDir(id);
+      if (!entry || !dir) return;
+      runHabilidadeEntry(entry, dir);
+    };
+  }
 }
 
 // Resolve the acervo-relative meeting dir for a skill run: the active living/
