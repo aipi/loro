@@ -108,6 +108,21 @@ test("noteCmd targets a folder (create) or a note file (evolve)", () => {
   assert.strictEqual(noteCmd("brainstorming/vendas/notas", "  "), null);
 });
 
+test("toolCmd targets an existing tool file to evolve, mirrors noteCmd", () => {
+  const { toolCmd } = require("../src/brainstorm.js");
+  assert.strictEqual(toolCmd(".claude/commands/resumo.md", "adicione um exemplo"),
+    "/loro-tool .claude/commands/resumo.md adicione um exemplo");
+  assert.strictEqual(toolCmd("", "x"), null);
+  assert.strictEqual(toolCmd(".claude/commands/resumo.md", "  "), null);
+});
+
+test("newToolCmd builds /loro-tool <descrição>, null when empty", () => {
+  const { newToolCmd } = require("../src/brainstorm.js");
+  assert.strictEqual(newToolCmd("resume um ticket do Jira em 3 bullets"),
+    "/loro-tool resume um ticket do Jira em 3 bullets");
+  assert.strictEqual(newToolCmd("  "), null);
+});
+
 test("syncCmd builds /loro-sync <fonte> <alvo> [busca-ou-link], null when either is empty", () => {
   const { syncCmd } = require("../src/brainstorm.js");
   assert.strictEqual(syncCmd("drive", "vendas"), "/loro-sync drive vendas");

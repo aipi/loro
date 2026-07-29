@@ -1171,6 +1171,7 @@ async function brainRefresh() {
   const sig = JSON.stringify([st.inbox.map((f) => f.name), st.contexts, st.reunioes.length, st.notas.length]);
   if (sig !== sideSig) { sideSig = sig; renderSidebar(st); }
   refreshPessoal();   // ADR-0009: produção (mundo pessoal) — self-gated por assinatura
+  refreshTools();     // ADR-0006: ferramentas customizadas — self-gated por assinatura
   markSel();
 }
 
@@ -1753,6 +1754,179 @@ async function promptSyncTool(fonte, slug) {
 document.querySelectorAll("#toolsCard [data-tool]").forEach((el2) =>
   el2.addEventListener("click", () => promptSyncTool(el2.dataset.tool)));
 
+// ============================ ferramentas customizadas (ADR-0006) ============================
+// A tool is any .md in .claude/commands/ NOT among the 7 built-in skills — the
+// filename IS the slash-command (mirrors the deny-list in acervo.rs's
+// BUILTIN_SKILLS; keep both lists in sync). Listed in the sidebar AND as
+// "usar" buttons on the Visão Geral card.
+const TOOL_BUILTINS = new Set([
+  "loro-context.md", "loro-analyse.md", "loro-question.md",
+  "loro-ask.md", "loro-note.md", "loro-sync.md", "loro-tool.md",
+]);
+let toolsSig = "";
+async function refreshTools() {
+  if (!brainTab) return;
+  let files = [];
+  try {
+    files = ((await invoke("brain_list_dir", { rel: ".claude/commands" })) || [])
+      .filter((f) => !f.dir && !TOOL_BUILTINS.has(f.name));
+  } catch (_) { files = []; }
+  const sig = JSON.stringify(files.map((f) => f.name));
+  if (sig === toolsSig) return;
+  toolsSig = sig;
+  renderTools(files);
+}
+function toolRow(rel, label) {
+  return `<div class="bitem file" data-doc="${esc(rel)}" title="${esc(rel)}">` +
+    `${ico("file")}<span class="bn">${esc(label)}</span>` +
+    `<button class="rowmenu" data-toolmenu="${esc(rel)}" data-toollabel="${esc(label)}" title="${t("ações (usar, editar, pedir à IA, excluir)")}">⋯</button>` +
+    `</div>`;
+}
+let lastToolFiles = [];
+function renderTools(files) {
+  lastToolFiles = files;
+  const nav = $("navTools");
+  if (nav) {
+    nav.innerHTML = files.length
+      ? files.map((f) => toolRow(f.path, shortName(f.name))).join("")
+      : `<div class="bempty">${t("nenhuma ferramenta ainda — crie uma com IA ou importe uma pronta (＋)")}</div>`;
+  }
+  const home = $("homeCustomTools");
+  if (home) {
+    home.innerHTML = files.map((f) =>
+      `<button class="abtn" data-usetool="${esc(f.path)}">${esc(shortName(f.name))}</button>`).join("");
+    home.querySelectorAll("[data-usetool]").forEach((el2) =>
+      el2.addEventListener("click", () => promptUseTool(el2.dataset.usetool)));
+  }
+  wireTools();
+}
+function wireTools() {
+  const nav = $("navTools");
+  if (!nav) return;
+  nav.querySelectorAll("[data-doc]").forEach((el2) => {
+    el2.onclick = (e) => { if (e.target.closest("[data-toolmenu]")) return; openDoc(el2.dataset.doc, { preview: true }); };
+    el2.ondblclick = () => openDoc(el2.dataset.doc, { preview: false });
+  });
+  nav.querySelectorAll("[data-toolmenu]").forEach((el2) => (el2.onclick = (e) => {
+    e.stopPropagation(); openToolMenu(el2.dataset.toolmenu, el2.dataset.toollabel, el2);
+  }));
+}
+// usar / editar / pedir à IA / excluir — same ⋯-menu spirit as openArtefatoMenu,
+// scoped to a tool instead of a note.
+function openToolMenu(rel, label, anchor) {
+  B.acervoMenu.hidden = true;
+  B.bMenu.innerHTML =
+    `<div class="fhead">${esc(label)}</div>` +
+    `<div class="fitem2 strong" data-use><span class="fn">▶ ${t("usar")}</span></div>` +
+    `<div class="fitem2" data-edit><span class="fn">✎ ${t("editar")}</span></div>` +
+    `<div class="fitem2" data-ainote><span class="fn">✦ ${t("pedir à IA")}</span></div>` +
+    `<div class="fitem2 danger" data-del><span class="fn">${t("excluir")}</span></div>`;
+  B.bMenu.querySelector("[data-use]").onclick = () => { closeFloat(); promptUseTool(rel); };
+  B.bMenu.querySelector("[data-edit]").onclick = () => { closeFloat(); openDoc(rel, { preview: false }); };
+  B.bMenu.querySelector("[data-ainote]").onclick = () => { closeFloat(); promptToolAI(rel); };
+  B.bMenu.querySelector("[data-del]").onclick = () => { closeFloat(); delTool(rel); };
+  placeMenu(anchor);
+}
+async function delTool(rel) {
+  if (!confirm(t("excluir esta ferramenta?"))) return;
+  try { await invoke("brain_delete_tool", { rel }); toolsSig = ""; refreshTools(); toast(t("excluída")); }
+  catch (e) { toast(tErr(String(e))); }
+}
+// "usar": reads the tool's own front-matter (description/argument-hint) to
+// prompt for arguments, then just runs "/<slug> <args>" — the file itself IS
+// the slash-command, no dedicated runner needed.
+async function promptUseTool(rel) {
+  const slug = rel.split("/").pop().replace(/\.md$/, "");
+  let hint = "", desc = "";
+  try {
+    const raw = await invoke("brain_read", { rel });
+    const mHint = /argument-hint:\s*(.+)/.exec(raw);
+    const mDesc = /description:\s*(.+)/.exec(raw);
+    if (mHint) hint = mHint[1].trim();
+    if (mDesc) desc = mDesc[1].trim();
+  } catch (_) {}
+  openModal(
+    `${t("usar")} /${slug}`,
+    (desc ? `<p class="pmnote mono">${esc(desc)}</p>` : "") +
+      `<label class="wfield"><span class="mono">${t("argumentos")}</span>` +
+      `<input id="useToolInput" type="text" placeholder="${esc(hint || t("opcional"))}" spellcheck="false"></label>`,
+    t("rodar"),
+    () => {
+      const args = (($("useToolInput") && $("useToolInput").value) || "").trim();
+      termRunAgent("/" + slug + (args ? " " + args : ""));
+      toast(t("comando enviado ao agente do terminal"), 4000);
+    }
+  );
+  const inp = $("useToolInput"); if (inp) inp.focus();
+}
+function promptToolAI(rel) {
+  openModal(
+    t("Pedir à IA sobre esta ferramenta"),
+    `<p class="pmnote mono">${t("a IA lê a ferramenta e aplica o pedido nela mesma — evolui, não apaga.")}</p>` +
+      `<label class="wfield"><span class="mono">${t("pedido")}</span>` +
+      `<input id="toolAiInput" type="text" placeholder="${t("ex.: adicione um passo para validar o input")}" spellcheck="false"></label>`,
+    t("enviar"),
+    () => {
+      const p = (($("toolAiInput") && $("toolAiInput").value) || "").trim();
+      const cmd = LoroBrainstorm.toolCmd(rel, p);
+      if (!cmd) { toast(t("descreva o pedido")); return; }
+      termRunAgent(cmd);
+      toast(t("pedido enviado ao agente do terminal"), 4000);
+    }
+  );
+  const inp = $("toolAiInput"); if (inp) inp.focus();
+}
+function promptNewToolAI() {
+  openModal(
+    t("Nova ferramenta (IA)"),
+    `<p class="pmnote mono">${t("descreva o que a ferramenta deve fazer — a IA cria a skill; ela aparece na lateral quando terminar.")}</p>` +
+      `<label class="wfield"><span class="mono">${t("descrição")}</span>` +
+      `<input id="newToolInput" type="text" placeholder="${t("ex.: resume um ticket do Jira em 3 bullets")}" spellcheck="false"></label>`,
+    t("criar"),
+    () => {
+      const d = (($("newToolInput") && $("newToolInput").value) || "").trim();
+      const cmd = LoroBrainstorm.newToolCmd(d);
+      if (!cmd) { toast(t("descreva a ferramenta")); return; }
+      termRunAgent(cmd);
+      toast(t("pedido enviado ao agente do terminal — a ferramenta aparece na lateral"), 4000);
+    }
+  );
+  const inp = $("newToolInput"); if (inp) inp.focus();
+}
+function promptImportTool() {
+  openModal(
+    t("Importar ferramenta existente"),
+    `<p class="pmnote mono">${t("cole o conteúdo de uma skill (.md) que você já tem.")}</p>` +
+      `<label class="wfield"><span class="mono">${t("nome")}</span>` +
+      `<input id="importToolName" type="text" placeholder="${t("ex.: resumo-jira")}" spellcheck="false"></label>` +
+      `<label class="wfield"><span class="mono">${t("conteúdo")}</span>` +
+      `<textarea id="importToolBody" rows="8" spellcheck="false" placeholder="---&#10;description: ...&#10;---&#10;&#10;..."></textarea></label>`,
+    t("importar"),
+    async () => {
+      const nome = (($("importToolName") && $("importToolName").value) || "").trim();
+      const conteudo = (($("importToolBody") && $("importToolBody").value) || "").trim();
+      if (!nome || !conteudo) { toast(t("preencha nome e conteúdo")); return; }
+      try {
+        const rel = await invoke("brain_new_tool", { nome, conteudo });
+        toolsSig = ""; refreshTools();
+        toast(t("ferramenta importada"));
+        openDoc(rel, { preview: false });
+      } catch (e) { toast(tErr(String(e))); }
+    }
+  );
+  const inp = $("importToolName"); if (inp) inp.focus();
+}
+function openAddToolMenu(anchor) {
+  B.acervoMenu.hidden = true;
+  B.bMenu.innerHTML =
+    `<div class="fitem2 strong" data-ai><span class="fn">✦ ${t("nova ferramenta (IA)")}</span></div>` +
+    `<div class="fitem2" data-import><span class="fn">⇩ ${t("importar skill existente")}</span></div>`;
+  B.bMenu.querySelector("[data-ai]").onclick = () => { closeFloat(); promptNewToolAI(); };
+  B.bMenu.querySelector("[data-import]").onclick = () => { closeFloat(); promptImportTool(); };
+  placeMenu(anchor);
+}
+{ const ab = $("addToolBtn"); if (ab) ab.addEventListener("click", (e) => { e.stopPropagation(); openAddToolMenu(ab); }); }
+
 // Inline "nova nota" inside a brainstorming (mirrors promptNewContext/promptNewTema).
 // Writes brainstorming/<slug>/notas/<slug>.md via brain_new_notebook and opens it.
 let notaEditing = false;
@@ -1836,6 +2010,7 @@ function openMeetingMenu(rel, id, title, status, anchor) {
     `<div class="fitem2${ready ? "" : " strong"}" data-question><span class="fn">? ${t("perguntar…")}</span></div>` +
     `<div class="fitem2${dis ? " off" : ""}" data-report><span class="fn">≡ ${t("ver relatório")}</span></div>` +
     (ready ? "" : `<div class="fnote mono">${t("analisar e ver relatório ficam disponíveis quando a reunião terminar — perguntar já funciona agora")}</div>`) +
+    `<div class="fitem2" data-tools><span class="fn">🧰 ${t("ferramentas…")}</span></div>` +
     `<div class="fsep"></div>` +
     `<div class="fitem2" data-ren><span class="fn">✎ ${t("renomear")}</span></div>` +
     `<div class="fitem2 danger" data-del><span class="fn">${t("apagar reunião")}</span></div>`;
@@ -1844,8 +2019,25 @@ function openMeetingMenu(rel, id, title, status, anchor) {
     B.bMenu.querySelector("[data-report]").onclick = () => { closeFloat(); buildAndOpenReport(id); };
   }
   B.bMenu.querySelector("[data-question]").onclick = () => { closeFloat(); askMeetingQuestion(id, rel); };
+  B.bMenu.querySelector("[data-tools]").onclick = () => openMeetingToolsMenu(rel, anchor);
   B.bMenu.querySelector("[data-ren]").onclick = () => { closeFloat(); promptRenameMeeting(id, title); };
   B.bMenu.querySelector("[data-del]").onclick = () => { closeFloat(); delPessoal(rel, "reuniao"); };
+  placeMenu(anchor);
+}
+// "🧰 ferramentas" usable during a meeting: same sync sources (Drive/Slack/
+// Jira/Confluence — meeting's own rel as alvo, no tema select needed) plus
+// any custom tool, reusing the exact same prompts as the Visão Geral card.
+function openMeetingToolsMenu(rel, anchor) {
+  B.acervoMenu.hidden = true;
+  const sources = ["drive", "slack", "jira", "confluence"]
+    .map((f) => `<div class="fitem2" data-src="${f}"><span class="fn">${f}</span></div>`).join("");
+  const tools = lastToolFiles
+    .map((f) => `<div class="fitem2" data-tool="${esc(f.path)}"><span class="fn">${esc(shortName(f.name))}</span></div>`).join("");
+  B.bMenu.innerHTML =
+    `<div class="fhead">${t("ferramentas")}</div>` + sources +
+    (tools ? `<div class="fsep"></div>${tools}` : "");
+  B.bMenu.querySelectorAll("[data-src]").forEach((el2) => (el2.onclick = () => { closeFloat(); promptSyncTool(el2.dataset.src, rel); }));
+  B.bMenu.querySelectorAll("[data-tool]").forEach((el2) => (el2.onclick = () => { closeFloat(); promptUseTool(el2.dataset.tool); }));
   placeMenu(anchor);
 }
 

@@ -242,11 +242,14 @@ body {
 }
 .wfield > span { flex: none; width: 78px; }
 .wfield input,
-.wfield select {
+.wfield select,
+.wfield textarea {
   flex: 1; border: none; background: none; color: var(--ink);
   font-family: var(--sans); font-size: 14px; outline: none; max-width: none;
 }
 .wfield select { cursor: pointer; }
+.wfield textarea { resize: vertical; font-family: var(--mono); font-size: 12px; line-height: 1.5; }
+.wfield:has(textarea) { align-items: flex-start; }
 .wfield .dirbtn { flex: 1; max-width: none; border: none; padding: 0; }
 .hint { font-family: var(--mono); font-size: 10.5px; color: var(--muted); letter-spacing: .03em; }
 .hint.err { color: var(--red); }

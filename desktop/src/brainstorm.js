@@ -123,10 +123,25 @@
     return s && t ? "/loro-sync " + s + " " + t + (q ? " " + q : "") : null;
   }
 
+  // /loro-tool: mirrors noteCmd's dual shape, but for custom tools — first
+  // token is the target (a description → create; an existing tool .md →
+  // evolve in place with the rest as the request).
+  function toolCmd(target, prompt) {
+    const d = String(target == null ? "" : target).replace(/\s+/g, " ").trim();
+    const p = String(prompt == null ? "" : prompt).replace(/\s+/g, " ").trim();
+    return d && p ? "/loro-tool " + d + " " + p : null;
+  }
+  // /loro-tool <descrição>: the create-a-new-tool shape — a single free-text
+  // description, no target file. Returns null when empty.
+  function newToolCmd(descricao) {
+    const d = String(descricao == null ? "" : descricao).replace(/\s+/g, " ").trim();
+    return d ? "/loro-tool " + d : null;
+  }
+
   return {
     STAGES, stages,
     groupByCategory,
     emptySelection, toggleSelection, selectedItems,
-    reportInboxName, brainContextCmd, brainAskCmd, noteCmd, syncCmd,
+    reportInboxName, brainContextCmd, brainAskCmd, noteCmd, syncCmd, toolCmd, newToolCmd,
   };
 });

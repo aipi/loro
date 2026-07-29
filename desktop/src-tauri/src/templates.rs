@@ -904,6 +904,103 @@ pub fn loro_sync_skill(lang: &str) -> &'static str {
     }
 }
 
+// ---- user-authored tools (/loro-tool, ADR-0006 §E) ----
+// A meta-skill: creates or evolves OTHER skills. Same dual create-or-evolve
+// shape as /loro-note, but targeting `.claude/commands/` instead of
+// `brainstorming/.../notas/` — the created file becomes its own slash-command
+// immediately (Claude Code discovers any .md there). Importing an
+// already-written skill (no AI drafting) is a separate path — the app's own
+// "importar skill existente" UI writes the file directly (brain_new_tool),
+// never through this skill.
+pub const LORO_TOOL_SKILL: &str = r#"---
+description: Cria ou evolui uma ferramenta customizada (skill) a partir de uma descrição (ADR-0006)
+argument-hint: <descrição-da-ferramenta> | <ferramenta-existente.md> <pedido>
+---
+
+Argumentos: `$ARGUMENTS`
+
+Você cria/evolui ferramentas customizadas do usuário — skills que viram
+comandos de barra (`/nome-da-ferramenta`) reais assim que o arquivo existe.
+Trabalhe SOMENTE dentro de `.claude/commands/`.
+
+- Se o PRIMEIRO token for o caminho de um `.md` já existente em
+  `.claude/commands/`: é para EVOLUIR essa ferramenta — leia o arquivo e
+  aplique o resto do argumento (o pedido) sobre ele, editando no lugar;
+  preserve o que já funciona, evolua, não apague.
+- Caso contrário: o argumento inteiro é a DESCRIÇÃO de uma ferramenta NOVA.
+  Derive um nome curto em kebab-case a partir da descrição — NUNCA um dos
+  nomes reservados (`loro-context`, `loro-analyse`, `loro-question`,
+  `loro-ask`, `loro-note`, `loro-sync`, `loro-tool`); em colisão com uma
+  ferramenta já existente, acrescente um sufixo. Crie
+  `.claude/commands/<nome>.md` com:
+  - front-matter `description:` (curta, o que a ferramenta faz) e, se a
+    ferramenta precisar de entrada, `argument-hint:`;
+  - um prompt objetivo que descreva o que fazer com `$ARGUMENTS`, no mesmo
+    espírito das outras skills deste acervo (local-first quando fizer
+    sentido; nunca assumir premissas não declaradas).
+- Ao final, diga o nome do comando resultante (`/<nome>`) e uma frase sobre
+  o que ele faz.
+
+Regras de rigor (ADR-0002 §5):
+- **Nunca assuma premissas** não declaradas: se a descrição for vaga sobre o
+  que a ferramenta deve fazer, registre isso no prompt gerado como uma
+  pergunta em aberto, em vez de inventar comportamento.
+- **Varredura eficiente:** para ler muitos arquivos, delegue a leitura a
+  subagentes (Task) num modelo rápido (ex. Haiku) retornando só o essencial;
+  reserve o modelo principal para a síntese.
+- **Leitura barata (ADR-0004):** comece pelo `INDEX.md` e pelo Sumário (§0) de
+  cada `context.md`; localize IDs estáveis (`D-…`, `H-…`) com busca e leia
+  somente a seção necessária — o arquivo inteiro é o último recurso.
+"#;
+
+pub const LORO_TOOL_SKILL_EN: &str = r#"---
+description: Creates or evolves a custom tool (skill) from a description (ADR-0006)
+argument-hint: <tool-description> | <existing-tool.md> <request>
+---
+
+Arguments: `$ARGUMENTS`
+
+You create/evolve the user's custom tools — skills that become real
+slash-commands (`/tool-name`) as soon as the file exists. Work ONLY inside
+`.claude/commands/`.
+
+- If the FIRST token is the path of an existing `.md` in
+  `.claude/commands/`: EVOLVE that tool — read the file and apply the rest
+  of the argument (the request) to it, editing in place; preserve what
+  already works, evolve, do not erase.
+- Otherwise: the whole argument is the DESCRIPTION of a NEW tool. Derive a
+  short kebab-case name from the description — NEVER one of the reserved
+  names (`loro-context`, `loro-analyse`, `loro-question`, `loro-ask`,
+  `loro-note`, `loro-sync`, `loro-tool`); on collision with an existing
+  tool, add a suffix. Create `.claude/commands/<name>.md` with:
+  - a `description:` front-matter field (short, what the tool does) and,
+    if the tool needs input, `argument-hint:`;
+  - an objective prompt describing what to do with `$ARGUMENTS`, in the
+    same spirit as this acervo's other skills (local-first when it makes
+    sense; never assume unstated premises).
+- At the end, state the resulting command's name (`/<name>`) and a
+  sentence about what it does.
+
+Rigor rules (ADR-0002 §5):
+- **Never assume unstated premises.** If the description is vague about
+  what the tool should do, record that in the generated prompt as an open
+  question instead of inventing behavior.
+- **Efficient scanning:** to read many files, delegate reading to subagents
+  (Task) on a fast model (e.g. Haiku) returning only the essentials; keep
+  the main model for synthesis.
+- **Cheap reading (ADR-0004):** start from `INDEX.md` and each `context.md`
+  Summary (§0); locate stable IDs (`D-…`, `H-…`) via search and read only
+  the needed section — the whole file is the last resort.
+"#;
+
+pub fn loro_tool_skill(lang: &str) -> &'static str {
+    if lang == "en" {
+        LORO_TOOL_SKILL_EN
+    } else {
+        LORO_TOOL_SKILL
+    }
+}
+
 // ---- general Q&A over the knowledge base (ADR-0013) ----
 //
 // `/loro-ask` answers ANY question from the acervo's versioned contexts (the local
@@ -1096,6 +1193,7 @@ mod tests {
                 ("answer", meeting_question_skill(lang)),
                 ("note", loro_note_skill(lang)),
                 ("sync", loro_sync_skill(lang)),
+                ("tool", loro_tool_skill(lang)),
             ] {
                 assert!(
                     body.contains(no_assume),

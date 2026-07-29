@@ -538,6 +538,78 @@ pub fn brain_list_meetings(slug: String) -> Result<Vec<MeetingListItem>, String>
     Ok(list_meetings(&acervo_base()?, &slug))
 }
 
+// ---- user tools (ADR-0006 §E) -----------------------------------------------
+// A tool is any `.md` in `.claude/commands/` that is NOT one of the 7 built-in
+// skills — the filename IS the slash-command (`minha-ferramenta.md` ->
+// `/minha-ferramenta`). This deny-list is the only thing that keeps a custom
+// tool from shadowing/deleting a built-in one; it must stay in sync with the
+// skill list materialized by ensure_acervo_structure/ensure_meeting_skills.
+pub const BUILTIN_SKILLS: [&str; 7] = [
+    "loro-context.md",
+    "loro-analyse.md",
+    "loro-question.md",
+    "loro-ask.md",
+    "loro-note.md",
+    "loro-sync.md",
+    "loro-tool.md",
+];
+
+fn tools_dir(base: &Path) -> PathBuf {
+    base.join(".claude/commands")
+}
+
+// Create a new tool (imported skill content, never AI-drafted here — that
+// path is /loro-tool itself, writing directly via the terminal agent).
+// Non-destructive: refuses a builtin name, never overwrites (suffix on
+// collision, mirroring new_notebook).
+fn new_tool(base: &Path, nome: &str, conteudo: &str) -> Result<String, String> {
+    let slug = sanitize_slug(nome)?;
+    let fname = format!("{slug}.md");
+    if BUILTIN_SKILLS.contains(&fname.as_str()) {
+        return Err("err.tool_name_reserved".into());
+    }
+    let dir = tools_dir(base);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let mut path = dir.join(&fname);
+    let mut n = 1;
+    while path.exists() {
+        n += 1;
+        path = dir.join(format!("{slug}-{n}.md"));
+    }
+    std::fs::write(&path, conteudo).map_err(|e| e.to_string())?;
+    path.strip_prefix(base)
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .map_err(|e| e.to_string())
+}
+
+// Delete a tool. Restricted to `.claude/commands/*.md`, outside the builtin
+// deny-list — never an arbitrary acervo file, never a built-in skill.
+fn delete_tool(base: &Path, rel: &str) -> Result<(), String> {
+    let rel = rel.replace('\\', "/");
+    let name = Path::new(&rel)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
+    if !rel.starts_with(".claude/commands/") || !rel.ends_with(".md") {
+        return Err("err.tool_path_invalid".into());
+    }
+    if BUILTIN_SKILLS.contains(&name) {
+        return Err("err.tool_name_reserved".into());
+    }
+    let p = guarded_existing(base, &rel)?;
+    std::fs::remove_file(&p).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn brain_new_tool(nome: String, conteudo: String) -> Result<String, String> {
+    new_tool(&acervo_base()?, &nome, &conteudo)
+}
+
+#[tauri::command]
+pub fn brain_delete_tool(rel: String) -> Result<(), String> {
+    delete_tool(&acervo_base()?, &rel)
+}
+
 // Create a notebook (.md) with living front-matter. Under a brainstorming's notas/
 // when one is given, else brainstorming/avulso/<AAAA-MM-DD>-<slug>.md. Non-destructive.
 fn new_notebook(
@@ -1769,6 +1841,48 @@ mod tests {
         assert!(!is_openable_link("javascript:alert(1)"));
         assert!(!is_openable_link("notas/x.md"));
         assert!(!is_openable_link("acervo://notas/x.md"));
+    }
+
+    #[test]
+    fn new_tool_writes_command_file_and_refuses_builtin_names() {
+        let base = tmp("tool-new");
+        let rel = new_tool(
+            &base,
+            "Minha Ferramenta",
+            "---\ndescription: x\n---\n\nfaça x",
+        )
+        .unwrap();
+        assert_eq!(rel, ".claude/commands/minha-ferramenta.md");
+        assert_eq!(
+            std::fs::read_to_string(base.join(&rel)).unwrap(),
+            "---\ndescription: x\n---\n\nfaça x"
+        );
+        // reserved: a builtin skill name is refused
+        assert!(new_tool(&base, "loro-note", "x").is_err());
+        assert!(new_tool(&base, "loro-sync", "x").is_err());
+    }
+
+    #[test]
+    fn new_tool_never_overwrites_existing() {
+        let base = tmp("tool-collide");
+        let a = new_tool(&base, "resumo", "primeira").unwrap();
+        let b = new_tool(&base, "resumo", "segunda").unwrap();
+        assert_ne!(a, b);
+        assert_eq!(std::fs::read_to_string(base.join(&a)).unwrap(), "primeira");
+        assert_eq!(std::fs::read_to_string(base.join(&b)).unwrap(), "segunda");
+    }
+
+    #[test]
+    fn delete_tool_refuses_builtin_and_non_command_paths() {
+        let base = tmp("tool-del-guard");
+        std::fs::create_dir_all(base.join(".claude/commands")).unwrap();
+        std::fs::write(base.join(".claude/commands/loro-note.md"), "x").unwrap();
+        std::fs::write(base.join(".claude/commands/minha.md"), "x").unwrap();
+        std::fs::write(base.join("brainstorming/x.md"), "x").unwrap_or(());
+        assert!(delete_tool(&base, ".claude/commands/loro-note.md").is_err());
+        assert!(delete_tool(&base, "brainstorming/x.md").is_err());
+        assert!(delete_tool(&base, ".claude/commands/minha.md").is_ok());
+        assert!(!base.join(".claude/commands/minha.md").exists());
     }
 
     #[test]
