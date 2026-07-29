@@ -103,10 +103,18 @@
     return "/loro-ask " + (c ? "[contexto: " + c + "] " : "") + q;
   }
 
+  // /loro-note: first token is the target (notes folder → create; .md file →
+  // evolve in place); the rest is the prompt, flattened to one line.
+  function noteCmd(target, prompt) {
+    const d = String(target == null ? "" : target).replace(/\s+/g, " ").trim();
+    const p = String(prompt == null ? "" : prompt).replace(/\s+/g, " ").trim();
+    return d && p ? "/loro-note " + d + " " + p : null;
+  }
+
   return {
     STAGES, stages,
     groupByCategory,
     emptySelection, toggleSelection, selectedItems,
-    reportInboxName, brainContextCmd, brainAskCmd,
+    reportInboxName, brainContextCmd, brainAskCmd, noteCmd,
   };
 });

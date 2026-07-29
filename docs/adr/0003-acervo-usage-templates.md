@@ -96,6 +96,17 @@
   `brain_status`, …): the rename is the *user-facing command surface*, not the
   code's ubiquitous language. ADR-0001 keeps the old names as history.
 
+### §5 `/loro-note` — AI-assisted notes
+
+- New skill in the family: `/loro-note <target> <prompt>`. A folder target
+  (`brainstorming/<t>/notas`) creates a new note from the prompt (kebab-case
+  filename, never overwrites); a `.md` target evolves that note in place
+  (expand/summarize/restructure — preserve, never erase). Confined to
+  `brainstorming/`; local-first over `contextos/` (read-only); carries the
+  ADR-0002 §5 rigor rules. UI: "✦ nota por IA…" in the brainstorming ⋯ menu,
+  "✦ pedir à IA…" in a note/analysis ⋯ menu; results surface via the
+  post-action sidebar refresh burst.
+
 ## Consequences
 
 - The wizard gains a template picker (localized from the manifests, not from

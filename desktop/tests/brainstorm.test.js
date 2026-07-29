@@ -97,3 +97,13 @@ test("brainAskCmd scopes the question to a context when given", () => {
   assert.strictEqual(brainAskCmd("qual o pipeline?"), "/loro-ask qual o pipeline?");
   assert.strictEqual(brainAskCmd("", "vendas"), null);
 });
+
+test("noteCmd targets a folder (create) or a note file (evolve)", () => {
+  const { noteCmd } = require("../src/brainstorm.js");
+  assert.strictEqual(noteCmd("brainstorming/vendas/notas", "riscos do contrato"),
+    "/loro-note brainstorming/vendas/notas riscos do contrato");
+  assert.strictEqual(noteCmd("brainstorming/vendas/notas/n.md", "resuma\nem bullets"),
+    "/loro-note brainstorming/vendas/notas/n.md resuma em bullets");
+  assert.strictEqual(noteCmd("", "x"), null);
+  assert.strictEqual(noteCmd("brainstorming/vendas/notas", "  "), null);
+});

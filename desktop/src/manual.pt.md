@@ -60,6 +60,9 @@ fila; o botão "gerar contexto" pede ao Claude do terminal que destile a fila em
 - Dentro dele (expanda o brainstorming na lateral): **＋ nova nota** para
   escrever, e **● gravar reunião** para gravar uma **reunião** ligada ao tema
   (também na paleta `Cmd/Ctrl+Shift+P` → "nova reunião").
+- **✦ nota por IA** (menu ⋯ do brainstorming) cria uma nota a partir de um
+  pedido seu; **✦ pedir à IA** (menu ⋯ de uma nota ou análise) aplica um pedido
+  sobre o arquivo existente — a IA evolui o conteúdo, nunca apaga.
 - As ações **analisar**, **perguntar…** e **ver relatório** ficam na aba
   `reuniao.md` da reunião e também no menu **⋯** da reunião na lateral; elas
   habilitam quando a reunião termina (o relatório é preenchido pelo

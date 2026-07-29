@@ -1135,6 +1135,7 @@ fn ensure_acervo_structure(
             meeting_question_skill(lang),
         ),
         (".claude/commands/loro-ask.md", brain_ask_skill(lang)),
+        (".claude/commands/loro-note.md", loro_note_skill(lang)),
     ] {
         let p = base.join(rel);
         if !p.exists() {
@@ -2015,6 +2016,10 @@ fn migrate_acervo(base: &Path, apply: bool, lang: &str) -> Result<MigrationRepor
             ".claude/commands/loro-ask.md",
             brain_ask_skill(lang).to_string(),
         ),
+        (
+            ".claude/commands/loro-note.md",
+            loro_note_skill(lang).to_string(),
+        ),
     ] {
         let p = base.join(rel);
         if !p.exists() {
@@ -2883,6 +2888,7 @@ fn ensure_meeting_skills(base: &Path, lang: &str) {
             meeting_question_skill(lang),
         ),
         (".claude/commands/loro-ask.md", brain_ask_skill(lang)),
+        (".claude/commands/loro-note.md", loro_note_skill(lang)),
     ] {
         let p = base.join(rel);
         if !p.exists() {

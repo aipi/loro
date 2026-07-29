@@ -62,6 +62,9 @@ in a brainstorming; you select what matters and send a report to the queue;
 - Inside it (expand the brainstorming in the sidebar): **＋ new note** to
   write, and **● record meeting** to record a **meeting** tied to the topic
   (also in the palette `Cmd/Ctrl+Shift+P` → "nova reunião").
+- **✦ AI note** (the brainstorming's ⋯ menu) creates a note from your
+  request; **✦ ask the AI** (a note's or analysis' ⋯ menu) applies a request
+  to the existing file — the AI evolves the content, never erases it.
 - The **analyse**, **ask…** and **view report** actions live in the
   meeting's `reuniao.md` tab and also in the meeting's **⋯** menu in the
   sidebar; they enable once the meeting ends (analyse fills the report).

@@ -1640,9 +1640,12 @@ function openBsMenu(slug, anchor) {
   B.acervoMenu.hidden = true;
   B.bMenu.innerHTML =
     `<div class="fhead">${esc(slug)}</div>` +
+    `<div class="fitem2 strong" data-ainote><span class="fn">✦ ${t("nota por IA…")}</span></div>` +
+    `<div class="fsep"></div>` +
     `<div class="fitem2" data-ren><span class="fn">${t("renomear")}</span></div>` +
     `<div class="fitem2" data-toqueue><span class="fn">${t("gerar relatório de tudo → fila")}</span></div>` +
     `<div class="fitem2 danger" data-del><span class="fn">${t("apagar brainstorming")}</span></div>`;
+  B.bMenu.querySelector("[data-ainote]").onclick = () => { closeFloat(); promptNoteAI(`brainstorming/${slug}/notas`, false); };
   B.bMenu.querySelector("[data-ren]").onclick = () => { closeFloat(); promptRenameBs(slug); };
   B.bMenu.querySelector("[data-toqueue]").onclick = () => { closeFloat(); sendBrainstormToQueue(slug, []); };
   B.bMenu.querySelector("[data-del]").onclick = () => { closeFloat(); delPessoal("brainstorming/" + slug, "tema"); };
@@ -1707,11 +1710,39 @@ function openArtefatoMenu(rel, label, anchor) {
   B.acervoMenu.hidden = true;
   B.bMenu.innerHTML =
     `<div class="fhead">${esc(label)}</div>` +
+    `<div class="fitem2 strong" data-ainote><span class="fn">✦ ${t("pedir à IA…")}</span></div>` +
+    `<div class="fsep"></div>` +
     `<div class="fitem2" data-ren><span class="fn">✎ ${t("renomear")}</span></div>` +
     `<div class="fitem2 danger" data-del><span class="fn">${t("apagar")}</span></div>`;
+  B.bMenu.querySelector("[data-ainote]").onclick = () => { closeFloat(); promptNoteAI(rel, true); };
   B.bMenu.querySelector("[data-ren]").onclick = () => { closeFloat(); promptRenameArtefato(rel); };
   B.bMenu.querySelector("[data-del]").onclick = () => { closeFloat(); delPessoal(rel); };
   placeMenu(anchor);
+}
+
+// /loro-note: create a note from a prompt (target = notes folder) or evolve an
+// existing note in place (target = the .md file). Runs in the terminal agent;
+// the sidebar's post-action refresh burst surfaces the result.
+function promptNoteAI(target, isFile) {
+  openModal(
+    isFile ? t("Pedir à IA sobre esta nota") : t("Nota por IA"),
+    `<p class="pmnote mono">${isFile
+      ? t("a IA lê a nota e aplica o pedido nela mesma — evolui, não apaga.")
+      : t("descreva a nota que o Loro deve criar neste brainstorming.")}</p>` +
+      `<label class="wfield"><span class="mono">${t("pedido")}</span>` +
+      `<input id="noteAiInput" type="text" placeholder="${isFile
+        ? t("ex.: resuma em 5 bullets e liste as dúvidas")
+        : t("ex.: nota sobre os riscos do contrato X, com o que sabemos hoje")}" spellcheck="false"></label>`,
+    t("enviar"),
+    () => {
+      const p = (($("noteAiInput") && $("noteAiInput").value) || "").trim();
+      const cmd = LoroBrainstorm.noteCmd(target, p);
+      if (!cmd) { toast(t("descreva o pedido")); return; }
+      termRunAgent(cmd);
+      toast(t("pedido enviado ao agente do terminal — a nota aparece na lateral"), 4000);
+    }
+  );
+  const inp = $("noteAiInput"); if (inp) inp.focus();
 }
 function promptRenameArtefato(rel) {
   const current = rel.split("/").pop() || "";

@@ -561,6 +561,77 @@ pub fn meeting_question_skill(lang: &str) -> &'static str {
     }
 }
 
+// ---- AI-assisted notes (/loro-note, ADR-0003 §5) ----
+// Create a note from a prompt, or evolve an existing note — always confined to
+// the non-versioned brainstorming world.
+pub const LORO_NOTE_SKILL: &str = r#"---
+description: Cria ou evolui uma nota de brainstorming a partir de um prompt (ADR-0003)
+argument-hint: <pasta-notas-ou-nota.md> <prompt>
+---
+
+Argumentos: `$ARGUMENTS`
+O PRIMEIRO token é o alvo (relativo à raiz do acervo); o RESTANTE é o prompt.
+
+Você é o assistente de notas do Loro. Trabalhe SOMENTE dentro de `brainstorming/`
+— nunca toque em `contextos/` (mundo versionado) nem em `manifest.json`.
+
+- Alvo é uma PASTA (ex.: `brainstorming/<tema>/notas`): crie uma nota nova em
+  markdown a partir do prompt. Nome do arquivo: kebab-case curto derivado do
+  assunto, terminando em `.md`; NUNCA sobrescreva um arquivo existente (em
+  colisão, acrescente um sufixo). Primeira linha = título (`# …`).
+- Alvo é um ARQUIVO `.md`: leia a nota e aplique o prompt sobre ela (expandir,
+  resumir, reestruturar, responder o que está anotado) editando o próprio
+  arquivo; preserve o que o autor escreveu — evolua, não apague.
+- Escreva no idioma do prompt, em markdown simples e objetivo.
+- Local-first: fundamente-se nos `contextos/` do acervo (somente leitura)
+  quando ajudar.
+
+Regras de rigor (ADR-0002 §5):
+- **Nunca assuma premissas** não declaradas: o que não estiver na base ou no
+  prompt é incerteza — registre explicitamente na nota (linha `?`).
+- **Varredura eficiente:** para ler muitos arquivos, delegue a leitura a
+  subagentes (Task) num modelo rápido (ex. Haiku) retornando só o essencial;
+  reserve o modelo principal para a síntese.
+"#;
+
+pub const LORO_NOTE_SKILL_EN: &str = r#"---
+description: Creates or evolves a brainstorming note from a prompt (ADR-0003)
+argument-hint: <notes-folder-or-note.md> <prompt>
+---
+
+Arguments: `$ARGUMENTS`
+The FIRST token is the target (relative to the acervo root); the REST is the prompt.
+
+You are Loro's note assistant. Work ONLY inside `brainstorming/` — never touch
+`contextos/` (the versioned world) nor `manifest.json`.
+
+- Target is a FOLDER (e.g. `brainstorming/<topic>/notas`): create a new markdown
+  note from the prompt. Filename: short kebab-case derived from the subject,
+  ending in `.md`; NEVER overwrite an existing file (on collision, add a
+  suffix). First line = title (`# …`).
+- Target is a `.md` FILE: read the note and apply the prompt to it (expand,
+  summarize, restructure, answer what is noted) editing the file in place;
+  preserve what the author wrote — evolve, do not erase.
+- Write in the prompt's language, in plain, objective markdown.
+- Local-first: ground yourself on the acervo's `contextos/` (read-only) when
+  it helps.
+
+Rigor rules (ADR-0002 §5):
+- **Never assume unstated premises.** Anything not in the base or in the prompt
+  is an uncertainty: record it explicitly in the note (a `?` line).
+- **Efficient scanning:** to read many files, delegate reading to subagents
+  (Task) on a fast model (e.g. Haiku) returning only the essentials; keep the
+  main model for synthesis.
+"#;
+
+pub fn loro_note_skill(lang: &str) -> &'static str {
+    if lang == "en" {
+        LORO_NOTE_SKILL_EN
+    } else {
+        LORO_NOTE_SKILL
+    }
+}
+
 // ---- general Q&A over the knowledge base (ADR-0013) ----
 //
 // `/loro-ask` answers ANY question from the acervo's versioned contexts (the local
@@ -745,6 +816,7 @@ mod tests {
                 ("ask", brain_ask_skill(lang)),
                 ("analyse", meeting_analyse_skill(lang)),
                 ("answer", meeting_question_skill(lang)),
+                ("note", loro_note_skill(lang)),
             ] {
                 assert!(
                     body.contains(no_assume),
