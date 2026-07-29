@@ -54,6 +54,28 @@
     return cats.map(function (c) { return { categoria: c, items: map.get(c) }; });
   }
 
+  // ADR-0007: with many brainstormings the always-expanded tree got unreadable
+  // — a search box replaces it. A query filters by nome/slug; with no query,
+  // caps to the `cap` most recently updated (unless `showAll`), reporting how
+  // many were hidden so the caller can render a "ver todos (N)" row.
+  function filterAndCapTemas(temas, query, showAll, cap) {
+    const arr = Array.isArray(temas) ? temas : [];
+    const q = String(query == null ? "" : query).trim().toLowerCase();
+    if (q) {
+      const items = arr.filter(function (t) {
+        const nome = String((t && t.nome) || "").toLowerCase();
+        const slug = String((t && t.slug) || "").toLowerCase();
+        return nome.includes(q) || slug.includes(q);
+      });
+      return { items, hiddenCount: 0 };
+    }
+    if (showAll || arr.length <= cap) return { items: arr, hiddenCount: 0 };
+    const sorted = arr.slice().sort(function (a, b) {
+      return String((b && b.atualizadoEm) || "").localeCompare(String((a && a.atualizadoEm) || ""));
+    });
+    return { items: sorted.slice(0, cap), hiddenCount: arr.length - cap };
+  }
+
   // A selection model over a brainstorming's parts. Each part is
   // { kind: "reuniao"|"investigacao"|"pergunta"|"nota", rel }. The model is a
   // plain Set of rels so it stays serializable/testable.
@@ -140,7 +162,7 @@
 
   return {
     STAGES, stages,
-    groupByCategory,
+    groupByCategory, filterAndCapTemas,
     emptySelection, toggleSelection, selectedItems,
     reportInboxName, brainContextCmd, brainAskCmd, noteCmd, syncCmd, toolCmd, newToolCmd,
   };

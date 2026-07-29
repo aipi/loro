@@ -26,7 +26,7 @@ domain `loro`); technical decisions live in the code repo.
 | `brain/contexts/loro/context.md` | What the product is, its rationale, and the immutable business rules (`BR-…`) |
 | `docs/ARCHITECTURE.md` | How it is built (contexts, IPC contract, flows) |
 | `docs/adr/0001-baseline.md` | The consolidated **baseline ADR**: all technical decisions up to 2026-07, with a map from the former ADR numbers still referenced in code comments |
-| `docs/adr/0002-….md` | Incremental ADRs from 2026-07-28 on (0002: Studio v2 — generation language, branch-first git, editor lifecycle, in-app manual; 0003: acervo usage templates & per-acervo AI agent; 0004: acervo efficient-reading layer — summary card, stable IDs, reading protocol; 0005: `/loro-sync` — external meeting notes (Gemini/Drive) as brainstorming context; 0006: `/loro-sync` extended to Slack/Jira/Confluence, custom user tools (`/loro-tool`), `autoContext` with a real effect) |
+| `docs/adr/0002-….md` | Incremental ADRs from 2026-07-28 on (0002: Studio v2 — generation language, branch-first git, editor lifecycle, in-app manual; 0003: acervo usage templates & per-acervo AI agent; 0004: acervo efficient-reading layer — summary card, stable IDs, reading protocol; 0005: `/loro-sync` — external meeting notes (Gemini/Drive) as brainstorming context; 0006: `/loro-sync` extended to Slack/Jira/Confluence, custom user tools (`/loro-tool`), `autoContext` with a real effect; 0007: habilidades rename+redesign, content-bearing sync, brainstorming anexos/apresentações, context anexos, terminal launch bugfix) |
 | `CLAUDE.md` | How to work (this file) |
 
 **Precedence on conflict:** brain domain source-of-truth > ARCHITECTURE > ADR > CLAUDE.md.

@@ -86,33 +86,48 @@ palette: `Cmd/Ctrl+Shift+P` → "Loro tour".
 - A meeting's investigations/answers are **collapsed by default** in the
   sidebar (tap the ▸ arrow next to the meeting to open) — keeps the list from
   growing huge once you've analysed several meetings.
+- Besides `reunioes/` and `notas/`, every brainstorming has `apresentacoes/`
+  and `anexos/` — fed by a habilidade (sync, presentation, artifact) or by
+  dropping a file straight into the real folder on disk.
+- With many brainstormings, a search box appears above the list (past 8) —
+  filters by name; with no search, it shows the most recent + "ver todos".
 
-## Tools (sync and custom skills)
+## Habilidades (skills)
 
-The **"🧰 tools"** section exists in three places — the Overview, the sidebar
-(its own section), and a meeting's **⋯** menu — always with the same set of
-actions:
+Habilidades are AI-agent actions — some ship ready-made (built-in), others
+you create. They no longer live on the Overview: run one from a
+brainstorming's or a meeting's **⋯** menu → **"executar habilidade…"** — a
+compact menu (each item's description only shows on hover, so it doesn't
+clutter the screen once there are many).
 
-- **Sync** attaches an external item (Google Drive/Gemini, Slack, Jira or
-  Confluence) as a reference on an acervo note — only title, link and date;
-  content is never read, downloaded or pasted. Each source asks for a
-  different identifier: Drive takes an optional search or link; Slack takes
-  the channel name; Jira, the ticket key or link; Confluence, the page title
-  or link. The agent always lists what it found and asks for your
-  confirmation before attaching. Items shared by colleagues have no
-  folder/organization of their own on your account — that is expected, they
-  are still accepted.
+- **Sync** brings an external item (Google Drive/Gemini, Slack, Jira or
+  Confluence) into a **local anexo** of the brainstorming, referenced by a
+  note. Drive brings the full document; Slack, Jira and Confluence bring an
+  agent-written **summary** (never the raw text/description). Each source
+  asks for a different identifier: Drive takes an optional search or link;
+  Slack takes the channel name; Jira, the ticket key or link; Confluence,
+  the page title or link. The agent always lists what it found and asks for
+  your confirmation before bringing it in. Items shared by colleagues have
+  no folder/organization of their own on your account — that is expected,
+  they are still accepted.
   **Prerequisite:** the terminal agent must already have that service's
   connector (Drive, Slack, Jira, Confluence) configured/authenticated —
   Loro does not manage those credentials.
-- **Custom tools** are skills you author yourself — they become real
-  slash-commands (`/tool-name`) as soon as they exist. Two ways to create
-  one, from the **＋** on the sidebar's "tools" section: **"new tool (AI)"**
-  — describe what it should do and the AI writes the skill — or **"import
-  existing skill"** — paste the content of a skill you already have. Every
-  listed tool has a **⋯** menu with **use**, **edit** (opens the raw file),
-  **ask the AI** (evolve the tool, preserving what already works) and
-  **delete**.
+- **Presentation** and **artifact** are built-in habilidades that generate
+  material (a markdown deck, a diagram, a script, a spreadsheet) from a
+  brainstorming or a context — presentations go into `apresentacoes/`,
+  artifacts into `anexos/`, and pointing at a specific note automatically
+  links it there.
+- **Built-in habilidades** (sync, presentation, artifact) can be **edited**
+  but never deleted. **Custom habilidades** are skills you author yourself —
+  they become real slash-commands (`/habilidade-name`) as soon as they
+  exist. Two ways to create one, from the **＋** on the sidebar's
+  "habilidades" section: **"new habilidade (AI)"** — describe what it
+  should do and the AI writes the skill — or **"import existing skill"** —
+  paste the content of a skill you already have. Every listed habilidade
+  (in the sidebar) has a **⋯** menu with **use**, **edit** (opens the raw
+  file), **ask the AI** (evolve it, preserving what already works) and
+  **delete** (custom ones only).
 
 ## Queue → generate context
 
@@ -125,6 +140,9 @@ actions:
   agents; decisions and hotspots get stable, searchable IDs.
 - With an **empty** queue the button warns and does not run: there is nothing
   to generate from.
+- The **"salvar anexos referenciados no contexto"** checkbox (optional, check
+  it before generating) copies the processed items' anexos into
+  `contextos/<c>/anexos/` — unchecked, anexos stay only in the brainstorming.
 
 ## Version and propose change (RFC = PR)
 
@@ -175,10 +193,15 @@ fixed — if it ever happens again, open an issue with the steps.
 **Which language is content generated in?** The interface language active at
 generation time. An acervo may hold documents in both languages if you switch.
 
-**What is a "custom tool"?** A skill you author yourself — either by
+**What is a "custom habilidade"?** A skill you author yourself — either by
 describing what it should do (the AI writes it) or by importing one you
-already have. It becomes a real slash-command (`/tool-name`) and shows up in
-the "🧰 tools" section (sidebar, Overview, and a meeting's menu).
+already have. It becomes a real slash-command (`/habilidade-name`) and shows
+up in the sidebar's "🧰 habilidades" section; run it via a brainstorming's or
+meeting's ⋯ menu ("executar habilidade…").
+
+**Can I delete a built-in habilidade (sync, presentation, artifact)?** No —
+you can edit it, but not delete it. Only custom habilidades (the ones you
+create) can be deleted.
 
 **What does "auto mode" actually do?** When on (default), the loop can
 create a new context or decide which one to assign something to, on its own,

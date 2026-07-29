@@ -24,16 +24,19 @@ It is three things working together:
    ("Versionar" / "Propor mudança"). The result is a portable **context harness**:
    a folder of per-domain truth any agent or teammate can read.
 3. **An AI-agent automation layer** — Loro wraps an AI agent CLI (`claude` by
-   default, any CLI — ADR-0003) in an embedded terminal, and turns its skills
-   into one-click UI instead of typed commands: buttons, a "🧰 ferramentas"
-   box, and a command palette (`Cmd/Ctrl+Shift+P`) inject `/loro-ask`,
-   `/loro-note`, `/loro-context`, `/loro-sync` (external sources —
-   Drive/Slack/Jira/Confluence, ADR-0005/0006), the meeting
-   `/loro-analyse`/`/loro-question` skills, and any **custom tool** the user
-   authored (`/loro-tool`, ADR-0006) — described in plain language and
-   AI-drafted, or imported from a skill the user already had. The capture
-   tool and the knowledge base are what the automations act on; this layer
-   is how the user reaches them.
+   default, any CLI — ADR-0003) in an embedded terminal, and turns its
+   skills ("habilidades") into one-click UI instead of typed commands: a
+   command palette (`Cmd/Ctrl+Shift+P`) and "⋯ → executar habilidade" menus
+   inject `/loro-ask`, `/loro-note`, `/loro-context`, `/loro-sync` (external
+   sources — Drive/Slack/Jira/Confluence bring content into a local anexo,
+   ADR-0005/0006/0007), `/loro-presentation`/`/loro-artifact` (generate
+   material from a brainstorming or context), the meeting
+   `/loro-analyse`/`/loro-question` skills, and any **custom habilidade**
+   the user authored (`/loro-tool`, ADR-0006) — described in plain language
+   and AI-drafted, or imported from a skill the user already had. Built-in
+   habilidades can be edited but never deleted. The capture tool and the
+   knowledge base are what the automations act on; this layer is how the
+   user reaches them.
 
 > Docs: the brain domain `loro` (**`brain/contexts/loro/context.md`**, what/why —
 > this repo dogfoods its own model), **`docs/ARCHITECTURE.md`** (how),
@@ -91,6 +94,12 @@ template** (sales, engineering, healthcare… — ADR-0003) and choose their own
 `autoContext` (on by default, toggle in the wizard/Settings) lets the loop
 create or assign a new context on its own when processing the fila; off,
 it leaves an unmatched item pending instead of guessing (ADR-0006).
+
+Each brainstorming has its own `reunioes/`, `apresentacoes/` and `anexos/`
+subfolders (ADR-0007) — fed by a habilidade (sincronizar, apresentação,
+artefato) or by dropping a file straight into the real folder on disk.
+"Gerar contexto" has an opt-in checkbox to copy those anexos into
+`contextos/<c>/anexos/` when the fila is processed.
 
 ## Security & privacy
 

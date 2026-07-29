@@ -30,7 +30,7 @@ open only the section you need._
   BR-9 no credentials.
 - **Hotspots** — H-1 Knowledge Studio flow · H-2 usage templates & vertical
   skill catalog · H-3 en/pt folder divergence · H-4 CODEOWNERS enforcement ·
-  H-5 end-user packaging · H-6 external-source sync & custom tools scope.
+  H-5 end-user packaging · H-6 external-source sync & habilidades scope.
 
 ## What Loro is
 A **companion** (not a replacement for agents) that captures speech 100% locally
@@ -107,17 +107,26 @@ the model: ideas live here, inline, not as separate files.)
 > vertical skill *catalog* item is superseded by ADR-0006's custom tools
 > (`/loro-tool`): rather than Loro shipping every vertical skill, the user
 > authors their own (AI-drafted or imported) and it appears in the
-> "🧰 ferramentas" box, usable from the sidebar, Visão Geral, or a meeting.
+> "🧰 habilidades" list, run via "⋯ → executar habilidade" from a
+> brainstorming or meeting (ADR-0007 moved it off the Visão Geral to keep
+> the home screen from accumulating cards).
 
-> [!HOTSPOT] H-6 — External-source sync & custom tools: scope of what gets attached
-> ADR-0005/0006 shipped `/loro-sync` (Drive/Slack/Jira/Confluence — title/link/
-> date only, never content, BR-8) and user-authored tools (`/loro-tool`) as a
-> generalized "🧰 ferramentas" surface (Visão Geral, sidebar, meeting menu).
-> `autoContext` also gained a real effect: on (default), the loop may create
-> a context the fila needs; off, it leaves the item pending instead of
-> guessing (`.loro/settings.json`, distinct from the global config). Open:
-> whether tools should be shareable/exportable between acervos or teammates,
-> and whether more sources (email, calendar) follow the same ref-only pattern.
+> [!HOTSPOT] H-6 — External-source sync & habilidades: scope of what gets attached
+> ADR-0005/0006/0007 shipped `/loro-sync` (Drive/Slack/Jira/Confluence) and
+> user-authored habilidades (`/loro-tool`, plus built-in `/loro-presentation`/
+> `/loro-artifact`) as a "🧰 habilidades" surface (sidebar + "executar
+> habilidade" picker). Sync now brings CONTENT into a local anexo
+> (`brainstorming/<tema>/anexos/`) — Drive the full doc, Slack/Jira/Confluence
+> an agent-written summary — referenced by a `tipo: doc` ref, superseding
+> ADR-0005 §4's link-only posture; BR-8 holds because the content lives in
+> the acervo's own material, never a log. Built-in habilidades are editable
+> but never deletable. `autoContext` also gained a real effect: on
+> (default), the loop may create a context the fila needs; off, it leaves
+> the item pending instead of guessing (`.loro/settings.json`, distinct from
+> the global config). Contexts can now also hold `anexos/` (opt-in
+> versioning checkbox at "gerar contexto"). Open: whether habilidades should
+> be shareable/exportable between acervos or teammates, and whether more
+> sources (email, calendar) follow the same content-into-anexo pattern.
 
 > [!HOTSPOT] H-3 — Acervo folder language diverges between brain and app (en vs pt)
 > This brain uses English folders (`contexts/`, `meetings/`, `notes/`) as the

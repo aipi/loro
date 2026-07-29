@@ -85,32 +85,50 @@ quando quiser pela paleta: `Cmd/Ctrl+Shift+P` → "apresentação do Loro".
 - Investigações e respostas de cada reunião ficam **recolhidas por padrão**
   na lateral (toque na seta ▸ ao lado da reunião para abrir) — evita que a
   lista cresça demais quando há muitas reuniões analisadas.
+- Além de `reunioes/` e `notas/`, cada brainstorming tem `apresentacoes/` e
+  `anexos/` — alimentadas por uma habilidade (sincronizar, apresentação,
+  artefato) ou arrastando um arquivo direto na pasta real no disco.
+- Com muitos brainstormings, um campo de busca aparece no topo da seção
+  (acima de 8) — filtra por nome; sem busca, mostra só os mais recentes +
+  "ver todos".
 
-## Ferramentas (sincronizar e skills customizadas)
+## Habilidades
 
-A seção **"🧰 ferramentas"** existe em três lugares — a Visão Geral, a lateral
-(sua própria seção) e o menu **⋯** de uma reunião — sempre com o mesmo
-conjunto de ações:
+Habilidades são ações do agente de IA — algumas já vêm prontas (padrão),
+outras você cria. Não ficam mais na Visão Geral: rode uma pelo menu **⋯**
+de um brainstorming ou de uma reunião → **"executar habilidade…"** — um
+menu compacto (a descrição de cada uma só aparece ao passar o mouse, para
+não poluir a tela quando houver muitas).
 
-- **Sincronizar** anexa um item externo (Google Drive/Gemini, Slack, Jira ou
-  Confluence) como referência numa nota do acervo — só título, link e data;
-  o conteúdo nunca é lido, baixado ou colado. Cada fonte pede um identificador
-  diferente: Drive aceita uma busca opcional ou um link; Slack pede o nome do
-  canal; Jira, a chave do ticket ou link; Confluence, o título da página ou
-  link. O agente sempre lista o que encontrou e pede sua confirmação antes de
-  anexar. Reuniões/itens compartilhados por colegas não têm pasta/organização
-  própria na sua conta — isso é esperado, ainda são aceitos.
+- **Sincronizar** traz um item externo (Google Drive/Gemini, Slack, Jira ou
+  Confluence) para um **anexo local** do brainstorming, referenciado numa
+  nota. Drive traz o documento inteiro; Slack, Jira e Confluence trazem um
+  **resumo** escrito pelo agente (nunca o texto/descrição crus). Cada fonte
+  pede um identificador diferente: Drive aceita uma busca opcional ou um
+  link; Slack pede o nome do canal; Jira, a chave do ticket ou link;
+  Confluence, o título da página ou link. O agente sempre lista o que
+  encontrou e pede sua confirmação antes de trazer. Itens compartilhados por
+  colegas não têm pasta/organização própria na sua conta — isso é esperado,
+  ainda são aceitos.
   **Pré-requisito:** o agente do terminal precisa ter o conector daquele
   serviço (Drive, Slack, Jira, Confluence) já configurado/autenticado — o
   Loro não gerencia essas credenciais.
-- **Ferramentas customizadas** são skills que você mesmo cria — aparecem como
-  comandos de barra reais (`/nome-da-ferramenta`) assim que existem. Duas
-  formas de criar, no **＋** da seção "ferramentas" da lateral: **"nova
-  ferramenta (IA)"** — descreva o que ela deve fazer e a IA escreve a skill
-  — ou **"importar skill existente"** — cole o conteúdo de uma skill que você
-  já tem. Cada ferramenta listada tem um menu **⋯** com **usar**, **editar**
-  (abre o arquivo bruto), **pedir à IA** (peça para evoluir a ferramenta,
-  preservando o que já funciona) e **excluir**.
+- **Apresentação** e **artefato** são habilidades padrão que geram material
+  (um deck em markdown, um diagrama, um script, uma planilha) a partir de um
+  brainstorming ou de um contexto — apresentações vão em `apresentacoes/`,
+  artefatos em `anexos/`, e se você apontar para uma nota específica, ela
+  ganha a referência automaticamente.
+- **Habilidades padrão** (as de sincronizar, apresentação e artefato) podem
+  ser **editadas**, mas nunca excluídas. **Habilidades customizadas** são
+  skills que você mesmo cria — aparecem como comandos de barra reais
+  (`/nome-da-habilidade`) assim que existem. Duas formas de criar, no **＋**
+  da seção "habilidades" da lateral: **"nova habilidade (IA)"** — descreva
+  o que ela deve fazer e a IA escreve a skill — ou **"importar skill
+  existente"** — cole o conteúdo de uma skill que você já tem. Cada
+  habilidade listada (na lateral) tem um menu **⋯** com **usar**,
+  **editar** (abre o arquivo bruto), **pedir à IA** (peça para evoluir a
+  habilidade, preservando o que já funciona) e **excluir** (só para as
+  customizadas).
 
 ## Fila → gerar contexto
 
@@ -122,6 +140,9 @@ conjunto de ações:
   regenerado a cada atualização — é ele que deixa a leitura barata para pessoas
   e agentes; decisões e hotspots ganham IDs estáveis, localizáveis por busca.
 - Com a fila **vazia**, o botão avisa e não roda: não há de onde gerar.
+- O checkbox **"salvar anexos referenciados no contexto"** (opcional, marque
+  antes de gerar) copia os anexos dos itens processados para
+  `contextos/<c>/anexos/` — sem marcar, os anexos ficam só no brainstorming.
 
 ## Versionar e propor mudança (RFC = PR)
 
@@ -170,10 +191,15 @@ editor, corrigido — se voltar a acontecer, abra um issue com os passos.
 **Em que idioma o conteúdo é gerado?** No idioma ativo da interface no momento
 da geração. Um acervo pode conter documentos nos dois idiomas se você alternar.
 
-**O que é uma "ferramenta customizada"?** Uma skill que você mesmo cria —
+**O que é uma "habilidade customizada"?** Uma skill que você mesmo cria —
 descrevendo o que ela deve fazer (a IA escreve) ou importando uma que você já
-tem. Vira um comando de barra de verdade (`/nome-da-ferramenta`) e aparece na
-seção "🧰 ferramentas" (lateral, Visão Geral, e no menu de uma reunião).
+tem. Vira um comando de barra de verdade (`/nome-da-habilidade`) e aparece na
+seção "🧰 habilidades" da lateral; roda pelo menu ⋯ ("executar habilidade…")
+de um brainstorming ou reunião.
+
+**Posso apagar uma habilidade padrão (sincronizar, apresentação, artefato)?**
+Não — pode editá-la, mas não excluí-la. Só habilidades customizadas (criadas
+por você) podem ser excluídas.
 
 **O que o "modo automático" realmente faz?** Quando ligado (padrão), o loop
 pode criar um contexto novo ou decidir a qual contexto atribuir algo, sozinho,
