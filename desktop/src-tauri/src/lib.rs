@@ -91,6 +91,11 @@ struct TermSession {
     writer: Box<dyn Write + Send>,
     master: Box<dyn portable_pty::MasterPty + Send>,
     child: Box<dyn portable_pty::Child + Send + Sync>,
+    // when the agent auto-launch line was written (ADR-0005): term_status uses
+    // this to tell "still starting up" apart from "never came up", so the
+    // frontend doesn't retype the launch command into a session that already
+    // has it in flight (ps-based detection lags a live process by ~1 poll).
+    launched_at: std::time::Instant,
 }
 
 // ---- structured logging (tracing) -----------------------------------------
@@ -967,7 +972,7 @@ fn valid_segment(s: &str) -> bool {
 
 // a context name may be hierarchical (e.g. "engineering/frontend"), up to 3
 // levels; each segment is a lowercase slug. Guards against path traversal.
-// A domain is recursive (ADR-0006): a context is itself a domain with
+// A domain is recursive (ADR-0005): a context is itself a domain with
 // context.md + CHANGELOG.md that MAY contain subdomain folders in the same shape.
 // The bound is a safety limit against pathological trees, not the old 3-level cap.
 const MAX_CONTEXT_DEPTH: usize = 6;
@@ -1136,6 +1141,16 @@ fn ensure_acervo_structure(
         ),
         (".claude/commands/loro-ask.md", brain_ask_skill(lang)),
         (".claude/commands/loro-note.md", loro_note_skill(lang)),
+        (".claude/commands/loro-sync.md", loro_sync_skill(lang)),
+        (".claude/commands/loro-tool.md", loro_tool_skill(lang)),
+        (
+            ".claude/commands/loro-presentation.md",
+            loro_presentation_skill(lang),
+        ),
+        (
+            ".claude/commands/loro-artifact.md",
+            loro_artifact_skill(lang),
+        ),
     ] {
         let p = base.join(rel);
         if !p.exists() {
@@ -1278,6 +1293,7 @@ fn brain_setup(
     let agent = normalize_agent(&agent.unwrap_or_default());
     let base = PathBuf::from(&dir);
     ensure_acervo_structure(&base, &ctxs, &lang, Some(&tpl))?;
+    write_acervo_settings(&base, auto)?;
     if git_init.unwrap_or(false) {
         git_init_repo(&base)?;
     }
@@ -1328,6 +1344,22 @@ fn brain_setup(
 #[tauri::command]
 fn brain_list_acervos() -> AcervosView {
     acervos_view()
+}
+
+// ADR-0005: post-creation toggle (Configurações) for the active acervo's
+// autoContext — updates the global config (so the "auto" pill stays accurate)
+// AND the local .loro/settings.json marker the /loro-context skill reads.
+#[tauri::command]
+fn brain_set_auto_context(value: bool) -> Result<(), String> {
+    let mut cfg = read_loro_config();
+    let dir = active_acervo(&cfg)
+        .map(|a| a.dir.clone())
+        .ok_or("acervo not configured")?;
+    if let Some(a) = cfg.acervos.iter_mut().find(|a| a.dir == dir) {
+        a.auto_context = value;
+    }
+    write_loro_config(&cfg)?;
+    write_acervo_settings(&PathBuf::from(&dir), value)
 }
 
 // ---- ADR-0003: acervo usage templates (presets) -----------------------------
@@ -2020,6 +2052,22 @@ fn migrate_acervo(base: &Path, apply: bool, lang: &str) -> Result<MigrationRepor
             ".claude/commands/loro-note.md",
             loro_note_skill(lang).to_string(),
         ),
+        (
+            ".claude/commands/loro-sync.md",
+            loro_sync_skill(lang).to_string(),
+        ),
+        (
+            ".claude/commands/loro-tool.md",
+            loro_tool_skill(lang).to_string(),
+        ),
+        (
+            ".claude/commands/loro-presentation.md",
+            loro_presentation_skill(lang).to_string(),
+        ),
+        (
+            ".claude/commands/loro-artifact.md",
+            loro_artifact_skill(lang).to_string(),
+        ),
     ] {
         let p = base.join(rel);
         if !p.exists() {
@@ -2478,7 +2526,7 @@ fn quickopen_kind(rel: &str) -> &'static str {
 }
 
 // Recursive walk producing every text-ish file by full rel path. Unlike the
-// ADR-0007 display tree this does NOT skip subdomain dirs — the palette indexes
+// ADR-0005 display tree this does NOT skip subdomain dirs — the palette indexes
 // everything. Pure over `base` so it is testable without a running app.
 fn list_all_in(base: &Path) -> Vec<FileHit> {
     let mut out = Vec::new();
@@ -2740,6 +2788,56 @@ async fn brain_import(app: AppHandle, context: Option<String>) -> Result<usize, 
     Ok(n)
 }
 
+// ADR-0005: import files from the computer straight into an anexos/ folder —
+// a brainstorming's OR a context's (owner request: "no contexto ... consiga
+// add a partir do computador"). Mirrors brain_import, but the destination is
+// an anexos/ folder (not the inbox), filenames are kept as-is (anexos are
+// arbitrary files — pdf/xlsx/images), and collisions get a numeric suffix
+// instead of clobbering. dest_rel is guarded by guarded_anexos_dir (only a
+// normalized brainstorming/contextos anexos path is accepted).
+#[tauri::command]
+async fn brain_import_files(app: AppHandle, dest_rel: String) -> Result<usize, String> {
+    let cfg = read_brain_config().ok_or("err.acervo_not_configured")?;
+    let base = PathBuf::from(&cfg.brain_dir);
+    let dir = guarded_anexos_dir(&base, &dest_rel)?;
+    let dialog = app.dialog().clone();
+    let files = tauri::async_runtime::spawn_blocking(move || dialog.file().blocking_pick_files())
+        .await
+        .map_err(|e| e.to_string())?;
+    let Some(files) = files else { return Ok(0) };
+    let mut n = 0;
+    for f in files {
+        let src = PathBuf::from(f.to_string());
+        let Some(name) = src.file_name().map(|s| s.to_string_lossy().to_string()) else {
+            continue;
+        };
+        // never overwrite: on collision, insert a numeric suffix before the ext
+        let mut dest = dir.join(&name);
+        if dest.exists() {
+            let stem = std::path::Path::new(&name)
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| name.clone());
+            let ext = std::path::Path::new(&name)
+                .extension()
+                .map(|e| format!(".{}", e.to_string_lossy()))
+                .unwrap_or_default();
+            let mut i = 2;
+            loop {
+                let cand = dir.join(format!("{stem}-{i}{ext}"));
+                if !cand.exists() {
+                    dest = cand;
+                    break;
+                }
+                i += 1;
+            }
+        }
+        std::fs::copy(&src, &dest).map_err(|e| format!("{name}: {e}"))?;
+        n += 1;
+    }
+    Ok(n)
+}
+
 // Import explicit file paths into the active acervo's inbox (used by external
 // drag-and-drop of one or more files onto the queue).
 #[tauri::command]
@@ -2889,6 +2987,16 @@ fn ensure_meeting_skills(base: &Path, lang: &str) {
         ),
         (".claude/commands/loro-ask.md", brain_ask_skill(lang)),
         (".claude/commands/loro-note.md", loro_note_skill(lang)),
+        (".claude/commands/loro-sync.md", loro_sync_skill(lang)),
+        (".claude/commands/loro-tool.md", loro_tool_skill(lang)),
+        (
+            ".claude/commands/loro-presentation.md",
+            loro_presentation_skill(lang),
+        ),
+        (
+            ".claude/commands/loro-artifact.md",
+            loro_artifact_skill(lang),
+        ),
     ] {
         let p = base.join(rel);
         if !p.exists() {
@@ -2941,11 +3049,14 @@ fn term_open(app: AppHandle, state: State<AppState>, cols: u16, rows: u16) -> Re
     let mut writer = pair.master.take_writer().map_err(|e| e.to_string())?;
     // Auto-launch the terminal agent so the /loro-* skills (analisar/perguntar/
     // ask/gerar contexto) work out of the box — the buttons inject slash commands
-    // that only a running Claude understands. The login shell sources the profile
-    // (real PATH) before reading this stdin, so `claude` resolves; if it is not
-    // installed the shell just prints "command not found" and stays usable.
+    // that only a running agent understands. The login shell sources the profile
+    // (real PATH) before reading this stdin, so the agent command resolves; if
+    // it is not installed the shell just prints "command not found" and stays
+    // usable. Uses the ACTIVE acervo's configured agent (ADR-0005) — this used
+    // to hardcode "claude", breaking any acervo configured with another CLI.
+    let launched_at = std::time::Instant::now();
     if in_acervo {
-        let _ = writer.write_all(b"claude\n");
+        let _ = writer.write_all(format!("{}\n", active_agent()).as_bytes());
         let _ = writer.flush();
     }
     let apph = app.clone();
@@ -2970,6 +3081,7 @@ fn term_open(app: AppHandle, state: State<AppState>, cols: u16, rows: u16) -> Re
         writer,
         master: pair.master,
         child,
+        launched_at,
     });
     info!(target: "term", "terminal opened");
     Ok(())
@@ -3019,6 +3131,18 @@ fn term_close(state: State<AppState>) {
 struct TermStatus {
     open: bool,
     agent_running: bool,
+    // ADR-0005: true for a short grace window right after term_open wrote the
+    // launch line — `ps`-based detection lags a freshly spawned process by at
+    // least one poll, so the frontend must not treat "not detected yet" as
+    // "never launched" and retype the agent command into a session that
+    // already has it in flight.
+    just_launched: bool,
+}
+
+const TERM_LAUNCH_GRACE: std::time::Duration = std::time::Duration::from_secs(6);
+
+fn is_within_grace(elapsed: std::time::Duration) -> bool {
+    elapsed < TERM_LAUNCH_GRACE
 }
 
 // Process name to look for: basename of the agent command's first token
@@ -3076,18 +3200,22 @@ fn has_descendant_process(table: &[(u32, u32, String)], root: u32, name: &str) -
 
 #[tauri::command]
 fn term_status(state: State<AppState>) -> TermStatus {
-    let shell_pid = state
-        .term
-        .lock()
-        .unwrap()
-        .as_ref()
-        .and_then(|s| s.child.process_id());
-    let Some(root) = shell_pid else {
+    let guard = state.term.lock().unwrap();
+    let Some(session) = guard.as_ref() else {
         return TermStatus {
             open: false,
             agent_running: false,
+            just_launched: false,
         };
     };
+    let Some(root) = session.child.process_id() else {
+        return TermStatus {
+            open: false,
+            agent_running: false,
+            just_launched: false,
+        };
+    };
+    let just_launched = is_within_grace(session.launched_at.elapsed());
     let agent_name = agent_process_name(&active_agent());
     let agent_running = Command::new("ps")
         .args(["-axo", "pid=,ppid=,comm="])
@@ -3104,6 +3232,7 @@ fn term_status(state: State<AppState>) -> TermStatus {
     TermStatus {
         open: true,
         agent_running,
+        just_launched,
     }
 }
 
@@ -3224,6 +3353,7 @@ pub fn run() {
             brain_get_config,
             brain_setup,
             brain_list_acervos,
+            brain_set_auto_context,
             brain_list_templates,
             brain_duplicate_template,
             brain_set_active,
@@ -3259,6 +3389,8 @@ pub fn run() {
             term_status,
             term_agent,
             brain_import,
+            brain_import_files,
+            brain_new_note_in,
             brain_delete_inbox,
             brain_write_inbox,
             brain_send_report_to_queue,
@@ -3278,8 +3410,11 @@ pub fn run() {
             brain_list_brainstorms,
             brain_list_meetings,
             brain_new_notebook,
+            brain_new_tool,
+            brain_delete_tool,
             brain_read_asset,
             brain_open_external,
+            brain_open_link,
             brain_resolve_ref,
             brain_add_ref,
             brain_promote,
@@ -3543,7 +3678,7 @@ mod tests {
 
     #[test]
     fn list_contexts_is_recursive_and_beyond_three_levels() {
-        // ADR-0006: recursive domain — parent with context.md + nested subdomains
+        // ADR-0005: recursive domain — parent with context.md + nested subdomains
         let root = std::env::temp_dir().join(format!("loro-rec-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let with_ctx = [
@@ -3706,6 +3841,16 @@ mod tests {
             "gemini"
         );
         assert_eq!(agent_process_name(""), "claude");
+    }
+
+    // ADR-0005: the grace window that stops termRunAgent from retyping the
+    // agent launch line into a session that already has it in flight.
+    #[test]
+    fn is_within_grace_holds_for_a_short_window_only() {
+        assert!(is_within_grace(std::time::Duration::from_secs(0)));
+        assert!(is_within_grace(std::time::Duration::from_secs(5)));
+        assert!(!is_within_grace(std::time::Duration::from_secs(6)));
+        assert!(!is_within_grace(std::time::Duration::from_secs(30)));
     }
 
     #[test]
@@ -3873,7 +4018,7 @@ mod tests {
         assert!(valid_context("frota"));
         assert!(valid_context("engineering/frontend"));
         assert!(valid_context("engineering/sre/platform"));
-        assert!(valid_context("frota/eletrica/piloto/pods/sp/zona-leste")); // 6 levels ok (ADR-0006)
+        assert!(valid_context("frota/eletrica/piloto/pods/sp/zona-leste")); // 6 levels ok (ADR-0005)
         assert!(!valid_context("a/b/c/d/e/f/g")); // > MAX_CONTEXT_DEPTH (7) levels
         assert!(!valid_context("Engineering/frontend")); // uppercase
         assert!(!valid_context("a//b")); // empty segment

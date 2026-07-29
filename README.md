@@ -1,36 +1,48 @@
 # Loro 🦜 — local speech capture + a per-domain knowledge base
 
-Loro is a **local, privacy-first desktop app** (Tauri v2) with one purpose: turn
-what teams *say* — meetings, brainstorms, thinking out loud — into a trustworthy,
-versioned, per-domain knowledge base that both **people and AI** can use as
-context. Speech is transcribed **entirely on your machine** (whisper.cpp); no
-audio or text ever leaves the device by default.
+Loro is a **local, privacy-first desktop app** (Tauri v2) that turns what teams
+*say and gather* — meetings, brainstorms, thinking out loud, plus notes and
+files from tools you already use — into a trustworthy, versioned, per-domain
+knowledge base that both **people and AI** can use as context. Speech is
+transcribed **entirely on your machine** (whisper.cpp); nothing leaves the
+device unless you explicitly send it, and the app never holds a credential.
 
-It is two things working together:
+Three parts work together:
 
 1. **A capture tool** — live transcription (mic, system audio, or both sides of
    a video meeting with zero driver setup), as a desktop app and a CLI (`loro.sh`).
-2. **A Knowledge Studio** — a VS Code-like workspace where captured material
-   flows through one explicit, sequential path:
-
-   **Brainstorming → Fila → Contexto**
-
-   You build an idea in a *brainstorming* (meetings, investigations, questions,
-   notes — private, non-versioned); you elect parts of it into **one consolidated
-   report** that enters the *fila* (queue); "gerar contexto" runs an agent loop
-   (Claude Code in the embedded terminal) that distills the queue into versioned
-   *contextos* — one `context.md` source of truth per domain, evolved by
-   RFC = branch + Pull Request, with Git completely hidden behind two buttons
-   ("Versionar" / "Propor mudança"). The result is a portable **context harness**:
-   a folder of per-domain truth any agent or teammate can read.
+2. **A Knowledge Studio** — a VS Code-like workspace where material flows
+   through one explicit path: **Brainstorming → Fila → Contexto**. In a
+   *brainstorming* you gather **reuniões**, **notas** and **anexos** (files you
+   drop in, or pull from Drive/Slack/Jira/Confluence); you elect parts into
+   **one consolidated report** that enters the *fila*; "gerar contexto" runs an
+   agent loop that distills the queue into versioned *contextos* — one
+   `context.md` source of truth per domain, evolved by RFC = branch + Pull
+   Request, with Git hidden behind two buttons ("Versionar" / "Propor
+   mudança"). The result is a portable **context harness** any agent or
+   teammate can read.
+3. **An AI-agent automation layer** — Loro wraps an AI agent CLI (`claude` by
+   default, any CLI — ADR-0003) in an embedded terminal and turns its skills,
+   called **habilidades**, into one-click UI instead of typed commands. They
+   run from a picker (friendly names, always-visible descriptions) on the
+   Visão Geral, a brainstorming/meeting `⋯` menu, or the right-side actions
+   rail of any open file. Nine ship built-in — the loop (`/loro-context`),
+   Q&A (`/loro-ask`), meeting AI (`/loro-analyse`/`/loro-question`), notes
+   (`/loro-note`), external sync (`/loro-sync` — brings a Drive doc, or a
+   Slack/Jira/Confluence summary, into a local anexo), generators
+   (`/loro-presentation`, `/loro-artifact`), and the skill authoring tool
+   (`/loro-tool`). You can author your own habilidade — describe it and let
+   the AI draft it, or import one you already have — and edit any built-in
+   (but not delete it). The capture tool and the knowledge base are what the
+   automations act on; this layer is how you reach them.
 
 > Docs: the brain domain `loro` (**`brain/contexts/loro/context.md`**, what/why —
 > this repo dogfoods its own model), **`docs/ARCHITECTURE.md`** (how),
 > **`docs/adr/`** (0001 is the consolidated baseline; 0002+ are incremental),
 > **`CLAUDE.md`** (how to work here). All docs and code are in English; the app
-> UI is pt-BR by default with a user-selectable English toggle (generated
-> content follows the active UI language). An in-app user manual (pt/en) opens
-> from the `?` button.
+> UI is pt-BR or English — chosen when you create an acervo and switchable in
+> Settings, with generated content following that language. An in-app user
+> manual (pt/en) opens from the `?` button.
 
 ## Requirements
 
@@ -69,14 +81,21 @@ Models are ggml files under `~/.loro/models` (configurable via `LORO_MODELS_DIR`
 
 The acervo lives in a **user-chosen folder, separate from this codebase**
 (config in `~/.loro/config.json`). Domains are user-defined and recursive
-(subdomains as nested folders); each has a single `context.md` source of truth +
-an append-only `CHANGELOG.md`; open questions live inline as *hotspots*. Meeting
-AI (`/loro-analyse`, `/loro-question`), AI-assisted notes (`/loro-note`),
-base/context Q&A (`/loro-ask`) and the distillation loop (`/loro-context`)
-run as agent skills in the embedded terminal, **local-first**: they read the
-local base before any external source. New acervos start from a **usage
-template** (sales, engineering, healthcare… — ADR-0003) and choose their own
-**AI agent CLI**; a first-launch welcome modal presents the main features.
+(subdomains as nested folders); each `contextos/<c>/` has a single `context.md`
+source of truth, an append-only `CHANGELOG.md`, and its own `anexos/` for
+attached files — open questions live inline as *hotspots*. Every brainstorming
+has exactly three folders, shown as such in the sidebar: **`reunioes/`** (every
+meeting is born there), **`notas/`**, and **`anexos/`** — fed by a habilidade
+(sincronizar, apresentação, artefato) or by importing a file from the computer.
+
+Skills run in the embedded terminal **local-first** (they read the local base
+before any external source). When you create an acervo you choose its
+**language** (pt-BR / English — the whole app follows), a **usage template**
+(ADR-0003) whose first option is **Automático** — the loop creates and assigns
+contexts on its own as it processes the fila (any other template = you define
+the contexts; switchable later in Settings) — and its own **AI agent CLI**.
+"Gerar contexto" has an opt-in checkbox to also copy the processed items'
+anexos into `contextos/<c>/anexos/`.
 
 ## Security & privacy
 
