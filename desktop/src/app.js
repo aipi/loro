@@ -938,7 +938,7 @@ let sideSig = "";          // assinatura p/ não re-renderizar a lateral sem mud
 let acervos = [], activeAcervo = "", creatingNew = false, gitFiles = {}, wizColor = "";
 // usage template picker state (ADR-0003): selected id, fetched list, and
 // whether the user already edited the contexts field by hand
-let wizTemplate = "generico", wizTemplates = [], ctxDirty = false;
+let wizTemplate = "generico", wizTemplates = [], wizCtxDirty = false;
 let lastEnvAcervo = null;
 
 // paleta curada (funciona no claro e no escuro); "" = padrão (teal do tema)
@@ -2715,7 +2715,7 @@ function openNewAcervo() {
   B.nameInput.value = ""; B.ctxInput.value = ""; brainDir = ""; B.dirBtn.textContent = "…";
   B.autoInput.checked = false; B.gitInput.checked = true;
   B.agentInput.value = "claude";
-  wizColor = ""; wizTemplate = "generico"; ctxDirty = false;
+  wizColor = ""; wizTemplate = "generico"; wizCtxDirty = false;
   drawWizColors();
   loadWizTemplates();
   B.cancelBtn.hidden = false; B.setupErr.hidden = true;
@@ -2743,7 +2743,7 @@ function drawWizTemplates() {
     b.title = tpl.description;
     b.onclick = () => {
       wizTemplate = tpl.id;
-      B.ctxInput.value = LoroPresets.prefillContexts(B.ctxInput.value, ctxDirty, tpl.contexts);
+      B.ctxInput.value = LoroPresets.prefillContexts(B.ctxInput.value, wizCtxDirty, tpl.contexts);
       drawWizTemplates();
     };
     box.appendChild(b);
@@ -2768,7 +2768,7 @@ function drawWizTemplates() {
     hint.appendChild(dup);
   }
 }
-B.ctxInput.addEventListener("input", () => { ctxDirty = true; });
+B.ctxInput.addEventListener("input", () => { wizCtxDirty = true; });
 B.cancelBtn.addEventListener("click", () => { creatingNew = false; applyAccent(activeColor()); brainRefresh(); });
 function activeColor() { const a = acervos.find((x) => x.id === activeAcervo); return a ? a.color : ""; }
 

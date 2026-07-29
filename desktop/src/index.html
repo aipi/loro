@@ -380,6 +380,10 @@
         </div>
       </div>
     </div>
+    <!-- boot diagnostics: a parse/early error in any script below kills the UI
+         before app.js can install its own handlers (blank window). This inline
+         hook reports it to the backend log (message/location only, BR-8). -->
+    <script>window.addEventListener("error",function(e){try{window.__TAURI__.core.invoke("client_log",{msg:"[boot-error] "+e.message+" @ "+e.filename+":"+e.lineno})}catch(_){}});</script>
     <script src="vendor/xterm.js"></script>
     <script src="vendor/addon-fit.js"></script>
     <script src="vendor/cm6.js"></script>
