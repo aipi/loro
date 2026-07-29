@@ -3451,6 +3451,10 @@ function initTerm() {
   if (Fit) { fit = new Fit(); term.loadAddon(fit); }
   term.open($("termView"));
   fitTerm();
+  // Refit on ANY geometry change of the terminal box — the live panel opening/
+  // closing reshapes the side-mode grid row above it, and a stale fit leaves
+  // the PTY cols/rows diverged from the rendered box (text renders "broken").
+  if (window.ResizeObserver) new ResizeObserver(() => fitTerm()).observe($("termView"));
   term.onData((d) => invoke("term_input", { data: d }).catch(() => {}));
   invoke("term_open", { cols: term.cols || 80, rows: term.rows || 24 })
     .then(() => { termReady = true; })
