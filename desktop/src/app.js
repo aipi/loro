@@ -1583,7 +1583,7 @@ async function loadTemaChildren(slug) {
   inner += `<div class="bsadd">` +
     `<button class="bsaddbtn" data-addnota="${esc(slug)}" title="${t("Escrever uma nota neste brainstorming")}">＋ ${t("nova nota")}</button>` +
     `<button class="bsaddbtn rec2" data-addmeeting="${esc(slug)}" title="${t("Gravar uma reunião neste brainstorming (áudio 100% local)")}">● ${t("gravar reunião")}</button>` +
-    `<button class="bsaddbtn" data-syncdrive="${esc(slug)}" title="${t("Anexar uma nota de reunião externa (Google Drive/Gemini), sem ler o conteúdo")}">⇄ ${t("sincronizar reunião")}</button>` +
+    `<button class="bsaddbtn" data-syncdrive="${esc(slug)}" title="${t("Trazer uma nota de reunião externa (Google Drive/Gemini) para os anexos deste tema")}">⇄ ${t("sincronizar reunião")}</button>` +
     `</div>`;
   for (const f of notas) inner += bsPartRow("nota", f.path, f.path, shortName(f.name), f.name, false);
   for (const f of apresentacoes) inner += bsPartRow("apresentacao", f.path, f.path, shortName(f.name), f.name, false);
@@ -1698,28 +1698,28 @@ function wirePessoal() {
 const SYNC_TOOL_COPY = {
   drive: {
     title: "Sincronizar reunião externa (Drive)",
-    desc: "busca uma nota do Gemini no Drive e anexa só título/link à nota — nunca lê o conteúdo.",
+    desc: "busca uma nota do Gemini no Drive e traz o documento inteiro como anexo local, referenciado na nota.",
     field: "busca ou link (opcional)",
     placeholder: "ex.: nome da reunião, ou um link do Drive",
     required: false,
   },
   slack: {
     title: "Sincronizar canal (Slack)",
-    desc: "anexa uma mensagem/thread de um canal do Slack como referência — só título/link/data, nunca o texto.",
+    desc: "escreve um resumo de uma mensagem/thread do Slack como anexo local, referenciado na nota.",
     field: "canal",
     placeholder: "ex.: #eng-loro",
     required: true,
   },
   jira: {
     title: "Sincronizar ticket (Jira)",
-    desc: "anexa um ticket do Jira como referência — só título/link, nunca a descrição/comentários.",
+    desc: "escreve um resumo de um ticket do Jira (título, status, pontos-chave) como anexo local, referenciado na nota.",
     field: "chave do ticket ou link",
     placeholder: "ex.: PROJ-123",
     required: true,
   },
   confluence: {
     title: "Sincronizar página (Confluence)",
-    desc: "anexa uma página do Confluence como referência — só título/link, nunca o conteúdo.",
+    desc: "escreve um resumo de uma página do Confluence como anexo local, referenciado na nota.",
     field: "título da página ou link",
     placeholder: "ex.: Ata da reunião de sprint",
     required: true,

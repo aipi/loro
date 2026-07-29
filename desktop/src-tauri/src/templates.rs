@@ -712,14 +712,17 @@ pub fn loro_note_skill(lang: &str) -> &'static str {
     }
 }
 
-// ---- external-source sync (/loro-sync, ADR-0005/0006) ----
-// Attaches an external item (never its full content) as a `ref` on a
-// brainstorming note. Sources: drive (Gemini notes), slack (a channel
-// message), jira (a ticket), confluence (a page) — each identified directly
-// by the user (channel/key/title/link), never guessed. The command stays
-// generic so a future source needs no rename, only a new branch here.
+// ---- external-source sync (/loro-sync, ADR-0005/0006/0007) ----
+// Attaches an external item as a LOCAL anexo file (brainstorming/<tema>/
+// anexos/) referenced by a note — content lives in the acervo, never in a
+// log (BR-8 stays satisfied: logs/manifests are still content-free; this is
+// the acervo's own working material, exactly like a meeting transcript
+// already is). Sources: drive (Gemini notes — full doc), slack/jira/
+// confluence (agent-written summaries) — each identified directly by the
+// user (channel/key/title/link), never guessed. ADR-0007 supersedes
+// ADR-0005 §4's stricter "link only, never content" framing.
 pub const LORO_SYNC_SKILL: &str = r#"---
-description: Anexa um item externo (Drive/Slack/Jira/Confluence) como referência numa nota do acervo (ADR-0005/0006)
+description: Traz um item externo (Drive/Slack/Jira/Confluence) para um anexo local, referenciado numa nota (ADR-0005/0006/0007)
 argument-hint: <fonte:drive|slack|jira|confluence> <alvo-nota-ou-tema> <identificador>
 ---
 
@@ -730,9 +733,9 @@ na fonte — o formato depende da fonte (veja abaixo).
 
 Você é o assistente de sincronização externa do Loro. Trabalhe SOMENTE dentro
 de `brainstorming/` — nunca toque em `contextos/` (mundo versionado). Em toda
-fonte, **NUNCA leia, baixe ou cole o conteúdo/corpo do item na nota** — só
-título, link e data (BR-8); e **NUNCA anexe sem confirmação explícita do
-usuário** sobre qual item é (BR-1).
+fonte, **NUNCA anexe sem confirmação explícita do usuário** sobre qual item é
+(BR-1); e **NUNCA cole o conteúdo/resumo em log ou manifesto** (BR-8) — ele
+vai só no arquivo de anexo, dentro do acervo local.
 
 Se a fonte não for uma das listadas no `argument-hint`, diga claramente que
 ainda não é suportada e pare — não invente comportamento.
@@ -741,8 +744,8 @@ Fonte `drive` (notas do Gemini no Google Drive) — identificador OPCIONAL
 (busca ou link):
 1. Se o identificador for um LINK do Google Drive/Docs (começa com
    `https://docs.google.com/` ou `https://drive.google.com/`): pule a busca,
-   vá direto para a confirmação usando só os metadados desse documento
-   (título, dono).
+   vá direto para a confirmação usando os metadados desse documento (título,
+   dono).
 2. Caso contrário, busque no Google Drive documentos cujo título contenha
    "Anotações do Gemini" (use o identificador, se houver, como palavra-chave
    adicional do título — ex. o nome da reunião). **A busca NUNCA deve
@@ -757,30 +760,30 @@ Fonte `drive` (notas do Gemini no Google Drive) — identificador OPCIONAL
    para rejeitar. Nunca infira pelo conteúdo do documento.
 4. Liste os candidatos (título, data, dono) e peça confirmação. Se nada for
    encontrado, sugira rodar de novo passando um LINK direto como
-   identificador. Ao confirmar, grave `tipo: drive`, `caminho: <link>`.
+   identificador. **Ao confirmar, exporte o texto do documento INTEIRO**
+   (via o conector do Drive) para o anexo (passo 6).
 
 Fonte `slack` — identificador OBRIGATÓRIO: o nome do canal (ex. `#eng-loro`
 ou `eng-loro`):
 1. Use o conector do Slack disponível para ler as mensagens recentes desse
    canal (e fixadas/pinned, se houver).
 2. Liste as mensagens candidatas (autor, data, um trecho curto só para
-   identificação visual — não é para copiar na nota) e peça ao usuário para
-   confirmar QUAL mensagem/thread representa a reunião ou decisão a anexar.
-   Se o canal não existir ou não houver mensagens relevantes, diga isso
-   claramente em vez de inventar uma.
-3. Ao confirmar, grave `tipo: slack`, `caminho: <link permanente da
-   mensagem/thread>` (o "copy link" do Slack). Nunca cole o texto da
-   mensagem no corpo da nota.
+   identificação visual) e peça ao usuário para confirmar QUAL mensagem/
+   thread representa a reunião ou decisão a trazer. Se o canal não existir
+   ou não houver mensagens relevantes, diga isso claramente em vez de
+   inventar uma.
+3. **Ao confirmar, escreva um RESUMO** da mensagem/thread (nunca copie o
+   texto cru) para o anexo (passo 6).
 
 Fonte `jira` — identificador OBRIGATÓRIO: a chave do ticket (ex. `PROJ-123`)
 ou o link direto do ticket:
 1. Use o conector do Jira/Atlassian disponível para buscar esse ticket
    exato pela chave (extraindo a chave do link, se um link foi passado).
 2. Mostre o título/resumo e status do ticket encontrado e peça confirmação
-   antes de anexar — mesmo sendo um identificador exato, confirme que é o
+   antes de trazer — mesmo sendo um identificador exato, confirme que é o
    ticket certo.
-3. Ao confirmar, grave `tipo: jira`, `caminho: <link do ticket>`. Nunca cole
-   a descrição/comentários do ticket na nota.
+3. **Ao confirmar, escreva um RESUMO** (título, status, pontos-chave — nunca
+   a descrição/comentários inteiros) para o anexo (passo 6).
 
 Fonte `confluence` — identificador OBRIGATÓRIO: o título exato da página ou
 o link direto:
@@ -788,13 +791,18 @@ o link direto:
    Confluence/Atlassian disponível para buscar a página por esse título.
 2. Se houver mais de uma página com título parecido, liste as candidatas
    (título, espaço, atualizado em) e peça confirmação de qual é a certa.
-3. Ao confirmar, grave `tipo: confluence`, `caminho: <link da página>`.
-   Nunca cole o conteúdo da página na nota.
+3. **Ao confirmar, escreva um RESUMO** do conteúdo da página (nunca a
+   página inteira) para o anexo (passo 6).
 
-Em qualquer fonte, ao confirmar: edite o arquivo `.md` da nota-alvo (crie uma
-nova nota em `brainstorming/<tema>/notas/` se o alvo for um tema, seguindo o
-mesmo front-matter das notas existentes) e acrescente ao `refs:` a entrada
-correspondente.
+6. Em qualquer fonte, ao confirmar: crie
+   `brainstorming/<tema>/anexos/<slug>.md` com front-matter `fonte:
+   drive|slack|jira|confluence`, `link: <link original>`, `data: <data>`
+   (mesmo formato de front-matter das notas existentes) e o
+   conteúdo/resumo no corpo. Depois edite a nota-alvo (crie uma nova nota em
+   `brainstorming/<tema>/notas/` se o alvo for um tema) e acrescente ao
+   `refs:` uma entrada `tipo: doc`, `caminho: acervo://brainstorming/<tema>/
+   anexos/<slug>.md` — uma referência LOCAL, nunca a URL externa direto no
+   `refs:`.
 
 Regras de rigor (ADR-0002 §5):
 - **Nunca assuma premissas** não declaradas: o que não estiver confirmado pelo
@@ -808,7 +816,7 @@ Regras de rigor (ADR-0002 §5):
 "#;
 
 pub const LORO_SYNC_SKILL_EN: &str = r#"---
-description: Attaches an external item (Drive/Slack/Jira/Confluence) as a reference on an acervo note (ADR-0005/0006)
+description: Brings an external item (Drive/Slack/Jira/Confluence) into a local anexo, referenced by a note (ADR-0005/0006/0007)
 argument-hint: <source:drive|slack|jira|confluence> <target-note-or-topic> <identifier>
 ---
 
@@ -819,9 +827,9 @@ IDENTIFIER in that source — the shape depends on the source (see below).
 
 You are Loro's external-sync assistant. Work ONLY inside `brainstorming/` —
 never touch `contextos/` (the versioned world). For every source, **NEVER
-read, download, or paste the item's content/body into the note** — only
-title, link, and date (BR-8); and **NEVER attach without the user's explicit
-confirmation** of which item it is (BR-1).
+attach without the user's explicit confirmation** of which item it is
+(BR-1); and **NEVER paste the content/summary into a log or manifest**
+(BR-8) — it only goes into the anexo file, inside the local acervo.
 
 If the source is not one of the ones listed in `argument-hint`, say clearly
 that it is not supported yet and stop — do not invent behavior.
@@ -830,8 +838,8 @@ Source `drive` (Gemini notes on Google Drive) — identifier OPTIONAL (a search
 keyword or a link):
 1. If the identifier is a Google Drive/Docs LINK (starts with
    `https://docs.google.com/` or `https://drive.google.com/`): skip the
-   search and go straight to confirmation using only that document's
-   metadata (title, owner).
+   search and go straight to confirmation using that document's metadata
+   (title, owner).
 2. Otherwise, search Google Drive for documents whose title contains
    "Anotações do Gemini" (use the identifier, if given, as an extra title
    keyword — e.g. the meeting's name). **The search must NEVER filter by
@@ -846,30 +854,30 @@ keyword or a link):
    reject. Never infer from the document's content.
 4. List the candidates (title, date, owner) and ask for confirmation. If
    nothing is found, suggest re-running with a direct link as the
-   identifier. On confirmation, record `tipo: drive`, `caminho: <link>`.
+   identifier. **On confirmation, export the document's FULL text** (via the
+   Drive connector) into the anexo (step 6).
 
 Source `slack` — identifier REQUIRED: the channel name (e.g. `#eng-loro` or
 `eng-loro`):
 1. Use the available Slack connector to read that channel's recent messages
    (and pinned ones, if any).
 2. List the candidate messages (author, date, a short excerpt for visual
-   identification only — not to be copied into the note) and ask the user to
-   confirm WHICH message/thread represents the meeting or decision to
-   attach. If the channel does not exist or has no relevant messages, say so
-   plainly instead of inventing one.
-3. On confirmation, record `tipo: slack`, `caminho: <the message/thread's
-   permanent link>` (Slack's "copy link"). Never paste the message text into
-   the note's body.
+   identification only) and ask the user to confirm WHICH message/thread
+   represents the meeting or decision to bring in. If the channel does not
+   exist or has no relevant messages, say so plainly instead of inventing
+   one.
+3. **On confirmation, write a SUMMARY** of the message/thread (never copy
+   the raw text) into the anexo (step 6).
 
 Source `jira` — identifier REQUIRED: the ticket key (e.g. `PROJ-123`) or a
 direct ticket link:
 1. Use the available Jira/Atlassian connector to fetch that exact ticket by
    key (extracting the key from the link, if a link was given).
 2. Show the found ticket's title/summary and status and ask for
-   confirmation before attaching — even for an exact identifier, confirm it
-   is the right ticket.
-3. On confirmation, record `tipo: jira`, `caminho: <ticket link>`. Never
-   paste the ticket's description/comments into the note.
+   confirmation before bringing it in — even for an exact identifier,
+   confirm it is the right ticket.
+3. **On confirmation, write a SUMMARY** (title, status, key points — never
+   the full description/comments) into the anexo (step 6).
 
 Source `confluence` — identifier REQUIRED: the page's exact title or a
 direct link:
@@ -877,13 +885,18 @@ direct link:
    Confluence/Atlassian connector to search for a page with that title.
 2. If more than one page has a similar title, list the candidates (title,
    space, updated date) and ask which one is correct.
-3. On confirmation, record `tipo: confluence`, `caminho: <page link>`. Never
-   paste the page's content into the note.
+3. **On confirmation, write a SUMMARY** of the page's content (never the
+   full page) into the anexo (step 6).
 
-For any source, on confirmation: edit the target note's `.md` file (create a
-new note under `brainstorming/<topic>/notas/` if the target is a topic,
-following the same front-matter as existing notes) and append the matching
-entry to `refs:`.
+6. For any source, on confirmation: create
+   `brainstorming/<topic>/anexos/<slug>.md` with front-matter `fonte:
+   drive|slack|jira|confluence`, `link: <original link>`, `data: <date>`
+   (same front-matter shape as existing notes) and the content/summary in
+   the body. Then edit the target note (create a new note under
+   `brainstorming/<topic>/notas/` if the target is a topic) and append to
+   its `refs:` an entry `tipo: doc`, `caminho: acervo://brainstorming/<topic>/
+   anexos/<slug>.md` — a LOCAL reference, never the external URL directly in
+   `refs:`.
 
 Rigor rules (ADR-0002 §5):
 - **Never assume unstated premises.** Anything not confirmed by the user is an
@@ -1553,6 +1566,19 @@ mod tests {
             // the bare old form is gone from the AGENTS skill reference
             assert!(!agents.contains("`/brain`"));
             assert!(!agents.contains("commands/brain.md"));
+        }
+    }
+
+    // ADR-0007: /loro-sync now brings content into a local anexo (superseding
+    // ADR-0005 §4's link-only posture) — the note's ref must point at that
+    // local file, never the external URL directly.
+    #[test]
+    fn sync_skill_writes_local_anexo_ref_not_external_url() {
+        for lang in ["pt", "en"] {
+            let skill = loro_sync_skill(lang);
+            assert!(skill.contains("anexos/"));
+            assert!(skill.contains("acervo://brainstorming"));
+            assert!(skill.contains("tipo: doc"));
         }
     }
 
