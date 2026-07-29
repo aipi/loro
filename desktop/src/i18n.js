@@ -287,7 +287,6 @@
     "context.md atualizado": "context.md updated",
     "contexto": "context",
     "Contexto": "Context",
-    "contexto do domínio": "domain context",
     "contexto: automático": "context: automatic",
     "contextos": "contexts",
     "contextos mais ativos": "most active contexts",

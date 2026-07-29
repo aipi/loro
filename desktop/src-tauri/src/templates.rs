@@ -12,8 +12,8 @@
 // point (open questions, contradictions, ideas under study) as the evolution
 // backlog of the domain. The lenses facts/thoughts/emotions/actions guide HOW
 // the loop interprets material — they are not the file's structure.
-pub const CONTEXT_TEMPLATE: &str = "# {{CONTEXT}} — contexto do domínio\n\n\
-_Fonte oficial da verdade deste domínio (markdown, legível para negócio). Evolui por RFC (branch + PR) revisada pelos donos do contexto._\n\n\
+pub const CONTEXT_TEMPLATE: &str = "# {{CONTEXT}} — contexto\n\n\
+_Fonte oficial da verdade deste contexto (markdown, legível para negócio). Evolui por RFC (branch + PR) revisada pelos donos do contexto._\n\n\
 ## 1 · Visão geral\n\n(sem registros ainda)\n\n\
 ## 2 · Como funciona\n\n(sem registros ainda)\n\n\
 ## 3 · Fluxos principais\n\n(sem registros ainda)\n\n\
@@ -25,8 +25,8 @@ _Pontos de evolução ainda não consolidados — dúvidas em aberto, contradiç
 > O que está indefinido/contraditório e por quê.\n\n\
 (sem registros ainda)\n";
 
-pub const CONTEXT_TEMPLATE_EN: &str = "# {{CONTEXT}} — domain context\n\n\
-_Official source of truth for this domain (business-readable markdown). It evolves via RFC (branch + PR) reviewed by the context owners._\n\n\
+pub const CONTEXT_TEMPLATE_EN: &str = "# {{CONTEXT}} — context\n\n\
+_Official source of truth for this context (business-readable markdown). It evolves via RFC (branch + PR) reviewed by the context owners._\n\n\
 ## 1 · Overview\n\n(no records yet)\n\n\
 ## 2 · How it works\n\n(no records yet)\n\n\
 ## 3 · Main flows\n\n(no records yet)\n\n\

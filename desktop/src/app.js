@@ -1391,7 +1391,7 @@ async function loadCtxChildren(name) {
   // subpastas que já são subdomínios (contextos) aparecem na ÁRVORE de contextos;
   // não as repetimos aqui como "pasta" — visualização única (ADR-0007).
   const ctxSet = new Set((lastSt && lastSt.contexts ? lastSt.contexts : []).map((c) => c.name));
-  const pretty = { "context.md": t("contexto do domínio"), "guia.md": t("guia do domínio"), "CHANGELOG.md": t("histórico"), CODEOWNERS: t("donos"), brainstorming: "brainstorming", incubadora: "brainstorming", referencias: t("referências") };
+  const pretty = { "context.md": t("contexto"), "guia.md": t("guia do domínio"), "CHANGELOG.md": t("histórico"), CODEOWNERS: t("donos"), brainstorming: "brainstorming", incubadora: "brainstorming", referencias: t("referências") };
   const order = (n) => n === "context.md" ? 0 : n === "guia.md" ? 0 : n === "CHANGELOG.md" ? 1 : n === "referencias" ? 2 : 3;
   entries.sort((a, b) => order(a.name) - order(b.name) || a.name.localeCompare(b.name));
   let html = "";

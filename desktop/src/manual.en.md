@@ -20,7 +20,10 @@ in a brainstorming; you select what matters and send a report to the queue;
 2. **Usage template** — pick a ready-made template (Sales, Engineering,
    Product & management, Learning, Education, Hiring, Healthcare) or the
    Generic (blank) one. A template prefills the contexts (still editable),
-   appends the vertical's rules to `AGENTS.md` and seeds the queue guide.
+   appends the vertical's rules to `AGENTS.md`, seeds the queue guide and
+   sets the `context.md` mold of every context (sections vary per vertical —
+   sales talks pipeline and commitments, healthcare talks practices and
+   protocols).
    "Duplicate to customize" copies any template into `~/.loro/templates/`,
    where you edit the files and it shows up in the wizard. Templates that
    touch personal data (Sales, Hiring, Healthcare) ship minimization rules —

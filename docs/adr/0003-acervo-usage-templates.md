@@ -12,11 +12,17 @@
 ### §1 Usage templates (presets)
 
 - A **usage template** seeds a new acervo: seed contexts, an `AGENTS.md`
-  **vertical addendum**, the initial queue guide (`inbox/_prompt.md`) and,
+  **vertical addendum**, the initial queue guide (`inbox/_prompt.md`), a
+  per-vertical **`context.md` mold** (`{{CONTEXT}}` placeholder — each
+  vertical gets its own section structure, e.g. sales: "Quem decide e
+  participa / Situação e pipeline / Compromissos e próximos passos") and,
   as a supported mechanism, extra skills copied into `.claude/commands/`.
   The addendum is *appended* to the generated `AGENTS.md`, never a
   replacement — the default body carries the loop mechanics the whole model
-  depends on.
+  depends on. Contexts added later (`brain_add_context`) follow the acervo's
+  stored template; a vanished custom template degrades to the default mold.
+  The seeded file's title is `<name> — contexto` (the "domínio" wording was
+  dropped from user-facing copy).
 - **Builtins (v1):** `generico` (default — empty content, preserving the
   baseline behavior and the "no built-in taxonomy" premise as opt-in),
   `vendas`, `engenharia`, `produto`, `aprendizado`, `educacao`,
@@ -25,8 +31,9 @@
 - **On-disk format** (identical for builtins and custom): a directory with
   `template.json` (manifest: `version`, `name`/`description`/`contexts` as
   plain values or `{pt, en}` maps) plus optional `pt|en/AGENTS.md`,
-  `pt|en/_prompt.md` and `pt|en/skills/*.md`. Missing language variants fall
-  back to the other language.
+  `pt|en/_prompt.md`, `pt|en/context.md` (the context mold) and
+  `pt|en/skills/*.md`. Missing language variants fall back to the other
+  language.
 - **Builtins are embedded** from `desktop/src-tauri/templates/<slug>/` via
   `include_str!` (module `presets.rs`): the binary stays self-contained and
   "duplicate to customize" is just writing the same bytes to disk.

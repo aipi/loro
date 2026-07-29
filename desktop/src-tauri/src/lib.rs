@@ -977,11 +977,12 @@ pub(crate) fn valid_context(name: &str) -> bool {
     !parts.is_empty() && parts.len() <= MAX_CONTEXT_DEPTH && parts.iter().all(|p| valid_segment(p))
 }
 
-// domain context (the official source of truth, MARKDOWN); {{CONTEXT}} = name.
-// 6 business sections; section 6 (Hotspots) holds the unconsolidated. The lenses
-// facts/thoughts/emotions/actions are how the loop INTERPRETS (see AGENTS.md).
-fn context_md(name: &str, lang: &str) -> String {
-    context_template(lang).replace("{{CONTEXT}}", name)
+// context (the official source of truth, MARKDOWN); {{CONTEXT}} = name.
+// Section "Hotspots" holds the unconsolidated. The usage template may provide
+// its own per-vertical mold (ADR-0003); the baseline template is the fallback.
+fn context_md(name: &str, lang: &str, mold: Option<&str>) -> String {
+    mold.unwrap_or_else(|| context_template(lang))
+        .replace("{{CONTEXT}}", name)
 }
 
 // the single knowledge file of a context; "guia.md" is the legacy name (kept so
@@ -996,7 +997,7 @@ fn context_file(dir: &Path) -> Option<PathBuf> {
     None
 }
 
-fn seed_context(base: &Path, name: &str, lang: &str) -> Result<(), String> {
+fn seed_context(base: &Path, name: &str, lang: &str, mold: Option<&str>) -> Result<(), String> {
     let d = base.join("contextos").join(name);
     std::fs::create_dir_all(&d).map_err(|e| e.to_string())?;
     let ch = d.join("CHANGELOG.md");
@@ -1011,7 +1012,8 @@ fn seed_context(base: &Path, name: &str, lang: &str) -> Result<(), String> {
     // Non-destructive: only seed context.md when neither the new nor the legacy
     // knowledge file exists (an already-populated context is never overwritten).
     if context_file(&d).is_none() {
-        std::fs::write(d.join("context.md"), context_md(name, lang)).map_err(|e| e.to_string())?;
+        std::fs::write(d.join("context.md"), context_md(name, lang, mold))
+            .map_err(|e| e.to_string())?;
     }
     // Ideas are no longer files: unconsolidated knowledge lives as HOTSPOTS inside
     // context.md. New contexts get no brainstorming/ folder; legacy folders on
@@ -1157,8 +1159,9 @@ fn ensure_acervo_structure(
             }
         }
     }
+    let mold = tpl.and_then(|t| t.context_md.as_deref());
     for c in ctxs {
-        seed_context(base, c, lang)?;
+        seed_context(base, c, lang, mold)?;
     }
     let state = base.join(".brain/state.json");
     if !state.exists() {
@@ -1390,7 +1393,14 @@ fn brain_add_context(name: String) -> Result<(), String> {
         return Err(format!("err.invalid_context:{slug}"));
     }
     let cfg = read_brain_config().ok_or("err.acervo_not_configured")?;
-    seed_context(Path::new(&cfg.brain_dir), &slug, &ui_lang())
+    let lang = ui_lang();
+    // Later-added contexts follow the acervo's usage template (ADR-0003); a
+    // vanished custom template degrades to the default mold, never an error.
+    let full = read_loro_config();
+    let mold = active_acervo(&full)
+        .and_then(|a| resolve_template(&a.template, &lang).ok())
+        .and_then(|t| t.context_md);
+    seed_context(Path::new(&cfg.brain_dir), &slug, &lang, mold.as_deref())
 }
 
 // Pure, testable core: delete a context/folder dir under contextos/.
@@ -3417,13 +3427,13 @@ mod tests {
     #[test]
     fn context_markdown_replaces_context_placeholder() {
         assert!(CONTEXT_TEMPLATE.contains("{{CONTEXT}}"));
-        let g = context_md("frota", "pt");
-        assert!(g.starts_with("# frota — contexto do domínio"));
+        let g = context_md("frota", "pt", None);
+        assert!(g.starts_with("# frota — contexto"));
         assert!(!g.contains("{{CONTEXT}}"));
         assert!(!g.contains("<html")); // pure markdown, no HTML
         assert!(g.contains("Hotspots")); // section 6 is the evolution backlog
                                          // the en language uses the English template
-        assert!(context_md("fleet", "en").contains("domain context"));
+        assert!(context_md("fleet", "en", None).contains("context"));
     }
 
     #[test]
@@ -3642,6 +3652,7 @@ mod tests {
         let tpl = TemplateContent {
             agents_extra: Some("## Regras da vertical: teste\n".into()),
             inbox_prompt: Some("# Guia da fila — teste\n".into()),
+            context_md: Some("# {{CONTEXT}} — contexto\n\n## 1 · Molde da vertical\n".into()),
             skills: vec![("brain-mensagem.md".into(), "corpo da skill".into())],
         };
         ensure_acervo_structure(&root, &["contas".into()], "pt", Some(&tpl)).unwrap();
@@ -3657,6 +3668,10 @@ mod tests {
             std::fs::read_to_string(root.join("inbox/_prompt.md")).unwrap(),
             "# Guia da fila — teste\n"
         );
+        // the vertical's own context.md mold, placeholder resolved
+        let ctx = std::fs::read_to_string(root.join("contextos/contas/context.md")).unwrap();
+        assert!(ctx.starts_with("# contas — contexto"));
+        assert!(ctx.contains("Molde da vertical"));
         // the loop consumed the guide; a re-materialization must NOT re-inject it
         std::fs::remove_file(root.join("inbox/_prompt.md")).unwrap();
         ensure_acervo_structure(&root, &["contas".into()], "pt", Some(&tpl)).unwrap();
@@ -3835,7 +3850,7 @@ mod tests {
         let d = root.join("contextos/frota");
         std::fs::create_dir_all(&d).unwrap();
         std::fs::write(d.join("guia.md"), "conhecimento legado").unwrap();
-        seed_context(&root, "frota", "pt").unwrap();
+        seed_context(&root, "frota", "pt", None).unwrap();
         // legacy guia preserved; no context.md created over it
         assert_eq!(
             std::fs::read_to_string(d.join("guia.md")).unwrap(),

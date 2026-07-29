@@ -32,6 +32,8 @@ pub struct TemplateContent {
     // AGENTS.md carries the loop mechanics the whole model depends on.
     pub agents_extra: Option<String>,
     pub inbox_prompt: Option<String>, // seeded to inbox/_prompt.md on first setup
+    // Per-vertical context.md mold ({{CONTEXT}} placeholder); None = default.
+    pub context_md: Option<String>,
     pub skills: Vec<(String, String)>, // (filename, body) -> .claude/commands/
 }
 
@@ -42,6 +44,8 @@ struct Builtin {
     agents_en: &'static str,
     prompt_pt: &'static str,
     prompt_en: &'static str,
+    context_pt: &'static str,
+    context_en: &'static str,
 }
 
 // "generico" is handled in code (empty content, honors the "no built-in
@@ -56,6 +60,8 @@ const BUILTINS: &[Builtin] = &[
         agents_en: include_str!("../templates/vendas/en/AGENTS.md"),
         prompt_pt: include_str!("../templates/vendas/pt/_prompt.md"),
         prompt_en: include_str!("../templates/vendas/en/_prompt.md"),
+        context_pt: include_str!("../templates/vendas/pt/context.md"),
+        context_en: include_str!("../templates/vendas/en/context.md"),
     },
     Builtin {
         id: "engenharia",
@@ -64,6 +70,8 @@ const BUILTINS: &[Builtin] = &[
         agents_en: include_str!("../templates/engenharia/en/AGENTS.md"),
         prompt_pt: include_str!("../templates/engenharia/pt/_prompt.md"),
         prompt_en: include_str!("../templates/engenharia/en/_prompt.md"),
+        context_pt: include_str!("../templates/engenharia/pt/context.md"),
+        context_en: include_str!("../templates/engenharia/en/context.md"),
     },
     Builtin {
         id: "produto",
@@ -72,6 +80,8 @@ const BUILTINS: &[Builtin] = &[
         agents_en: include_str!("../templates/produto/en/AGENTS.md"),
         prompt_pt: include_str!("../templates/produto/pt/_prompt.md"),
         prompt_en: include_str!("../templates/produto/en/_prompt.md"),
+        context_pt: include_str!("../templates/produto/pt/context.md"),
+        context_en: include_str!("../templates/produto/en/context.md"),
     },
     Builtin {
         id: "aprendizado",
@@ -80,6 +90,8 @@ const BUILTINS: &[Builtin] = &[
         agents_en: include_str!("../templates/aprendizado/en/AGENTS.md"),
         prompt_pt: include_str!("../templates/aprendizado/pt/_prompt.md"),
         prompt_en: include_str!("../templates/aprendizado/en/_prompt.md"),
+        context_pt: include_str!("../templates/aprendizado/pt/context.md"),
+        context_en: include_str!("../templates/aprendizado/en/context.md"),
     },
     Builtin {
         id: "educacao",
@@ -88,6 +100,8 @@ const BUILTINS: &[Builtin] = &[
         agents_en: include_str!("../templates/educacao/en/AGENTS.md"),
         prompt_pt: include_str!("../templates/educacao/pt/_prompt.md"),
         prompt_en: include_str!("../templates/educacao/en/_prompt.md"),
+        context_pt: include_str!("../templates/educacao/pt/context.md"),
+        context_en: include_str!("../templates/educacao/en/context.md"),
     },
     Builtin {
         id: "recrutamento",
@@ -96,6 +110,8 @@ const BUILTINS: &[Builtin] = &[
         agents_en: include_str!("../templates/recrutamento/en/AGENTS.md"),
         prompt_pt: include_str!("../templates/recrutamento/pt/_prompt.md"),
         prompt_en: include_str!("../templates/recrutamento/en/_prompt.md"),
+        context_pt: include_str!("../templates/recrutamento/pt/context.md"),
+        context_en: include_str!("../templates/recrutamento/en/context.md"),
     },
     Builtin {
         id: "saude",
@@ -104,6 +120,8 @@ const BUILTINS: &[Builtin] = &[
         agents_en: include_str!("../templates/saude/en/AGENTS.md"),
         prompt_pt: include_str!("../templates/saude/pt/_prompt.md"),
         prompt_en: include_str!("../templates/saude/en/_prompt.md"),
+        context_pt: include_str!("../templates/saude/pt/context.md"),
+        context_en: include_str!("../templates/saude/en/context.md"),
     },
 ];
 
@@ -302,6 +320,7 @@ pub fn resolve_template(id: &str, lang: &str) -> Result<TemplateContent, String>
         return Ok(TemplateContent {
             agents_extra: read_custom_file(&dir, lang, "AGENTS.md"),
             inbox_prompt: read_custom_file(&dir, lang, "_prompt.md"),
+            context_md: read_custom_file(&dir, lang, "context.md"),
             skills: read_custom_skills(&dir, lang),
         });
     }
@@ -309,14 +328,15 @@ pub fn resolve_template(id: &str, lang: &str) -> Result<TemplateContent, String>
         .iter()
         .find(|b| b.id == id)
         .ok_or("err.template_not_found")?;
-    let (agents, prompt) = if lang == "en" {
-        (b.agents_en, b.prompt_en)
+    let (agents, prompt, context) = if lang == "en" {
+        (b.agents_en, b.prompt_en, b.context_en)
     } else {
-        (b.agents_pt, b.prompt_pt)
+        (b.agents_pt, b.prompt_pt, b.context_pt)
     };
     Ok(TemplateContent {
         agents_extra: non_empty(agents.to_string()),
         inbox_prompt: non_empty(prompt.to_string()),
+        context_md: non_empty(context.to_string()),
         skills: Vec::new(), // builtins ship no extra skills in v1 (ADR-0003)
     })
 }
@@ -348,8 +368,10 @@ pub fn duplicate_template(id: &str) -> Result<PathBuf, String> {
         ("template.json", b.manifest),
         ("pt/AGENTS.md", b.agents_pt),
         ("pt/_prompt.md", b.prompt_pt),
+        ("pt/context.md", b.context_pt),
         ("en/AGENTS.md", b.agents_en),
         ("en/_prompt.md", b.prompt_en),
+        ("en/context.md", b.context_en),
     ] {
         let p = dest.join(rel);
         if let Some(parent) = p.parent() {
@@ -461,6 +483,15 @@ mod tests {
             assert!(pt.inbox_prompt.unwrap().contains("Guia da fila"));
             let en = resolve_template("vendas", "en").unwrap();
             assert!(en.agents_extra.unwrap().contains("Vertical rules: sales"));
+            // per-vertical context.md mold, with the {{CONTEXT}} placeholder
+            let mold = en.context_md.unwrap();
+            assert!(mold.contains("{{CONTEXT}}"));
+            assert!(mold.contains("Situation & pipeline"));
+            assert!(resolve_template("saude", "pt")
+                .unwrap()
+                .context_md
+                .unwrap()
+                .contains("prontuário"));
         });
     }
 
@@ -489,6 +520,7 @@ mod tests {
             )
             .unwrap();
             std::fs::write(dir.join("pt/AGENTS.md"), "## Regras da casa\n").unwrap();
+            std::fs::write(dir.join("pt/context.md"), "# {{CONTEXT}} — molde da casa\n").unwrap();
             let list = list_templates("pt");
             let v = list.iter().find(|t| t.id == "vendas").unwrap();
             assert_eq!(v.name, "Vendas da casa");
@@ -496,6 +528,7 @@ mod tests {
             assert!(!v.builtin);
             let c = resolve_template("vendas", "pt").unwrap();
             assert!(c.agents_extra.unwrap().contains("Regras da casa"));
+            assert!(c.context_md.unwrap().contains("molde da casa"));
         });
     }
 

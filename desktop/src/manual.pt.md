@@ -19,8 +19,10 @@ fila; o botão "gerar contexto" pede ao Claude do terminal que destile a fila em
 2. **Modelo de uso** — escolha um modelo pronto (Vendas, Engenharia,
    Produto & gestão, Aprendizado, Educação, Recrutamento, Saúde) ou o
    Genérico (em branco). O modelo pré-preenche os contextos (você pode
-   editar), adiciona regras da vertical ao `AGENTS.md` e semeia o guia da
-   fila. "Duplicar para personalizar" copia qualquer modelo para
+   editar), adiciona regras da vertical ao `AGENTS.md`, semeia o guia da
+   fila e define o molde do `context.md` de cada contexto (as seções variam
+   por vertical — vendas fala de pipeline e compromissos, saúde de condutas
+   e protocolos). "Duplicar para personalizar" copia qualquer modelo para
    `~/.loro/templates/`, onde você edita os arquivos e ele passa a aparecer
    no assistente. Modelos com dados pessoais (Vendas, Recrutamento, Saúde)
    trazem regras de minimização — o de Saúde avisa: dados de saúde são
