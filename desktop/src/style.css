@@ -150,9 +150,14 @@ body {
 
 /* ---- acervo + terminal: empilhado ou lado a lado ---- */
 .mainrow { display: flex; flex-direction: column; flex: 1; min-height: 0; }
-.mainrow.side { flex-direction: row; }
-.mainrow.side .termpanel { width: clamp(320px, 42%, 560px); height: auto;
+/* Side mode is a grid, not a row: the live panel must NEVER become a row item
+   (it turned into a squeezed middle column — loose text over a broken screen).
+   Top row: studio | terminal; bottom row: the live panel spanning full width. */
+.mainrow.side { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: minmax(0, 1fr) auto; }
+.mainrow.side > .bwrap { grid-area: 1 / 1; min-height: 0; }
+.mainrow.side .termpanel { grid-area: 1 / 2; width: clamp(320px, 42vw, 560px); height: auto;
   border-top: none; border-left: 1px solid var(--line); }
+.mainrow.side .livepanel { grid-column: 1 / -1; grid-row: 2; }
 
 /* ---- terminal embutido ---- */
 .termpanel { flex: none; height: 40vh; display: flex; flex-direction: column;
