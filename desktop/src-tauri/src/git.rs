@@ -1166,7 +1166,7 @@ mod tests {
         let root = temp_repo("sync-ff");
         let bare = root.join("origin.git");
         std::fs::create_dir_all(&bare).unwrap();
-        run_git(&bare, &["init", "--bare"]);
+        run_git(&bare, &["init", "--bare", "--initial-branch=main"]);
 
         let a = root.join("a");
         std::fs::create_dir_all(&a).unwrap();
@@ -1204,7 +1204,7 @@ mod tests {
         let root = temp_repo("sync-div");
         let bare = root.join("origin.git");
         std::fs::create_dir_all(&bare).unwrap();
-        run_git(&bare, &["init", "--bare"]);
+        run_git(&bare, &["init", "--bare", "--initial-branch=main"]);
 
         let a = root.join("a");
         std::fs::create_dir_all(&a).unwrap();
