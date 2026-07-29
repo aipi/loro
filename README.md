@@ -25,12 +25,15 @@ It is three things working together:
    a folder of per-domain truth any agent or teammate can read.
 3. **An AI-agent automation layer** — Loro wraps an AI agent CLI (`claude` by
    default, any CLI — ADR-0003) in an embedded terminal, and turns its skills
-   into one-click UI instead of typed commands: buttons and a command palette
-   (`Cmd/Ctrl+Shift+P`) inject `/loro-ask`, `/loro-note`, `/loro-context`,
-   `/loro-sync` (external sources — Drive/Slack/Jira/Confluence, ADR-0005/0006)
-   and the meeting `/loro-analyse`/`/loro-question` skills. The capture tool
-   and the knowledge base are what the automations act on; this layer is how
-   the user reaches them.
+   into one-click UI instead of typed commands: buttons, a "🧰 ferramentas"
+   box, and a command palette (`Cmd/Ctrl+Shift+P`) inject `/loro-ask`,
+   `/loro-note`, `/loro-context`, `/loro-sync` (external sources —
+   Drive/Slack/Jira/Confluence, ADR-0005/0006), the meeting
+   `/loro-analyse`/`/loro-question` skills, and any **custom tool** the user
+   authored (`/loro-tool`, ADR-0006) — described in plain language and
+   AI-drafted, or imported from a skill the user already had. The capture
+   tool and the knowledge base are what the automations act on; this layer
+   is how the user reaches them.
 
 > Docs: the brain domain `loro` (**`brain/contexts/loro/context.md`**, what/why —
 > this repo dogfoods its own model), **`docs/ARCHITECTURE.md`** (how),
@@ -85,6 +88,9 @@ run as agent skills in the embedded terminal, **local-first**: they read the
 local base before any external source. New acervos start from a **usage
 template** (sales, engineering, healthcare… — ADR-0003) and choose their own
 **AI agent CLI**; a first-launch welcome modal presents the main features.
+`autoContext` (on by default, toggle in the wizard/Settings) lets the loop
+create or assign a new context on its own when processing the fila; off,
+it leaves an unmatched item pending instead of guessing (ADR-0006).
 
 ## Security & privacy
 

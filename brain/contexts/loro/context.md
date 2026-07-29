@@ -30,7 +30,7 @@ open only the section you need._
   BR-9 no credentials.
 - **Hotspots** — H-1 Knowledge Studio flow · H-2 usage templates & vertical
   skill catalog · H-3 en/pt folder divergence · H-4 CODEOWNERS enforcement ·
-  H-5 end-user packaging.
+  H-5 end-user packaging · H-6 external-source sync & custom tools scope.
 
 ## What Loro is
 A **companion** (not a replacement for agents) that captures speech 100% locally
@@ -102,10 +102,22 @@ the model: ideas live here, inline, not as separate files.)
 > aprendizado, educacao, recrutamento, saude) and a per-acervo AI agent command
 > (any CLI, `claude` default) — ADR-0003. Shipped: structure seeding (contexts,
 > AGENTS.md addendum, queue guide), custom templates in `~/.loro/templates`,
-> agent-agnostic skill injection. Open: the vertical skill *catalog* (e.g.
-> `/loro-mensagem` generating sales follow-ups from an account context),
-> further verticals (legal, …), and a full "Claude"→"agent" wording sweep in
-> descriptive UI copy.
+> agent-agnostic skill injection. Open: further built-in verticals (legal, …)
+> and a full "Claude"→"agent" wording sweep in descriptive UI copy. The
+> vertical skill *catalog* item is superseded by ADR-0006's custom tools
+> (`/loro-tool`): rather than Loro shipping every vertical skill, the user
+> authors their own (AI-drafted or imported) and it appears in the
+> "🧰 ferramentas" box, usable from the sidebar, Visão Geral, or a meeting.
+
+> [!HOTSPOT] H-6 — External-source sync & custom tools: scope of what gets attached
+> ADR-0005/0006 shipped `/loro-sync` (Drive/Slack/Jira/Confluence — title/link/
+> date only, never content, BR-8) and user-authored tools (`/loro-tool`) as a
+> generalized "🧰 ferramentas" surface (Visão Geral, sidebar, meeting menu).
+> `autoContext` also gained a real effect: on (default), the loop may create
+> a context the fila needs; off, it leaves the item pending instead of
+> guessing (`.loro/settings.json`, distinct from the global config). Open:
+> whether tools should be shareable/exportable between acervos or teammates,
+> and whether more sources (email, calendar) follow the same ref-only pattern.
 
 > [!HOTSPOT] H-3 — Acervo folder language diverges between brain and app (en vs pt)
 > This brain uses English folders (`contexts/`, `meetings/`, `notes/`) as the

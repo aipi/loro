@@ -105,6 +105,8 @@ OS/serde errors may still pass through and are shown untranslated.
 | `brain_read` | `rel` | content | read a file inside the acervo (path-traversal guarded) |
 | `brain_import` | `context?` | count | copy files into the inbox (prefix `<ctx>--`) |
 | `brain_delete_inbox` | `name` | `()` | delete an unprocessed queue item |
+| `brain_set_auto_context` | `value: bool` | `()` | post-creation toggle (Settings) for autoContext — global config + local `.loro/settings.json` (ADR-0006 §3) |
+| `brain_new_tool` / `brain_delete_tool` | `nome, conteudo` / `rel` | rel / `()` | create (imported skill content) or delete a custom tool — any `.claude/commands/*.md` outside the 7 built-in skills (ADR-0006 §2) |
 
 Brainstorming world + the fila → contexto flow (ADR-0001 §7):
 
@@ -181,15 +183,23 @@ Path resolution: `LORO_HOME` (exported by `loro.sh`) or a sensible default;
   enriched (description · updated date · hotspot range) so agents route without
   opening files. The generated `AGENTS.md` and every skill teach the protocol:
   index → card → ID search → targeted section read.
-- **External-source sync (`/loro-sync`, ADR-0005):** attaches an external
-  meeting note (v1: a Gemini note on Google Drive) to a brainstorming note as
-  a `tipo: drive` ref (title + link only — never the transcript body, BR-8).
-  Runs as a terminal-Claude skill like `/loro-note`, using the terminal
-  agent's own connector access (ambient-credential model, ADR-0004 baseline)
-  — the Tauri app never talks to Google's API or stores a token. Always an
-  explicit, user-triggered invocation (BR-1); the agent validates candidates
-  by title pattern + folder/owner heuristic and asks for confirmation before
-  attaching.
+- **External-source sync (`/loro-sync`, ADR-0005/0006):** attaches an
+  external item — a Gemini note on Google Drive, a Slack channel message, a
+  Jira ticket, or a Confluence page — to an acervo note as a ref (title +
+  link only — never the content, BR-8). Runs as a terminal-Claude skill like
+  `/loro-note`, using the terminal agent's own connector access
+  (ambient-credential model, ADR-0004 baseline) — the Tauri app never talks
+  to any of these APIs or stores a token. Always an explicit, user-triggered
+  invocation (BR-1); the agent confirms the exact item before attaching.
+  Reachable from a brainstorming's sidebar, from the Visão Geral's
+  "🧰 ferramentas" card, or from a meeting's `⋯` menu.
+- **Custom user tools (`/loro-tool`, ADR-0006):** any `.claude/commands/*.md`
+  outside the 7 built-in skills is a tool the user authored — the filename
+  IS the slash-command. Created either by describing it to `/loro-tool`
+  (AI drafts the skill, same dual create-or-evolve shape as `/loro-note`) or
+  by importing an already-written skill file directly (`brain_new_tool`, no
+  AI). Listed in a sidebar section (usar/editar/pedir à IA/excluir) and as
+  "usar" buttons on the Visão Geral card and in a meeting's `⋯` menu.
 - **Knowledge versioning (ADR-0001 §5), Git hidden behind two buttons:** *Versionar*
   → `brain_version` creates `rfc/<slug>` off the default branch and commits the
   working changes locally (Git only). *Propor mudança* → `brain_propose_change`
@@ -234,4 +244,6 @@ All technical decisions are consolidated in the single **`docs/adr/0001-baseline
 | Meetings | living file + notebook report, transient audio | ADR-0001 §8 |
 | Meeting AI | terminal-Claude skills, local-first | ADR-0001 §9 |
 | Doc language | English | ADR-0001 |
-| External-source sync | `/loro-sync <fonte>`, ambient terminal-agent connector, link-only refs | ADR-0005 |
+| External-source sync | `/loro-sync <fonte>` (drive/slack/jira/confluence), ambient terminal-agent connector, link-only refs | ADR-0005/0006 |
+| Custom user tools | any `.claude/commands/*.md` outside 7 built-ins; `/loro-tool` (AI-drafted) or direct import | ADR-0006 |
+| `autoContext` | per-acervo `.loro/settings.json` gate on the loop creating a brand-new context; toggle in wizard + Settings | ADR-0006 |
