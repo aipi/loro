@@ -718,8 +718,8 @@ function askAcervo() {
   const inp = $("askInput"); if (inp) inp.focus();
 }
 
-async function buildAndOpenReport() {
-  let id = meeting.id;
+async function buildAndOpenReport(explicitId) {
+  let id = explicitId || meeting.id;
   if (!id) { const rel = currentRel(); id = rel ? (LM.livingId(rel) || LM.reportId(rel)) : null; }
   if (!id) { toast(t("abra uma reunião para gerar o relatório")); return; }
   try { const r = await invoke("brain_meeting_build_notebook", { id }); if (r && r.rel) openDoc(r.rel, { preview: false }); toast(t("relatório pronto")); }
@@ -1298,12 +1298,11 @@ function renderSidebar(st) {
       `<div class="bitem addctx" data-genctx title="${t("Processa a fila com o Claude (/loro-context)")}">▶ ${t("gerar contexto")}</div>`
     : `<div class="bempty">${t("vazia — envie um relatório ou arquivos para gerar contexto")}</div>`;
   // contextos como ÁRVORE: pastas/áreas agrupam; contextos reais abrem o guia.
-  // A criação lidera a lista (creation-first UX, 2026-07-28).
+  // Criação vive no ＋ do cabeçalho da seção (linhas cheias poluíam a árvore).
   B.navCtx.innerHTML =
-    `<div class="bitem addctx" data-addctx title="${t("Criar um novo contexto")}">＋ ${t("novo contexto")}</div>` +
-    (st.contexts.length
+    st.contexts.length
       ? renderCtxForest(buildCtxTree(st.contexts))
-      : `<div class="bempty">${t("nenhum contexto ainda — crie o primeiro para organizar o conhecimento")}</div>`);
+      : `<div class="bempty">${t("nenhum contexto ainda — crie o primeiro para organizar o conhecimento")}</div>`;
   // fontes agrupadas por mês (escala p/ listas grandes)
   B.navSources.innerHTML = [["reunioes", st.reunioes], ["notas", st.notas]].map(([kind, files]) => {
     if (!files.length) return "";
@@ -1355,6 +1354,9 @@ function wireSidebar() {
   }));
 
   B.main.querySelectorAll("[data-addctx]").forEach((el2) => (el2.onclick = promptNewContext));
+  // section-header ＋ buttons (compact creation, owner feedback 2026-07-28)
+  if ($("addCtxBtn")) $("addCtxBtn").onclick = promptNewContext;
+  if ($("addTemaBtn")) $("addTemaBtn").onclick = promptNewTema;
   B.main.querySelectorAll("[data-genctx]").forEach((el2) => (el2.onclick = genContextNow));
   // pasta/área (não é contexto): só expande/recolhe
   B.main.querySelectorAll("[data-fold]").forEach((el2) => (el2.onclick = (e) => {
@@ -1453,9 +1455,9 @@ async function refreshPessoal() {
   renderPessoal(temas, avulso);
 }
 function renderPessoal(temas, avulso) {
-  // criação em primeiro lugar: a ação primária do grupo fica no topo, não
-  // escondida depois da lista (decisão de UX, 2026-07-28)
-  let html = `<div class="bitem addctx" data-addtema title="${t("Criar um novo brainstorming")}">＋ ${t("novo brainstorming")}</div>`;
+  // creation moved to the section header (＋, wired once at boot) — full-width
+  // creation rows polluted the tree (owner feedback 2026-07-28)
+  let html = "";
   if (temas.length || avulso.length) {
     // group brainstormings by their optional categoria (uncategorized last)
     for (const grp of LoroBrainstorm.groupByCategory(temas)) {
@@ -1494,9 +1496,9 @@ function renderTemaNode(t) {
 // segmentação em quatro pastas era atrito, não estrutura.
 // A selectable part row: a checkbox (data-bssel/data-bskind) + the open target.
 // A meeting row carries a ⋯ menu (renomear/apagar); files keep the plain ×.
-function bsPartRow(kind, openRel, selRel, label, title, indent, meetingId) {
+function bsPartRow(kind, openRel, selRel, label, title, indent, meetingId, meetingStatus) {
   const act = meetingId
-    ? `<button class="rowmenu" data-mtgmenu="${esc(selRel)}" data-mtgid="${esc(meetingId)}" data-mtgtitle="${esc(label)}" title="${t("ações da reunião (renomear, apagar)")}">⋯</button>`
+    ? `<button class="rowmenu" data-mtgmenu="${esc(selRel)}" data-mtgid="${esc(meetingId)}" data-mtgtitle="${esc(label)}" data-mtgstatus="${esc(meetingStatus || "")}" title="${t("ações da reunião (analisar, perguntar, relatório…)")}">⋯</button>`
     : `<button class="rowmenu danger" data-delpessoal="${esc(selRel)}" title="${t("apagar")}">×</button>`;
   const icon = kind === "reuniao" ? "meeting" : kind === "nota" ? "note" : "file";
   return `<div class="bitem file${indent ? " bsub" : ""}" data-doc="${esc(openRel)}" title="${esc(title)}">` +
@@ -1514,16 +1516,18 @@ async function loadTemaChildren(slug) {
   let inner = "";
   // ADR-0002 §6: the whole notes block leads the brainstorming (creation-first),
   // above the meetings — "＋ nova nota" is the top row.
-  inner += `<div class="bitem addctx" data-addnota="${esc(slug)}" title="${t("Escrever uma nota neste brainstorming")}">＋ ${t("nova nota")}</div>`;
-  // creation-first (UX decision 2026-07-28): recording a meeting is a primary
-  // action of the brainstorming, not a hidden palette/source-selector flow.
-  inner += `<div class="bitem addctx" data-addmeeting="${esc(slug)}" title="${t("Gravar uma reunião neste brainstorming (áudio 100% local)")}">● ${t("gravar reunião")}</div>`;
+  // creation-first but compact: one row, two half-width actions (nota/reunião)
+  // — two full rows polluted every expanded brainstorming (owner feedback).
+  inner += `<div class="bsadd">` +
+    `<button class="bsaddbtn" data-addnota="${esc(slug)}" title="${t("Escrever uma nota neste brainstorming")}">＋ ${t("nova nota")}</button>` +
+    `<button class="bsaddbtn rec2" data-addmeeting="${esc(slug)}" title="${t("Gravar uma reunião neste brainstorming (áudio 100% local)")}">● ${t("gravar reunião")}</button>` +
+    `</div>`;
   for (const f of notas) inner += bsPartRow("nota", f.path, f.path, shortName(f.name), f.name, false);
   for (const m of meetings) {
     // título do manifest (renomeável); cai para o id humanizado quando ausente
     const title = LM.meetingTitleFromManifest({ titulo: m.titulo }, m.id);
     const label = title === m.id ? LM.meetingLabel(m.id, settings.uiLang) : title;
-    inner += bsPartRow("reuniao", `${m.rel}/reuniao.md`, m.rel, label, m.id, false, m.id);
+    inner += bsPartRow("reuniao", `${m.rel}/reuniao.md`, m.rel, label, m.id, false, m.id, m.status);
     for (const [asub, akind] of [["investigacoes", "investigacao"], ["respostas", "nota"]]) {
       let arts = [];
       try { arts = ((await invoke("brain_list_dir", { rel: `${m.rel}/artefatos/${asub}` })) || []).filter((a) => !a.dir); }
@@ -1568,7 +1572,7 @@ function wirePessoal() {
   }));
   B.navPessoal.querySelectorAll("[data-mtgmenu]").forEach((el2) => (el2.onclick = (e) => {
     e.stopPropagation();
-    openMeetingMenu(el2.dataset.mtgmenu, el2.dataset.mtgid, el2.dataset.mtgtitle, el2);
+    openMeetingMenu(el2.dataset.mtgmenu, el2.dataset.mtgid, el2.dataset.mtgtitle, el2.dataset.mtgstatus, el2);
   }));
   B.navPessoal.querySelectorAll("[data-tema]").forEach((el2) => (el2.onclick = (e) => {
     if (e.target.closest("[data-bsmenu]")) return;
@@ -1660,12 +1664,27 @@ function promptRenameBs(slug) {
 
 // O menu ⋯ de uma reunião na árvore — renomear (só o título; o id/pasta é
 // estável, então abas e artefatos continuam válidos) / apagar.
-function openMeetingMenu(rel, id, title, anchor) {
+function openMeetingMenu(rel, id, title, status, anchor) {
   B.acervoMenu.hidden = true;
+  // the meeting's AI actions live here too (not only in the open tab); the
+  // report is only worth opening after the meeting is done — before that the
+  // entry shows disabled with the reason instead of failing on click.
+  const ready = status === "done";
+  const dis = ready ? "" : " disabled";
   B.bMenu.innerHTML =
     `<div class="fhead">${esc(title)}</div>` +
+    `<div class="fitem2 strong${dis ? " off" : ""}" data-analyse><span class="fn">✦ ${t("analisar")}</span></div>` +
+    `<div class="fitem2${dis ? " off" : ""}" data-question><span class="fn">? ${t("perguntar…")}</span></div>` +
+    `<div class="fitem2${dis ? " off" : ""}" data-report><span class="fn">≡ ${t("ver relatório")}</span></div>` +
+    (ready ? "" : `<div class="fnote mono">${t("disponíveis quando a reunião terminar")}</div>`) +
+    `<div class="fsep"></div>` +
     `<div class="fitem2" data-ren><span class="fn">✎ ${t("renomear")}</span></div>` +
     `<div class="fitem2 danger" data-del><span class="fn">${t("apagar reunião")}</span></div>`;
+  if (ready) {
+    B.bMenu.querySelector("[data-analyse]").onclick = () => { closeFloat(); openDoc(`${rel}/reuniao.md`, { preview: false }); runMeetingSkill("analyse", id, null, rel); };
+    B.bMenu.querySelector("[data-question]").onclick = () => { closeFloat(); askMeetingQuestion(id, rel); };
+    B.bMenu.querySelector("[data-report]").onclick = () => { closeFloat(); buildAndOpenReport(id); };
+  }
   B.bMenu.querySelector("[data-ren]").onclick = () => { closeFloat(); promptRenameMeeting(id, title); };
   B.bMenu.querySelector("[data-del]").onclick = () => { closeFloat(); delPessoal(rel, "reuniao"); };
   placeMenu(anchor);
@@ -2094,7 +2113,7 @@ function paintMeetingSurface(id, raw, manifest, status, artefatos) {
       `<div class="mtg-doc">${meetingStatusBar(status)}${preview}` +
         (body.trim() ? mdRender(body) : emptyMsg) +
       `</div>` +
-      `<aside class="mtg-rail">${meetingRailHtml(id)}</aside>` +
+      `<aside class="mtg-rail">${meetingRailHtml(id, status)}</aside>` +
     `</div>`;
   wireMeetingSurface(id);
   wireDocLinks();
@@ -2112,22 +2131,28 @@ function meetingStatusBar(status) {
 // the terminal (local-first: it reads the context before the internet); "ver
 // relatório" shows the built report; "enviar para a fila" turns this meeting into
 // a consolidated report and puts it in the fila de geração de contexto.
-function meetingRailHtml(id) {
-  const action = (btnCls, btnId, label, note) =>
+function meetingRailHtml(id, status) {
+  // primary action first and emphasized: analyse fills the report; the report
+  // is only worth opening after the meeting is done (recording/transcribing →
+  // the button is disabled with the reason spelled out).
+  const ready = status === "done";
+  const action = (btnCls, btnId, label, note, disabled) =>
     `<div class="mtg-action">` +
-      `<button class="abtn ${btnCls}" id="${btnId}">${label}</button>` +
+      `<button class="abtn ${btnCls}" id="${btnId}"${disabled ? " disabled" : ""}>${label}</button>` +
       `<p class="mtg-note mono">${note}</p>` +
     `</div>`;
   return `<div class="mtg-railsec mtg-analise">` +
     `<div class="mtg-railhead mono">${t("o que fazer com esta reunião")}</div>` +
-    action("", "mtgAnalyseBtn", t("analisar"),
-      t("O Claude lê a transcrição e o contexto local primeiro, aponta tema, decisões, riscos e dúvidas, e escreve o relatório.")) +
+    action("cta", "mtgAnalyseBtn", t("analisar"),
+      t("O agente lê a transcrição e o contexto local primeiro, aponta tema, decisões, riscos e dúvidas, e escreve o relatório."), !ready) +
     action("", "mtgQuestionBtn", t("perguntar…"),
-      t("Faça uma pergunta sobre a reunião — a resposta é ancorada no que foi dito e no contexto local.")) +
+      t("Faça uma pergunta sobre a reunião — a resposta é ancorada no que foi dito e no contexto local."), !ready) +
     action("ghost", "mtgReportBtn", t("ver relatório"),
-      t("Abre o relatório desta reunião (resumo, decisões, dúvidas, investigações).")) +
-    action("cta", "mtgQueueBtn", `${t("enviar para a fila")} →`,
-      t("Gera um relatório consolidado desta reunião e o coloca na fila de geração de contexto (próximo passo do fluxo).")) +
+      ready
+        ? t("Abre o relatório desta reunião (resumo, decisões, dúvidas, investigações).")
+        : t("disponível quando a reunião terminar — rode analisar para preenchê-lo."), !ready) +
+    action("", "mtgQueueBtn", `${t("enviar para a fila")} →`,
+      t("Gera um relatório consolidado desta reunião e o coloca na fila de geração de contexto (próximo passo do fluxo)."), !ready) +
     `</div>`;
 }
 
@@ -2162,8 +2187,8 @@ function currentMeetingDir(id) {
 // meeting's artefatos/ + relatorio.md; we refresh the tree afterwards so the new
 // files surface (the skill never touches manifest.json, so the rail's artefatos
 // list only reflects app-written artifacts).
-function runMeetingSkill(kind, id, question) {
-  const dir = currentMeetingDir(id);
+function runMeetingSkill(kind, id, question, dirOverride) {
+  const dir = dirOverride || currentMeetingDir(id);
   if (!dir) { toast(t("abra a reunião para analisar")); return; }
   const cmd = LM.meetingSkillCmd(kind, dir, question);
   if (!cmd) { toast(t("digite uma pergunta")); return; }
@@ -2181,8 +2206,8 @@ function scheduleMeetingSkillRefresh(id) {
 
 // "perguntar…": prompt for a free-text question, then inject /loro-question. Uses the
 // shared modal (window.prompt is unreliable in the webview) mirroring pickMeeting.
-function askMeetingQuestion(id) {
-  const dir = currentMeetingDir(id);
+function askMeetingQuestion(id, dirOverride) {
+  const dir = dirOverride || currentMeetingDir(id);
   if (!dir) { toast(t("abra a reunião para responder")); return; }
   openModal(
     t("Perguntar sobre a reunião"),
@@ -2193,7 +2218,7 @@ function askMeetingQuestion(id) {
     () => {
       const q = (($("mtgQuestion") && $("mtgQuestion").value) || "").trim();
       if (!q) { toast(t("digite uma pergunta")); return; }
-      runMeetingSkill("question", id, q);
+      runMeetingSkill("question", id, q, dirOverride);
     }
   );
   const inp = $("mtgQuestion"); if (inp) inp.focus();

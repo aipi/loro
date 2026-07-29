@@ -1024,3 +1024,21 @@ body {
 /* palette shortcut hint (every command has one) */
 .cmdk-k { margin-left: auto; flex: none; font-size: 10px; color: var(--muted);
   border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; }
+
+/* compact creation (owner feedback 2026-07-28): ＋ in the section header;
+   inside a brainstorming, one row with two half-width actions */
+.gadd { margin-left: auto; background: none; border: 1px solid transparent; border-radius: 5px;
+  color: var(--muted); font-size: 13px; line-height: 1; padding: 1px 6px; cursor: pointer; }
+.gadd:hover, .gadd:focus-visible { color: var(--accent); border-color: var(--line); }
+.bsadd { display: flex; gap: 4px; padding: 2px 8px 4px; }
+.bsaddbtn { flex: 1; min-width: 0; background: none; border: 1px dashed var(--line); border-radius: 6px;
+  font-family: var(--mono); font-size: 10px; letter-spacing: .04em; color: var(--muted);
+  padding: 3px 4px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bsaddbtn:hover { color: var(--ink); border-color: var(--muted); }
+.bsaddbtn.rec2:hover { color: var(--red); border-color: color-mix(in srgb, var(--red) 50%, transparent); }
+
+/* meeting ⋯ menu: emphasized primary action, disabled entries with a reason */
+.fitem2.strong .fn { color: var(--accent); }
+.fitem2.off { opacity: .45; pointer-events: none; }
+.fnote { padding: 2px 10px 6px; font-size: 10px; color: var(--muted); }
+.fsep { border-top: 1px solid var(--line); margin: 4px 0; }

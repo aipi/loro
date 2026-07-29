@@ -55,13 +55,15 @@ fila; o botão "gerar contexto" pede ao Claude do terminal que destile a fila em
 
 ## Brainstorming (o mundo não versionado)
 
-- **＋ novo brainstorming** cria um espaço privado para um tema.
+- O **＋** no cabeçalho da seção cria um brainstorming (espaço privado para
+  um tema); o **＋** da seção contextos cria um contexto.
 - Dentro dele (expanda o brainstorming na lateral): **＋ nova nota** para
   escrever, e **● gravar reunião** para gravar uma **reunião** ligada ao tema
   (também na paleta `Cmd/Ctrl+Shift+P` → "nova reunião").
-- Ao abrir a aba `reuniao.md` de uma reunião aparecem as ações **analisar**,
-  **perguntar…** (perguntas sobre a reunião), **ver relatório** e **enviar
-  para a fila**.
+- As ações **analisar**, **perguntar…** e **ver relatório** ficam na aba
+  `reuniao.md` da reunião e também no menu **⋯** da reunião na lateral; elas
+  habilitam quando a reunião termina (o relatório é preenchido pelo
+  analisar).
 - Numa reunião: marque **dúvidas/decisões/investigações** durante a fala (via
   paleta `Cmd/Ctrl+Shift+P` ou pelos botões); depois rode **analisar** para o
   Claude preencher o relatório da reunião.
