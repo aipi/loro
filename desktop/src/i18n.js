@@ -169,6 +169,8 @@
     "não foi possível abrir o agente no terminal — verifique se o CLI configurado está instalado": "could not open the agent in the terminal — check that the configured CLI is installed",
     // usage templates + per-acervo agent (ADR-0003)
     "modelo de uso": "usage template",
+    "gravar reunião": "record meeting",
+    "Gravar uma reunião neste brainstorming (áudio 100% local)": "Record a meeting in this brainstorming (audio 100% local)",
     "duplicar para personalizar": "duplicate to customize",
     "modelo duplicado em": "template duplicated at",
     "agente de IA (comando)": "AI agent (command)",

@@ -442,11 +442,11 @@ async function stopSession() {
 // itself). The mic keeps recording via the existing MediaRecorder (the onda +
 // audio/mic.webm). The reuniao.md tab is opened as THE live surface (the footer
 // live panel is retired for meetings), and the transcript only shows after stop.
-async function startMeetingSession() {
+async function startMeetingSession(presetTema) {
   if (state.running || meeting.active) { toast(t("já há uma gravação em andamento")); return; }
   let temas = [];
   try { temas = (await invoke("brain_list_brainstorms")) || []; } catch (_) {}
-  const choice = await pickMeeting(temas);
+  const choice = await pickMeeting(temas, presetTema);
   if (!choice) return;
   const cfg = currentCfg();
   clog("start (meeting ADR-0010): tema=" + choice.tema);
@@ -686,10 +686,11 @@ async function markMeeting(tipo) {
   catch (e) { toast(tErr(String(e))); clog("brain_meeting_marker error: " + e); }
 }
 
-// paleta: "nova reunião" (independe do seletor de fonte) · "abrir relatório"
-function startMeetingFlow() {
+// paleta: "nova reunião" (independe do seletor de fonte) · "abrir relatório".
+// presetTema pins the brainstorming when the flow starts from its sidebar row.
+function startMeetingFlow(presetTema) {
   if (state.running || meeting.active) { toast(t("já há uma gravação em andamento")); return; }
-  startMeetingSession();
+  startMeetingSession(presetTema);
 }
 // ADR-0013: general Q&A over the acervo. Any question is answered from the
 // versioned contexts (local base) first, MCP/external only after (the /brain-ask
@@ -1496,6 +1497,9 @@ async function loadTemaChildren(slug) {
   // ADR-0002 §6: the whole notes block leads the brainstorming (creation-first),
   // above the meetings — "＋ nova nota" is the top row.
   inner += `<div class="bitem addctx" data-addnota="${esc(slug)}" title="${t("Escrever uma nota neste brainstorming")}">＋ ${t("nova nota")}</div>`;
+  // creation-first (UX decision 2026-07-28): recording a meeting is a primary
+  // action of the brainstorming, not a hidden palette/source-selector flow.
+  inner += `<div class="bitem addctx" data-addmeeting="${esc(slug)}" title="${t("Gravar uma reunião neste brainstorming (áudio 100% local)")}">● ${t("gravar reunião")}</div>`;
   for (const f of notas) inner += bsPartRow("nota", f.path, f.path, shortName(f.name), f.name, false);
   for (const m of meetings) {
     // título do manifest (renomeável); cai para o id humanizado quando ausente
@@ -1537,6 +1541,9 @@ function wirePessoal() {
   });
   B.navPessoal.querySelectorAll("[data-delpessoal]").forEach((el2) => (el2.onclick = (e) => {
     e.stopPropagation(); delPessoal(el2.dataset.delpessoal);
+  }));
+  B.navPessoal.querySelectorAll("[data-addmeeting]").forEach((el2) => (el2.onclick = (e) => {
+    e.stopPropagation(); startMeetingFlow(el2.dataset.addmeeting);
   }));
   B.navPessoal.querySelectorAll("[data-bsmenu]").forEach((el2) => (el2.onclick = (e) => {
     e.stopPropagation(); openBsMenu(el2.dataset.bsmenu, el2);
@@ -2259,11 +2266,12 @@ function hidePill() { const p = $("mtgPill"); if (p) p.hidden = true; }
 
 // START picker: choose an existing tema or type a new one (+ optional title).
 // Resolves to {tema,titulo} on confirm or null on cancel/close.
-function pickMeeting(temas) {
+function pickMeeting(temas, presetTema) {
   return new Promise((resolve) => {
     let settled = false;
     const finish = (v) => { if (settled) return; settled = true; resolve(v); };
-    const opts = (temas || []).map((t) => `<option value="${esc(t.slug)}">${esc(t.nome || t.slug)}</option>`).join("");
+    const opts = (temas || []).map((t) =>
+      `<option value="${esc(t.slug)}"${t.slug === presetTema ? " selected" : ""}>${esc(t.nome || t.slug)}</option>`).join("");
     // ADR-0013: the brainstorming comes from the select (created elsewhere — no
     // "novo tema" field here). With none yet, a single name field bootstraps one.
     // Fields use the app's canonical `.wfield` pattern (same as the setup wizard).

@@ -54,8 +54,12 @@ in a brainstorming; you select what matters and send a report to the queue;
 ## Brainstorming (the non-versioned world)
 
 - **＋ new brainstorming** creates a private space for a topic.
-- Inside it: **＋ new note** (first row of the block) to write, and ● to record
-  a **meeting** tied to the topic.
+- Inside it (expand the brainstorming in the sidebar): **＋ new note** to
+  write, and **● record meeting** to record a **meeting** tied to the topic
+  (also in the palette `Cmd/Ctrl+Shift+P` → "nova reunião").
+- Opening a meeting's `reuniao.md` tab reveals the actions **analyse**,
+  **answer…** (questions about the meeting), **view report** and **send to
+  the queue**.
 - In a meeting: mark **questions/decisions/investigations** while people speak
   (via the palette `Cmd/Ctrl+Shift+P` or the buttons); then run **analyse** so
   Claude fills in the meeting report.
