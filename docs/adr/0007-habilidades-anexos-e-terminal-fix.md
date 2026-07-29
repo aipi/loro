@@ -47,8 +47,9 @@ habilidade" — já têm UI dedicada, listá-las de novo seria ruído.
 
 `/loro-presentation` e `/loro-artifact` (nomes de comando em inglês, igual
 às demais skills; conteúdo/pastas continuam em português) — genéricas,
-usáveis a partir de um brainstorming (`apresentacoes/`/`anexos/`) OU de um
-contexto (`contextos/<c>/anexos/`). Markdown é o formato padrão (qualquer
+usáveis a partir de um brainstorming (`brainstorming/<tema>/anexos/`) OU de
+um contexto (`contextos/<c>/anexos/`) — sem pasta própria de apresentações
+(ver amendment em §5). Markdown é o formato padrão (qualquer
 agente sempre consegue produzir); um `.pptx`/`.xlsx` de verdade é aceitável
 se o agente tiver como gerar, nunca assumido.
 
@@ -67,13 +68,23 @@ e a nota referencia esse arquivo LOCAL (`tipo: doc`,
 BR-8 continua satisfeita: o conteúdo vive no próprio acervo (igual a uma
 transcrição de reunião já vive), nunca em log/manifesto.
 
-### §5 Subpastas do brainstorming: `apresentacoes/`, `anexos/`
+### §5 Subpastas do brainstorming: exatamente 3 — `reunioes/`, `notas/`, `anexos/`
 
-Aditivo: `create_brainstorming` cria as duas pastas; `all_parts_of` as
-enumera para o relatório consolidado. `gather_part` já tratava qualquer
-`kind` desconhecido como nota — nenhuma mudança adicional foi necessária ali
-(confirmado por teste, não só leitura). Alimentação manual dessas pastas é
-só arrastar arquivo por fora (Finder/Explorer) — sem picker novo no app.
+Aditivo: `create_brainstorming` cria `anexos/`; `all_parts_of` a enumera
+para o relatório consolidado. `gather_part` já tratava qualquer `kind`
+desconhecido como nota — nenhuma mudança adicional foi necessária ali
+(confirmado por teste, não só leitura). Alimentação manual é só arrastar
+arquivo por fora (Finder/Explorer) — sem picker novo no app.
+
+**Amendment (mesma sessão):** a primeira versão desta ADR criou uma pasta
+`apresentacoes/` separada. Revisado: **não há pasta própria de
+apresentações** — uma apresentação é só mais um tipo de conteúdo dentro de
+`anexos/` (ambas as habilidades, `/loro-presentation` e `/loro-artifact`,
+escrevem lá). As três pastas do brainstorming que importam para o usuário
+são `reunioes/`, `notas/` e `anexos/` — cada uma com uma finalidade clara;
+toda reunião nasce dentro de `reunioes/`. (`investigacoes/`, `perguntas/` e
+`relatorios/` seguem existindo como infraestrutura pré-existente, não
+alterada por esta ADR.)
 
 ### §6 Anexos de contexto, versionamento opcional
 
@@ -93,19 +104,44 @@ nome/slug; sem busca, a lista corta para os 8 mais recentes + uma linha
 "ver todos (N)". Lógica pura (`filterAndCapTemas`, testada) em
 `brainstorm.js`; `renderPessoal` reaplica a cada tecla sem re-buscar.
 
+### §8 Rail da reunião: um dropdown único e irrestrito (amendment)
+
+A primeira versão adicionava um dropdown de habilidades como uma 5ª ação,
+ao lado de 4 botões fixos ("analisar", "perguntar…", "ver relatório",
+"enviar para a fila"). Revisado: **"o que fazer com esta reunião" vira só o
+dropdown** — um único controle, sem nenhuma ação fixa, e sem restrição de
+habilidade (`allHabilidadeEntries()`, sem o filtro dos 5 skills "de fluxo"):
+`/loro-analyse` e `/loro-question` agora aparecem ali como qualquer outra
+habilidade. As 4 ações continuam acessíveis pelo menu **"⋯"** da reunião
+(que já tinha analisar/perguntar/ver relatório; ganhou "enviar para a fila",
+que só existia no rail antes) — nada foi perdido, só reorganizado. O ícone
+de raio (`ico("skill")`) identifica visualmente o controle de habilidade,
+tanto no cabeçalho do rail quanto nas linhas da lateral e nos menus "⋯".
+
+Também: o botão "executar habilidade…" passou a existir no topo do
+visualizador de **qualquer** arquivo markdown (ao lado de "pedir à IA…"),
+não só em reuniões — pedido explícito do dono ("todos os arquivos markdown
+deverão ter as habilidades ao lado").
+
 ## Consequências
 
 - `lib.rs`: `TermSession.launched_at`, `TermStatus.justLaunched`,
   `is_within_grace`, `term_open` usa `active_agent()`.
-- `templates.rs`: `LORO_PRESENTATION_SKILL`/`LORO_ARTIFACT_SKILL` (pt/en);
-  `/loro-sync` reescrito (4 fontes); `/loro-context` documenta a instrução
-  opcional de anexos.
+- `templates.rs`: `LORO_PRESENTATION_SKILL`/`LORO_ARTIFACT_SKILL` (pt/en,
+  escrevem em `anexos/`, sem pasta própria); `/loro-sync` reescrito (4
+  fontes, sempre `brainstorming/<tema>/anexos/` — nunca grava direto num
+  contexto); `/loro-context` documenta a instrução opcional de anexos.
 - `acervo.rs`: `BUILTIN_SKILLS` cresce para 9; `create_brainstorming`/
-  `all_parts_of` ganham `apresentacoes`/`anexos`.
+  `all_parts_of` ganham `anexos` (sem `apresentacoes` separado);
+  `list_brainstormings` se auto-cura (cria a pasta que faltar a cada
+  listagem — sem migração explícita).
 - `app.js`/`index.html`/`style.css`: rename de rótulo, remoção do card da
-  Visão Geral, `openHabilidadeMenu` compartilhado, checkbox de anexos,
-  campo de busca da lateral.
-- Testes novos: `is_within_grace`, `all_parts_of_includes_anexos_and_
-  apresentacoes`, `sync_skill_writes_local_anexo_ref_not_external_url`,
+  Visão Geral, ícone de raio no lugar do emoji 🧰, `openHabilidadeMenu`/
+  `allHabilidadeEntries`/`pickableHabilidadeEntries` compartilhados, rail da
+  reunião reduzido a um dropdown irrestrito, "executar habilidade…" em todo
+  markdown, checkbox de anexos, campo de busca da lateral.
+- Testes novos: `is_within_grace`, `all_parts_of_includes_anexos`,
+  `list_brainstormings_backfills_missing_subfolders`,
+  `sync_skill_writes_local_anexo_ref_not_external_url`,
   `loop_skill_documents_optional_anexos_versioning`, `filterAndCapTemas`
   (2 casos).

@@ -95,9 +95,11 @@ template** (sales, engineering, healthcare… — ADR-0003) and choose their own
 create or assign a new context on its own when processing the fila; off,
 it leaves an unmatched item pending instead of guessing (ADR-0006).
 
-Each brainstorming has its own `reunioes/`, `apresentacoes/` and `anexos/`
-subfolders (ADR-0007) — fed by a habilidade (sincronizar, apresentação,
-artefato) or by dropping a file straight into the real folder on disk.
+Each brainstorming has exactly three subfolders (ADR-0007) — `reunioes/`
+(every meeting is born there), `notas/`, and `anexos/` (presentations are
+one kind of anexo, not a separate folder) — fed by a habilidade
+(sincronizar, apresentação, artefato) or by dropping a file straight into
+the real folder on disk.
 "Gerar contexto" has an opt-in checkbox to copy those anexos into
 `contextos/<c>/anexos/` when the fila is processed.
 

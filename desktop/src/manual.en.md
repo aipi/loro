@@ -74,21 +74,26 @@ palette: `Cmd/Ctrl+Shift+P` → "Loro tour".
   request; **✦ ask the AI** (a note's/analysis' ⋯ menu **and at the top of
   the file viewer**) applies a request to the existing content — the AI
   evolves it, never erases.
-- The **analyse**, **ask…** and **view report** actions live in the
-  meeting's `reuniao.md` tab and also in the meeting's **⋯** menu in the
-  sidebar. **Ask…** already works while the meeting is still recording
-  (highlighted while active); **analyse** and **view report** enable once
-  the meeting ends (analyse fills the report).
+- The **analyse**, **ask…**, **view report** and **send to queue** actions
+  live in the meeting's **⋯** menu in the sidebar. **Ask…** already works
+  while the meeting is still recording; the other three enable once the
+  meeting ends (analyse fills the report).
+- The meeting's `reuniao.md` tab shows, instead of fixed buttons, a single
+  **habilidade dropdown** ("o que fazer com esta reunião") — pick any
+  habilidade (including analyse/ask) and run it against the open meeting.
+  Unrestricted: every habilidade shows up there, built-in and custom.
 - In a meeting: mark **questions/decisions/investigations** while people speak
-  (via the palette `Cmd/Ctrl+Shift+P` or the buttons); then run **analyse** so
-  Claude fills in the meeting report.
+  (via the palette `Cmd/Ctrl+Shift+P` or the buttons); then run **analyse**
+  (⋯ menu) so Claude fills in the meeting report.
 - Nothing in a brainstorming is versioned or leaves the machine.
 - A meeting's investigations/answers are **collapsed by default** in the
   sidebar (tap the ▸ arrow next to the meeting to open) — keeps the list from
   growing huge once you've analysed several meetings.
-- Besides `reunioes/` and `notas/`, every brainstorming has `apresentacoes/`
-  and `anexos/` — fed by a habilidade (sync, presentation, artifact) or by
-  dropping a file straight into the real folder on disk.
+- Every brainstorming has exactly three folders: **reunioes/** (every
+  meeting is born there), **notas/**, and **anexos/** (a presentation is
+  just one kind of anexo — no folder of its own). `anexos/` is fed by a
+  habilidade (sync, presentation, artifact) or by dropping a file straight
+  into the real folder on disk.
 - With many brainstormings, a search box appears above the list (past 8) —
   filters by name; with no search, it shows the most recent + "ver todos".
 
@@ -96,9 +101,11 @@ palette: `Cmd/Ctrl+Shift+P` → "Loro tour".
 
 Habilidades are AI-agent actions — some ship ready-made (built-in), others
 you create. They no longer live on the Overview: run one from a
-brainstorming's or a meeting's **⋯** menu → **"executar habilidade…"** — a
-compact menu (each item's description only shows on hover, so it doesn't
-clutter the screen once there are many).
+brainstorming's **⋯** menu → **"executar habilidade…"**, from the
+**"executar habilidade…"** button at the top of **any markdown file's**
+viewer, or from the habilidade dropdown on an open meeting. Always a
+compact menu/control — each item's description only shows on hover, so it
+doesn't clutter the screen once there are many.
 
 - **Sync** brings an external item (Google Drive/Gemini, Slack, Jira or
   Confluence) into a **local anexo** of the brainstorming, referenced by a
@@ -115,9 +122,9 @@ clutter the screen once there are many).
   Loro does not manage those credentials.
 - **Presentation** and **artifact** are built-in habilidades that generate
   material (a markdown deck, a diagram, a script, a spreadsheet) from a
-  brainstorming or a context — presentations go into `apresentacoes/`,
-  artifacts into `anexos/`, and pointing at a specific note automatically
-  links it there.
+  brainstorming or a context — always into `anexos/` (no folder of its own
+  for presentations), and pointing at a specific note automatically links
+  it there.
 - **Built-in habilidades** (sync, presentation, artifact) can be **edited**
   but never deleted. **Custom habilidades** are skills you author yourself —
   they become real slash-commands (`/habilidade-name`) as soon as they

@@ -1609,12 +1609,10 @@ async function loadTemaChildren(slug) {
   let notas = [];
   try { notas = ((await invoke("brain_list_dir", { rel: `brainstorming/${slug}/notas` })) || []).filter((f) => !f.dir); }
   catch (_) {}
-  // ADR-0007: anexos/apresentacoes are fed by habilidades (sincronizar,
-  // apresentação, artefato) or by the user dropping files straight into the
-  // real folder on disk — no dedicated "importar" UI for that second path.
-  let apresentacoes = [];
-  try { apresentacoes = ((await invoke("brain_list_dir", { rel: `brainstorming/${slug}/apresentacoes` })) || []).filter((f) => !f.dir); }
-  catch (_) {}
+  // ADR-0007: three brainstorming folders — reunioes/, notas/, anexos/.
+  // anexos/ is fed by a habilidade (sincronizar, apresentação, artefato) or
+  // by the user dropping files straight into the real folder on disk — no
+  // dedicated "importar" UI for that second path.
   let anexos = [];
   try { anexos = ((await invoke("brain_list_dir", { rel: `brainstorming/${slug}/anexos` })) || []).filter((f) => !f.dir); }
   catch (_) {}
@@ -1629,7 +1627,6 @@ async function loadTemaChildren(slug) {
     `<button class="bsaddbtn" data-syncdrive="${esc(slug)}" title="${t("Trazer uma nota de reunião externa (Google Drive/Gemini) para os anexos deste tema")}">⇄ ${t("sincronizar reunião")}</button>` +
     `</div>`;
   for (const f of notas) inner += bsPartRow("nota", f.path, f.path, shortName(f.name), f.name, false);
-  for (const f of apresentacoes) inner += bsPartRow("apresentacao", f.path, f.path, shortName(f.name), f.name, false);
   for (const f of anexos) inner += bsPartRow("anexo", f.path, f.path, shortName(f.name), f.name, false);
   for (const m of meetings) {
     // título do manifest (renomeável); cai para o id humanizado quando ausente
@@ -1640,7 +1637,7 @@ async function loadTemaChildren(slug) {
     inner += `<div class="bchild" data-mtgchild="${esc(m.id)}" data-mtgrel="${esc(m.rel)}" ${mopen ? "" : "hidden"}></div>`;
     if (mopen) await fillMeetingChild(m.id, m.rel);
   }
-  if (!meetings.length && !notas.length && !apresentacoes.length && !anexos.length) {
+  if (!meetings.length && !notas.length && !anexos.length) {
     inner += `<div class="bempty">${t("vazio — grave uma reunião (●) ou escreva uma nota")}</div>`;
   }
   holder.innerHTML = inner;
@@ -1903,7 +1900,10 @@ async function delTool(rel) {
 // "usar": reads the tool's own front-matter (description/argument-hint) to
 // prompt for arguments, then just runs "/<slug> <args>" — the file itself IS
 // the slash-command, no dedicated runner needed.
-async function promptUseTool(rel) {
+// presetArg pre-fills the input (e.g. the meeting/note the habilidade was
+// invoked against) — the user can accept it as-is or extend it, instead of
+// retyping a path the caller already knew.
+async function promptUseTool(rel, presetArg) {
   const slug = rel.split("/").pop().replace(/\.md$/, "");
   let hint = "", desc = "";
   try {
@@ -1917,7 +1917,7 @@ async function promptUseTool(rel) {
     `${t("usar")} /${slug}`,
     (desc ? `<p class="pmnote mono">${esc(desc)}</p>` : "") +
       `<label class="wfield"><span class="mono">${t("argumentos")}</span>` +
-      `<input id="useToolInput" type="text" placeholder="${esc(hint || t("opcional"))}" spellcheck="false"></label>`,
+      `<input id="useToolInput" type="text" value="${esc(presetArg || "")}" placeholder="${esc(hint || t("opcional"))}" spellcheck="false"></label>`,
     t("rodar"),
     () => {
       const args = (($("useToolInput") && $("useToolInput").value) || "").trim();
@@ -2004,10 +2004,9 @@ function openAddToolMenu(anchor) {
 // habilidade (built-in or custom, minus the 5 workflow-specific ones) is one
 // entry. Shared by the ⋯ menu picker AND the meeting rail dropdown so both
 // stay in sync automatically.
-function pickableHabilidadeEntries() {
+function habilidadeEntriesFrom(files) {
   const entries = [];
-  for (const f of lastToolFiles) {
-    if (TOOL_PICKER_EXCLUDE.has(f.name)) continue;
+  for (const f of files) {
     if (f.name === "loro-sync.md") {
       for (const fonte of ["drive", "slack", "jira", "confluence"]) {
         entries.push({ kind: "sync", fonte, label: fonte, title: f.desc });
@@ -2018,9 +2017,19 @@ function pickableHabilidadeEntries() {
   }
   return entries;
 }
+// Curated: excludes the 5 workflow-specific built-ins (already have dedicated
+// UI) — used by the ⋯ menu picker, which coexists with that dedicated UI.
+function pickableHabilidadeEntries() {
+  return habilidadeEntriesFrom(lastToolFiles.filter((f) => !TOOL_PICKER_EXCLUDE.has(f.name)));
+}
+// Unrestricted: every habilidade, no exclusion — used where there is no
+// separate dedicated UI to coexist with (the meeting rail, ADR-0007).
+function allHabilidadeEntries() {
+  return habilidadeEntriesFrom(lastToolFiles);
+}
 function runHabilidadeEntry(entry, alvoRel) {
   if (entry.kind === "sync") promptSyncTool(entry.fonte, alvoRel);
-  else promptUseTool(entry.rel);
+  else promptUseTool(entry.rel, alvoRel);
 }
 function openHabilidadeMenu(alvoRel, anchor) {
   B.acervoMenu.hidden = true;
@@ -2119,7 +2128,8 @@ function openMeetingMenu(rel, id, title, status, anchor) {
     `<div class="fitem2 strong${dis ? " off" : ""}" data-analyse><span class="fn">✦ ${t("analisar")}</span></div>` +
     `<div class="fitem2${ready ? "" : " strong"}" data-question><span class="fn">? ${t("perguntar…")}</span></div>` +
     `<div class="fitem2${dis ? " off" : ""}" data-report><span class="fn">≡ ${t("ver relatório")}</span></div>` +
-    (ready ? "" : `<div class="fnote mono">${t("analisar e ver relatório ficam disponíveis quando a reunião terminar — perguntar já funciona agora")}</div>`) +
+    `<div class="fitem2${dis ? " off" : ""}" data-queue><span class="fn">${t("enviar para a fila")} →</span></div>` +
+    (ready ? "" : `<div class="fnote mono">${t("analisar, ver relatório e enviar para a fila ficam disponíveis quando a reunião terminar — perguntar já funciona agora")}</div>`) +
     `<div class="fitem2" data-tools><span class="fn">${ico("skill")} ${t("executar habilidade…")}</span></div>` +
     `<div class="fsep"></div>` +
     `<div class="fitem2" data-ren><span class="fn">✎ ${t("renomear")}</span></div>` +
@@ -2127,6 +2137,12 @@ function openMeetingMenu(rel, id, title, status, anchor) {
   if (ready) {
     B.bMenu.querySelector("[data-analyse]").onclick = () => { closeFloat(); openDoc(`${rel}/reuniao.md`, { preview: false }); runMeetingSkill("analyse", id, null, rel); };
     B.bMenu.querySelector("[data-report]").onclick = () => { closeFloat(); buildAndOpenReport(id); };
+    B.bMenu.querySelector("[data-queue]").onclick = () => {
+      closeFloat();
+      const m = /^brainstorming\/([^/]+)\//.exec(rel);
+      if (!m) { toast(t("abra a reunião para enviar")); return; }
+      sendBrainstormToQueue(m[1], [{ kind: "reuniao", rel }]);
+    };
   }
   B.bMenu.querySelector("[data-question]").onclick = () => { closeFloat(); askMeetingQuestion(id, rel); };
   B.bMenu.querySelector("[data-tools]").onclick = () => openHabilidadeMenu(rel, anchor);
@@ -2618,7 +2634,7 @@ function paintMeetingSurface(id, raw, manifest, status, artefatos) {
       `<div class="mtg-doc">${meetingStatusBar(status)}${preview}` +
         (body.trim() ? mdRender(body) : emptyMsg) +
       `</div>` +
-      `<aside class="mtg-rail">${meetingRailHtml(id, status)}</aside>` +
+      `<aside class="mtg-rail">${meetingRailHtml()}</aside>` +
     `</div>`;
   wireMeetingSurface(id);
   wireDocLinks();
@@ -2630,69 +2646,31 @@ function meetingStatusBar(status) {
   return `<div class="mtg-status ${cls}"><span class="mtg-statusdot"></span><span class="mono">${esc(txt)}</span></div>`;
 }
 
-// ADR-0013: the meeting rail is trimmed to the actions that matter, each made
-// evident and EXPLAINED — no audio (transient/deleted), no artefatos clutter, no
-// cloud/MCP consent, no audit. "analisar" and "responder" run the Claude skill in
-// the terminal (local-first: it reads the context before the internet); "ver
-// relatório" shows the built report; "enviar para a fila" turns this meeting into
-// a consolidated report and puts it in the fila de geração de contexto.
-function meetingRailHtml(id, status) {
-  // primary action first and emphasized: analyse fills the report; the report
-  // is only worth opening after the meeting is done (recording/transcribing →
-  // the button is disabled with the reason spelled out).
-  const ready = status === "done";
-  // "perguntar" has no technical dependency on the finished report — the living
-  // notebook already accretes text while recording — so it stays enabled
-  // throughout, and is the highlighted (.cta) action while the meeting is
-  // still active, since "analisar" isn't usable yet at that point.
-  const action = (btnCls, btnId, label, note, disabled) =>
-    `<div class="mtg-action">` +
-      `<button class="abtn ${btnCls}" id="${btnId}"${disabled ? " disabled" : ""}>${label}</button>` +
-      `<p class="mtg-note mono">${note}</p>` +
-    `</div>`;
+// ADR-0007 (owner request): the meeting rail no longer lists fixed actions
+// (analisar/perguntar/ver relatório/enviar para a fila — all still reachable
+// from the meeting's ⋯ menu) — "o que fazer com esta reunião" is now a
+// single, UNRESTRICTED habilidade dropdown (every skill, including
+// analisar/perguntar's own /loro-analyse and /loro-question), so the rail
+// never hardcodes which actions exist. Options are populated in
+// wireMeetingSurface from the already-cached habilidade list; the bolt icon
+// keeps habilidades visually distinct everywhere else they appear.
+function meetingRailHtml() {
   return `<div class="mtg-railsec mtg-analise">` +
-    `<div class="mtg-railhead mono">${t("o que fazer com esta reunião")}</div>` +
-    action("cta", "mtgAnalyseBtn", t("analisar"),
-      t("O agente lê a transcrição e o contexto local primeiro, aponta tema, decisões, riscos e dúvidas, e escreve o relatório."), !ready) +
-    action(ready ? "" : "cta", "mtgQuestionBtn", t("perguntar…"),
-      t("Faça uma pergunta sobre a reunião — a resposta é ancorada no que foi dito e no contexto local. Funciona mesmo com a reunião ainda em andamento."), false) +
-    action("ghost", "mtgReportBtn", t("ver relatório"),
-      ready
-        ? t("Abre o relatório desta reunião (resumo, decisões, dúvidas, investigações).")
-        : t("disponível quando a reunião terminar — rode analisar para preenchê-lo."), !ready) +
-    action("", "mtgQueueBtn", `${t("enviar para a fila")} →`,
-      t("Gera um relatório consolidado desta reunião e o coloca na fila de geração de contexto (próximo passo do fluxo)."), !ready) +
-    // ADR-0007: habilidades directly in "o que fazer com esta reunião" — a
-    // single compact dropdown (options populated in wireMeetingSurface from
-    // the already-cached habilidade list), never every description inline;
-    // hover an option (native title) to see what it does.
+    `<div class="mtg-railhead mono">${ico("skill")} ${t("executar habilidade")}</div>` +
     `<div class="mtg-action mtg-skillpick">` +
       `<div class="mtg-skillrow">` +
         `<select id="mtgSkillSelect" class="mini-select"></select>` +
-        `<button class="abtn" id="mtgSkillRunBtn">▶ ${t("usar")}</button>` +
+        `<button class="abtn cta" id="mtgSkillRunBtn">▶ ${t("usar")}</button>` +
       `</div>` +
-      `<p class="mtg-note mono">${t("executa uma habilidade sobre esta reunião — passe o mouse nas opções para ver a descrição")}</p>` +
+      `<p class="mtg-note mono">${t("escolha uma habilidade para executar sobre esta reunião — passe o mouse nas opções para ver a descrição")}</p>` +
     `</div>` +
     `</div>`;
 }
 
 function wireMeetingSurface(id) {
-  const analyseBtn = B.doc.querySelector("#mtgAnalyseBtn");
-  if (analyseBtn) analyseBtn.onclick = () => runMeetingSkill("analyse", id);
-  const questionBtn = B.doc.querySelector("#mtgQuestionBtn");
-  if (questionBtn) questionBtn.onclick = () => askMeetingQuestion(id);
-  const reportBtn = B.doc.querySelector("#mtgReportBtn");
-  if (reportBtn) reportBtn.onclick = () => buildAndOpenReport();
-  const queueBtn = B.doc.querySelector("#mtgQueueBtn");
-  if (queueBtn) queueBtn.onclick = () => {
-    const dir = currentMeetingDir(id);
-    const m = dir && /^brainstorming\/([^/]+)\//.exec(dir);
-    if (!m) { toast(t("abra a reunião para enviar")); return; }
-    sendBrainstormToQueue(m[1], [{ kind: "reuniao", rel: dir }]);
-  };
   const skillSel = B.doc.querySelector("#mtgSkillSelect");
   if (skillSel) {
-    const entries = pickableHabilidadeEntries();
+    const entries = allHabilidadeEntries();
     skillSel.innerHTML = entries.length
       ? entries.map((e, i) => `<option value="${i}" title="${esc(e.title)}">${esc(e.label)}</option>`).join("")
       : `<option value="">${t("nenhuma habilidade disponível")}</option>`;

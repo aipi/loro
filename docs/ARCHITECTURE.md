@@ -206,12 +206,15 @@ Path resolution: `LORO_HOME` (exported by `loro.sh`) or a sensible default;
   skill, same dual create-or-evolve shape as `/loro-note`) or by importing
   an already-written skill file directly (`brain_new_tool`, no AI). Listed
   in a sidebar section (usar/editar/pedir à IA/excluir-if-custom) and run
-  via "⋯ → executar habilidade" from a brainstorming or a meeting — a
-  compact picker with descriptions on hover only, excluding the 5
-  workflow-specific built-ins that already have dedicated UI elsewhere.
-  `/loro-presentation`/`/loro-artifact` generate material (markdown by
-  default) from a brainstorming (`apresentacoes/`/`anexos/`) or a context
-  (`contextos/<c>/anexos/`).
+  from "⋯ → executar habilidade" on a brainstorming (curated picker,
+  excludes the 5 workflow-specific built-ins with dedicated UI elsewhere),
+  from the top of ANY open markdown document's viewer, or — unrestricted,
+  no exclusion — from a single dropdown in a meeting's rail
+  ("o que fazer com esta reunião" no longer lists fixed actions; those
+  moved to the meeting's `⋯` menu). `/loro-presentation`/`/loro-artifact`
+  generate material (markdown by default) into `anexos/` — a
+  brainstorming's `brainstorming/<tema>/anexos/` or a context's
+  `contextos/<c>/anexos/`; there is no separate presentations folder.
 - **Knowledge versioning (ADR-0001 §5), Git hidden behind two buttons:** *Versionar*
   → `brain_version` creates `rfc/<slug>` off the default branch and commits the
   working changes locally (Git only). *Propor mudança* → `brain_propose_change`

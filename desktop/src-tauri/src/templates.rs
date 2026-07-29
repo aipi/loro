@@ -1028,13 +1028,13 @@ pub fn loro_tool_skill(lang: &str) -> &'static str {
 }
 
 // ---- built-in generative habilidades: apresentação / artefato (ADR-0007) ----
-// Both write into an anexos-style folder — brainstorming/<tema>/apresentacoes/
-// or /anexos/ when the alvo is a brainstorming (tema or nota inside it),
-// contextos/<c>/anexos/ when the alvo is a context — and, when the alvo is a
-// specific note, append a `ref` to it (same local-doc ref pattern as
-// /loro-sync's anexos, ADR-0006/0007). Markdown is the default deliverable
-// (any agent can always produce it); a real .pptx/.xlsx is fine if the agent
-// has the means, but never assumed.
+// Both write into anexos/ — brainstorming/<tema>/anexos/ or contextos/<c>/
+// anexos/ depending on the alvo (presentations are one KIND of anexo, not a
+// separate folder — the acervo's brainstorming folders are reunioes/, notas/,
+// anexos/) — and, when the alvo is a specific note, append a `ref` to it
+// (same local-doc ref pattern as /loro-sync's anexos, ADR-0006/0007).
+// Markdown is the default deliverable (any agent can always produce it); a
+// real .pptx/.xlsx is fine if the agent has the means, but never assumed.
 pub const LORO_PRESENTATION_SKILL: &str = r#"---
 description: Gera uma apresentação (deck) a partir de um brainstorming ou contexto (ADR-0007)
 argument-hint: <alvo:tema-ou-contexto-ou-nota> <descrição>
@@ -1045,9 +1045,10 @@ O PRIMEIRO token é o ALVO (um tema `brainstorming/<tema>`, uma nota dentro
 dele, ou um `contextos/<c>`); o RESTO é a DESCRIÇÃO do que a apresentação
 deve cobrir.
 
-1. Se o alvo for dentro de `contextos/`, o material de saída vai em
-   `contextos/<c>/anexos/`; se for dentro de `brainstorming/`, vai em
-   `brainstorming/<tema>/apresentacoes/`. Crie a pasta se não existir.
+1. O material de saída vai em `anexos/` — `contextos/<c>/anexos/` se o alvo
+   for dentro de `contextos/`, ou `brainstorming/<tema>/anexos/` se for
+   dentro de `brainstorming/` (não existe pasta separada de apresentações;
+   uma apresentação é só mais um tipo de anexo). Crie a pasta se não existir.
 2. Funde-se no conteúdo já existente no alvo (o `context.md`, ou as
    notas/reuniões do tema) para que a apresentação reflita o que já se sabe
    — não invente fatos não sustentados pela base.
@@ -1082,9 +1083,10 @@ The FIRST token is the TARGET (a topic `brainstorming/<topic>`, a note
 inside it, or a `contextos/<c>`); the REST is the DESCRIPTION of what the
 presentation should cover.
 
-1. If the target is inside `contextos/`, the output goes in
-   `contextos/<c>/anexos/`; if inside `brainstorming/`, it goes in
-   `brainstorming/<topic>/apresentacoes/`. Create the folder if absent.
+1. The output goes in `anexos/` — `contextos/<c>/anexos/` if the target is
+   inside `contextos/`, or `brainstorming/<topic>/anexos/` if inside
+   `brainstorming/` (there is no separate presentations folder; a
+   presentation is just one kind of anexo). Create the folder if absent.
 2. Ground yourself on what already exists at the target (the `context.md`,
    or the topic's notes/meetings) so the presentation reflects what is
    already known — never invent facts the base doesn't support.

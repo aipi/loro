@@ -397,7 +397,6 @@ fn create_brainstorming(
         "perguntas",
         "notas",
         "relatorios",
-        "apresentacoes",
         "anexos",
     ] {
         std::fs::create_dir_all(dir.join(sub)).map_err(|e| e.to_string())?;
@@ -443,15 +442,15 @@ pub struct BrainstormingListItem {
     atualizado_em: String,
 }
 
-// ADR-0007: brainstormings created before apresentacoes/anexos existed never
-// got those folders — self-heal on every list call (cheap, idempotent,
-// create-if-absent) instead of requiring an explicit migration step. Mirrors
-// the "respect existing structure, fill only gaps" premise already used for
-// skill files (ensure_meeting_skills).
+// ADR-0007: brainstormings created before anexos/ existed never got that
+// folder — self-heal on every list call (cheap, idempotent, create-if-absent)
+// instead of requiring an explicit migration step. Mirrors the "respect
+// existing structure, fill only gaps" premise already used for skill files
+// (ensure_meeting_skills). Presentations live in anexos/ too (one kind among
+// others) — no separate apresentacoes/ folder; the acervo's three
+// brainstorming folders are reunioes/, notas/, anexos/.
 fn ensure_brainstorming_subfolders(dir: &Path) {
-    for sub in ["apresentacoes", "anexos"] {
-        let _ = std::fs::create_dir_all(dir.join(sub));
-    }
+    let _ = std::fs::create_dir_all(dir.join("anexos"));
 }
 
 fn list_brainstormings(base: &Path) -> Vec<BrainstormingListItem> {
@@ -1255,7 +1254,6 @@ fn all_parts_of(base: &Path, slug: &str) -> Vec<SelItem> {
         ("investigacoes", "investigacao"),
         ("perguntas", "pergunta"),
         ("notas", "nota"),
-        ("apresentacoes", "apresentacao"),
         ("anexos", "anexo"),
     ] {
         if let Ok(rd) = std::fs::read_dir(root.join(sub)) {
@@ -1678,10 +1676,10 @@ mod tests {
         assert_eq!(ref_tipo("a/planilha.xlsx"), "other");
     }
 
-    // ADR-0007: a brainstorming created before apresentacoes/anexos existed
-    // (simulated here by building the old, narrower folder set by hand) must
-    // self-heal the missing folders the next time it's listed — no explicit
-    // migration command required.
+    // ADR-0007: a brainstorming created before anexos/ existed (simulated here
+    // by building the old, narrower folder set by hand) must self-heal the
+    // missing folder the next time it's listed — no explicit migration
+    // command required.
     #[test]
     fn list_brainstormings_backfills_missing_subfolders() {
         let base = tmp("bs-backfill");
@@ -1695,11 +1693,9 @@ mod tests {
         ] {
             std::fs::create_dir_all(dir.join(sub)).unwrap();
         }
-        assert!(!dir.join("apresentacoes").exists());
         assert!(!dir.join("anexos").exists());
         let list = list_brainstormings(&base);
         assert_eq!(list.len(), 1);
-        assert!(dir.join("apresentacoes").is_dir());
         assert!(dir.join("anexos").is_dir());
     }
 
@@ -1711,7 +1707,6 @@ mod tests {
         assert_eq!(t.rel, "brainstorming/frota-2026");
         assert!(base.join("brainstorming/frota-2026/reunioes").is_dir());
         assert!(base.join("brainstorming/frota-2026/relatorios").is_dir());
-        assert!(base.join("brainstorming/frota-2026/apresentacoes").is_dir());
         assert!(base.join("brainstorming/frota-2026/anexos").is_dir());
         assert!(base.join("brainstorming/frota-2026/indice.md").is_file());
         assert!(base.join("brainstorming/frota-2026/meta.json").is_file());
@@ -2185,12 +2180,13 @@ mod tests {
         assert!(r.contains("- Partes: 1"));
     }
 
-    // ADR-0007: anexos/ and apresentacoes/ are new brainstorming subfolders —
-    // all_parts_of must enumerate them (empty selection = "everything") and
-    // gather_part's unknown-kind fallback routes them into "## Notas", with no
-    // further code needed (confirmed by this test, not just by reading).
+    // ADR-0007: anexos/ is a new brainstorming subfolder (presentations live
+    // there too — no separate apresentacoes/ folder) — all_parts_of must
+    // enumerate it (empty selection = "everything") and gather_part's
+    // unknown-kind fallback routes it into "## Notas", with no further code
+    // needed (confirmed by this test, not just by reading).
     #[test]
-    fn all_parts_of_includes_anexos_and_apresentacoes() {
+    fn all_parts_of_includes_anexos() {
         let base = tmp("report-anexos");
         create_brainstorming(&base, "Frota 2026", None, "2026-07-28").unwrap();
         std::fs::write(
@@ -2199,7 +2195,7 @@ mod tests {
         )
         .unwrap();
         std::fs::write(
-            base.join("brainstorming/frota-2026/apresentacoes/deck-v1.md"),
+            base.join("brainstorming/frota-2026/anexos/deck-v1.md"),
             "---\nloro: 1\n---\n\n# Deck v1\n\n## Slide 1\n\nProposta inicial.\n",
         )
         .unwrap();

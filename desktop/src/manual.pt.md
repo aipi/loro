@@ -73,21 +73,26 @@ quando quiser pela paleta: `Cmd/Ctrl+Shift+P` → "apresentação do Loro".
   pedido seu; **✦ pedir à IA** (menu ⋯ de uma nota/análise **e no topo do
   visualizador do arquivo**) aplica um pedido sobre o conteúdo existente — a
   IA evolui, nunca apaga.
-- As ações **analisar**, **perguntar…** e **ver relatório** ficam na aba
-  `reuniao.md` da reunião e também no menu **⋯** da reunião na lateral.
-  **Perguntar** funciona já durante a gravação (aparece em destaque enquanto
-  a reunião está ativa); **analisar** e **ver relatório** habilitam quando a
-  reunião termina (o relatório é preenchido pelo analisar).
+- As ações **analisar**, **perguntar…**, **ver relatório** e **enviar para a
+  fila** ficam no menu **⋯** da reunião na lateral. **Perguntar** funciona já
+  durante a gravação; as outras três habilitam quando a reunião termina (o
+  relatório é preenchido pelo analisar).
+- A aba `reuniao.md` da reunião mostra, em vez de botões fixos, um único
+  **dropdown de habilidades** ("o que fazer com esta reunião") — escolha
+  qualquer habilidade (incluindo analisar/perguntar) e rode sobre a reunião
+  aberta. Sem restrição: aparecem todas, padrão e customizadas.
 - Numa reunião: marque **dúvidas/decisões/investigações** durante a fala (via
-  paleta `Cmd/Ctrl+Shift+P` ou pelos botões); depois rode **analisar** para o
-  Claude preencher o relatório da reunião.
+  paleta `Cmd/Ctrl+Shift+P` ou pelos botões); depois rode **analisar** (menu
+  ⋯) para o Claude preencher o relatório da reunião.
 - Nada do brainstorming é versionado nem sai da máquina.
 - Investigações e respostas de cada reunião ficam **recolhidas por padrão**
   na lateral (toque na seta ▸ ao lado da reunião para abrir) — evita que a
   lista cresça demais quando há muitas reuniões analisadas.
-- Além de `reunioes/` e `notas/`, cada brainstorming tem `apresentacoes/` e
-  `anexos/` — alimentadas por uma habilidade (sincronizar, apresentação,
-  artefato) ou arrastando um arquivo direto na pasta real no disco.
+- Cada brainstorming tem exatamente três pastas: **reunioes/** (toda reunião
+  nasce ali), **notas/** e **anexos/** (uma apresentação é só mais um tipo
+  de anexo — não tem pasta própria). `anexos/` é alimentada por uma
+  habilidade (sincronizar, apresentação, artefato) ou arrastando um arquivo
+  direto na pasta real no disco.
 - Com muitos brainstormings, um campo de busca aparece no topo da seção
   (acima de 8) — filtra por nome; sem busca, mostra só os mais recentes +
   "ver todos".
@@ -96,9 +101,11 @@ quando quiser pela paleta: `Cmd/Ctrl+Shift+P` → "apresentação do Loro".
 
 Habilidades são ações do agente de IA — algumas já vêm prontas (padrão),
 outras você cria. Não ficam mais na Visão Geral: rode uma pelo menu **⋯**
-de um brainstorming ou de uma reunião → **"executar habilidade…"** — um
-menu compacto (a descrição de cada uma só aparece ao passar o mouse, para
-não poluir a tela quando houver muitas).
+de um brainstorming → **"executar habilidade…"**, pelo botão **"executar
+habilidade…"** no topo do visualizador de **qualquer arquivo markdown**, ou
+pelo dropdown de habilidades numa reunião aberta. Sempre um menu/controle
+compacto — a descrição de cada uma só aparece ao passar o mouse, para não
+poluir a tela quando houver muitas.
 
 - **Sincronizar** traz um item externo (Google Drive/Gemini, Slack, Jira ou
   Confluence) para um **anexo local** do brainstorming, referenciado numa
@@ -115,9 +122,9 @@ não poluir a tela quando houver muitas).
   Loro não gerencia essas credenciais.
 - **Apresentação** e **artefato** são habilidades padrão que geram material
   (um deck em markdown, um diagrama, um script, uma planilha) a partir de um
-  brainstorming ou de um contexto — apresentações vão em `apresentacoes/`,
-  artefatos em `anexos/`, e se você apontar para uma nota específica, ela
-  ganha a referência automaticamente.
+  brainstorming ou de um contexto — sempre em `anexos/` (não há pasta
+  própria de apresentações), e se você apontar para uma nota específica,
+  ela ganha a referência automaticamente.
 - **Habilidades padrão** (as de sincronizar, apresentação e artefato) podem
   ser **editadas**, mas nunca excluídas. **Habilidades customizadas** são
   skills que você mesmo cria — aparecem como comandos de barra reais
