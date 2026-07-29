@@ -1094,12 +1094,26 @@ $("guideBtn").addEventListener("click", () => openGuideDoc());
 // into the terminal Claude (the /loro-context loop), which processes the whole
 // queue into versioned contexts. Same terminal-skill pattern as analisar/responder.
 // One function, two entry points: the home card CTA and the sidebar quick action.
-function genContextNow() {
+// ADR-0007: "salvar anexos" is opt-in per run — reuses the existing _prompt.md
+// guide plumbing (brain_read_guide/brain_write_guide) instead of new backend
+// surface; the loop already archives/clears _prompt.md after each run (step 0
+// of /loro-context), so this instruction is naturally one-shot.
+const ANEXOS_GUIDE_LINE = "Nesta rodada, copie os anexos referenciados pelos itens processados para contextos/<c>/anexos/ (por item, use o contexto de destino desse item).";
+async function genContextNow() {
   // ADR-0002 §5: an empty queue is refused loudly here, not just by disabled
   // buttons — there is nothing to generate context FROM, and the user must know.
   if (!lastSt || !lastSt.inbox || !lastSt.inbox.length) {
     toast(t("a fila está vazia — envie um relatório ou arquivos antes de gerar contexto"), 5000);
     return;
+  }
+  const saveAnexos = $("queueSaveAnexos");
+  if (saveAnexos && saveAnexos.checked) {
+    try {
+      const cur = (await invoke("brain_read_guide").catch(() => "")) || "";
+      if (!cur.includes(ANEXOS_GUIDE_LINE)) {
+        await invoke("brain_write_guide", { content: cur ? `${cur}\n\n${ANEXOS_GUIDE_LINE}` : ANEXOS_GUIDE_LINE });
+      }
+    } catch (e) { clog("queueSaveAnexos guide write error: " + e); }
   }
   termRunAgent(LoroBrainstorm.brainContextCmd());
   toast(t("gerando contexto no agente do terminal — acompanhe abaixo"), 4000);

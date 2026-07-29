@@ -203,9 +203,15 @@ na raiz do acervo — ele define estrutura, estilo, a fonte oficial da verdade
 (`context.md`), os hotspots e as regras — e siga-o à risca. Trabalhe somente
 dentro desta pasta.
 
-0. Se `inbox/_prompt.md` existir, siga-o ANTES do processamento padrão. Ao
-   terminar, **arquive-o** em `.brain/prompt-history/<AAAA-MM-DD-HHMM>.md` e
-   **remova** `inbox/_prompt.md` (o histórico não é versionado).
+0. Se `inbox/_prompt.md` existir, siga-o ANTES do processamento padrão — por
+   exemplo, se ele pedir para "salvar anexos referenciados no contexto"
+   (ADR-0007, opt-in acionado pelo checkbox de "gerar contexto"): para cada
+   item processado que tiver um `ref` local em `anexos/` (`tipo: doc`,
+   `caminho: acervo://brainstorming/.../anexos/...`), copie esse arquivo
+   para `contextos/<c>/anexos/` (o `<c>` de destino daquele item) e linke-o
+   a partir do `context.md`/`CHANGELOG.md` correspondente. Ao terminar,
+   **arquive** `inbox/_prompt.md` em `.brain/prompt-history/<AAAA-MM-DD-
+   HHMM>.md` e **remova** `inbox/_prompt.md` (o histórico não é versionado).
 0.5. Leia `.loro/settings.json` se existir (`{"autoContext": bool}`) — ausente
    ou ilegível conta como `true` (padrão). Esse valor é a permissão para criar
    um contexto NOVO sozinho (ADR-0006); nunca afeta atribuir a um contexto
@@ -380,8 +386,15 @@ You are the curator of this knowledge base. Read `AGENTS.md` (or `CLAUDE.md`) at
 the base root — it defines the structure, style, source of truth (`context.md`),
 hotspots and rules — and follow it strictly. Work only inside this folder.
 
-0. If `inbox/_prompt.md` exists, follow it BEFORE default processing; then archive
-   it to `.brain/prompt-history/<YYYY-MM-DD-HHMM>.md` and remove it (not versioned).
+0. If `inbox/_prompt.md` exists, follow it BEFORE default processing — for
+   example, if it asks to "save anexos referenced in the context" (ADR-0007,
+   opt-in via the "gerar contexto" checkbox): for each processed item that
+   has a local ref under `anexos/` (`tipo: doc`, `caminho:
+   acervo://brainstorming/.../anexos/...`), copy that file into
+   `contextos/<c>/anexos/` (that item's destination `<c>`) and link it from
+   the matching `context.md`/`CHANGELOG.md`. When done, archive
+   `inbox/_prompt.md` to `.brain/prompt-history/<YYYY-MM-DD-HHMM>.md` and
+   remove it (not versioned).
 0.5. Read `.loro/settings.json` if present (`{"autoContext": bool}`) — absent or
    unreadable counts as `true` (default). This is the permission to create a
    NEW context on its own (ADR-0006); it never affects assigning to an
@@ -1579,6 +1592,16 @@ mod tests {
             assert!(skill.contains("anexos/"));
             assert!(skill.contains("acervo://brainstorming"));
             assert!(skill.contains("tipo: doc"));
+        }
+    }
+
+    // ADR-0007: the loop skill documents the opt-in "save anexos" instruction
+    // it may find in _prompt.md — copying anexos/ refs into contextos/<c>/anexos/.
+    #[test]
+    fn loop_skill_documents_optional_anexos_versioning() {
+        for lang in ["pt", "en"] {
+            let skill = brain_skill(lang);
+            assert!(skill.contains("contextos/<c>/anexos/"));
         }
     }
 
