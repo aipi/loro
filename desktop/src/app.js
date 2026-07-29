@@ -447,7 +447,11 @@ async function startMeetingSession(presetTema) {
   let temas = [];
   try { temas = (await invoke("brain_list_brainstorms")) || []; } catch (_) {}
   const choice = await pickMeeting(temas, presetTema);
-  if (!choice) return;
+  if (!choice || !choice.tema) return;
+  return startMeetingWith(choice);
+}
+async function startMeetingWith(choice) {
+  if (state.running || meeting.active) { toast(t("já há uma gravação em andamento")); return; }
   const cfg = currentCfg();
   clog("start (meeting ADR-0010): tema=" + choice.tema);
   let res;
@@ -791,7 +795,21 @@ function toggle() {
   const now = Date.now();
   if (now - lastToggle < 500) return;
   lastToggle = now;
-  state.running ? stopSession() : startSession();
+  state.running ? stopSession() : startRecordFlow();
+}
+
+// ● never starts a loose recording (owner decision 2026-07-28): like every
+// other flow, it first asks WHERE the result will live — a brainstorming
+// (meeting) or an explicit one-off transcription (the old savebar flow).
+async function startRecordFlow() {
+  if (state.running || meeting.active) return;
+  if (settings.source === "meeting") return startMeetingSession(); // already asks
+  let temas = [];
+  try { temas = (await invoke("brain_list_brainstorms")) || []; } catch (_) {}
+  const choice = await pickMeeting(temas, null, { allowLoose: true });
+  if (!choice) return;
+  if (choice.tema) return startMeetingWith(choice);
+  return startSession(); // explicit one-off: current live/file flow + savebar
 }
 
 // ---- salvar / descartar / limpar ----
@@ -2266,18 +2284,24 @@ function hidePill() { const p = $("mtgPill"); if (p) p.hidden = true; }
 
 // START picker: choose an existing tema or type a new one (+ optional title).
 // Resolves to {tema,titulo} on confirm or null on cancel/close.
-function pickMeeting(temas, presetTema) {
+function pickMeeting(temas, presetTema, opts2) {
+  const allowLoose = !!(opts2 && opts2.allowLoose);
   return new Promise((resolve) => {
     let settled = false;
     const finish = (v) => { if (settled) return; settled = true; resolve(v); };
+    // ● flow: the destination select leads with the explicit one-off option
+    // (value "") — recording is never loose by default (decision 2026-07-28).
+    const loose = allowLoose
+      ? `<option value="">${t("transcrição avulsa (salvar ao final)")}</option>`
+      : "";
     const opts = (temas || []).map((t) =>
       `<option value="${esc(t.slug)}"${t.slug === presetTema ? " selected" : ""}>${esc(t.nome || t.slug)}</option>`).join("");
     // ADR-0013: the brainstorming comes from the select (created elsewhere — no
     // "novo tema" field here). With none yet, a single name field bootstraps one.
     // Fields use the app's canonical `.wfield` pattern (same as the setup wizard).
-    const temaField = (temas && temas.length)
-      ? `<label class="wfield"><span class="mono">brainstorming</span>` +
-          `<select id="mtgTema">${opts}</select></label>`
+    const temaField = (temas && temas.length) || allowLoose
+      ? `<label class="wfield"><span class="mono">${allowLoose ? t("onde salvar") : "brainstorming"}</span>` +
+          `<select id="mtgTema">${loose}${opts}</select></label>`
       : `<label class="wfield"><span class="mono">brainstorming</span>` +
           `<input id="mtgNovoTema" type="text" placeholder="${t("ex.: frota 2026")}" spellcheck="false"></label>`;
     const html =
@@ -2285,14 +2309,14 @@ function pickMeeting(temas, presetTema) {
       temaField +
       `<label class="wfield"><span class="mono">${t("título")}</span>` +
         `<input id="mtgTitulo" type="text" placeholder="${t("opcional — ex.: semanal de custos")}" spellcheck="false"></label>`;
-    openModal(t("Nova reunião"), html, t("começar"), () => {
+    openModal(allowLoose ? t("Nova gravação") : t("Nova reunião"), html, t("começar"), () => {
       const selEl = $("mtgTema");
       const novo = (($("mtgNovoTema") && $("mtgNovoTema").value) || "").trim();
       const tema = selEl ? selEl.value : novo;
       const titulo = (($("mtgTitulo") && $("mtgTitulo").value) || "").trim();
       // the modal closes on confirm regardless; abort (never hang) if no brainstorming
-      if (!tema) { toast(t("escolha ou nomeie um brainstorming")); finish(null); return; }
-      finish({ tema, titulo: titulo || null });
+      if (!tema && !allowLoose) { toast(t("escolha ou nomeie um brainstorming")); finish(null); return; }
+      finish({ tema: tema || null, titulo: titulo || null });
     });
     PM.cancel.addEventListener("click", () => finish(null), { once: true });
     PM.close.addEventListener("click", () => finish(null), { once: true });
@@ -2528,26 +2552,33 @@ async function openDoc(relPath, opts) {
 
 // ============================ paleta de comandos (⌘P / ⌘⇧P) ============================
 // pt-BR command registry (ADR-0008). `run` wires to existing handlers/buttons.
+// Every command carries a shortcut (owner decision 2026-07-28): `code` is a
+// KeyboardEvent.code matched on ⌘/Ctrl+⌥ (Alt+letter types symbols on macOS, so
+// e.key is useless here); `combo` overrides the display for pre-existing
+// mod-only shortcuts that are handled elsewhere in the keydown block.
+const IS_MAC = /mac/i.test(navigator.platform || "");
+const comboLabel = (c) =>
+  c.combo || (c.code ? (IS_MAC ? "⌘⌥" : "Ctrl+Alt+") + c.code.replace(/^(Key|Digit)/, "") : "");
 const COMMANDS = [
-  { label: "ir para início", run: () => openHome() },
-  { label: "abrir manual", run: () => openDoc(MANUAL_REL, { preview: false }) },
-  { label: "alternar visualizar/editar", run: () => toggleActiveMode() },
-  { label: "fechar aba", run: () => closeActiveTab() },
-  { label: "reabrir aba", run: () => reopenClosedTab() },
-  { label: "perguntar ao acervo", run: () => askAcervo() },
-  { label: "novo contexto", run: () => promptNewContext() },
-  { label: "novo brainstorming", run: () => promptNewTema() },
-  { label: "novo caderno", run: () => promptNewNotebook() },
-  { label: "nova reunião", run: () => startMeetingFlow() },
-  { label: "encerrar reunião", run: () => { if (meeting.active) stopSession(); else toast(t("nenhuma reunião em andamento")); } },
-  { label: "abrir relatório", run: () => buildAndOpenReport() },
-  { label: "marcar dúvida", run: () => markMeeting("duvida") },
-  { label: "marcar decisão", run: () => markMeeting("decisao") },
-  { label: "marcar investigação", run: () => markMeeting("investigacao") },
-  { label: "migrar acervo", run: () => runMigration() },
-  { label: "instruções do loop", run: () => openGuideDoc() },
-  { label: "versionar", run: () => B.gitBtn.click() },
-  { label: "propor mudança", run: () => B.proposeBtn.click() },
+  { label: "ir para início", code: "KeyH", run: () => openHome() },
+  { label: "abrir manual", code: "KeyM", run: () => openDoc(MANUAL_REL, { preview: false }) },
+  { label: "alternar visualizar/editar", combo: IS_MAC ? "⌘E" : "Ctrl+E", run: () => toggleActiveMode() },
+  { label: "fechar aba", combo: IS_MAC ? "⌘W" : "Ctrl+W", run: () => closeActiveTab() },
+  { label: "reabrir aba", code: "KeyT", run: () => reopenClosedTab() },
+  { label: "perguntar ao acervo", code: "KeyQ", run: () => askAcervo() },
+  { label: "novo contexto", code: "KeyC", run: () => promptNewContext() },
+  { label: "novo brainstorming", code: "KeyB", run: () => promptNewTema() },
+  { label: "novo caderno", code: "KeyK", run: () => promptNewNotebook() },
+  { label: "nova reunião", code: "KeyR", run: () => startMeetingFlow() },
+  { label: "encerrar reunião", code: "KeyX", run: () => { if (meeting.active) stopSession(); else toast(t("nenhuma reunião em andamento")); } },
+  { label: "abrir relatório", code: "KeyO", run: () => buildAndOpenReport() },
+  { label: "marcar dúvida", code: "Digit1", run: () => markMeeting("duvida") },
+  { label: "marcar decisão", code: "Digit2", run: () => markMeeting("decisao") },
+  { label: "marcar investigação", code: "Digit3", run: () => markMeeting("investigacao") },
+  { label: "migrar acervo", code: "KeyG", run: () => runMigration() },
+  { label: "instruções do loop", code: "KeyI", run: () => openGuideDoc() },
+  { label: "versionar", code: "KeyV", run: () => B.gitBtn.click() },
+  { label: "propor mudança", code: "KeyP", run: () => B.proposeBtn.click() },
 ];
 let cmdkMode = "file";     // "file" | "command"
 let cmdkIndex = 0;         // highlighted row
@@ -2588,7 +2619,7 @@ function renderPalette() {
   if (isCmd) {
     // COMMANDS holds pt msgids; translate at render time so a language switch applies
     cmdkRows = LoroFuzzy.filter(query, COMMANDS, (c) => t(c.label))
-      .map((c) => ({ kind: "cmd", label: t(c.label), run: c.run }));
+      .map((c) => ({ kind: "cmd", label: t(c.label), run: c.run, combo: comboLabel(c) }));
   } else {
     const src = query ? paletteIndex : mruRecents();
     cmdkRows = LoroFuzzy.filter(query, src, (it) => it.rel)
@@ -2601,7 +2632,8 @@ function renderPalette() {
           : r.kind === "file" && r.world === "personal" ? t("rascunho") : "";
         const badge = world ? `<span class="cmdk-w ${r.world}">${world}</span>` : "";
         const sub = r.sub ? `<span class="cmdk-sub mono">${esc(r.sub)}</span>` : "";
-        return `<li class="cmdk-item${i === 0 ? " on" : ""}" data-i="${i}"><span class="cmdk-l">${esc(r.label)}</span>${sub}${badge}</li>`;
+        const kbd = r.combo ? `<span class="cmdk-k mono">${esc(r.combo)}</span>` : "";
+        return `<li class="cmdk-item${i === 0 ? " on" : ""}" data-i="${i}"><span class="cmdk-l">${esc(r.label)}</span>${sub}${badge}${kbd}</li>`;
       }).join("")
     : `<li class="cmdk-empty mono">${t("nada encontrado")}</li>`;
   B.cmdkList.querySelectorAll("[data-i]").forEach((li) => {
@@ -2648,6 +2680,12 @@ window.addEventListener("keydown", (e) => {
     if (!B.find.hidden) { own(); closeFind(); return; }
   }
   if (paletteOpen()) return;   // the palette input owns the rest of its keys
+  // every palette command answers to mod+alt+<code> — app-level chords, so they
+  // win even over the terminal (the shell has no claim on ⌘⌥ combos)
+  if (mod && e.altKey && !e.repeat) {
+    const cmd = COMMANDS.find((c) => c.code === e.code);
+    if (cmd) { own(); cmd.run(); return; }
+  }
   if (termHasFocus()) return;  // route everything else to the shell
   if (e.ctrlKey && key === "tab") { own(); cycleTab(e.shiftKey); return; }
   // ⌘/Ctrl+W MUST preventDefault or the WebView closes the window (ADR-0008)

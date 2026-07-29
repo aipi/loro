@@ -43,8 +43,12 @@ in a brainstorming; you select what matters and send a report to the queue;
 
 ## Record and transcribe
 
-- **● (record)** starts live microphone transcription; the global shortcut is
-  `Cmd/Ctrl+Alt+Space`. The live panel shows text as you speak.
+- **● (record)** opens the recording dialog asking **where to save**: a
+  brainstorming (it becomes a meeting tied to the topic) or a "one-off
+  transcription" (the text stays in the live panel to save/discard at the
+  end). The global shortcut is `Cmd/Ctrl+Alt+Space`.
+- Every palette command (`Cmd/Ctrl+Shift+P`) has a `Cmd/Ctrl+Alt+<key>`
+  shortcut, shown next to the command in the palette itself.
 - **Sources**: microphone, system audio (requires BlackHole — the app guides
   the install) or **meeting** (mic + system together; transcription happens at
   the end, with better fidelity).

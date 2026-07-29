@@ -1020,3 +1020,7 @@ body {
 /* usage template picker (wizard, ADR-0003): hint under the dropdown, aligned
    with the field column (.wfield > span is 78px + gap) */
 .tplhint { margin: -4px 0 0 90px; }
+
+/* palette shortcut hint (every command has one) */
+.cmdk-k { margin-left: auto; flex: none; font-size: 10px; color: var(--muted);
+  border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; }

@@ -170,6 +170,9 @@
     // usage templates + per-acervo agent (ADR-0003)
     "modelo de uso": "usage template",
     "gravar reunião": "record meeting",
+    "Nova gravação": "New recording",
+    "onde salvar": "save to",
+    "transcrição avulsa (salvar ao final)": "one-off transcription (save at the end)",
     "Gravar uma reunião neste brainstorming (áudio 100% local)": "Record a meeting in this brainstorming (audio 100% local)",
     "duplicar para personalizar": "duplicate to customize",
     "modelo duplicado em": "template duplicated at",

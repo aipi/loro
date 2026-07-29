@@ -41,8 +41,12 @@ fila; o botão "gerar contexto" pede ao Claude do terminal que destile a fila em
 
 ## Gravar e transcrever
 
-- **● (gravar)** inicia a transcrição ao vivo do microfone; o atalho global é
-  `Cmd/Ctrl+Alt+Espaço`. O painel ao vivo mostra o texto conforme você fala.
+- **● (gravar)** abre o diálogo de gravação perguntando **onde salvar**: um
+  brainstorming (vira uma reunião ligada ao tema) ou "transcrição avulsa"
+  (o texto fica no painel ao vivo para salvar/descartar ao final). O atalho
+  global é `Cmd/Ctrl+Alt+Espaço`.
+- Cada comando da paleta (`Cmd/Ctrl+Shift+P`) tem um atalho `Cmd/Ctrl+Alt+
+  <tecla>`, exibido ao lado do comando na própria paleta.
 - **Fontes**: microfone, áudio do sistema (requer BlackHole — o app guia a
   instalação) ou **reunião** (mic + sistema juntos; a transcrição acontece ao
   final, com mais fidelidade).
