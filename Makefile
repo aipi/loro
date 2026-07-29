@@ -13,7 +13,7 @@ export PATH := $(HOME)/.cargo/bin:$(PATH)
 # Vanilla JS frontend files that must at least parse (node --check).
 JS_SRC := desktop/src/app.js desktop/src/overlay.js desktop/src/text.js desktop/src/audio.js
 
-.PHONY: help test test-rust test-js lint fmt build app test-docker syscap vendor-cm6
+.PHONY: help test test-rust test-js lint fmt build app test-docker syscap vendor-cm6 require-rust
 
 help: ## Show this help menu
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -44,10 +44,19 @@ syscap: ## Compile the macOS system-audio capturer (ScreenCaptureKit, ADR-0005)
 desktop/node_modules: desktop/package.json
 	cd desktop && npm install
 
-build: syscap desktop/node_modules ## Build the production app bundle (tauri build)
+# Fail fast with an actionable message when the Rust toolchain is absent —
+# otherwise tauri dies mid-build with a cryptic "cargo metadata ... os error 2".
+require-rust:
+	@command -v cargo >/dev/null 2>&1 || { \
+	  echo "Rust/cargo not found. Install it:"; \
+	  echo "  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"; \
+	  echo "then open a new shell (or: source ~/.cargo/env) and re-run make."; \
+	  exit 1; }
+
+build: require-rust syscap desktop/node_modules ## Build the production app bundle (tauri build)
 	cd desktop && npm run tauri build
 
-app: syscap desktop/node_modules ## Run the app in development mode (tauri dev)
+app: require-rust syscap desktop/node_modules ## Run the app in development mode (tauri dev)
 	cd desktop && npm run tauri dev
 
 test-docker: ## Run the test suite inside Docker (reproducible/headless)
