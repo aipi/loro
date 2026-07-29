@@ -285,9 +285,6 @@ body {
 }
 .mini:hover { color: var(--accent); }
 .mini.rm:hover { color: var(--red); }
-/* the AI action reads in the accent color at rest (owner request) */
-.mini.ai { color: var(--accent); }
-.mini.ai:hover { color: var(--ink); }
 .card .pill {
   font-family: var(--mono); font-size: 10px; flex: none;
   background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent);
@@ -555,6 +552,10 @@ body {
 }
 .mini.act:hover { color: var(--accent); border-color: var(--accent); }
 .mini.act.danger:hover { color: var(--red); border-color: var(--red); }
+/* the AI action wears the acervo accent AT REST (owner request) — this rule
+   must outrank .mini.act above, hence the triple class */
+.mini.act.ai { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); }
+.mini.act.ai:hover { color: var(--ink); border-color: var(--accent); }
 /* confirmação destrutiva explícita */
 .fitem2.fstatic { cursor: default; }
 .fitem2.fstatic:hover { background: none; }
