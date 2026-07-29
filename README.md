@@ -41,7 +41,7 @@ It is two things working together:
 | **Node.js ≥ 18** + **Rust (rustup)** | desktop app (Tauri) | https://nodejs.org · https://rustup.rs |
 | **Python ≥ 3.12** | diarization (optional) | — |
 | **git** + **gh** | optional: knowledge versioning / remote collaboration | opt-in, validated by an in-app doctor |
-| **Claude Code** (`claude`) | optional: the agent loop and meeting AI skills | runs in the embedded terminal, user's own account |
+| **AI agent CLI** (`claude` by default) | optional: the agent loop and meeting AI skills | runs in the embedded terminal, user's own account; configurable per acervo (any CLI, including local models — ADR-0003) |
 
 Models are ggml files under `~/.loro/models` (configurable via `LORO_MODELS_DIR`).
 
@@ -71,9 +71,12 @@ The acervo lives in a **user-chosen folder, separate from this codebase**
 (config in `~/.loro/config.json`). Domains are user-defined and recursive
 (subdomains as nested folders); each has a single `context.md` source of truth +
 an append-only `CHANGELOG.md`; open questions live inline as *hotspots*. Meeting
-AI (`/brain-analyse`, `/brain-answer`) and the distillation loop
-(`/brain-context`) run as Claude Code skills in the embedded terminal,
-**local-first**: they read the local base before any external source.
+AI (`/loro-analyse`, `/loro-question`), AI-assisted notes (`/loro-note`),
+base/context Q&A (`/loro-ask`) and the distillation loop (`/loro-context`)
+run as agent skills in the embedded terminal, **local-first**: they read the
+local base before any external source. New acervos start from a **usage
+template** (sales, engineering, healthcare… — ADR-0003) and choose their own
+**AI agent CLI**; a first-launch welcome modal presents the main features.
 
 ## Security & privacy
 
@@ -91,3 +94,7 @@ See `docs/adr/0001-baseline.md` §3 for the full posture.
 `make test` · `make lint` · `make build` · `make test-docker` (see `Makefile`).
 Contribution rules and the AI-agent workflow are in `CONTRIBUTING.md` and
 `CLAUDE.md`. The desktop app's UI details: `desktop/README.md`.
+
+## License
+
+Apache-2.0 — see [LICENSE](LICENSE).

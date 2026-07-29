@@ -121,24 +121,24 @@ test("sanitizeSkillArg flattens whitespace/newlines to one PTY line", () => {
 });
 
 test("meetingSkillCmd builds the analyse and answer slash commands", () => {
-  assert.strictEqual(LM.meetingSkillCmd("analyse", DIR), "/brain-analyse " + DIR);
+  assert.strictEqual(LM.meetingSkillCmd("analyse", DIR), "/loro-analyse " + DIR);
   assert.strictEqual(
-    LM.meetingSkillCmd("answer", DIR, "qual foi a decisão?"),
-    "/brain-answer " + DIR + " qual foi a decisão?"
+    LM.meetingSkillCmd("question", DIR, "qual foi a decisão?"),
+    "/loro-question " + DIR + " qual foi a decisão?"
   );
 });
 
 test("meetingSkillCmd flattens a multiline question — never a premature submit", () => {
-  const cmd = LM.meetingSkillCmd("answer", DIR, "linha 1\nlinha 2");
-  assert.strictEqual(cmd, "/brain-answer " + DIR + " linha 1 linha 2");
+  const cmd = LM.meetingSkillCmd("question", DIR, "linha 1\nlinha 2");
+  assert.strictEqual(cmd, "/loro-question " + DIR + " linha 1 linha 2");
   assert.ok(!/[\r\n]/.test(cmd));
 });
 
 test("meetingSkillCmd returns null without a dir, or with an empty answer question", () => {
   assert.strictEqual(LM.meetingSkillCmd("analyse", ""), null);
   assert.strictEqual(LM.meetingSkillCmd("analyse", null), null);
-  assert.strictEqual(LM.meetingSkillCmd("answer", DIR, "   \n  "), null);
-  assert.strictEqual(LM.meetingSkillCmd("answer", DIR, ""), null);
+  assert.strictEqual(LM.meetingSkillCmd("question", DIR, "   \n  "), null);
+  assert.strictEqual(LM.meetingSkillCmd("question", DIR, ""), null);
 });
 
 test("ADR-0013: meeting helpers recognize the brainstorming/ world", () => {

@@ -24,14 +24,14 @@ processes captured transcripts into a knowledge base on disk.
                                |
                         ~/.loro/  (config, models, logs)
                                |
-   transcripts (inbox) ---> Claude loop (/brain-context) ---> knowledge base
+   transcripts (inbox) ---> Claude loop (/loro-context) ---> knowledge base
 ```
 
 **Knowledge flow (ADR-0001 §7):** the studio makes one sequential path explicit —
 **Brainstorming → Fila → Contexto**. A *brainstorming* (`brainstorming/<slug>/`, the
 renamed non-versioned world) gathers meetings/investigations/questions/notes; the
 user elects parts into ONE consolidated report that enters the **fila** (the
-`inbox/` queue); **"gerar contexto"** runs `/brain-context` (the renamed loop skill)
+`inbox/` queue); **"gerar contexto"** runs `/loro-context` (the renamed loop skill)
 which distills the fila into versioned `contextos/`.
 
 Config, models and logs live under `~/.loro/`. The knowledge base ("brain") is a
@@ -97,7 +97,9 @@ OS/serde errors may still pass through and are shown untranslated.
 | `save_transcript` | `content` | path or `null` | native save dialog + write |
 | `auto_save` | `content, dir, filename` | path | silent save to the configured folder |
 | `list_capture_devices` | — | `[{index,name}]` | enumerate capture devices (for `-c`) |
-| `brain_get_config` / `brain_setup` / `brain_add_context` / `brain_remove_context` | … | config | acervo config lifecycle |
+| `brain_get_config` / `brain_setup` / `brain_add_context` / `brain_remove_context` | … | config | acervo config lifecycle; `brain_setup` takes `template?` (usage preset id, ADR-0003) and `agent?` (per-acervo AI CLI command, default `claude`) |
+| `brain_list_templates` | `lang?` | `[{id,name,description,contexts,builtin,dir?}]` | usage templates for the wizard (ADR-0003): builtins + `~/.loro/templates`, localized |
+| `brain_duplicate_template` | `id` | dir path | copy a template into `~/.loro/templates` as an editable custom template |
 | `ui_get_lang` / `ui_set_lang` | — / `lang ("pt"\|"en")` | lang | user-level UI language (ADR-0001 §10, ADR-0002 §1: generated content follows it); set relabels the tray live |
 | `brain_status` | — | status | contexts, inbox, processed, activity |
 | `brain_read` | `rel` | content | read a file inside the acervo (path-traversal guarded) |
@@ -115,6 +117,7 @@ Brainstorming world + the fila → contexto flow (ADR-0001 §7):
 | `brain_rename_brainstorm` | `slug, nome` | `{slug, rel}` | rename a brainstorming (folder + meta) |
 | `brain_set_brainstorm_category` | `{slug, categoria?}` | `()` | set/clear the UI grouping category |
 | `brain_brainstorm_delete` | `{rel}` | `()` | delete a brainstorming item (guarded to `brainstorming/`) |
+| `brain_rename_pessoal` | `rel, name` | new rel | rename a note/analysis file in place (world-confined, keeps extension, never overwrites — ADR-0003 §5) |
 | `brain_brainstorm_build_report` | `slug, selection[]` | `{rel}` | build ONE consolidated report (empty selection = all parts) |
 | `brain_send_report_to_queue` | `reportRel, destContext?` | name | copy a report into the fila (`inbox/`) steered by `<ctx>--` |
 
@@ -127,7 +130,8 @@ Knowledge versioning & collaboration (ADR-0001 §5) — all opt-in, no credentia
 | `env_set_identity` | `name, email` | `()` / err | the one safe wizard fix — sets git identity scoped to the acervo |
 | `brain_version` | `slug, message` | `{branch, result, warn?}` | Versionar (ADR-0002 §2): sync local default with origin (fetch + ff-only, degradable — `warn` = `err.git_offline`/`err.main_diverged`), then `rfc/<slug>` + add + commit (local) |
 | `git_branches` / `git_switch_branch` / `git_create_branch` | — / `branch` / `slug` | `{current, default, branches, dirty}` / branch / branch | branch-first flow (ADR-0002 §2): picker data, switch (blocked on dirty tree), create `rfc/<slug>` off the synced default |
-| `term_status` | — | `{open, claudeRunning}` | readiness handshake (ADR-0002 §4): slash-commands are injected only when a `claude` process lives under the PTY shell |
+| `term_status` | — | `{open, agentRunning}` | readiness handshake (ADR-0002 §4, ADR-0003 §3): skill invocations are injected only when the acervo's agent process lives under the PTY shell |
+| `term_agent` | — | command string | the active acervo's AI agent command (frontend launches it in the PTY; non-Claude agents get skills as plain prompts) |
 | `brain_propose_change` | `title, body` | `{number, url}` | Propor: push the rfc/ branch + `gh pr create` (the RFC); gated |
 | `gh_pr_list` / `gh_pr_status` | — / `number` | PR(s) | read open PRs / one PR's review status via `gh --json` |
 | `brain_notifications` | — | inbox by category | collaboration inbox from open PRs; `connected:false` when local-only |
@@ -164,13 +168,19 @@ Path resolution: `LORO_HOME` (exported by `loro.sh`) or a sensible default;
   Errors surface via `transcribe-error`.
 - **Auto-save:** on stop, if enabled, the buffer is written to
   `<saveDir>/loro-<timestamp>.md` (validated filename).
-- **Brain loop (`/brain-context`, ADR-0001 §7):** `loop → /brain-context` reads the acervo inbox, distills each new input
+- **Brain loop (`/loro-context`, ADR-0001 §7):** `loop → /loro-context` reads the acervo inbox, distills each new input
   into `reunioes/` or `notas/`, appends prose to `contextos/<c>/CHANGELOG.md`,
   updates `contextos/<c>/context.md` (consolidated in sections 1–5; anything still
   open/contradictory as a **hotspot** in section 6 — ideas are no longer files),
   moves raw to `processed/`, updates state. Suggests a new context when none fits,
   and splits a composite domain into recursive `contextos/<c>/<sub>/` subdomains
   (parent becomes overview + index), up to `MAX_CONTEXT_DEPTH` levels (ADR-0001 §4).
+- **Efficient-reading layer (ADR-0004):** every `context.md` opens with a
+  regenerated **Summary card** (§0); decisions carry stable IDs
+  (`D-YYYY-MM-DD-<slug>`), hotspots carry `H-<n>`, and the `INDEX.md` line is
+  enriched (description · updated date · hotspot range) so agents route without
+  opening files. The generated `AGENTS.md` and every skill teach the protocol:
+  index → card → ID search → targeted section read.
 - **Knowledge versioning (ADR-0001 §5), Git hidden behind two buttons:** *Versionar*
   → `brain_version` creates `rfc/<slug>` off the default branch and commits the
   working changes locally (Git only). *Propor mudança* → `brain_propose_change`
@@ -211,7 +221,7 @@ All technical decisions are consolidated in the single **`docs/adr/0001-baseline
 | Product per context | single `context.md` (source of truth) + CHANGELOG; inline hotspots | ADR-0001 §4 |
 | Change proposal | RFC = branch + Pull Request; opt-in remote via `gh` + CODEOWNERS | ADR-0001 §5 |
 | Studio shell | multi-tab workspace, command palette, vendored CM6 IIFE | ADR-0001 §6 |
-| Knowledge flow | Brainstorming → Fila → Contexto (`/brain-context`) | ADR-0001 §7 |
+| Knowledge flow | Brainstorming → Fila → Contexto (`/loro-context`) | ADR-0001 §7 |
 | Meetings | living file + notebook report, transient audio | ADR-0001 §8 |
 | Meeting AI | terminal-Claude skills, local-first | ADR-0001 §9 |
 | Doc language | English | ADR-0001 |

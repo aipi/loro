@@ -17,6 +17,33 @@ pub struct Acervo {
     pub color: String, // accent color for this project (hex; empty = default)
     #[serde(default)]
     pub lang: String, // project language ("pt" | "en"); drives the templates
+    // Usage template (preset) id that seeded this acervo ("generico" default).
+    // Drives seeding only — never re-applied destructively (ADR-0003).
+    #[serde(default = "default_template")]
+    pub template: String,
+    // AI agent command launched in the embedded terminal ("claude" default).
+    // Any CLI the user owns — the app never ships credentials (BR-9).
+    #[serde(default = "default_agent")]
+    pub agent: String,
+}
+
+pub fn default_template() -> String {
+    "generico".into()
+}
+
+pub fn default_agent() -> String {
+    "claude".into()
+}
+
+// Empty/blank agent falls back to the default; the command is otherwise the
+// user's own, verbatim (any CLI, including local models).
+pub fn normalize_agent(s: &str) -> String {
+    let s = s.trim();
+    if s.is_empty() {
+        default_agent()
+    } else {
+        s.to_string()
+    }
 }
 
 // Global config (~/.loro/config.json). New format: list of acervos + active id.
@@ -83,6 +110,41 @@ mod tests {
         assert!(json.contains(r#""uiLang":"en""#));
         let back: LoroConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(back.ui_lang, "en");
+    }
+
+    // usage templates (ADR-0003): existing acervos gain the default preset id
+    #[test]
+    fn acervo_template_and_agent_default_when_absent() {
+        let a: Acervo = serde_json::from_str(r#"{"id":"x","name":"X","dir":"/tmp/x"}"#).unwrap();
+        assert_eq!(a.template, "generico");
+        assert_eq!(a.agent, "claude");
+    }
+
+    #[test]
+    fn acervo_template_and_agent_roundtrip_as_camel_case_json() {
+        let a = Acervo {
+            id: "x".into(),
+            name: "X".into(),
+            dir: "/tmp/x".into(),
+            auto_context: false,
+            color: String::new(),
+            lang: "pt".into(),
+            template: "vendas".into(),
+            agent: "ollama run llama3".into(),
+        };
+        let json = serde_json::to_string(&a).unwrap();
+        assert!(json.contains(r#""template":"vendas""#));
+        assert!(json.contains(r#""agent":"ollama run llama3""#));
+        let back: Acervo = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.template, "vendas");
+        assert_eq!(back.agent, "ollama run llama3");
+    }
+
+    #[test]
+    fn normalize_agent_falls_back_to_claude_when_blank() {
+        assert_eq!(normalize_agent(""), "claude");
+        assert_eq!(normalize_agent("   "), "claude");
+        assert_eq!(normalize_agent(" gemini "), "gemini");
     }
 
     #[test]
@@ -152,6 +214,8 @@ pub fn read_loro_config() -> LoroConfig {
                     auto_context: false,
                     color: String::new(),
                     lang: "pt".into(),
+                    template: default_template(),
+                    agent: default_agent(),
                 }],
                 active: id,
                 ui_lang: default_ui_lang(),

@@ -103,6 +103,7 @@ const DEFAULTS = {
   model: "large-v3-turbo", lang: "pt", translate: false,
   autoscroll: true, autosave: false, saveDir: "", source: "mic", mode: "live", uiLang: "pt", termSide: false,
   sideW: 0, // sidebar width in px; 0 = the default CSS clamp (ADR-0002 §6)
+  welcomeSeen: false, // first-launch feature tour (reopen via palette)
 };
 let settings = { ...DEFAULTS };
 function loadSettings() {
@@ -442,12 +443,16 @@ async function stopSession() {
 // itself). The mic keeps recording via the existing MediaRecorder (the onda +
 // audio/mic.webm). The reuniao.md tab is opened as THE live surface (the footer
 // live panel is retired for meetings), and the transcript only shows after stop.
-async function startMeetingSession() {
+async function startMeetingSession(presetTema) {
   if (state.running || meeting.active) { toast(t("já há uma gravação em andamento")); return; }
   let temas = [];
   try { temas = (await invoke("brain_list_brainstorms")) || []; } catch (_) {}
-  const choice = await pickMeeting(temas);
-  if (!choice) return;
+  const choice = await pickMeeting(temas, presetTema);
+  if (!choice || !choice.tema) return;
+  return startMeetingWith(choice);
+}
+async function startMeetingWith(choice) {
+  if (state.running || meeting.active) { toast(t("já há uma gravação em andamento")); return; }
   const cfg = currentCfg();
   clog("start (meeting ADR-0010): tema=" + choice.tema);
   let res;
@@ -686,38 +691,48 @@ async function markMeeting(tipo) {
   catch (e) { toast(tErr(String(e))); clog("brain_meeting_marker error: " + e); }
 }
 
-// paleta: "nova reunião" (independe do seletor de fonte) · "abrir relatório"
-function startMeetingFlow() {
+// paleta: "nova reunião" (independe do seletor de fonte) · "abrir relatório".
+// presetTema pins the brainstorming when the flow starts from its sidebar row.
+function startMeetingFlow(presetTema) {
   if (state.running || meeting.active) { toast(t("já há uma gravação em andamento")); return; }
-  startMeetingSession();
+  startMeetingSession(presetTema);
 }
 // ADR-0013: general Q&A over the acervo. Any question is answered from the
-// versioned contexts (local base) first, MCP/external only after (the /brain-ask
+// versioned contexts (local base) first, MCP/external only after (the /loro-ask
 // skill enforces the order). Injects into the terminal Claude, like the meeting
 // skills — the answer appears in the terminal. Not meeting-scoped.
-function askAcervo() {
+function askAcervo(ctx) {
+  const scope = ctx
+    ? `<p class="pmnote mono">${t("a pergunta fica ancorada neste contexto")}: <b>${esc(ctx)}</b></p>`
+    : "";
   openModal(
-    t("Perguntar ao acervo"),
-    `<p class="pmnote mono">${t("A resposta vem primeiro dos contextos (a base de conhecimento) e, se preciso, de conectores MCP. Roda no Claude do terminal.")}</p>` +
+    ctx ? t("Perguntar ao contexto") : t("Perguntar ao acervo"),
+    scope +
+      `<p class="pmnote mono">${t("A resposta vem primeiro dos contextos (a base de conhecimento) e, se preciso, de conectores MCP. Roda no Claude do terminal.")}</p>` +
       `<label class="wfield"><span class="mono">${t("pergunta")}</span>` +
       `<input id="askInput" type="text" placeholder="${t("ex.: qual a política de multas da frota?")}" spellcheck="false"></label>`,
     t("perguntar"),
     () => {
       const q = (($("askInput") && $("askInput").value) || "").trim();
-      const cmd = LoroBrainstorm.brainAskCmd(q);
+      const cmd = LoroBrainstorm.brainAskCmd(q, ctx);
       if (!cmd) { toast(t("digite uma pergunta")); return; }
-      termRunClaude(cmd);
-      toast(t("pergunta enviada ao Claude do terminal — a resposta aparece abaixo"), 4000);
+      termRunAgent(cmd);
+      toast(t("pergunta enviada ao agente do terminal — a resposta aparece abaixo"), 4000);
     }
   );
   const inp = $("askInput"); if (inp) inp.focus();
 }
 
-async function buildAndOpenReport() {
-  let id = meeting.id;
+async function buildAndOpenReport(explicitId) {
+  let id = explicitId || meeting.id;
   if (!id) { const rel = currentRel(); id = rel ? (LM.livingId(rel) || LM.reportId(rel)) : null; }
   if (!id) { toast(t("abra uma reunião para gerar o relatório")); return; }
-  try { const r = await invoke("brain_meeting_build_notebook", { id }); if (r && r.rel) openDoc(r.rel, { preview: false }); toast(t("relatório pronto")); }
+  try {
+    const r = await invoke("brain_meeting_build_notebook", { id });
+    if (r && r.rel) openDoc(r.rel, { preview: false });
+    toast(t("relatório pronto"));
+    pessoalSig = ""; refreshPessoal();
+  }
   catch (e) { toast(t("não montei o relatório") + ": " + tErr(String(e))); clog("build_notebook error: " + e); }
 }
 
@@ -790,7 +805,21 @@ function toggle() {
   const now = Date.now();
   if (now - lastToggle < 500) return;
   lastToggle = now;
-  state.running ? stopSession() : startSession();
+  state.running ? stopSession() : startRecordFlow();
+}
+
+// ● never starts a loose recording (owner decision 2026-07-28): like every
+// other flow, it first asks WHERE the result will live — a brainstorming
+// (meeting) or an explicit one-off transcription (the old savebar flow).
+async function startRecordFlow() {
+  if (state.running || meeting.active) return;
+  if (settings.source === "meeting") return startMeetingSession(); // already asks
+  let temas = [];
+  try { temas = (await invoke("brain_list_brainstorms")) || []; } catch (_) {}
+  const choice = await pickMeeting(temas, null, { allowLoose: true });
+  if (!choice) return;
+  if (choice.tema) return startMeetingWith(choice);
+  return startSession(); // explicit one-off: current live/file flow + savebar
 }
 
 // ---- salvar / descartar / limpar ----
@@ -901,6 +930,7 @@ const B = {
   setup: $("brainSetup"), shell: $("brainShell"),
   dirBtn: $("brainDirBtn"), ctxInput: $("brainCtxInput"), createBtn: $("brainCreateBtn"),
   nameInput: $("brainNameInput"), autoInput: $("brainAuto"), gitInput: $("brainGit"),
+  agentInput: $("brainAgentInput"), wizTemplates: $("wizTemplates"), wizTemplateHint: $("wizTemplateHint"),
   cancelBtn: $("brainCancelBtn"), wizTitle: $("wizTitle"), setupErr: $("brainSetupErr"),
   acervoBtn: $("acervoBtn"), acervoName: $("acervoName"), acervoMenu: $("acervoMenu"),
   gitBtn: $("gitBtn"), branchBtn: $("branchBtn"), proposeBtn: $("proposeBtn"), bMenu: $("bMenu"),
@@ -935,6 +965,9 @@ const fmById = new Map();
 const bOpen = new Set();   // nós expandidos da lateral
 let sideSig = "";          // assinatura p/ não re-renderizar a lateral sem mudança
 let acervos = [], activeAcervo = "", creatingNew = false, gitFiles = {}, wizColor = "";
+// usage template picker state (ADR-0003): selected id, fetched list, and
+// whether the user already edited the contexts field by hand
+let wizTemplate = "generico", wizTemplates = [], wizCtxDirty = false;
 let lastEnvAcervo = null;
 
 // paleta curada (funciona no claro e no escuro); "" = padrão (teal do tema)
@@ -990,11 +1023,36 @@ document.addEventListener("click", (e) => {
 });
 window.addEventListener("keydown", (e) => { if (e.key === "Escape") hideTip(); });
 
+// ---- welcome (first launch): the main features in one modal ----------------
+// Shown once (settings.welcomeSeen); reopen anytime via the palette
+// ("apresentação do Loro"). Content mirrors the manual's headline features.
+function showWelcome() {
+  const li = (msg) => `<li>${t(msg)}</li>`;
+  openModal(
+    t("Bem-vindo ao Loro 🦜"),
+    `<ul class="welcome">` +
+      li("Fluxo em três passos: Brainstorming → Fila → Contexto — junte ideias, eleja o que importa e gere conhecimento versionado.") +
+      li("● grava reuniões ou transcrições avulsas — 100% local; o áudio nunca sai da sua máquina.") +
+      li("Modelos de uso (vendas, engenharia, saúde…) moldam os contextos e as regras do acervo na criação.") +
+      li("O agente de IA é escolha sua por acervo: claude por padrão, ou qualquer CLI — inclusive modelos locais.") +
+      li("Analise reuniões, pergunte ao acervo ou a um contexto, e crie/evolua notas com IA (✦) direto da lateral.") +
+      li("⌘/Ctrl+Shift+P abre a paleta de comandos — e todo comando tem um atalho ⌘/Ctrl+⌥.") +
+    `</ul>` +
+      `<p class="pmnote mono"><button id="welcomeManual" class="link mono strong">${t("abrir manual")}</button></p>`,
+    t("começar"),
+    () => {}
+  );
+  const m = $("welcomeManual");
+  if (m) m.onclick = () => { closeModal(); openDoc(MANUAL_REL, { preview: false }); };
+  settings.welcomeSeen = true; persistSettings();
+}
+
 // o acervo é a tela principal (sempre ativo); a transcrição vive no player (dock)
 function initBrain() {
   brainTab = true;
   brainRefresh();
   if (!brainPoll) brainPoll = setInterval(brainRefresh, 10000);
+  if (!settings.welcomeSeen) setTimeout(showWelcome, 600);
 }
 if (el.liveExpand) el.liveExpand.addEventListener("click", () => setLivePanel(el.surface.hidden));
 el.liveCollapse.addEventListener("click", () => setLivePanel(false));
@@ -1019,8 +1077,8 @@ B.editSave.addEventListener("click", async () => {
 });
 $("guideBtn").addEventListener("click", () => openGuideDoc());
 { const ab = $("askBtn"); if (ab) ab.addEventListener("click", askAcervo); }
-// ADR-0013: "gerar contexto" — the fila → contexto step. Injects /brain-context
-// into the terminal Claude (the renamed /brain loop), which processes the whole
+// ADR-0013: "gerar contexto" — the fila → contexto step. Injects /loro-context
+// into the terminal Claude (the /loro-context loop), which processes the whole
 // queue into versioned contexts. Same terminal-skill pattern as analisar/responder.
 // One function, two entry points: the home card CTA and the sidebar quick action.
 function genContextNow() {
@@ -1030,8 +1088,8 @@ function genContextNow() {
     toast(t("a fila está vazia — envie um relatório ou arquivos antes de gerar contexto"), 5000);
     return;
   }
-  termRunClaude(LoroBrainstorm.brainContextCmd());
-  toast(t("gerando contexto no Claude do terminal — acompanhe abaixo"), 4000);
+  termRunAgent(LoroBrainstorm.brainContextCmd());
+  toast(t("gerando contexto no agente do terminal — acompanhe abaixo"), 4000);
 }
 {
   const gen = $("queueGenCtx");
@@ -1123,7 +1181,7 @@ function renderHome(st) {
   if (gen) {
     gen.disabled = !n;
     gen.title = n
-      ? t("Processa a fila com o Claude (/brain-context): cada item vira/atualiza um contexto versionado")
+      ? t("Processa a fila com o Claude (/loro-context): cada item vira/atualiza um contexto versionado")
       : t("a fila está vazia — selecione partes no brainstorming ou envie arquivos");
   }
   const qc = $("queueCard");
@@ -1160,7 +1218,7 @@ function renderHome(st) {
         const txt = m ? m[3] : l;
         return `<div class="fitem"><span class="fdot"></span><span class="ftime mono">${esc(time)}</span><span class="ftxt">${esc(txt)}</span></div>`;
       }).join("")
-    : `<div class="bempty">${t("o loop ainda não rodou — use /loop 1h /brain no Claude Code")}</div>`;
+    : `<div class="bempty">${t("o loop ainda não rodou — use /loop 1h /loro-context no Claude Code")}</div>`;
 }
 
 // ---- ícones Material (SVG inline, monocromático via currentColor) ----
@@ -1272,15 +1330,14 @@ function renderSidebar(st) {
           title="${ed ? t("não sincronizado — clique para editar") : t("não sincronizado (aguardando o loop)")}">${ico("file")}<span class="bn">${esc(f.name)}${bMeta(f.mtime, "inbox/" + f.name)}</span>
           <button class="rowmenu" data-qmenu="${esc(f.name)}" data-move="${esc(f.name)}" title="${t("ações")}">⋯</button></div>`;
       }).join("") +
-      `<div class="bitem addctx" data-genctx title="${t("Processa a fila com o Claude (/brain-context)")}">▶ ${t("gerar contexto")}</div>`
+      `<div class="bitem addctx" data-genctx title="${t("Processa a fila com o Claude (/loro-context)")}">▶ ${t("gerar contexto")}</div>`
     : `<div class="bempty">${t("vazia — envie um relatório ou arquivos para gerar contexto")}</div>`;
   // contextos como ÁRVORE: pastas/áreas agrupam; contextos reais abrem o guia.
-  // A criação lidera a lista (creation-first UX, 2026-07-28).
+  // Criação vive no ＋ do cabeçalho da seção (linhas cheias poluíam a árvore).
   B.navCtx.innerHTML =
-    `<div class="bitem addctx" data-addctx title="${t("Criar um novo contexto")}">＋ ${t("novo contexto")}</div>` +
-    (st.contexts.length
+    st.contexts.length
       ? renderCtxForest(buildCtxTree(st.contexts))
-      : `<div class="bempty">${t("nenhum contexto ainda — crie o primeiro para organizar o conhecimento")}</div>`);
+      : `<div class="bempty">${t("nenhum contexto ainda — crie o primeiro para organizar o conhecimento")}</div>`;
   // fontes agrupadas por mês (escala p/ listas grandes)
   B.navSources.innerHTML = [["reunioes", st.reunioes], ["notas", st.notas]].map(([kind, files]) => {
     if (!files.length) return "";
@@ -1332,6 +1389,9 @@ function wireSidebar() {
   }));
 
   B.main.querySelectorAll("[data-addctx]").forEach((el2) => (el2.onclick = promptNewContext));
+  // section-header ＋ buttons (compact creation, owner feedback 2026-07-28)
+  if ($("addCtxBtn")) $("addCtxBtn").onclick = promptNewContext;
+  if ($("addTemaBtn")) $("addTemaBtn").onclick = promptNewTema;
   B.main.querySelectorAll("[data-genctx]").forEach((el2) => (el2.onclick = genContextNow));
   // pasta/área (não é contexto): só expande/recolhe
   B.main.querySelectorAll("[data-fold]").forEach((el2) => (el2.onclick = (e) => {
@@ -1387,7 +1447,7 @@ async function loadCtxChildren(name) {
   // subpastas que já são subdomínios (contextos) aparecem na ÁRVORE de contextos;
   // não as repetimos aqui como "pasta" — visualização única (ADR-0007).
   const ctxSet = new Set((lastSt && lastSt.contexts ? lastSt.contexts : []).map((c) => c.name));
-  const pretty = { "context.md": t("contexto do domínio"), "guia.md": t("guia do domínio"), "CHANGELOG.md": t("histórico"), CODEOWNERS: t("donos"), brainstorming: "brainstorming", incubadora: "brainstorming", referencias: t("referências") };
+  const pretty = { "context.md": t("contexto"), "guia.md": t("guia do domínio"), "CHANGELOG.md": t("histórico"), CODEOWNERS: t("donos"), brainstorming: "brainstorming", incubadora: "brainstorming", referencias: t("referências") };
   const order = (n) => n === "context.md" ? 0 : n === "guia.md" ? 0 : n === "CHANGELOG.md" ? 1 : n === "referencias" ? 2 : 3;
   entries.sort((a, b) => order(a.name) - order(b.name) || a.name.localeCompare(b.name));
   let html = "";
@@ -1430,9 +1490,9 @@ async function refreshPessoal() {
   renderPessoal(temas, avulso);
 }
 function renderPessoal(temas, avulso) {
-  // criação em primeiro lugar: a ação primária do grupo fica no topo, não
-  // escondida depois da lista (decisão de UX, 2026-07-28)
-  let html = `<div class="bitem addctx" data-addtema title="${t("Criar um novo brainstorming")}">＋ ${t("novo brainstorming")}</div>`;
+  // creation moved to the section header (＋, wired once at boot) — full-width
+  // creation rows polluted the tree (owner feedback 2026-07-28)
+  let html = "";
   if (temas.length || avulso.length) {
     // group brainstormings by their optional categoria (uncategorized last)
     for (const grp of LoroBrainstorm.groupByCategory(temas)) {
@@ -1471,10 +1531,10 @@ function renderTemaNode(t) {
 // segmentação em quatro pastas era atrito, não estrutura.
 // A selectable part row: a checkbox (data-bssel/data-bskind) + the open target.
 // A meeting row carries a ⋯ menu (renomear/apagar); files keep the plain ×.
-function bsPartRow(kind, openRel, selRel, label, title, indent, meetingId) {
+function bsPartRow(kind, openRel, selRel, label, title, indent, meetingId, meetingStatus) {
   const act = meetingId
-    ? `<button class="rowmenu" data-mtgmenu="${esc(selRel)}" data-mtgid="${esc(meetingId)}" data-mtgtitle="${esc(label)}" title="${t("ações da reunião (renomear, apagar)")}">⋯</button>`
-    : `<button class="rowmenu danger" data-delpessoal="${esc(selRel)}" title="${t("apagar")}">×</button>`;
+    ? `<button class="rowmenu" data-mtgmenu="${esc(selRel)}" data-mtgid="${esc(meetingId)}" data-mtgtitle="${esc(label)}" data-mtgstatus="${esc(meetingStatus || "")}" title="${t("ações da reunião (analisar, perguntar, relatório…)")}">⋯</button>`
+    : `<button class="rowmenu" data-artmenu="${esc(selRel)}" data-artlabel="${esc(label)}" title="${t("ações (renomear, apagar)")}">⋯</button>`;
   const icon = kind === "reuniao" ? "meeting" : kind === "nota" ? "note" : "file";
   return `<div class="bitem file${indent ? " bsub" : ""}" data-doc="${esc(openRel)}" title="${esc(title)}">` +
     `<input type="checkbox" class="bschk" data-bssel="${esc(selRel)}" data-bskind="${kind}" title="${t("selecionar para a fila")}">` +
@@ -1491,13 +1551,18 @@ async function loadTemaChildren(slug) {
   let inner = "";
   // ADR-0002 §6: the whole notes block leads the brainstorming (creation-first),
   // above the meetings — "＋ nova nota" is the top row.
-  inner += `<div class="bitem addctx" data-addnota="${esc(slug)}" title="${t("Escrever uma nota neste brainstorming")}">＋ ${t("nova nota")}</div>`;
+  // creation-first but compact: one row, two half-width actions (nota/reunião)
+  // — two full rows polluted every expanded brainstorming (owner feedback).
+  inner += `<div class="bsadd">` +
+    `<button class="bsaddbtn" data-addnota="${esc(slug)}" title="${t("Escrever uma nota neste brainstorming")}">＋ ${t("nova nota")}</button>` +
+    `<button class="bsaddbtn rec2" data-addmeeting="${esc(slug)}" title="${t("Gravar uma reunião neste brainstorming (áudio 100% local)")}">● ${t("gravar reunião")}</button>` +
+    `</div>`;
   for (const f of notas) inner += bsPartRow("nota", f.path, f.path, shortName(f.name), f.name, false);
   for (const m of meetings) {
     // título do manifest (renomeável); cai para o id humanizado quando ausente
     const title = LM.meetingTitleFromManifest({ titulo: m.titulo }, m.id);
     const label = title === m.id ? LM.meetingLabel(m.id, settings.uiLang) : title;
-    inner += bsPartRow("reuniao", `${m.rel}/reuniao.md`, m.rel, label, m.id, false, m.id);
+    inner += bsPartRow("reuniao", `${m.rel}/reuniao.md`, m.rel, label, m.id, false, m.id, m.status);
     for (const [asub, akind] of [["investigacoes", "investigacao"], ["respostas", "nota"]]) {
       let arts = [];
       try { arts = ((await invoke("brain_list_dir", { rel: `${m.rel}/artefatos/${asub}` })) || []).filter((a) => !a.dir); }
@@ -1534,12 +1599,18 @@ function wirePessoal() {
   B.navPessoal.querySelectorAll("[data-delpessoal]").forEach((el2) => (el2.onclick = (e) => {
     e.stopPropagation(); delPessoal(el2.dataset.delpessoal);
   }));
+  B.navPessoal.querySelectorAll("[data-artmenu]").forEach((el2) => (el2.onclick = (e) => {
+    e.stopPropagation(); openArtefatoMenu(el2.dataset.artmenu, el2.dataset.artlabel, el2);
+  }));
+  B.navPessoal.querySelectorAll("[data-addmeeting]").forEach((el2) => (el2.onclick = (e) => {
+    e.stopPropagation(); startMeetingFlow(el2.dataset.addmeeting);
+  }));
   B.navPessoal.querySelectorAll("[data-bsmenu]").forEach((el2) => (el2.onclick = (e) => {
     e.stopPropagation(); openBsMenu(el2.dataset.bsmenu, el2);
   }));
   B.navPessoal.querySelectorAll("[data-mtgmenu]").forEach((el2) => (el2.onclick = (e) => {
     e.stopPropagation();
-    openMeetingMenu(el2.dataset.mtgmenu, el2.dataset.mtgid, el2.dataset.mtgtitle, el2);
+    openMeetingMenu(el2.dataset.mtgmenu, el2.dataset.mtgid, el2.dataset.mtgtitle, el2.dataset.mtgstatus, el2);
   }));
   B.navPessoal.querySelectorAll("[data-tema]").forEach((el2) => (el2.onclick = (e) => {
     if (e.target.closest("[data-bsmenu]")) return;
@@ -1595,9 +1666,12 @@ function openBsMenu(slug, anchor) {
   B.acervoMenu.hidden = true;
   B.bMenu.innerHTML =
     `<div class="fhead">${esc(slug)}</div>` +
+    `<div class="fitem2 strong" data-ainote><span class="fn">✦ ${t("nota por IA…")}</span></div>` +
+    `<div class="fsep"></div>` +
     `<div class="fitem2" data-ren><span class="fn">${t("renomear")}</span></div>` +
     `<div class="fitem2" data-toqueue><span class="fn">${t("gerar relatório de tudo → fila")}</span></div>` +
     `<div class="fitem2 danger" data-del><span class="fn">${t("apagar brainstorming")}</span></div>`;
+  B.bMenu.querySelector("[data-ainote]").onclick = () => { closeFloat(); promptNoteAI(`brainstorming/${slug}/notas`, false); };
   B.bMenu.querySelector("[data-ren]").onclick = () => { closeFloat(); promptRenameBs(slug); };
   B.bMenu.querySelector("[data-toqueue]").onclick = () => { closeFloat(); sendBrainstormToQueue(slug, []); };
   B.bMenu.querySelector("[data-del]").onclick = () => { closeFloat(); delPessoal("brainstorming/" + slug, "tema"); };
@@ -1608,7 +1682,7 @@ function openBsMenu(slug, anchor) {
 }
 
 // Rename via the shared modal — window.prompt is unreliable in the webview
-// (same reason pickMeeting/askMeetingAnswer use openModal).
+// (same reason pickMeeting/askMeetingQuestion use openModal).
 function promptRenameBs(slug) {
   openModal(
     t("Renomear brainstorming"),
@@ -1631,15 +1705,90 @@ function promptRenameBs(slug) {
 
 // O menu ⋯ de uma reunião na árvore — renomear (só o título; o id/pasta é
 // estável, então abas e artefatos continuam válidos) / apagar.
-function openMeetingMenu(rel, id, title, anchor) {
+function openMeetingMenu(rel, id, title, status, anchor) {
   B.acervoMenu.hidden = true;
+  // the meeting's AI actions live here too (not only in the open tab); the
+  // report is only worth opening after the meeting is done — before that the
+  // entry shows disabled with the reason instead of failing on click.
+  const ready = status === "done";
+  const dis = ready ? "" : " disabled";
   B.bMenu.innerHTML =
     `<div class="fhead">${esc(title)}</div>` +
+    `<div class="fitem2 strong${dis ? " off" : ""}" data-analyse><span class="fn">✦ ${t("analisar")}</span></div>` +
+    `<div class="fitem2${dis ? " off" : ""}" data-question><span class="fn">? ${t("perguntar…")}</span></div>` +
+    `<div class="fitem2${dis ? " off" : ""}" data-report><span class="fn">≡ ${t("ver relatório")}</span></div>` +
+    (ready ? "" : `<div class="fnote mono">${t("disponíveis quando a reunião terminar")}</div>`) +
+    `<div class="fsep"></div>` +
     `<div class="fitem2" data-ren><span class="fn">✎ ${t("renomear")}</span></div>` +
     `<div class="fitem2 danger" data-del><span class="fn">${t("apagar reunião")}</span></div>`;
+  if (ready) {
+    B.bMenu.querySelector("[data-analyse]").onclick = () => { closeFloat(); openDoc(`${rel}/reuniao.md`, { preview: false }); runMeetingSkill("analyse", id, null, rel); };
+    B.bMenu.querySelector("[data-question]").onclick = () => { closeFloat(); askMeetingQuestion(id, rel); };
+    B.bMenu.querySelector("[data-report]").onclick = () => { closeFloat(); buildAndOpenReport(id); };
+  }
   B.bMenu.querySelector("[data-ren]").onclick = () => { closeFloat(); promptRenameMeeting(id, title); };
   B.bMenu.querySelector("[data-del]").onclick = () => { closeFloat(); delPessoal(rel, "reuniao"); };
   placeMenu(anchor);
+}
+
+// notes and analysis artifacts: rename in place (world-confined backend) + delete
+function openArtefatoMenu(rel, label, anchor) {
+  B.acervoMenu.hidden = true;
+  B.bMenu.innerHTML =
+    `<div class="fhead">${esc(label)}</div>` +
+    `<div class="fitem2 strong" data-ainote><span class="fn">✦ ${t("pedir à IA…")}</span></div>` +
+    `<div class="fsep"></div>` +
+    `<div class="fitem2" data-ren><span class="fn">✎ ${t("renomear")}</span></div>` +
+    `<div class="fitem2 danger" data-del><span class="fn">${t("apagar")}</span></div>`;
+  B.bMenu.querySelector("[data-ainote]").onclick = () => { closeFloat(); promptNoteAI(rel, true); };
+  B.bMenu.querySelector("[data-ren]").onclick = () => { closeFloat(); promptRenameArtefato(rel); };
+  B.bMenu.querySelector("[data-del]").onclick = () => { closeFloat(); delPessoal(rel); };
+  placeMenu(anchor);
+}
+
+// /loro-note: create a note from a prompt (target = notes folder) or evolve an
+// existing note in place (target = the .md file). Runs in the terminal agent;
+// the sidebar's post-action refresh burst surfaces the result.
+function promptNoteAI(target, isFile) {
+  openModal(
+    isFile ? t("Pedir à IA sobre esta nota") : t("Nota por IA"),
+    `<p class="pmnote mono">${isFile
+      ? t("a IA lê a nota e aplica o pedido nela mesma — evolui, não apaga.")
+      : t("descreva a nota que o Loro deve criar neste brainstorming.")}</p>` +
+      `<label class="wfield"><span class="mono">${t("pedido")}</span>` +
+      `<input id="noteAiInput" type="text" placeholder="${isFile
+        ? t("ex.: resuma em 5 bullets e liste as dúvidas")
+        : t("ex.: nota sobre os riscos do contrato X, com o que sabemos hoje")}" spellcheck="false"></label>`,
+    t("enviar"),
+    () => {
+      const p = (($("noteAiInput") && $("noteAiInput").value) || "").trim();
+      const cmd = LoroBrainstorm.noteCmd(target, p);
+      if (!cmd) { toast(t("descreva o pedido")); return; }
+      termRunAgent(cmd);
+      toast(t("pedido enviado ao agente do terminal — a nota aparece na lateral"), 4000);
+    }
+  );
+  const inp = $("noteAiInput"); if (inp) inp.focus();
+}
+function promptRenameArtefato(rel) {
+  const current = rel.split("/").pop() || "";
+  openModal(
+    t("Renomear arquivo"),
+    `<label class="wfield"><span class="mono">${t("nome")}</span>` +
+      `<input id="artRenInput" type="text" value="${esc(current)}" spellcheck="false"></label>`,
+    t("renomear"),
+    async () => {
+      const name = (($("artRenInput") && $("artRenInput").value) || "").trim();
+      if (!name) { toast(t("informe um título")); return; }
+      try {
+        await invoke("brain_rename_pessoal", { rel, name });
+        toast(t("renomeado"));
+        pessoalSig = ""; refreshPessoal();
+      } catch (e) { toast(tErr(String(e))); }
+    }
+  );
+  const inp = $("artRenInput");
+  if (inp) { inp.focus(); const dot = current.lastIndexOf("."); inp.setSelectionRange(0, dot > 0 ? dot : current.length); }
 }
 
 function promptRenameMeeting(id, current) {
@@ -2065,7 +2214,7 @@ function paintMeetingSurface(id, raw, manifest, status, artefatos) {
       `<div class="mtg-doc">${meetingStatusBar(status)}${preview}` +
         (body.trim() ? mdRender(body) : emptyMsg) +
       `</div>` +
-      `<aside class="mtg-rail">${meetingRailHtml(id)}</aside>` +
+      `<aside class="mtg-rail">${meetingRailHtml(id, status)}</aside>` +
     `</div>`;
   wireMeetingSurface(id);
   wireDocLinks();
@@ -2083,30 +2232,36 @@ function meetingStatusBar(status) {
 // the terminal (local-first: it reads the context before the internet); "ver
 // relatório" shows the built report; "enviar para a fila" turns this meeting into
 // a consolidated report and puts it in the fila de geração de contexto.
-function meetingRailHtml(id) {
-  const action = (btnCls, btnId, label, note) =>
+function meetingRailHtml(id, status) {
+  // primary action first and emphasized: analyse fills the report; the report
+  // is only worth opening after the meeting is done (recording/transcribing →
+  // the button is disabled with the reason spelled out).
+  const ready = status === "done";
+  const action = (btnCls, btnId, label, note, disabled) =>
     `<div class="mtg-action">` +
-      `<button class="abtn ${btnCls}" id="${btnId}">${label}</button>` +
+      `<button class="abtn ${btnCls}" id="${btnId}"${disabled ? " disabled" : ""}>${label}</button>` +
       `<p class="mtg-note mono">${note}</p>` +
     `</div>`;
   return `<div class="mtg-railsec mtg-analise">` +
     `<div class="mtg-railhead mono">${t("o que fazer com esta reunião")}</div>` +
-    action("", "mtgAnalyseBtn", t("analisar"),
-      t("O Claude lê a transcrição e o contexto local primeiro, aponta tema, decisões, riscos e dúvidas, e escreve o relatório.")) +
-    action("", "mtgAnswerBtn", t("responder…"),
-      t("Faça uma pergunta sobre a reunião — a resposta é ancorada no que foi dito e no contexto local.")) +
+    action("cta", "mtgAnalyseBtn", t("analisar"),
+      t("O agente lê a transcrição e o contexto local primeiro, aponta tema, decisões, riscos e dúvidas, e escreve o relatório."), !ready) +
+    action("", "mtgQuestionBtn", t("perguntar…"),
+      t("Faça uma pergunta sobre a reunião — a resposta é ancorada no que foi dito e no contexto local."), !ready) +
     action("ghost", "mtgReportBtn", t("ver relatório"),
-      t("Abre o relatório desta reunião (resumo, decisões, dúvidas, investigações).")) +
-    action("cta", "mtgQueueBtn", `${t("enviar para a fila")} →`,
-      t("Gera um relatório consolidado desta reunião e o coloca na fila de geração de contexto (próximo passo do fluxo).")) +
+      ready
+        ? t("Abre o relatório desta reunião (resumo, decisões, dúvidas, investigações).")
+        : t("disponível quando a reunião terminar — rode analisar para preenchê-lo."), !ready) +
+    action("", "mtgQueueBtn", `${t("enviar para a fila")} →`,
+      t("Gera um relatório consolidado desta reunião e o coloca na fila de geração de contexto (próximo passo do fluxo)."), !ready) +
     `</div>`;
 }
 
 function wireMeetingSurface(id) {
   const analyseBtn = B.doc.querySelector("#mtgAnalyseBtn");
   if (analyseBtn) analyseBtn.onclick = () => runMeetingSkill("analyse", id);
-  const answerBtn = B.doc.querySelector("#mtgAnswerBtn");
-  if (answerBtn) answerBtn.onclick = () => askMeetingAnswer(id);
+  const questionBtn = B.doc.querySelector("#mtgQuestionBtn");
+  if (questionBtn) questionBtn.onclick = () => askMeetingQuestion(id);
   const reportBtn = B.doc.querySelector("#mtgReportBtn");
   if (reportBtn) reportBtn.onclick = () => buildAndOpenReport();
   const queueBtn = B.doc.querySelector("#mtgQueueBtn");
@@ -2133,13 +2288,13 @@ function currentMeetingDir(id) {
 // meeting's artefatos/ + relatorio.md; we refresh the tree afterwards so the new
 // files surface (the skill never touches manifest.json, so the rail's artefatos
 // list only reflects app-written artifacts).
-function runMeetingSkill(kind, id, question) {
-  const dir = currentMeetingDir(id);
+function runMeetingSkill(kind, id, question, dirOverride) {
+  const dir = dirOverride || currentMeetingDir(id);
   if (!dir) { toast(t("abra a reunião para analisar")); return; }
   const cmd = LM.meetingSkillCmd(kind, dir, question);
   if (!cmd) { toast(t("digite uma pergunta")); return; }
-  termRunClaude(cmd);
-  toast(kind === "answer" ? t("pergunta enviada ao Claude do terminal") : t("análise enviada ao Claude do terminal"), 4000);
+  termRunAgent(cmd);
+  toast(kind === "question" ? t("pergunta enviada ao agente do terminal") : t("análise enviada ao agente do terminal"), 4000);
   // A skill write is async and IPC-free (no pessoal-changed event), so nudge a
   // couple of tree/surface refreshes to reveal the artefatos it produces.
   scheduleMeetingSkillRefresh(id);
@@ -2150,10 +2305,10 @@ function scheduleMeetingSkillRefresh(id) {
   }, ms));
 }
 
-// "responder…": prompt for a free-text question, then inject /answer. Uses the
+// "perguntar…": prompt for a free-text question, then inject /loro-question. Uses the
 // shared modal (window.prompt is unreliable in the webview) mirroring pickMeeting.
-function askMeetingAnswer(id) {
-  const dir = currentMeetingDir(id);
+function askMeetingQuestion(id, dirOverride) {
+  const dir = dirOverride || currentMeetingDir(id);
   if (!dir) { toast(t("abra a reunião para responder")); return; }
   openModal(
     t("Perguntar sobre a reunião"),
@@ -2164,7 +2319,7 @@ function askMeetingAnswer(id) {
     () => {
       const q = (($("mtgQuestion") && $("mtgQuestion").value) || "").trim();
       if (!q) { toast(t("digite uma pergunta")); return; }
-      runMeetingSkill("answer", id, q);
+      runMeetingSkill("question", id, q, dirOverride);
     }
   );
   const inp = $("mtgQuestion"); if (inp) inp.focus();
@@ -2255,17 +2410,24 @@ function hidePill() { const p = $("mtgPill"); if (p) p.hidden = true; }
 
 // START picker: choose an existing tema or type a new one (+ optional title).
 // Resolves to {tema,titulo} on confirm or null on cancel/close.
-function pickMeeting(temas) {
+function pickMeeting(temas, presetTema, opts2) {
+  const allowLoose = !!(opts2 && opts2.allowLoose);
   return new Promise((resolve) => {
     let settled = false;
     const finish = (v) => { if (settled) return; settled = true; resolve(v); };
-    const opts = (temas || []).map((t) => `<option value="${esc(t.slug)}">${esc(t.nome || t.slug)}</option>`).join("");
+    // ● flow: the destination select leads with the explicit one-off option
+    // (value "") — recording is never loose by default (decision 2026-07-28).
+    const loose = allowLoose
+      ? `<option value="">${t("transcrição avulsa (salvar ao final)")}</option>`
+      : "";
+    const opts = (temas || []).map((t) =>
+      `<option value="${esc(t.slug)}"${t.slug === presetTema ? " selected" : ""}>${esc(t.nome || t.slug)}</option>`).join("");
     // ADR-0013: the brainstorming comes from the select (created elsewhere — no
     // "novo tema" field here). With none yet, a single name field bootstraps one.
     // Fields use the app's canonical `.wfield` pattern (same as the setup wizard).
-    const temaField = (temas && temas.length)
-      ? `<label class="wfield"><span class="mono">brainstorming</span>` +
-          `<select id="mtgTema">${opts}</select></label>`
+    const temaField = (temas && temas.length) || allowLoose
+      ? `<label class="wfield"><span class="mono">${allowLoose ? t("onde salvar") : "brainstorming"}</span>` +
+          `<select id="mtgTema">${loose}${opts}</select></label>`
       : `<label class="wfield"><span class="mono">brainstorming</span>` +
           `<input id="mtgNovoTema" type="text" placeholder="${t("ex.: frota 2026")}" spellcheck="false"></label>`;
     const html =
@@ -2273,14 +2435,14 @@ function pickMeeting(temas) {
       temaField +
       `<label class="wfield"><span class="mono">${t("título")}</span>` +
         `<input id="mtgTitulo" type="text" placeholder="${t("opcional — ex.: semanal de custos")}" spellcheck="false"></label>`;
-    openModal(t("Nova reunião"), html, t("começar"), () => {
+    openModal(allowLoose ? t("Nova gravação") : t("Nova reunião"), html, t("começar"), () => {
       const selEl = $("mtgTema");
       const novo = (($("mtgNovoTema") && $("mtgNovoTema").value) || "").trim();
       const tema = selEl ? selEl.value : novo;
       const titulo = (($("mtgTitulo") && $("mtgTitulo").value) || "").trim();
       // the modal closes on confirm regardless; abort (never hang) if no brainstorming
-      if (!tema) { toast(t("escolha ou nomeie um brainstorming")); finish(null); return; }
-      finish({ tema, titulo: titulo || null });
+      if (!tema && !allowLoose) { toast(t("escolha ou nomeie um brainstorming")); finish(null); return; }
+      finish({ tema: tema || null, titulo: titulo || null });
     });
     PM.cancel.addEventListener("click", () => finish(null), { once: true });
     PM.close.addEventListener("click", () => finish(null), { once: true });
@@ -2328,6 +2490,13 @@ async function renderActive() {
   B.badge.textContent = label; B.badge.className = "mono badge " + cls;
   setDocGit(tab.rel, tab.kind, isGuide);
   if (isGuide) $("bDocActs").hidden = true; else applyDocActions(tab.rel);
+  // ✦ ask-the-AI lives on the note viewer too (owner request): any markdown
+  // file of the non-versioned world except the meeting living surface (which
+  // has its own rail of actions).
+  const aiable = !isGuide && tab.rel.startsWith("brainstorming/") &&
+    tab.rel.endsWith(".md") && !LM.isLiving(tab.rel);
+  $("bAskAi").hidden = !aiable;
+  if (aiable) $("bAskAi").onclick = () => promptNoteAI(tab.rel, true);
   // ADR-0010: a meeting living file (reuniao.md) is its own append-only surface —
   // transcript + artefatos rail + análise/consent; no free-form CM6 editing.
   if (LM.isLiving(tab.rel)) {
@@ -2516,26 +2685,34 @@ async function openDoc(relPath, opts) {
 
 // ============================ paleta de comandos (⌘P / ⌘⇧P) ============================
 // pt-BR command registry (ADR-0008). `run` wires to existing handlers/buttons.
+// Every command carries a shortcut (owner decision 2026-07-28): `code` is a
+// KeyboardEvent.code matched on ⌘/Ctrl+⌥ (Alt+letter types symbols on macOS, so
+// e.key is useless here); `combo` overrides the display for pre-existing
+// mod-only shortcuts that are handled elsewhere in the keydown block.
+const IS_MAC = /mac/i.test(navigator.platform || "");
+const comboLabel = (c) =>
+  c.combo || (c.code ? (IS_MAC ? "⌘⌥" : "Ctrl+Alt+") + c.code.replace(/^(Key|Digit)/, "") : "");
 const COMMANDS = [
-  { label: "ir para início", run: () => openHome() },
-  { label: "abrir manual", run: () => openDoc(MANUAL_REL, { preview: false }) },
-  { label: "alternar visualizar/editar", run: () => toggleActiveMode() },
-  { label: "fechar aba", run: () => closeActiveTab() },
-  { label: "reabrir aba", run: () => reopenClosedTab() },
-  { label: "perguntar ao acervo", run: () => askAcervo() },
-  { label: "novo contexto", run: () => promptNewContext() },
-  { label: "novo brainstorming", run: () => promptNewTema() },
-  { label: "novo caderno", run: () => promptNewNotebook() },
-  { label: "nova reunião", run: () => startMeetingFlow() },
-  { label: "encerrar reunião", run: () => { if (meeting.active) stopSession(); else toast(t("nenhuma reunião em andamento")); } },
-  { label: "abrir relatório", run: () => buildAndOpenReport() },
-  { label: "marcar dúvida", run: () => markMeeting("duvida") },
-  { label: "marcar decisão", run: () => markMeeting("decisao") },
-  { label: "marcar investigação", run: () => markMeeting("investigacao") },
-  { label: "migrar acervo", run: () => runMigration() },
-  { label: "instruções do loop", run: () => openGuideDoc() },
-  { label: "versionar", run: () => B.gitBtn.click() },
-  { label: "propor mudança", run: () => B.proposeBtn.click() },
+  { label: "ir para início", code: "KeyH", run: () => openHome() },
+  { label: "abrir manual", code: "KeyM", run: () => openDoc(MANUAL_REL, { preview: false }) },
+  { label: "apresentação do Loro", code: "KeyA", run: () => showWelcome() },
+  { label: "alternar visualizar/editar", combo: IS_MAC ? "⌘E" : "Ctrl+E", run: () => toggleActiveMode() },
+  { label: "fechar aba", combo: IS_MAC ? "⌘W" : "Ctrl+W", run: () => closeActiveTab() },
+  { label: "reabrir aba", code: "KeyT", run: () => reopenClosedTab() },
+  { label: "perguntar ao acervo", code: "KeyQ", run: () => askAcervo() },
+  { label: "novo contexto", code: "KeyC", run: () => promptNewContext() },
+  { label: "novo brainstorming", code: "KeyB", run: () => promptNewTema() },
+  { label: "novo caderno", code: "KeyK", run: () => promptNewNotebook() },
+  { label: "nova reunião", code: "KeyR", run: () => startMeetingFlow() },
+  { label: "encerrar reunião", code: "KeyX", run: () => { if (meeting.active) stopSession(); else toast(t("nenhuma reunião em andamento")); } },
+  { label: "abrir relatório", code: "KeyO", run: () => buildAndOpenReport() },
+  { label: "marcar dúvida", code: "Digit1", run: () => markMeeting("duvida") },
+  { label: "marcar decisão", code: "Digit2", run: () => markMeeting("decisao") },
+  { label: "marcar investigação", code: "Digit3", run: () => markMeeting("investigacao") },
+  { label: "migrar acervo", code: "KeyG", run: () => runMigration() },
+  { label: "instruções do loop", code: "KeyI", run: () => openGuideDoc() },
+  { label: "versionar", code: "KeyV", run: () => B.gitBtn.click() },
+  { label: "propor mudança", code: "KeyP", run: () => B.proposeBtn.click() },
 ];
 let cmdkMode = "file";     // "file" | "command"
 let cmdkIndex = 0;         // highlighted row
@@ -2576,7 +2753,7 @@ function renderPalette() {
   if (isCmd) {
     // COMMANDS holds pt msgids; translate at render time so a language switch applies
     cmdkRows = LoroFuzzy.filter(query, COMMANDS, (c) => t(c.label))
-      .map((c) => ({ kind: "cmd", label: t(c.label), run: c.run }));
+      .map((c) => ({ kind: "cmd", label: t(c.label), run: c.run, combo: comboLabel(c) }));
   } else {
     const src = query ? paletteIndex : mruRecents();
     cmdkRows = LoroFuzzy.filter(query, src, (it) => it.rel)
@@ -2589,7 +2766,8 @@ function renderPalette() {
           : r.kind === "file" && r.world === "personal" ? t("rascunho") : "";
         const badge = world ? `<span class="cmdk-w ${r.world}">${world}</span>` : "";
         const sub = r.sub ? `<span class="cmdk-sub mono">${esc(r.sub)}</span>` : "";
-        return `<li class="cmdk-item${i === 0 ? " on" : ""}" data-i="${i}"><span class="cmdk-l">${esc(r.label)}</span>${sub}${badge}</li>`;
+        const kbd = r.combo ? `<span class="cmdk-k mono">${esc(r.combo)}</span>` : "";
+        return `<li class="cmdk-item${i === 0 ? " on" : ""}" data-i="${i}"><span class="cmdk-l">${esc(r.label)}</span>${sub}${badge}${kbd}</li>`;
       }).join("")
     : `<li class="cmdk-empty mono">${t("nada encontrado")}</li>`;
   B.cmdkList.querySelectorAll("[data-i]").forEach((li) => {
@@ -2636,6 +2814,12 @@ window.addEventListener("keydown", (e) => {
     if (!B.find.hidden) { own(); closeFind(); return; }
   }
   if (paletteOpen()) return;   // the palette input owns the rest of its keys
+  // every palette command answers to mod+alt+<code> — app-level chords, so they
+  // win even over the terminal (the shell has no claim on ⌘⌥ combos)
+  if (mod && e.altKey && !e.repeat) {
+    const cmd = COMMANDS.find((c) => c.code === e.code);
+    if (cmd) { own(); cmd.run(); return; }
+  }
   if (termHasFocus()) return;  // route everything else to the shell
   if (e.ctrlKey && key === "tab") { own(); cycleTab(e.shiftKey); return; }
   // ⌘/Ctrl+W MUST preventDefault or the WebView closes the window (ADR-0008)
@@ -2710,8 +2894,10 @@ function openNewAcervo() {
   B.wizTitle.textContent = t("Novo projeto (acervo)");
   B.nameInput.value = ""; B.ctxInput.value = ""; brainDir = ""; B.dirBtn.textContent = "…";
   B.autoInput.checked = false; B.gitInput.checked = true;
-  wizColor = "";
+  B.agentInput.value = "claude";
+  wizColor = ""; wizTemplate = "generico"; wizCtxDirty = false;
   drawWizColors();
+  loadWizTemplates();
   B.cancelBtn.hidden = false; B.setupErr.hidden = true;
   B.setup.hidden = false; B.shell.hidden = true;
   B.nameInput.focus();
@@ -2719,6 +2905,54 @@ function openNewAcervo() {
 function drawWizColors() {
   renderSwatches($("wizColors"), wizColor, (hex) => { wizColor = hex; drawWizColors(); applyAccent(hex); });
 }
+
+// ---- usage template picker (ADR-0003): builtins + ~/.loro/templates --------
+async function loadWizTemplates() {
+  try { wizTemplates = await invoke("brain_list_templates", {}); }
+  catch (e) { wizTemplates = []; clog("brain_list_templates error: " + e); }
+  drawWizTemplates();
+}
+function drawWizTemplates() {
+  const box = B.wizTemplates;
+  box.innerHTML = "";
+  for (const tpl of wizTemplates) {
+    const o = document.createElement("option");
+    o.value = tpl.id;
+    o.textContent = tpl.name + (tpl.builtin ? "" : " ✎");
+    o.title = tpl.description;
+    box.appendChild(o);
+  }
+  box.value = wizTemplate;
+  box.onchange = () => {
+    wizTemplate = box.value;
+    const tpl = wizTemplates.find((x) => x.id === wizTemplate);
+    if (tpl) B.ctxInput.value = LoroPresets.prefillContexts(B.ctxInput.value, wizCtxDirty, tpl.contexts);
+    drawWizHint();
+  };
+  drawWizHint();
+}
+function drawWizHint() {
+  const sel = wizTemplates.find((x) => x.id === wizTemplate);
+  const hint = B.wizTemplateHint;
+  hint.innerHTML = "";
+  if (!sel) { hint.hidden = true; return; }
+  hint.hidden = false;
+  hint.append(document.createTextNode(sel.description + " "));
+  if (sel.id !== "generico") {
+    const dup = document.createElement("button");
+    dup.type = "button"; dup.className = "link mono";
+    dup.textContent = t("duplicar para personalizar");
+    dup.onclick = async () => {
+      try {
+        const dir = await invoke("brain_duplicate_template", { id: sel.id });
+        toast(t("modelo duplicado em") + " " + dir, 5000);
+        await loadWizTemplates();
+      } catch (e) { toast(tErr(String(e))); }
+    };
+    hint.appendChild(dup);
+  }
+}
+B.ctxInput.addEventListener("input", () => { wizCtxDirty = true; });
 B.cancelBtn.addEventListener("click", () => { creatingNew = false; applyAccent(activeColor()); brainRefresh(); });
 function activeColor() { const a = acervos.find((x) => x.id === activeAcervo); return a ? a.color : ""; }
 
@@ -2737,6 +2971,8 @@ B.createBtn.addEventListener("click", async () => {
       autoContext: B.autoInput.checked,
       gitInit: B.gitInput.checked,
       color: wizColor || null,
+      template: wizTemplate || null,
+      agent: B.agentInput.value.trim() || null,
       // ADR-0002 §1: no per-project language — seeds follow the UI language
     });
     acervos = av.acervos || []; activeAcervo = av.active || "";
@@ -3126,9 +3362,12 @@ function openCtxMenu(anchor, name, isFolder) {
   B.acervoMenu.hidden = true;
   B.bMenu.innerHTML =
     `<div class="fhead">${esc(name)}${isFolder ? ` (${t("pasta")})` : ""}</div>
+     <div class="fitem2 strong" data-a="ask"><span class="fn">? ${t("perguntar…")}</span></div>
+     <div class="fsep"></div>
      <div class="fitem2" data-a="ren"><span class="fn">✎ ${t("renomear")}</span></div>
      <div class="fitem2" data-a="mv"><span class="fn">⇢ ${t("mover para…")}</span></div>
      <div class="fitem2 ditem" data-a="del"><span class="fn">${t("deletar…")}</span></div>`;
+  B.bMenu.querySelector('[data-a="ask"]').onclick = () => { closeFloat(); askAcervo(name); };
   B.bMenu.querySelector('[data-a="ren"]').onclick = () => openRenameCtx(anchor, name);
   B.bMenu.querySelector('[data-a="mv"]').onclick = () => openMoveCtxMenu(anchor, name, isFolder);
   B.bMenu.querySelector('[data-a="del"]').onclick = () => openConfirmDeleteCtx(anchor, name, isFolder);
@@ -3324,6 +3563,10 @@ function initTerm() {
   if (Fit) { fit = new Fit(); term.loadAddon(fit); }
   term.open($("termView"));
   fitTerm();
+  // Refit on ANY geometry change of the terminal box — the live panel opening/
+  // closing reshapes the side-mode grid row above it, and a stale fit leaves
+  // the PTY cols/rows diverged from the rendered box (text renders "broken").
+  if (window.ResizeObserver) new ResizeObserver(() => fitTerm()).observe($("termView"));
   term.onData((d) => invoke("term_input", { data: d }).catch(() => {}));
   invoke("term_open", { cols: term.cols || 80, rows: term.rows || 24 })
     .then(() => { termReady = true; })
@@ -3360,31 +3603,59 @@ function termRun(cmd) {
   send();
 }
 
-// ADR-0002 §4 — runs a SLASH-COMMAND, which only a live Claude understands.
-// Handshake: poll term_status until a `claude` process exists under the PTY
-// shell (relaunching it once if the session was reused after Claude exited),
-// give the TUI a short settle so it doesn't drop pending stdin, then inject.
-// Fails loudly instead of typing into a bare shell.
-async function termRunClaude(cmd) {
+// ---- post-action auto-refresh (owner feedback 2026-07-28) ------------------
+// Skills run asynchronously in the terminal agent, and the sidebar's signature
+// only tracks the brainstorming LIST — artifacts the agent writes (analyses,
+// answers, report sections) never change it. After any injected action, force
+// a refresh burst: every 5s for 2 minutes, sig cleared so expanded children
+// (meetings + artefatos) reload. Skipped while the user types in a sidebar
+// inline input, so a re-render never eats a half-written note title.
+let actionRefreshTimer = null, actionRefreshUntil = 0;
+function scheduleActionRefresh(ms = 120000) {
+  actionRefreshUntil = Date.now() + ms;
+  if (actionRefreshTimer) return;
+  actionRefreshTimer = setInterval(() => {
+    if (Date.now() > actionRefreshUntil) {
+      clearInterval(actionRefreshTimer); actionRefreshTimer = null; return;
+    }
+    const focused = document.activeElement;
+    if (focused && focused.closest && focused.closest(".bside") &&
+        (focused.tagName === "INPUT" || focused.tagName === "TEXTAREA")) return;
+    pessoalSig = ""; refreshPessoal();
+    sideSig = ""; brainRefresh();
+  }, 5000);
+}
+
+// ADR-0002 §4 / ADR-0003 — runs a skill in the acervo's AI agent. Slash-commands
+// only mean something to Claude; for any other agent the same skill is injected
+// as a plain prompt (LoroPresets.agentInvocation). Handshake: poll term_status
+// until the agent's process exists under the PTY shell (relaunching it once if
+// the session was reused after the agent exited), give the TUI a short settle
+// so it doesn't drop pending stdin, then inject. Fails loudly instead of typing
+// into a bare shell.
+async function termRunAgent(cmd) {
   const cfg = await invoke("brain_get_config").catch(() => null);
   if (!cfg || !cfg.brainDir) { toast(tErr("err.acervo_not_configured")); return; }
+  const agent = await invoke("term_agent").catch(() => "claude");
+  const line = LoroPresets.agentInvocation(agent, cmd);
   setTermPanel(true);
   let relaunched = false;
   for (let tries = 0; tries < 50; tries++) {           // ~15s total
     const st = await invoke("term_status").catch(() => null);
-    if (st && st.open && st.claudeRunning) {
+    if (st && st.open && st.agentRunning) {
       await new Promise((r) => setTimeout(r, tries === 0 ? 0 : 800)); // settle a fresh TUI
-      await invoke("term_input", { data: cmd + "\n" }).catch(() => {});
+      await invoke("term_input", { data: line + "\n" }).catch(() => {});
+      scheduleActionRefresh(); // the skill writes files the sidebar must show
       return;
     }
-    if (st && st.open && !st.claudeRunning && termReady && !relaunched) {
-      relaunched = true; // reused session where Claude exited: bring it back
-      await invoke("term_input", { data: "claude\n" }).catch(() => {});
+    if (st && st.open && !st.agentRunning && termReady && !relaunched) {
+      relaunched = true; // reused session where the agent exited: bring it back
+      await invoke("term_input", { data: agent + "\n" }).catch(() => {});
     }
     await new Promise((r) => setTimeout(r, 300));
   }
-  toast(t("não foi possível abrir o Claude no terminal — verifique se o CLI está instalado (claude)"), 5000);
-  clog("termRunClaude: claude did not come up; command not injected");
+  toast(t("não foi possível abrir o agente no terminal — verifique se o CLI configurado está instalado"), 5000);
+  clog("termRunAgent: agent did not come up; command not injected");
 }
 
 // ---- setup guiado: o Loro verifica dependências e resolve pelo terminal ----

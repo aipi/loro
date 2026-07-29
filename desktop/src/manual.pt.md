@@ -13,19 +13,44 @@ fila; o botão "gerar contexto" pede ao Claude do terminal que destile a fila em
 
 ## Primeiros passos
 
+Na primeira abertura, um **modal de boas-vindas** resume as principais
+funcionalidades (fluxo, gravação, modelos, agente, IA e atalhos) — reabra
+quando quiser pela paleta: `Cmd/Ctrl+Shift+P` → "apresentação do Loro".
+
 1. **Criar o acervo** — na primeira abertura, o assistente pede um nome, a
    pasta onde gerar e os contextos iniciais (ex.: `produto`, `engenharia`).
    Marque "versionar com git" para habilitar o fluxo de revisão (recomendado).
-2. **Dependências** — o Loro avisa se faltar o whisper (transcrição) ou um
+2. **Modelo de uso** — escolha um modelo pronto (Vendas, Engenharia,
+   Produto & gestão, Aprendizado, Educação, Recrutamento, Saúde) ou o
+   Genérico (em branco). O modelo pré-preenche os contextos (você pode
+   editar), adiciona regras da vertical ao `AGENTS.md`, semeia o guia da
+   fila e define o molde do `context.md` de cada contexto (as seções variam
+   por vertical — vendas fala de pipeline e compromissos, saúde de condutas
+   e protocolos). "Duplicar para personalizar" copia qualquer modelo para
+   `~/.loro/templates/`, onde você edita os arquivos e ele passa a aparecer
+   no assistente. Modelos com dados pessoais (Vendas, Recrutamento, Saúde)
+   trazem regras de minimização — o de Saúde avisa: dados de saúde são
+   sensíveis e o acervo não substitui o prontuário.
+3. **Agente de IA** — o campo "agente de IA (comando)" define qual CLI o
+   terminal embutido usa neste acervo: `claude` (padrão), `gemini`,
+   `ollama run llama3`… O acervo é só arquivos + convenção (`AGENTS.md`),
+   então qualquer agente — inclusive um modelo local — consegue trabalhar
+   nele; para agentes que não entendem slash-commands, o Loro envia as
+   instruções da skill como texto.
+4. **Dependências** — o Loro avisa se faltar o whisper (transcrição) ou um
    modelo de voz, e instala pelos botões do banner usando o terminal embutido.
-3. **Idioma** — na engrenagem (⚙), "idioma da interface" alterna pt-BR/inglês.
+5. **Idioma** — na engrenagem (⚙), "idioma da interface" alterna pt-BR/inglês.
    Tudo que o app **gera** (relatórios, documentos de reunião, contextos)
    nasce no idioma ativo da interface.
 
 ## Gravar e transcrever
 
-- **● (gravar)** inicia a transcrição ao vivo do microfone; o atalho global é
-  `Cmd/Ctrl+Alt+Espaço`. O painel ao vivo mostra o texto conforme você fala.
+- **● (gravar)** abre o diálogo de gravação perguntando **onde salvar**: um
+  brainstorming (vira uma reunião ligada ao tema) ou "transcrição avulsa"
+  (o texto fica no painel ao vivo para salvar/descartar ao final). O atalho
+  global é `Cmd/Ctrl+Alt+Espaço`.
+- Cada comando da paleta (`Cmd/Ctrl+Shift+P`) tem um atalho `Cmd/Ctrl+Alt+
+  <tecla>`, exibido ao lado do comando na própria paleta.
 - **Fontes**: microfone, áudio do sistema (requer BlackHole — o app guia a
   instalação) ou **reunião** (mic + sistema juntos; a transcrição acontece ao
   final, com mais fidelidade).
@@ -34,9 +59,19 @@ fila; o botão "gerar contexto" pede ao Claude do terminal que destile a fila em
 
 ## Brainstorming (o mundo não versionado)
 
-- **＋ novo brainstorming** cria um espaço privado para um tema.
-- Dentro dele: **＋ nova nota** (primeira linha do bloco) para escrever, e ●
-  para gravar uma **reunião** ligada ao tema.
+- O **＋** no cabeçalho da seção cria um brainstorming (espaço privado para
+  um tema); o **＋** da seção contextos cria um contexto.
+- Dentro dele (expanda o brainstorming na lateral): **＋ nova nota** para
+  escrever, e **● gravar reunião** para gravar uma **reunião** ligada ao tema
+  (também na paleta `Cmd/Ctrl+Shift+P` → "nova reunião").
+- **✦ nota por IA** (menu ⋯ do brainstorming) cria uma nota a partir de um
+  pedido seu; **✦ pedir à IA** (menu ⋯ de uma nota/análise **e no topo do
+  visualizador do arquivo**) aplica um pedido sobre o conteúdo existente — a
+  IA evolui, nunca apaga.
+- As ações **analisar**, **perguntar…** e **ver relatório** ficam na aba
+  `reuniao.md` da reunião e também no menu **⋯** da reunião na lateral; elas
+  habilitam quando a reunião termina (o relatório é preenchido pelo
+  analisar).
 - Numa reunião: marque **dúvidas/decisões/investigações** durante a fala (via
   paleta `Cmd/Ctrl+Shift+P` ou pelos botões); depois rode **analisar** para o
   Claude preencher o relatório da reunião.
@@ -46,8 +81,11 @@ fila; o botão "gerar contexto" pede ao Claude do terminal que destile a fila em
 
 - Selecione as partes de um brainstorming e **envie o relatório para a fila**
   (ou solte arquivos `.md`/`.txt` direto na fila).
-- **▶ gerar contexto** roda `/brain-context` no Claude do terminal, que
+- **▶ gerar contexto** roda `/loro-context` no Claude do terminal, que
   estrutura o material em `contextos/<c>/context.md` (+ CHANGELOG).
+- Cada `context.md` abre com um **Sumário** (1 linha por seção + IDs `D-…`/`H-…`),
+  regenerado a cada atualização — é ele que deixa a leitura barata para pessoas
+  e agentes; decisões e hotspots ganham IDs estáveis, localizáveis por busca.
 - Com a fila **vazia**, o botão avisa e não roda: não há de onde gerar.
 
 ## Versionar e propor mudança (RFC = PR)
@@ -65,7 +103,7 @@ fila; o botão "gerar contexto" pede ao Claude do terminal que destile a fila em
 ## Perguntar ao acervo
 
 - **perguntar ao acervo** abre o Claude no terminal embutido e envia sua
-  pergunta com `/brain-ask`; a resposta se ancora nos `context.md` do acervo e
+  pergunta com `/loro-ask`; a resposta se ancora nos `context.md` do acervo e
   diz claramente quando a base não cobre o assunto.
 
 ## FAQ

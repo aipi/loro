@@ -34,6 +34,10 @@
           <label class="wfield"><span class="mono" data-i18n>nome do projeto</span>
             <input id="brainNameInput" type="text" placeholder="ex.: Company, Pessoal" data-i18n-attrs="placeholder" />
           </label>
+          <label class="wfield"><span class="mono" data-i18n>modelo de uso</span>
+            <select id="wizTemplates"></select>
+          </label>
+          <p id="wizTemplateHint" class="hint tplhint"></p>
           <label class="wfield"><span class="mono" data-i18n>onde gerar</span>
             <button id="brainDirBtn" class="link mono dirbtn">…</button>
           </label>
@@ -45,9 +49,14 @@
             <span data-i18n>modo automático — deixar o loop criar e organizar os contextos</span></label>
           <label class="wtoggle"><input type="checkbox" id="brainGit" checked />
             <span data-i18n>versionar com git (git init nesta pasta)</span></label>
-          <label class="wfield"><span class="mono" data-i18n>cor do projeto</span>
-            <div id="wizColors" class="swatches"></div>
+          <label class="wfield"><span class="mono" data-i18n>agente de IA (comando)</span>
+            <input id="brainAgentInput" type="text" placeholder="claude — ou outro CLI: gemini, ollama run llama3…" data-i18n-attrs="placeholder" />
           </label>
+          <!-- div, not label: a label would re-dispatch any swatch click to its
+               first labelable control (the first swatch), resetting the pick -->
+          <div class="wfield"><span class="mono" data-i18n>cor do projeto</span>
+            <div id="wizColors" class="swatches"></div>
+          </div>
           <p class="hint"><span data-i18n>cada contexto vira uma pasta com</span> <span class="mono">context.md</span>
             <span data-i18n>(a fonte da verdade) e</span> <span class="mono">CHANGELOG.md</span><span data-i18n>; a colaboração usa</span>
             <span class="mono">.github/CODEOWNERS</span><span data-i18n>. Se já houver estrutura, ela é respeitada.</span></p>
@@ -73,15 +82,15 @@
             <!-- Fluxo sequencial (ADR-0013): Brainstorming → Fila → Contexto. A
                  ordem dos grupos espelha os passos, para o usuário entender o caminho. -->
             <!-- 1 · Brainstorming — mundo não versionado (âmbar) -->
-            <div class="bgroup pessoal"><span><span data-i18n>1 · brainstorming</span> <button class="ghelp" data-tip="Passo 1 — construa a ideia em reuniões e notas. Privado, não versionado. Selecione partes e envie para a fila." aria-label="O que é o brainstorming?" data-i18n-attrs="data-tip,aria-label">ⓘ</button></span></div>
+            <div class="bgroup pessoal"><span><span data-i18n>1 · brainstorming</span> <button class="ghelp" data-tip="Passo 1 — construa a ideia em reuniões e notas. Privado, não versionado. Selecione partes e envie para a fila." aria-label="O que é o brainstorming?" data-i18n-attrs="data-tip,aria-label">ⓘ</button></span><button id="addTemaBtn" class="gadd" title="Criar um novo brainstorming" data-i18n-attrs="title">＋</button></div>
             <div id="navPessoal" class="btree pessoal"></div>
 
             <!-- 2 · Fila de geração de contexto -->
-            <div class="bgroup"><span><span data-i18n>2 · fila → contexto</span> <button class="ghelp" data-tip="Passo 2 — a fila de geração de contexto. Relatórios do brainstorming e arquivos enviados esperam aqui até você clicar em 'gerar contexto' (o Claude processa com /brain-context)." aria-label="O que é a fila?" data-i18n-attrs="data-tip,aria-label">ⓘ</button></span><span id="navQueueCount" class="pill" hidden>0</span></div>
+            <div class="bgroup"><span><span data-i18n>2 · fila → contexto</span> <button class="ghelp" data-tip="Passo 2 — a fila de geração de contexto. Relatórios do brainstorming e arquivos enviados esperam aqui até você clicar em 'gerar contexto' (o Claude processa com /loro-context)." aria-label="O que é a fila?" data-i18n-attrs="data-tip,aria-label">ⓘ</button></span><span id="navQueueCount" class="pill" hidden>0</span></div>
             <div id="navQueue" class="btree"></div>
 
             <!-- 3 · Contextos versionados -->
-            <div class="bgroup"><span><span data-i18n>3 · contextos</span> <button class="ghelp" data-tip="Passo 3 — o conhecimento oficial do negócio: versionado, revisado (RFC = PR) e compartilhado com o time." aria-label="O que são contextos?" data-i18n-attrs="data-tip,aria-label">ⓘ</button></span></div>
+            <div class="bgroup"><span><span data-i18n>3 · contextos</span> <button class="ghelp" data-tip="Passo 3 — o conhecimento oficial do negócio: versionado, revisado (RFC = PR) e compartilhado com o time." aria-label="O que são contextos?" data-i18n-attrs="data-tip,aria-label">ⓘ</button></span><button id="addCtxBtn" class="gadd" title="Criar um novo contexto" data-i18n-attrs="title">＋</button></div>
             <div id="navCtx" class="btree"></div>
 
             <div class="bgroup"><span data-i18n>fontes</span></div>
@@ -143,7 +152,7 @@
               <div class="hgrid">
                 <div class="hcard qcard" id="queueCard">
                   <h2 class="sect mono qhead">
-                    <span><span data-i18n>fila de geração de contexto</span> <button class="ghelp" data-tip="O que está aqui vira contexto quando você clicar em 'gerar contexto'. Envie relatórios do brainstorming, ou arraste arquivos. O Claude processa a fila com /brain-context." aria-label="Como funciona a fila?" data-i18n-attrs="data-tip,aria-label">ⓘ</button></span>
+                    <span><span data-i18n>fila de geração de contexto</span> <button class="ghelp" data-tip="O que está aqui vira contexto quando você clicar em 'gerar contexto'. Envie relatórios do brainstorming, ou arraste arquivos. O Claude processa a fila com /loro-context." aria-label="Como funciona a fila?" data-i18n-attrs="data-tip,aria-label">ⓘ</button></span>
                     <span id="bPulse" class="pulse mono">—</span>
                   </h2>
                   <div id="homeQueue"></div>
@@ -154,7 +163,7 @@
                     <select id="importCtx" class="mini-select">
                       <option value="" data-i18n>contexto: automático</option>
                     </select>
-                    <button id="queueGenCtx" class="abtn cta" title="Processa a fila com o Claude (/brain-context): cada item vira/atualiza um contexto versionado" data-i18n data-i18n-attrs="title">gerar contexto →</button>
+                    <button id="queueGenCtx" class="abtn cta" title="Processa a fila com o Claude (/loro-context): cada item vira/atualiza um contexto versionado" data-i18n data-i18n-attrs="title">gerar contexto →</button>
                   </div>
                   <div class="hfoot qfoot">
                     <button id="guideBtn" class="link mono muted" title="Instruções que o loop segue antes de processar a fila" data-i18n data-i18n-attrs="title">✎ instruções do loop</button>
@@ -177,6 +186,7 @@
                 <span id="bBadge" class="mono badge ro"></span>
                 <span id="bGit" class="mono badge" hidden></span>
                 <span id="bPromoted" class="mono badge ok promoted" hidden></span>
+                <button id="bAskAi" class="mini act ai" hidden title="a IA lê este arquivo e aplica seu pedido nele (evolui, não apaga)" data-i18n-attrs="title">✦ <span data-i18n>pedir à IA…</span></button>
                 <span id="bDocActs" class="cluster" hidden>
                   <button id="bMoveDoc" class="mini act" title="mover para outro contexto ou projeto" data-i18n data-i18n-attrs="title">⇢ mover</button>
                   <button id="bDelDoc" class="mini act danger" title="apagar da fila" data-i18n data-i18n-attrs="title">apagar</button>
@@ -373,6 +383,10 @@
         </div>
       </div>
     </div>
+    <!-- boot diagnostics: a parse/early error in any script below kills the UI
+         before app.js can install its own handlers (blank window). This inline
+         hook reports it to the backend log (message/location only, BR-8). -->
+    <script>window.addEventListener("error",function(e){try{window.__TAURI__.core.invoke("client_log",{msg:"[boot-error] "+e.message+" @ "+e.filename+":"+e.lineno})}catch(_){}});</script>
     <script src="vendor/xterm.js"></script>
     <script src="vendor/addon-fit.js"></script>
     <script src="vendor/cm6.js"></script>
@@ -384,6 +398,7 @@
     <script src="refs.js"></script>
     <script src="meeting.js"></script>
     <script src="brainstorm.js"></script>
+    <script src="presets.js"></script>
     <script src="audio.js"></script>
     <script src="app.js"></script>
   </body>
