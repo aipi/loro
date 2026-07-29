@@ -123,6 +123,38 @@ visualizador de **qualquer** arquivo markdown (ao lado de "pedir à IA…"),
 não só em reuniões — pedido explícito do dono ("todos os arquivos markdown
 deverão ter as habilidades ao lado").
 
+### §9 Rail de ações do documento + pastas visíveis na lateral (amendment)
+
+Dois ajustes de UI pedidos após uso real:
+
+- **Rail lateral direita, um padrão único.** "Executar habilidade" e "pedir
+  à IA" saíram do cabeçalho do documento (`.dochead`) para um **rail à
+  direita** (`#bDocRail`, `renderDocRail`), com **botões visíveis de
+  verdade** (`.railbtn`) — não mais um botão que abre um menu flutuante.
+  Habilidade virou um **dropdown + ícone de play** inline (mesmo controle
+  já usado no rail da reunião, agora extraído para uma classe compartilhada
+  `.rail-sec`/`.rail-row`/`.railbtn`). "Versionar" (que já existia só no
+  cabeçalho do acervo) ganhou o mesmo botão no rail quando o documento
+  aberto é um contexto (`tab.kind === "context"`) — mesma ação
+  (`brain_version`, extraída para `promptVersionar()`), só mais um lugar de
+  acesso. O rail da reunião foi migrado para as mesmas classes, garantindo
+  visual idêntico nos dois lugares.
+- **Estrutura de pasta visível na lateral.** As três pastas do brainstorming
+  (`reuniões/`, `notas/`, `anexos/`) agora aparecem como **grupos
+  colapsáveis com ícone de pasta** (`folderGroupHtml`, reaproveitando o
+  toggle `[data-pestoggle]` já usado para "avulso") — antes eram só listas
+  soltas sem nenhuma indicação visual de que pertenciam a pastas
+  diferentes. Cada grupo mostra sua contagem e permanece visível mesmo
+  vazio, deixando a estrutura sempre legível.
+- Corrigido manualmente um acervo real (`../turbo`, fora deste repositório)
+  que estava com uma versão antiga: faltavam `loro-tool.md`,
+  `loro-presentation.md`, `loro-artifact.md`, e `loro-sync.md` era a versão
+  pré-conteúdo (ADR-0005 original). O mecanismo de auto-cura do app
+  (`ensure_meeting_skills`/`list_brainstormings`) resolveria os builtins e o
+  `anexos/` na próxima abertura; a correção manual só adiantou os arquivos
+  que o app não sobrescreve por padrão (`loro-sync.md` já existia, então
+  precisou ser substituído à mão).
+
 ## Consequências
 
 - `lib.rs`: `TermSession.launched_at`, `TermStatus.justLaunched`,

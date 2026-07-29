@@ -70,9 +70,14 @@ quando quiser pela paleta: `Cmd/Ctrl+Shift+P` → "apresentação do Loro".
   escrever, e **● gravar reunião** para gravar uma **reunião** ligada ao tema
   (também na paleta `Cmd/Ctrl+Shift+P` → "nova reunião").
 - **✦ nota por IA** (menu ⋯ do brainstorming) cria uma nota a partir de um
-  pedido seu; **✦ pedir à IA** (menu ⋯ de uma nota/análise **e no topo do
-  visualizador do arquivo**) aplica um pedido sobre o conteúdo existente — a
-  IA evolui, nunca apaga.
+  pedido seu; **✦ pedir à IA** (menu ⋯ de uma nota/análise **e no rail à
+  direita de qualquer arquivo aberto**) aplica um pedido sobre o conteúdo
+  existente — a IA evolui, nunca apaga.
+- **Rail de ações à direita do arquivo:** ao abrir qualquer nota/documento,
+  a lateral direita mostra botões visíveis — **habilidade** (dropdown +
+  ▶, escolha e execute sem abrir menu), **pedir à IA…**, e **versionar**
+  (quando o arquivo é de um contexto). Mesmo padrão em todo lugar onde essas
+  três ações existem — reunião, documento comum, cabeçalho do acervo.
 - As ações **analisar**, **perguntar…**, **ver relatório** e **enviar para a
   fila** ficam no menu **⋯** da reunião na lateral. **Perguntar** funciona já
   durante a gravação; as outras três habilitam quando a reunião termina (o
@@ -88,10 +93,13 @@ quando quiser pela paleta: `Cmd/Ctrl+Shift+P` → "apresentação do Loro".
 - Investigações e respostas de cada reunião ficam **recolhidas por padrão**
   na lateral (toque na seta ▸ ao lado da reunião para abrir) — evita que a
   lista cresça demais quando há muitas reuniões analisadas.
-- Cada brainstorming tem exatamente três pastas: **reunioes/** (toda reunião
-  nasce ali), **notas/** e **anexos/** (uma apresentação é só mais um tipo
-  de anexo — não tem pasta própria). `anexos/` é alimentada por uma
-  habilidade (sincronizar, apresentação, artefato) ou arrastando um arquivo
+- Cada brainstorming tem exatamente três pastas, visíveis na lateral como
+  grupos com ícone de pasta (📁 **reuniões**, 📁 **notas**, 📁 **anexos** —
+  cada uma clicável para expandir/recolher, com a contagem de itens):
+  **reunioes/** (toda reunião nasce ali), **notas/** e **anexos/** (uma
+  apresentação é só mais um tipo de anexo — não tem pasta própria).
+  `anexos/` é alimentada por uma habilidade (sincronizar, apresentação,
+  artefato) ou arrastando um arquivo
   direto na pasta real no disco.
 - Com muitos brainstormings, um campo de busca aparece no topo da seção
   (acima de 8) — filtra por nome; sem busca, mostra só os mais recentes +

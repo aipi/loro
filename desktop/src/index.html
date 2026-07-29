@@ -195,8 +195,6 @@
                 <span id="bBadge" class="mono badge ro"></span>
                 <span id="bGit" class="mono badge" hidden></span>
                 <span id="bPromoted" class="mono badge ok promoted" hidden></span>
-                <button id="bAskAi" class="mini act ai" hidden title="a IA lê este arquivo e aplica seu pedido nele (evolui, não apaga)" data-i18n-attrs="title">✦ <span data-i18n>pedir à IA…</span></button>
-                <button id="bRunSkill" class="mini act" hidden title="executar uma habilidade tendo este arquivo como alvo" data-i18n-attrs="title"><span class="nico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 21l1-9H7l6-11-1 9h5l-6 11z"/></svg></span> <span data-i18n>executar habilidade…</span></button>
                 <span id="bDocActs" class="cluster" hidden>
                   <button id="bMoveDoc" class="mini act" title="mover para outro contexto ou projeto" data-i18n data-i18n-attrs="title">⇢ mover</button>
                   <button id="bDelDoc" class="mini act danger" title="apagar da fila" data-i18n data-i18n-attrs="title">apagar</button>
@@ -219,9 +217,17 @@
                 <button id="bFindNext" class="glyph" title="Próximo (Enter)" data-i18n-attrs="title">›</button>
                 <button id="bFindClose" class="glyph" title="Fechar (Esc)" data-i18n-attrs="title">×</button>
               </div>
-              <div id="brainDoc" class="doc reader"></div>
-              <!-- editor fiel CodeMirror 6 (ADR-0008); um handle por aba, montado aqui -->
-              <div id="bEditHost" class="edithost" hidden></div>
+              <div class="docbody">
+                <div class="docmain">
+                  <div id="brainDoc" class="doc reader"></div>
+                  <!-- editor fiel CodeMirror 6 (ADR-0008); um handle por aba, montado aqui -->
+                  <div id="bEditHost" class="edithost" hidden></div>
+                </div>
+                <!-- rail de ações do documento (ADR-0007): habilidade (dropdown + ▶),
+                     pedir à IA, versionar — o mesmo padrão em todo lugar onde essas
+                     ações existem (aqui, na reunião, e no cabeçalho do acervo). -->
+                <aside id="bDocRail" class="doc-rail" hidden></aside>
+              </div>
             </div>
             </div><!-- /wsBody -->
             <!-- pill "novas linhas" da reunião ao vivo (ADR-0010) -->

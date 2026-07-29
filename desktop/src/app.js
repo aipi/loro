@@ -1626,23 +1626,40 @@ async function loadTemaChildren(slug) {
     `<button class="bsaddbtn rec2" data-addmeeting="${esc(slug)}" title="${t("Gravar uma reunião neste brainstorming (áudio 100% local)")}">● ${t("gravar reunião")}</button>` +
     `<button class="bsaddbtn" data-syncdrive="${esc(slug)}" title="${t("Trazer uma nota de reunião externa (Google Drive/Gemini) para os anexos deste tema")}">⇄ ${t("sincronizar reunião")}</button>` +
     `</div>`;
-  for (const f of notas) inner += bsPartRow("nota", f.path, f.path, shortName(f.name), f.name, false);
-  for (const f of anexos) inner += bsPartRow("anexo", f.path, f.path, shortName(f.name), f.name, false);
+  // ADR-0007 (owner request): a pasta de verdade precisa estar visível na UI —
+  // três grupos com ícone de pasta (reuniões/notas/anexos), cada um
+  // colapsável (mesmo padrão `data-pestoggle` já usado para "avulso").
+  let reunioesRows = "";
+  const pendingMeetingFills = [];
   for (const m of meetings) {
     // título do manifest (renomeável); cai para o id humanizado quando ausente
     const title = LM.meetingTitleFromManifest({ titulo: m.titulo }, m.id);
     const label = title === m.id ? LM.meetingLabel(m.id, settings.uiLang) : title;
     const mkey = "mtg:" + m.id, mopen = bOpen.has(mkey);
-    inner += bsPartRow("reuniao", `${m.rel}/reuniao.md`, m.rel, label, m.id, false, m.id, m.status, mopen);
-    inner += `<div class="bchild" data-mtgchild="${esc(m.id)}" data-mtgrel="${esc(m.rel)}" ${mopen ? "" : "hidden"}></div>`;
-    if (mopen) await fillMeetingChild(m.id, m.rel);
+    reunioesRows += bsPartRow("reuniao", `${m.rel}/reuniao.md`, m.rel, label, m.id, true, m.id, m.status, mopen);
+    reunioesRows += `<div class="bchild" data-mtgchild="${esc(m.id)}" data-mtgrel="${esc(m.rel)}" ${mopen ? "" : "hidden"}></div>`;
+    if (mopen) pendingMeetingFills.push([m.id, m.rel]);
   }
-  if (!meetings.length && !notas.length && !anexos.length) {
-    inner += `<div class="bempty">${t("vazio — grave uma reunião (●) ou escreva uma nota")}</div>`;
-  }
+  const notasRows = notas.map((f) => bsPartRow("nota", f.path, f.path, shortName(f.name), f.name, true)).join("");
+  const anexosRows = anexos.map((f) => bsPartRow("anexo", f.path, f.path, shortName(f.name), f.name, true)).join("");
+  inner += folderGroupHtml(`bsfolder:${slug}:reunioes`, t("reuniões"), meetings.length, reunioesRows, t("nenhuma reunião ainda"));
+  inner += folderGroupHtml(`bsfolder:${slug}:notas`, t("notas"), notas.length, notasRows, t("nenhuma nota ainda"));
+  inner += folderGroupHtml(`bsfolder:${slug}:anexos`, t("anexos"), anexos.length, anexosRows, t("nenhum anexo ainda"));
   holder.innerHTML = inner;
   wirePessoal();
+  // fillMeetingChild queries the live DOM — must run AFTER innerHTML is set,
+  // not while `inner` is still a string (the container doesn't exist yet).
+  for (const [id, rel] of pendingMeetingFills) await fillMeetingChild(id, rel);
   markSel();
+}
+// A collapsible folder group in the sidebar (reuniões/notas/anexos) — a real
+// folder icon + label + count, expand/collapse via the same [data-pestoggle]
+// wiring already used for "avulso" (wirePessoal, no new JS needed there).
+function folderGroupHtml(key, label, count, rowsHtml, emptyMsg) {
+  const open = bOpen.has(key);
+  const pill = count ? `<span class="pill">${count}</span>` : "";
+  return `<div class="bitem ctx${open ? " open" : ""}" data-pestoggle="${key}">${ico("folder", "ac")}<span class="bn">${label}</span>${pill}</div>` +
+    `<div class="bchild" ${open ? "" : "hidden"}>${rowsHtml || `<div class="bempty sub">${emptyMsg}</div>`}</div>`;
 }
 // Busca e injeta investigações/respostas de UMA reunião no seu container
 // (chamado ao expandir, e ao re-render de uma tema já expandida).
@@ -2655,15 +2672,15 @@ function meetingStatusBar(status) {
 // wireMeetingSurface from the already-cached habilidade list; the bolt icon
 // keeps habilidades visually distinct everywhere else they appear.
 function meetingRailHtml() {
-  return `<div class="mtg-railsec mtg-analise">` +
-    `<div class="mtg-railhead mono">${ico("skill")} ${t("executar habilidade")}</div>` +
-    `<div class="mtg-action mtg-skillpick">` +
-      `<div class="mtg-skillrow">` +
-        `<select id="mtgSkillSelect" class="mini-select"></select>` +
-        `<button class="abtn cta" id="mtgSkillRunBtn">▶ ${t("usar")}</button>` +
-      `</div>` +
-      `<p class="mtg-note mono">${t("escolha uma habilidade para executar sobre esta reunião — passe o mouse nas opções para ver a descrição")}</p>` +
+  // Same rail-sec/rail-row/railbtn classes as the generic doc rail
+  // (renderDocRail) — "mesmo padrão em todo lugar" (owner request).
+  return `<div class="rail-sec">` +
+    `<div class="rail-head">${ico("skill")} ${t("habilidade")}</div>` +
+    `<div class="rail-row">` +
+      `<select id="mtgSkillSelect" class="mini-select"></select>` +
+      `<button class="railbtn icon cta" id="mtgSkillRunBtn" title="${t("executar")}">▶</button>` +
     `</div>` +
+    `<p class="mtg-note mono">${t("escolha uma habilidade para executar sobre esta reunião — passe o mouse nas opções para ver a descrição")}</p>` +
     `</div>`;
 }
 
@@ -2901,26 +2918,17 @@ async function renderActive() {
   B.badge.textContent = label; B.badge.className = "mono badge " + cls;
   setDocGit(tab.rel, tab.kind, isGuide);
   if (isGuide) $("bDocActs").hidden = true; else applyDocActions(tab.rel);
-  // ✦ ask-the-AI lives on the note viewer too (owner request): any markdown
-  // file of the non-versioned world except the meeting living surface (which
-  // has its own rail of actions).
-  const aiable = !isGuide && tab.rel.startsWith("brainstorming/") &&
-    tab.rel.endsWith(".md") && !LM.isLiving(tab.rel);
-  $("bAskAi").hidden = !aiable;
-  if (aiable) $("bAskAi").onclick = () => promptNoteAI(tab.rel, true);
-  // ADR-0007 (owner request): every markdown file gets "executar habilidade"
-  // at the top of the viewer — a meeting's living surface already has its
-  // own dropdown in the rail, so it's excluded here to avoid a duplicate.
-  const skillable = !isGuide && tab.rel !== MANUAL_REL &&
-    tab.rel.endsWith(".md") && !LM.isLiving(tab.rel);
-  $("bRunSkill").hidden = !skillable;
-  if (skillable) $("bRunSkill").onclick = (e) => openHabilidadeMenu(tab.rel, e.currentTarget);
+  // ADR-0007 (owner request): habilidade/pedir à IA/versionar live in the
+  // doc's right-side rail, not the header — a meeting's living surface
+  // renders its own rail (paintMeetingSurface/meetingRailHtml) instead.
+  if (!LM.isLiving(tab.rel)) renderDocRail(tab, isGuide);
   // ADR-0010: a meeting living file (reuniao.md) is its own append-only surface —
   // transcript + artefatos rail + análise/consent; no free-form CM6 editing.
   if (LM.isLiving(tab.rel)) {
     B.modes.hidden = true;
     $("bPromoted").hidden = true;
     $("bDocActs").hidden = true;
+    $("bDocRail").hidden = true;
     await renderMeetingLiving(tab, stale);
     if (stale()) return;
     B.wsBody.scrollTop = 0;
@@ -2937,6 +2945,54 @@ async function renderActive() {
   updatePromotedBadge(tab);
   B.wsBody.scrollTop = 0;
   markSel();
+}
+
+// ADR-0007 (owner request): habilidade / pedir à IA / versionar as a right-
+// side rail on the document viewer — the SAME pattern (visible buttons; the
+// habilidade control is a dropdown + ▶ play button, never a menu) used on
+// the meeting surface and the acervo header. Each action shows only when it
+// actually applies to the open doc; the whole rail hides when none do.
+function renderDocRail(tab, isGuide) {
+  const rail = $("bDocRail");
+  if (!rail) return;
+  const isMd = tab.rel.endsWith(".md") && tab.rel !== MANUAL_REL;
+  // "pedir à IA": non-versioned markdown only (evolves a note in place) —
+  // same scope as before, just relocated.
+  const aiable = !isGuide && isMd && tab.rel.startsWith("brainstorming/");
+  // "habilidade": any markdown file except the loop guide/manual.
+  const skillable = !isGuide && isMd;
+  // "versionar": viewing a context file — a shortcut into the same action
+  // as the acervo header's git button.
+  const versionable = !isGuide && tab.kind === "context";
+  if (!aiable && !skillable && !versionable) { rail.hidden = true; rail.innerHTML = ""; return; }
+  rail.hidden = false;
+  rail.innerHTML =
+    (skillable ? `<div class="rail-sec">` +
+      `<div class="rail-head">${ico("skill")} ${t("habilidade")}</div>` +
+      `<div class="rail-row">` +
+        `<select id="railSkillSelect" class="mini-select"></select>` +
+        `<button class="railbtn icon cta" id="railSkillRunBtn" title="${t("executar")}">▶</button>` +
+      `</div>` +
+    `</div>` : "") +
+    (aiable ? `<div class="rail-sec">` +
+      `<button class="railbtn" id="railAskAiBtn">✦ ${t("pedir à IA…")}</button>` +
+    `</div>` : "") +
+    (versionable ? `<div class="rail-sec">` +
+      `<button class="railbtn" id="railVersionarBtn">⎇ ${t("versionar")}</button>` +
+    `</div>` : "");
+  if (skillable) {
+    const sel = $("railSkillSelect");
+    const entries = allHabilidadeEntries();
+    sel.innerHTML = entries.length
+      ? entries.map((e, i) => `<option value="${i}" title="${esc(e.title)}">${esc(e.label)}</option>`).join("")
+      : `<option value="">${t("nenhuma habilidade disponível")}</option>`;
+    $("railSkillRunBtn").onclick = () => {
+      const entry = entries[Number(sel.value)];
+      if (entry) runHabilidadeEntry(entry, tab.rel);
+    };
+  }
+  if (aiable) $("railAskAiBtn").onclick = () => promptNoteAI(tab.rel, true);
+  if (versionable) $("railVersionarBtn").onclick = promptVersionar;
 }
 
 // ADR-0009: a persistent "promovido → <contexto>" badge, read from the source
@@ -3411,7 +3467,9 @@ B.createBtn.addEventListener("click", async () => {
 
 // ---- versionar (branch + commit local) → propor mudança (push + PR/RFC) ----
 // O Git fica escondido: o usuário só "versiona" e depois "propõe a mudança".
-B.gitBtn.addEventListener("click", () => {
+// Extraída para função (ADR-0007): o mesmo botão "versionar" também aparece
+// no rail lateral de um documento de contexto, não só no cabeçalho da acervo.
+function promptVersionar() {
   openEditor(
     t("Versionar mudança — descreva em uma linha"),
     "",
@@ -3424,7 +3482,8 @@ B.gitBtn.addEventListener("click", () => {
       if (r.warn) toast(tErr(r.warn), 5000);
     }
   );
-});
+}
+B.gitBtn.addEventListener("click", promptVersionar);
 
 // ADR-0002 §2 — branch picker: see the current branch, switch to another local
 // branch or create a new rfc/. Switching with a dirty tree is blocked by the

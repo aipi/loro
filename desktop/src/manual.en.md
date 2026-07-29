@@ -71,9 +71,14 @@ palette: `Cmd/Ctrl+Shift+P` → "Loro tour".
   write, and **● record meeting** to record a **meeting** tied to the topic
   (also in the palette `Cmd/Ctrl+Shift+P` → "nova reunião").
 - **✦ AI note** (the brainstorming's ⋯ menu) creates a note from your
-  request; **✦ ask the AI** (a note's/analysis' ⋯ menu **and at the top of
-  the file viewer**) applies a request to the existing content — the AI
-  evolves it, never erases.
+  request; **✦ ask the AI** (a note's/analysis' ⋯ menu **and the right-side
+  rail of any open file**) applies a request to the existing content — the
+  AI evolves it, never erases.
+- **Right-side actions rail:** opening any note/document shows visible
+  buttons on the right — **habilidade** (dropdown + ▶, pick and run without
+  opening a menu), **ask the AI…**, and **version** (when the file is part
+  of a context). Same pattern everywhere these three actions exist —
+  meeting, regular document, acervo header.
 - The **analyse**, **ask…**, **view report** and **send to queue** actions
   live in the meeting's **⋯** menu in the sidebar. **Ask…** already works
   while the meeting is still recording; the other three enable once the
@@ -89,11 +94,13 @@ palette: `Cmd/Ctrl+Shift+P` → "Loro tour".
 - A meeting's investigations/answers are **collapsed by default** in the
   sidebar (tap the ▸ arrow next to the meeting to open) — keeps the list from
   growing huge once you've analysed several meetings.
-- Every brainstorming has exactly three folders: **reunioes/** (every
-  meeting is born there), **notas/**, and **anexos/** (a presentation is
-  just one kind of anexo — no folder of its own). `anexos/` is fed by a
-  habilidade (sync, presentation, artifact) or by dropping a file straight
-  into the real folder on disk.
+- Every brainstorming has exactly three folders, visible in the sidebar as
+  collapsible groups with a folder icon (📁 **reuniões**, 📁 **notas**,
+  📁 **anexos** — each with an item count): **reunioes/** (every meeting is
+  born there), **notas/**, and **anexos/** (a presentation is just one kind
+  of anexo — no folder of its own). `anexos/` is fed by a habilidade (sync,
+  presentation, artifact) or by dropping a file straight into the real
+  folder on disk.
 - With many brainstormings, a search box appears above the list (past 8) —
   filters by name; with no search, it shows the most recent + "ver todos".
 
