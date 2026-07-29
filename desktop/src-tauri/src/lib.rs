@@ -1221,10 +1221,9 @@ fn brain_setup(
             return Err(format!("err.invalid_context:{c}"));
         }
     }
-    let lang = match lang.as_deref() {
-        Some("en") => "en".to_string(),
-        _ => "pt".to_string(),
-    };
+    // ADR-0002 §1: generated content follows the UI language; the per-acervo
+    // language field is retired (still stored for older tooling, never asked).
+    let lang = lang.map(|l| normalize_lang(&l)).unwrap_or_else(ui_lang);
     let base = PathBuf::from(&dir);
     ensure_acervo_structure(&base, &ctxs, &lang)?;
     if git_init.unwrap_or(false) {
@@ -1323,7 +1322,7 @@ fn brain_add_context(name: String) -> Result<(), String> {
         return Err(format!("err.invalid_context:{slug}"));
     }
     let cfg = read_brain_config().ok_or("err.acervo_not_configured")?;
-    seed_context(Path::new(&cfg.brain_dir), &slug, &active_lang())
+    seed_context(Path::new(&cfg.brain_dir), &slug, &ui_lang())
 }
 
 // Pure, testable core: delete a context/folder dir under contextos/.
@@ -1669,18 +1668,83 @@ fn brain_notifications() -> Notifications {
 struct VersionOutcome {
     branch: String,
     result: String,
+    warn: Option<String>,
 }
 
-// "Versionar": create rfc/<slug> off the default branch and commit the working
-// changes there. Local only — needs git, never the network.
+// Sync outcomes the user should see as a warning (the flow still proceeds —
+// branch-first degrades, ADR-0002 §2). NoRemote is the pure-local case: no warn.
+fn sync_warn(outcome: &SyncOutcome) -> Option<String> {
+    match outcome {
+        SyncOutcome::Offline => Some("err.git_offline".into()),
+        SyncOutcome::Diverged => Some("err.main_diverged".into()),
+        _ => None,
+    }
+}
+
+// "Versionar": sync the default branch (best effort), create rfc/<slug> off it
+// and commit the working changes there. Local git only on the write path.
 #[tauri::command]
 fn brain_version(slug: String, message: String) -> Result<VersionOutcome, String> {
     let cfg = read_brain_config().ok_or("err.acervo_not_configured")?;
     let base = PathBuf::from(&cfg.brain_dir);
     let slug = sanitize_slug(&slug)?;
+    let warn = sync_warn(&sync_default_branch(&base));
     let branch = create_branch(&base, &slug)?;
     let result = stage_and_commit(&base, message)?;
-    Ok(VersionOutcome { branch, result })
+    Ok(VersionOutcome {
+        branch,
+        result,
+        warn,
+    })
+}
+
+// ---- branch-first IPC (ADR-0002 §2): list / switch / create ----------------
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BranchesInfo {
+    current: Option<String>,
+    default: String,
+    branches: Vec<String>,
+    dirty: bool,
+}
+
+fn acervo_repo_base() -> Result<PathBuf, String> {
+    let cfg = read_brain_config().ok_or("err.acervo_not_configured")?;
+    let base = PathBuf::from(&cfg.brain_dir);
+    if !base.join(".git").is_dir() {
+        return Err("err.git_repo_required".into());
+    }
+    Ok(base)
+}
+
+#[tauri::command]
+fn git_branches() -> Result<BranchesInfo, String> {
+    let base = acervo_repo_base()?;
+    Ok(BranchesInfo {
+        current: current_branch(&base),
+        default: local_default_branch(&base),
+        branches: list_branches(&base)?,
+        dirty: is_dirty(&base),
+    })
+}
+
+#[tauri::command]
+fn git_switch_branch(branch: String) -> Result<String, String> {
+    let base = acervo_repo_base()?;
+    switch_branch(&base, &branch)?;
+    Ok(current_branch(&base).unwrap_or(branch))
+}
+
+// Create (or resume) rfc/<slug>. Sync degrades: whatever the outcome, the
+// branch is created off the freshest local default available.
+#[tauri::command]
+fn git_create_branch(slug: String) -> Result<String, String> {
+    let cfg = read_brain_config().ok_or("err.acervo_not_configured")?;
+    let base = PathBuf::from(&cfg.brain_dir);
+    let slug = sanitize_slug(&slug)?;
+    let _ = sync_default_branch(&base);
+    create_branch(&base, &slug)
 }
 
 // "Propor mudança": push the current rfc/ branch and open the PR (the RFC).
@@ -1760,7 +1824,7 @@ fn brain_migrate(apply: Option<bool>) -> Result<MigrationReport, String> {
     migrate_acervo(
         &PathBuf::from(&cfg.brain_dir),
         apply.unwrap_or(false),
-        &active_lang(),
+        &ui_lang(),
     )
 }
 
@@ -2782,7 +2846,7 @@ fn term_open(app: AppHandle, state: State<AppState>, cols: u16, rows: u16) -> Re
     if let Some(cfg) = read_brain_config() {
         let d = PathBuf::from(&cfg.brain_dir);
         if d.is_dir() {
-            ensure_meeting_skills(&d, "pt"); // discoverable without a manual migrate
+            ensure_meeting_skills(&d, &ui_lang()); // discoverable without a manual migrate
             cmd.cwd(d);
             in_acervo = true;
         }
@@ -2858,6 +2922,82 @@ fn term_resize(state: State<AppState>, cols: u16, rows: u16) -> Result<(), Strin
 fn term_close(state: State<AppState>) {
     if let Some(mut s) = state.term.lock().unwrap().take() {
         let _ = s.child.kill();
+    }
+}
+
+// ---- ADR-0002 §4: terminal/Claude readiness handshake ----------------------
+// Slash-commands only mean something to a running Claude. The frontend asks
+// this instead of guessing from terminal output: is the PTY open, and does a
+// `claude` process live under its shell right now?
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TermStatus {
+    open: bool,
+    claude_running: bool,
+}
+
+fn parse_ps_table(out: &str) -> Vec<(u32, u32, String)> {
+    out.lines()
+        .filter_map(|l| {
+            let mut it = l.split_whitespace();
+            let pid = it.next()?.parse().ok()?;
+            let ppid = it.next()?.parse().ok()?;
+            let comm = it.next()?.to_string();
+            Some((pid, ppid, comm))
+        })
+        .collect()
+}
+
+fn has_descendant_process(table: &[(u32, u32, String)], root: u32, name: &str) -> bool {
+    let mut frontier = vec![root];
+    let mut seen = std::collections::HashSet::new();
+    while let Some(pid) = frontier.pop() {
+        if !seen.insert(pid) {
+            continue;
+        }
+        for (cpid, ppid, comm) in table {
+            if *ppid == pid {
+                // `ps -axo comm=` may print the full executable path on macOS
+                let base = comm.rsplit('/').next().unwrap_or(comm);
+                if base == name {
+                    return true;
+                }
+                frontier.push(*cpid);
+            }
+        }
+    }
+    false
+}
+
+#[tauri::command]
+fn term_status(state: State<AppState>) -> TermStatus {
+    let shell_pid = state
+        .term
+        .lock()
+        .unwrap()
+        .as_ref()
+        .and_then(|s| s.child.process_id());
+    let Some(root) = shell_pid else {
+        return TermStatus {
+            open: false,
+            claude_running: false,
+        };
+    };
+    let claude_running = Command::new("ps")
+        .args(["-axo", "pid=,ppid=,comm="])
+        .output()
+        .ok()
+        .map(|o| {
+            has_descendant_process(
+                &parse_ps_table(&String::from_utf8_lossy(&o.stdout)),
+                root,
+                "claude",
+            )
+        })
+        .unwrap_or(false);
+    TermStatus {
+        open: true,
+        claude_running,
     }
 }
 
@@ -2994,11 +3134,15 @@ pub fn run() {
             brain_notifications,
             brain_version,
             brain_propose_change,
+            git_branches,
+            git_switch_branch,
+            git_create_branch,
             brain_migrate,
             term_open,
             term_input,
             term_resize,
             term_close,
+            term_status,
             brain_import,
             brain_delete_inbox,
             brain_write_inbox,
@@ -3061,6 +3205,24 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ADR-0002 §4 — the terminal/Claude readiness handshake asks the OS whether
+    // a `claude` process lives under the PTY shell, instead of guessing from
+    // terminal output.
+    #[test]
+    fn ps_table_parses_and_finds_descendant_by_name() {
+        let table = parse_ps_table(
+            "  1     0  launchd\n 300     1  zsh\n 412   300  claude\n 500   412  node\n 600     1  zsh\n",
+        );
+        assert!(has_descendant_process(&table, 300, "claude"));
+        assert!(!has_descendant_process(&table, 600, "claude"));
+        // the root itself does not count as its own descendant match
+        assert!(!has_descendant_process(&table, 412, "zsh"));
+        // grandchildren are found too
+        assert!(has_descendant_process(&table, 300, "node"));
+        // malformed lines are skipped, not fatal
+        assert!(parse_ps_table("garbage\n").is_empty());
+    }
 
     #[test]
     fn tray_labels_follow_ui_lang() {

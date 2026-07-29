@@ -152,7 +152,8 @@ do domínio**, não a ferramenta nem o passo de reestruturação.
 5. Regenerar o `context.md` dos contextos tocados (6 seções). Use as lentes só
    para INTERPRETAR.
 6. Atualizar `INDEX.md`, `state.json` e `.brain/activity.log`. Idempotente; na
-   dúvida de contexto, escolher o mais provável e marcar `?`.
+   dúvida de contexto, NÃO assuma: registre a incerteza como hotspot com `?`
+   e só destine o item quando a evidência for clara.
 7. **Quebra em subdomínios (DDD):** quando um domínio virar um COMPOSTO de
    bounded contexts (vários fluxos/fronteiras distintos), quebre-o em subdomínios
    `contextos/<c>/<sub>/` — cada um com seu `context.md` + `CHANGELOG.md`. O
@@ -199,6 +200,14 @@ dentro desta pasta.
 5. Respeite estrutura já existente (só complete lacunas; nunca sobrescreva). Não
    abra PRs nem versione: quem propõe mudança é a pessoa, pelos botões do Loro.
 6. Ao final, informe em 1–2 linhas o que fez.
+
+Regras de rigor (ADR-0002 §5):
+- **Nunca assuma premissas** não declaradas. O que não estiver na base ou no
+  pedido é incerteza: registre-a explicitamente (hotspot/`?` ou uma linha de
+  "incertezas" na resposta) e, quando a interação permitir, pergunte.
+- **Varredura eficiente:** para listar/ler muitos arquivos, delegue a leitura a
+  subagentes (Task) com um modelo rápido (ex.: Haiku), recebendo só o essencial;
+  reserve o modelo principal para a síntese.
 "#;
 
 // ---- English variants (selected by the project language) ----
@@ -296,7 +305,9 @@ the tooling or the restructuring step.
    the rest becomes a **hotspot** (section 6). Never create idea files. Raw moved
    to `processed/`, never deleted.
 5. Regenerate the touched `context.md` (6 sections).
-6. Update `INDEX.md`, `state.json`, `.brain/activity.log`. Idempotent.
+6. Update `INDEX.md`, `state.json`, `.brain/activity.log`. Idempotent; when in
+   doubt about the context, do NOT assume: record the uncertainty as a `?`
+   hotspot and only file the item when the evidence is clear.
 7. **Split into subdomains (DDD):** when a domain becomes a COMPOSITE of bounded
    contexts, split it into `contextos/<c>/<sub>/` subdomains — each with its own
    `context.md` + `CHANGELOG.md`. The PARENT `context.md` becomes an overview +
@@ -336,6 +347,14 @@ hotspots and rules — and follow it strictly. Work only inside this folder.
 5. Respect existing structure (fill gaps only; never overwrite). Do not open PRs
    or version: the person proposes changes via Loro's buttons.
 6. Finish with a 1–2 line summary of what you did.
+
+Rigor rules (ADR-0002 §5):
+- **Never assume unstated premises.** Anything not in the base or in the request
+  is an uncertainty: record it explicitly (hotspot/`?` or an "uncertainties"
+  line in the answer) and, when the interaction allows, ask.
+- **Efficient scanning:** to list/read many files, delegate reading to subagents
+  (Task) on a fast model (e.g. Haiku) returning only the essentials; keep the
+  main model for synthesis.
 "#;
 
 // ---- meeting-AI skills run by the terminal Claude (ADR-0012) ----
@@ -380,15 +399,25 @@ editar aqui geraria corrida com esse escritor).
    (só `tipo` + `t_ms?`/`ref?`, NUNCA texto de transcrição). O app incorpora esses
    marcadores ao relatório — não edite `manifest.json`.
 6. Atualize `$ARGUMENTS/relatorio.md`: substitua a prosa provisória das seções
-   `## Resumo`, `## Decisões` e `## Dúvidas & Respostas` por prosa real e objetiva
-   derivada da transcrição, mantendo os títulos. Se `relatorio.md` ainda não
-   existir, crie-o com essas seções.
+   `## Resumo`, `## Decisões` e `## Dúvidas & Respostas` (ou suas equivalentes em
+   inglês: `## Summary`, `## Decisions`, `## Questions & Answers` — o notebook
+   pode ter nascido em qualquer um dos dois idiomas) por prosa real e objetiva
+   derivada da transcrição, mantendo os títulos existentes. Se `relatorio.md`
+   ainda não existir, crie-o com essas seções no idioma deste skill.
 7. Acrescente UMA linha JSON, orientada a evento, em `$ARGUMENTS/auditoria.jsonl`
    registrando o que leu e produziu — nunca texto de transcrição, PII ou segredos
    (BR-8/BR-9), ex.:
    `{"em":"<ISO>","event":"analyse","read":["reuniao.md","manifest.json"],"wrote":["artefatos/investigacoes/analise-<ISO>.md","relatorio.md","marcadores.jsonl"]}`.
 
 Ao final, responda em pt-BR com 1–2 linhas do que você escreveu.
+
+Regras de rigor (ADR-0002 §5):
+- **Nunca assuma premissas** não declaradas. O que não estiver na base ou no
+  pedido é incerteza: registre-a explicitamente (hotspot/`?` ou uma linha de
+  "incertezas" na resposta) e, quando a interação permitir, pergunte.
+- **Varredura eficiente:** para listar/ler muitos arquivos, delegue a leitura a
+  subagentes (Task) com um modelo rápido (ex.: Haiku), recebendo só o essencial;
+  reserve o modelo principal para a síntese.
 "#;
 
 pub const MEETING_ANSWER_SKILL: &str = r#"---
@@ -420,6 +449,14 @@ escritor atômico).
    o que leu/produziu — nunca texto de transcrição, PII ou segredos: BR-8/BR-9).
 
 Responda em pt-BR.
+
+Regras de rigor (ADR-0002 §5):
+- **Nunca assuma premissas** não declaradas. O que não estiver na base ou no
+  pedido é incerteza: registre-a explicitamente (hotspot/`?` ou uma linha de
+  "incertezas" na resposta) e, quando a interação permitir, pergunte.
+- **Varredura eficiente:** para listar/ler muitos arquivos, delegue a leitura a
+  subagentes (Task) com um modelo rápido (ex.: Haiku), recebendo só o essencial;
+  reserve o modelo principal para a síntese.
 "#;
 
 pub const MEETING_ANALYSE_SKILL_EN: &str = r#"---
@@ -452,13 +489,23 @@ race that writer).
    `tipo` + `t_ms?`/`ref?`, NEVER transcript text). The app folds these markers
    into the report — do not edit `manifest.json`.
 6. Update `$ARGUMENTS/relatorio.md`: replace the placeholder prose in the
-   `## Resumo`, `## Decisões` and `## Dúvidas & Respostas` sections with real,
-   objective prose derived from the transcript, keeping the titles. If
-   `relatorio.md` does not exist yet, create it with those sections.
+   `## Summary`, `## Decisions` and `## Questions & Answers` sections (or their
+   pt equivalents `## Resumo`, `## Decisões`, `## Dúvidas & Respostas` — the
+   notebook may have been born in either language) with real, objective prose
+   derived from the transcript, keeping the existing titles. If `relatorio.md`
+   does not exist yet, create it with those sections in this skill's language.
 7. Append ONE event-oriented JSON line to `$ARGUMENTS/auditoria.jsonl` recording
    what you read and produced — never transcript text, PII or secrets (BR-8/BR-9).
 
-Finish with a 1–2 line summary (pt-BR) of what you wrote.
+Finish with a 1–2 line summary (in English) of what you wrote.
+
+Rigor rules (ADR-0002 §5):
+- **Never assume unstated premises.** Anything not in the base or in the request
+  is an uncertainty: record it explicitly (hotspot/`?` or an "uncertainties"
+  line in the answer) and, when the interaction allows, ask.
+- **Efficient scanning:** to list/read many files, delegate reading to subagents
+  (Task) on a fast model (e.g. Haiku) returning only the essentials; keep the
+  main model for synthesis.
 "#;
 
 pub const MEETING_ANSWER_SKILL_EN: &str = r#"---
@@ -488,7 +535,15 @@ only your own Read/Write tools — do not call loro IPC and do NOT edit
 4. Append ONE PII-free JSON line to `<dir>/auditoria.jsonl` (event `answer`, what
    you read/produced — never transcript text, PII or secrets: BR-8/BR-9).
 
-Reply in pt-BR.
+Reply in English.
+
+Rigor rules (ADR-0002 §5):
+- **Never assume unstated premises.** Anything not in the base or in the request
+  is an uncertainty: record it explicitly (hotspot/`?` or an "uncertainties"
+  line in the answer) and, when the interaction allows, ask.
+- **Efficient scanning:** to list/read many files, delegate reading to subagents
+  (Task) on a fast model (e.g. Haiku) returning only the essentials; keep the
+  main model for synthesis.
 "#;
 
 pub fn meeting_analyse_skill(lang: &str) -> &'static str {
@@ -534,6 +589,14 @@ negócio, sem metodologia).
    se houver — uma dúvida em aberto é um bom candidato a virar reunião/RFC.
 
 Não modifique arquivos (isto é uma consulta). Responda em pt-BR.
+
+Regras de rigor (ADR-0002 §5):
+- **Nunca assuma premissas** não declaradas. O que não estiver na base ou no
+  pedido é incerteza: registre-a explicitamente (hotspot/`?` ou uma linha de
+  "incertezas" na resposta) e, quando a interação permitir, pergunte.
+- **Varredura eficiente:** para listar/ler muitos arquivos, delegue a leitura a
+  subagentes (Task) com um modelo rápido (ex.: Haiku), recebendo só o essencial;
+  reserve o modelo principal para a síntese.
 "#;
 
 pub const BRAIN_ASK_SKILL_EN: &str = r#"---
@@ -553,7 +616,15 @@ You are this acervo's consultant. Answer OBJECTIVELY (business prose, no methodo
 3. Answer citing which contexts grounded it (e.g. `contextos/frota`). If the base does
    not settle it, say so plainly and point at the relevant hotspot (§6) if any.
 
-Do not modify files (this is a query). Reply in pt-BR.
+Do not modify files (this is a query). Reply in English.
+
+Rigor rules (ADR-0002 §5):
+- **Never assume unstated premises.** Anything not in the base or in the request
+  is an uncertainty: record it explicitly (hotspot/`?` or an "uncertainties"
+  line in the answer) and, when the interaction allows, ask.
+- **Efficient scanning:** to list/read many files, delegate reading to subagents
+  (Task) on a fast model (e.g. Haiku) returning only the essentials; keep the
+  main model for synthesis.
 "#;
 
 pub fn brain_ask_skill(lang: &str) -> &'static str {
@@ -658,6 +729,44 @@ pub fn pr_template(lang: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ADR-0002 §5 — every skill forbids unstated premises and instructs
+    // fast-model subagent scanning for bulk file reading, in both languages.
+    #[test]
+    fn skills_forbid_assumptions_and_instruct_fast_scanning() {
+        for lang in ["pt", "en"] {
+            let (no_assume, fast) = if lang == "en" {
+                ("Never assume unstated premises", "fast model")
+            } else {
+                ("Nunca assuma premissas", "modelo rápido")
+            };
+            for (name, body) in [
+                ("brain", brain_skill(lang)),
+                ("ask", brain_ask_skill(lang)),
+                ("analyse", meeting_analyse_skill(lang)),
+                ("answer", meeting_answer_skill(lang)),
+            ] {
+                assert!(
+                    body.contains(no_assume),
+                    "{name}/{lang}: missing no-premise rule"
+                );
+                assert!(
+                    body.contains(fast),
+                    "{name}/{lang}: missing fast-scanning rule"
+                );
+            }
+        }
+    }
+
+    // ADR-0002 §5 — the loop's rule 6 records doubt instead of guessing.
+    #[test]
+    fn agents_rule_records_doubt_instead_of_guessing() {
+        let pt = agents_template(&["frota".into()], "pt");
+        assert!(!pt.contains("escolher o mais provável"));
+        assert!(pt.contains("NÃO assuma"));
+        let en = agents_template(&["fleet".into()], "en");
+        assert!(en.contains("do NOT assume"));
+    }
 
     // ADR-0012: the terminal Claude runs `analyse`/`answer` skills that take the
     // meeting dir as an argument. Assert both render (both languages) with the

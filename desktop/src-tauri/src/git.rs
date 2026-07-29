@@ -206,6 +206,181 @@ pub fn default_branch(base: &Path) -> String {
     .unwrap_or_else(|| "main".into())
 }
 
+// ---- branch-first flow (ADR-0002 §2) ----------------------------------------
+// Local view of the git graph: everything here resolves without network or gh,
+// so the studio stays responsive offline. gh remains only on the propose path.
+
+fn ref_exists(base: &Path, r: &str) -> bool {
+    Command::new("git")
+        .args(["rev-parse", "--verify", "--quiet", r])
+        .current_dir(base)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+fn ref_sha(base: &Path, r: &str) -> Option<String> {
+    let out = Command::new("git")
+        .args(["rev-parse", "--verify", "--quiet", r])
+        .current_dir(base)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+// Default branch resolved locally (no network, no gh): origin/HEAD when the
+// clone recorded it, else the conventional local head, else "main".
+pub fn local_default_branch(base: &Path) -> String {
+    if let Ok(out) = Command::new("git")
+        .args(["symbolic-ref", "refs/remotes/origin/HEAD"])
+        .current_dir(base)
+        .output()
+    {
+        if out.status.success() {
+            let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if let Some(b) = s.strip_prefix("refs/remotes/origin/") {
+                if !b.is_empty() {
+                    return b.to_string();
+                }
+            }
+        }
+    }
+    for cand in ["main", "master"] {
+        if ref_exists(base, &format!("refs/heads/{cand}")) {
+            return cand.into();
+        }
+    }
+    "main".into()
+}
+
+pub fn is_dirty(base: &Path) -> bool {
+    Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(base)
+        .output()
+        .map(|o| !String::from_utf8_lossy(&o.stdout).trim().is_empty())
+        .unwrap_or(false)
+}
+
+// Local branches, most recently committed first.
+pub fn list_branches(base: &Path) -> Result<Vec<String>, String> {
+    let out = Command::new("git")
+        .args([
+            "for-each-ref",
+            "refs/heads",
+            "--format=%(refname:short)",
+            "--sort=-committerdate",
+        ])
+        .current_dir(base)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+    }
+    Ok(String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect())
+}
+
+pub fn switch_branch(base: &Path, branch: &str) -> Result<(), String> {
+    if is_dirty(base) {
+        return Err("err.working_tree_dirty".into());
+    }
+    if !ref_exists(base, &format!("refs/heads/{branch}")) {
+        return Err("err.branch_not_found".into());
+    }
+    let out = Command::new("git")
+        .args(["checkout", branch])
+        .current_dir(base)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
+}
+
+#[derive(PartialEq, Debug)]
+pub enum SyncOutcome {
+    Updated,
+    AlreadyUpToDate,
+    NoRemote,
+    Offline,
+    Diverged,
+    SkippedDirty,
+}
+
+// Best-effort fast-forward of the local default branch from origin. Never an
+// error: every failure degrades to an outcome the caller can surface as a
+// warning. The local default branch is never rewritten outside fast-forward.
+pub fn sync_default_branch(base: &Path) -> SyncOutcome {
+    if git_remote_url(base).is_none() {
+        return SyncOutcome::NoRemote;
+    }
+    let default = local_default_branch(base);
+    // low-speed limits keep a flaky network from hanging the UI
+    let fetch = Command::new("git")
+        .args([
+            "-c",
+            "http.lowSpeedLimit=1",
+            "-c",
+            "http.lowSpeedTime=10",
+            "fetch",
+            "origin",
+            &default,
+        ])
+        .current_dir(base)
+        .output();
+    match fetch {
+        Ok(o) if o.status.success() => {}
+        _ => return SyncOutcome::Offline,
+    }
+    let local_ref = format!("refs/heads/{default}");
+    if current_branch(base).as_deref() == Some(default.as_str()) {
+        if is_dirty(base) {
+            return SyncOutcome::SkippedDirty;
+        }
+        let before = ref_sha(base, &local_ref);
+        let merge = Command::new("git")
+            .args(["merge", "--ff-only", &format!("origin/{default}")])
+            .current_dir(base)
+            .output();
+        match merge {
+            Ok(o) if o.status.success() => {
+                if ref_sha(base, &local_ref) == before {
+                    SyncOutcome::AlreadyUpToDate
+                } else {
+                    SyncOutcome::Updated
+                }
+            }
+            _ => SyncOutcome::Diverged,
+        }
+    } else {
+        // not on the default branch: fetch refspec updates it fast-forward-only
+        let before = ref_sha(base, &local_ref);
+        let out = Command::new("git")
+            .args(["fetch", "origin", &format!("{default}:{default}")])
+            .current_dir(base)
+            .output();
+        match out {
+            Ok(o) if o.status.success() => {
+                if ref_sha(base, &local_ref) == before {
+                    SyncOutcome::AlreadyUpToDate
+                } else {
+                    SyncOutcome::Updated
+                }
+            }
+            _ => SyncOutcome::Diverged,
+        }
+    }
+}
+
 // ---- timeline (abstracted git history) -------------------------------------
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -370,7 +545,9 @@ pub fn current_branch(base: &Path) -> Option<String> {
 pub fn create_branch(base: &Path, slug: &str) -> Result<String, String> {
     git_init_repo(base)?;
     let branch = format!("rfc/{slug}");
-    let start = default_branch(base);
+    // branch off the locally-resolved default (no network); the propose path
+    // still asks gh for the authoritative default branch
+    let start = local_default_branch(base);
     let has_start = Command::new("git")
         .args([
             "rev-parse",
@@ -529,10 +706,12 @@ pub fn git_init_repo(base: &Path) -> Result<(), String> {
 }
 
 #[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GitState {
     available: bool,
     repo: bool,
     pending: usize,
+    branch: Option<String>,
 }
 
 #[tauri::command]
@@ -557,10 +736,16 @@ pub fn brain_git_state() -> GitState {
     } else {
         0
     };
+    let branch = if available && repo {
+        base.as_ref().and_then(|b| current_branch(b))
+    } else {
+        None
+    };
     GitState {
         available,
         repo,
         pending,
+        branch,
     }
 }
 
@@ -877,6 +1062,244 @@ mod tests {
             !files.contains("notas/"),
             "root notas/ is personal — never versioned"
         );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ---- branch-first flow (ADR-0002 §2) fixtures --------------------------
+
+    fn run_git(dir: &Path, args: &[&str]) -> Output {
+        Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .unwrap()
+    }
+
+    fn rev_sha(dir: &Path, r: &str) -> String {
+        let out = run_git(dir, &["rev-parse", r]);
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    fn temp_repo(tag: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("loro-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    // Repo with one commit and a deterministic default-branch name (older git
+    // inits as "master"; the tests need "main").
+    fn init_with_commit(root: &Path) {
+        git_init_repo(root).unwrap();
+        set_identity(root, "Teste", "teste@localhost").unwrap();
+        std::fs::write(root.join("context.md"), "base").unwrap();
+        stage_and_commit(root, "base".into()).unwrap();
+        run_git(root, &["branch", "-M", "main"]);
+    }
+
+    #[test]
+    fn list_branches_returns_locals() {
+        if which("git").is_none() {
+            return; // git is a system dependency; skip when absent
+        }
+        let root = temp_repo("branches");
+        init_with_commit(&root);
+        create_branch(&root, "primeira").unwrap();
+        create_branch(&root, "segunda").unwrap();
+
+        let branches = list_branches(&root).unwrap();
+        for expected in ["main", "rfc/primeira", "rfc/segunda"] {
+            assert!(
+                branches.iter().any(|b| b == expected),
+                "missing branch {expected} in {branches:?}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn switch_branch_blocks_on_dirty_working_tree() {
+        if which("git").is_none() {
+            return;
+        }
+        let root = temp_repo("switch-dirty");
+        init_with_commit(&root);
+        create_branch(&root, "mudanca").unwrap();
+        std::fs::write(root.join("context.md"), "edição pendente").unwrap();
+
+        let err = switch_branch(&root, "main").unwrap_err();
+        assert_eq!(err, "err.working_tree_dirty");
+        assert_eq!(current_branch(&root).as_deref(), Some("rfc/mudanca"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn switch_branch_errors_on_missing_branch() {
+        if which("git").is_none() {
+            return;
+        }
+        let root = temp_repo("switch-missing");
+        init_with_commit(&root);
+
+        let err = switch_branch(&root, "nao-existe").unwrap_err();
+        assert_eq!(err, "err.branch_not_found");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn sync_default_without_remote_returns_no_remote() {
+        if which("git").is_none() {
+            return;
+        }
+        let root = temp_repo("sync-noremote");
+        init_with_commit(&root);
+
+        assert_eq!(sync_default_branch(&root), SyncOutcome::NoRemote);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn sync_default_fast_forwards_from_origin() {
+        if which("git").is_none() {
+            return;
+        }
+        let root = temp_repo("sync-ff");
+        let bare = root.join("origin.git");
+        std::fs::create_dir_all(&bare).unwrap();
+        run_git(&bare, &["init", "--bare"]);
+
+        let a = root.join("a");
+        std::fs::create_dir_all(&a).unwrap();
+        init_with_commit(&a);
+        run_git(&a, &["remote", "add", "origin", bare.to_str().unwrap()]);
+        assert!(run_git(&a, &["push", "-u", "origin", "main"])
+            .status
+            .success());
+
+        let c = root.join("c");
+        assert!(run_git(
+            &root,
+            &["clone", bare.to_str().unwrap(), c.to_str().unwrap()]
+        )
+        .status
+        .success());
+        set_identity(&c, "Teste", "teste@localhost").unwrap();
+
+        // origin moves ahead; the local clone is behind
+        std::fs::write(a.join("context.md"), "avanço").unwrap();
+        stage_and_commit(&a, "feat: avanço".into()).unwrap();
+        assert!(run_git(&a, &["push", "origin", "main"]).status.success());
+
+        assert_eq!(sync_default_branch(&c), SyncOutcome::Updated);
+        assert_eq!(rev_sha(&c, "main"), rev_sha(&c, "origin/main"));
+        assert_eq!(sync_default_branch(&c), SyncOutcome::AlreadyUpToDate);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn sync_default_reports_diverged_and_keeps_local_main() {
+        if which("git").is_none() {
+            return;
+        }
+        let root = temp_repo("sync-div");
+        let bare = root.join("origin.git");
+        std::fs::create_dir_all(&bare).unwrap();
+        run_git(&bare, &["init", "--bare"]);
+
+        let a = root.join("a");
+        std::fs::create_dir_all(&a).unwrap();
+        init_with_commit(&a);
+        run_git(&a, &["remote", "add", "origin", bare.to_str().unwrap()]);
+        assert!(run_git(&a, &["push", "-u", "origin", "main"])
+            .status
+            .success());
+
+        let c = root.join("c");
+        assert!(run_git(
+            &root,
+            &["clone", bare.to_str().unwrap(), c.to_str().unwrap()]
+        )
+        .status
+        .success());
+        set_identity(&c, "Teste", "teste@localhost").unwrap();
+
+        // both sides commit: origin and local main diverge
+        std::fs::write(c.join("context.md"), "local próprio").unwrap();
+        stage_and_commit(&c, "local".into()).unwrap();
+        let local_sha = rev_sha(&c, "main");
+        std::fs::write(a.join("context.md"), "remoto").unwrap();
+        stage_and_commit(&a, "remoto".into()).unwrap();
+        assert!(run_git(&a, &["push", "origin", "main"]).status.success());
+
+        assert_eq!(sync_default_branch(&c), SyncOutcome::Diverged);
+        // the local default branch is never rewritten outside fast-forward
+        assert_eq!(rev_sha(&c, "main"), local_sha);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn sync_offline_degrades() {
+        if which("git").is_none() {
+            return;
+        }
+        let root = temp_repo("sync-offline");
+        init_with_commit(&root);
+        run_git(
+            &root,
+            &["remote", "add", "origin", "/loro-nonexistent-remote.git"],
+        );
+
+        assert_eq!(sync_default_branch(&root), SyncOutcome::Offline);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn local_default_branch_prefers_origin_head_then_main() {
+        if which("git").is_none() {
+            return;
+        }
+        let root = temp_repo("default-branch");
+        init_with_commit(&root);
+
+        // (b) no origin/HEAD → local main wins
+        assert_eq!(local_default_branch(&root), "main");
+
+        // (a) origin/HEAD, when present, wins over local heads
+        run_git(
+            &root,
+            &[
+                "symbolic-ref",
+                "refs/remotes/origin/HEAD",
+                "refs/remotes/origin/develop",
+            ],
+        );
+        assert_eq!(local_default_branch(&root), "develop");
+        run_git(
+            &root,
+            &["symbolic-ref", "--delete", "refs/remotes/origin/HEAD"],
+        );
+
+        // (c) master when there is no main
+        run_git(&root, &["branch", "-M", "master"]);
+        assert_eq!(local_default_branch(&root), "master");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn version_never_commits_on_default() {
+        if which("git").is_none() {
+            return;
+        }
+        let root = temp_repo("ver-default");
+        init_with_commit(&root);
+        let main_sha = rev_sha(&root, "main");
+
+        create_branch(&root, "proposta").unwrap();
+        std::fs::write(root.join("context.md"), "mudança").unwrap();
+        stage_and_commit(&root, "feat: mudança".into()).unwrap();
+
+        assert_eq!(current_branch(&root).as_deref(), Some("rfc/proposta"));
+        assert_eq!(rev_sha(&root, "main"), main_sha, "main never moves");
         let _ = std::fs::remove_dir_all(&root);
     }
 

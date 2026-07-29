@@ -367,12 +367,20 @@ body {
 /* ---- acervo: shell tipo site de docs (lateral + conteúdo) ---- */
 .bwrap { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .bwrap .wizard { overflow-y: auto; padding: 0 16px 24px; }
-.bshell { flex: 1; min-height: 0; display: grid; grid-template-columns: clamp(180px, 30vw, 250px) 1fr; }
+/* ADR-0002 §6: user-resizable sidebar — --side-w is set by the drag grip and
+   persisted in settings; the default keeps the original clamp behavior. */
+.bshell { flex: 1; min-height: 0; display: grid; grid-template-columns: var(--side-w, clamp(180px, 30vw, 250px)) 5px 1fr; }
 .bside {
-  border-right: 1px solid var(--line); overflow-y: auto;
+  overflow-y: auto;
   padding: 10px 8px 24px;
   background: color-mix(in srgb, var(--panel) 55%, var(--paper));
 }
+.sidegrip { cursor: col-resize; background: var(--line); opacity: .5; }
+.sidegrip:hover, .sidegrip.dragging { opacity: 1; background: var(--acc, #2bc5b4); }
+/* wide sidebar: full names wrap and the metadata line appears */
+.bmeta { display: none; }
+.bside.wide .bn { white-space: normal; overflow: visible; text-overflow: unset; }
+.bside.wide .bmeta { display: block; font-size: 9px; opacity: .6; letter-spacing: .04em; }
 .bgroup {
   display: flex; align-items: center; justify-content: space-between; gap: 6px;
   font-family: var(--mono); font-size: 9.5px; letter-spacing: .1em;

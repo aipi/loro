@@ -40,6 +40,9 @@ how to fix). Do not ship on any ❌.
 
 ## 7. Docs current
 - PRD/ARCHITECTURE/ADRs reflect the release; any new non-trivial decision has an ADR.
+- The in-app manual (`desktop/src/manual.pt.md` + `manual.en.md`) and README
+  reflect every user-visible change in this release (ADR-0002 §7 process rule).
+- **Fix:** update the manual/README before shipping.
 
 ## Expected output
 A short report per section, the overall verdict (ship / do not ship), and the exact

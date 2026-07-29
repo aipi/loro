@@ -25,7 +25,8 @@ domain `loro`); technical decisions live in the code repo.
 |---|---|
 | `brain/contexts/loro/context.md` | What the product is, its rationale, and the immutable business rules (`BR-…`) |
 | `docs/ARCHITECTURE.md` | How it is built (contexts, IPC contract, flows) |
-| `docs/adr/0001-baseline.md` | The **single consolidated ADR**: all technical decisions, with a map from the former ADR numbers still referenced in code comments |
+| `docs/adr/0001-baseline.md` | The consolidated **baseline ADR**: all technical decisions up to 2026-07, with a map from the former ADR numbers still referenced in code comments |
+| `docs/adr/0002-….md` | Incremental ADRs from 2026-07-28 on (0002: Studio v2 — generation language, branch-first git, editor lifecycle, in-app manual) |
 | `CLAUDE.md` | How to work (this file) |
 
 **Precedence on conflict:** brain domain source-of-truth > ARCHITECTURE > ADR > CLAUDE.md.
@@ -111,8 +112,12 @@ business logic in the Tauri `run()` wiring.
 5. Write a failing test.
 6. Implement the minimum to pass.
 7. Refactor; comment only the *why*.
-8. Record a non-trivial decision in `docs/adr/0001-baseline.md`.
-9. Run `make test` and `make lint`; ensure the app still works (`LORO_SELFTEST=1`).
+8. Record a non-trivial decision in the ADR series (`docs/adr/`).
+9. **Docs sweep (ADR-0002 §7):** for every feature added or changed, evaluate
+   and update the in-app manual (`desktop/src/manual.pt.md` + `manual.en.md`),
+   the ADR, `README.md` and `docs/ARCHITECTURE.md`. Structural docs are never
+   optional; the manual is updated whenever user-visible behavior changes.
+10. Run `make test` and `make lint`; ensure the app still works (`LORO_SELFTEST=1`).
 
 ## 9. What this file does NOT do
 

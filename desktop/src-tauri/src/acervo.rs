@@ -919,6 +919,18 @@ struct ReportPart {
 // Prose under a `## <heading>` up to the next `## `, trimmed. The DEFERRED_PROSE
 // placeholder ("resumo automático — em breve") is treated as empty (no real prose
 // yet). Returns "" when the section is absent/empty. Pure.
+// Source parts may be pt- or en-headed (ADR-0002 §1 allows mixed-language
+// acervos), so extraction tries every known name for a section.
+fn extract_section_any(md: &str, headings: &[&str]) -> String {
+    for h in headings {
+        let s = extract_section(md, h);
+        if !s.is_empty() {
+            return s;
+        }
+    }
+    String::new()
+}
+
 fn extract_section(md: &str, heading: &str) -> String {
     let mut lines = md.lines();
     let want = format!("## {heading}");
@@ -939,7 +951,7 @@ fn extract_section(md: &str, heading: &str) -> String {
     }
     let cleaned: String = body
         .lines()
-        .filter(|l| !l.contains("resumo automático"))
+        .filter(|l| !l.contains("resumo automático") && !l.contains("automatic summary"))
         .collect::<Vec<_>>()
         .join("\n");
     cleaned.trim().to_string()
@@ -980,12 +992,15 @@ fn gather_part(base: &Path, item: &SelItem) -> Result<ReportPart, String> {
         Ok(ReportPart {
             title,
             rel: dir_rel,
-            resumo: extract_section(&relatorio, "Resumo"),
-            decisoes: extract_section(&relatorio, "Decisões"),
-            duvidas: extract_section(&relatorio, "Dúvidas & Respostas"),
-            investigacoes: extract_section(&relatorio, "Investigações"),
+            resumo: extract_section_any(&relatorio, &["Resumo", "Summary"]),
+            decisoes: extract_section_any(&relatorio, &["Decisões", "Decisions"]),
+            duvidas: extract_section_any(
+                &relatorio,
+                &["Dúvidas & Respostas", "Questions & Answers"],
+            ),
+            investigacoes: extract_section_any(&relatorio, &["Investigações", "Investigations"]),
             notas: String::new(),
-            dados: extract_section(&relatorio, "Dados & Gráficos"),
+            dados: extract_section_any(&relatorio, &["Dados & Gráficos", "Data & Charts"]),
         })
     } else {
         let abs = guarded_existing(base, &rel)?;
@@ -1020,6 +1035,7 @@ fn gather_part(base: &Path, item: &SelItem) -> Result<ReportPart, String> {
 fn push_report_section(
     out: &mut String,
     title: &str,
+    empty_note: &str,
     parts: &[ReportPart],
     sel: impl Fn(&ReportPart) -> &str,
 ) {
@@ -1033,24 +1049,51 @@ fn push_report_section(
         }
     }
     if !any {
-        out.push_str("_(sem registros)_\n\n");
+        out.push_str(empty_note);
+        out.push_str("\n\n");
     }
 }
 
 // Assemble ONE consolidated report merging all parts. Pure/IO-free. NEVER contains
 // a `## Transcrição` section nor any audio reference (ADR-0013 / BR-8).
-fn assemble_brainstorm_report(slug: &str, today: &str, parts: &[ReportPart]) -> String {
+// The report is born in the active UI language (ADR-0002 §1); anything but
+// "en" falls back to pt, the original.
+fn assemble_brainstorm_report(slug: &str, today: &str, parts: &[ReportPart], lang: &str) -> String {
+    let en = lang == "en";
+    let empty_note = if en {
+        "_(no entries)_"
+    } else {
+        "_(sem registros)_"
+    };
     let mut out = String::new();
-    out.push_str(&format!("# Relatório — {slug}\n\n"));
-    out.push_str("_Relatório consolidado (ADR-0013) — resumo, decisões, dúvidas, investigações e dados das partes selecionadas. Sem transcrição nem áudio. É isto que segue para a fila de geração de contexto._\n\n");
+    out.push_str(&format!(
+        "# {} — {slug}\n\n",
+        if en { "Report" } else { "Relatório" }
+    ));
+    out.push_str(if en {
+        "_Consolidated report (ADR-0013) — summary, decisions, questions, investigations and data from the selected parts. No transcript, no audio. This is what goes to the context-generation queue._\n\n"
+    } else {
+        "_Relatório consolidado (ADR-0013) — resumo, decisões, dúvidas, investigações e dados das partes selecionadas. Sem transcrição nem áudio. É isto que segue para a fila de geração de contexto._\n\n"
+    });
     out.push_str(&format!("- Brainstorming: {slug}\n"));
-    out.push_str(&format!("- Data: {today}\n"));
-    out.push_str(&format!("- Partes: {}\n\n", parts.len()));
+    out.push_str(&format!(
+        "- {}: {today}\n",
+        if en { "Date" } else { "Data" }
+    ));
+    out.push_str(&format!(
+        "- {}: {}\n\n",
+        if en { "Parts" } else { "Partes" },
+        parts.len()
+    ));
 
-    // Origem — links back to the source parts (references, not the transcript)
-    out.push_str("## Origem\n\n");
+    // Origin — links back to the source parts (references, not the transcript)
+    out.push_str(if en { "## Origin\n\n" } else { "## Origem\n\n" });
     if parts.is_empty() {
-        out.push_str("_(nenhuma parte selecionada)_\n\n");
+        out.push_str(if en {
+            "_(no parts selected)_\n\n"
+        } else {
+            "_(nenhuma parte selecionada)_\n\n"
+        });
     } else {
         for p in parts {
             out.push_str(&format!("- [{}](acervo://{})\n", p.title, p.rel));
@@ -1058,12 +1101,37 @@ fn assemble_brainstorm_report(slug: &str, today: &str, parts: &[ReportPart]) -> 
         out.push('\n');
     }
 
-    push_report_section(&mut out, "Resumo", parts, |p| &p.resumo);
-    push_report_section(&mut out, "Decisões", parts, |p| &p.decisoes);
-    push_report_section(&mut out, "Dúvidas & Respostas", parts, |p| &p.duvidas);
-    push_report_section(&mut out, "Investigações", parts, |p| &p.investigacoes);
-    push_report_section(&mut out, "Notas", parts, |p| &p.notas);
-    push_report_section(&mut out, "Dados", parts, |p| &p.dados);
+    let s = |pt: &'static str, en_h: &'static str| if en { en_h } else { pt };
+    push_report_section(&mut out, s("Resumo", "Summary"), empty_note, parts, |p| {
+        &p.resumo
+    });
+    push_report_section(
+        &mut out,
+        s("Decisões", "Decisions"),
+        empty_note,
+        parts,
+        |p| &p.decisoes,
+    );
+    push_report_section(
+        &mut out,
+        s("Dúvidas & Respostas", "Questions & Answers"),
+        empty_note,
+        parts,
+        |p| &p.duvidas,
+    );
+    push_report_section(
+        &mut out,
+        s("Investigações", "Investigations"),
+        empty_note,
+        parts,
+        |p| &p.investigacoes,
+    );
+    push_report_section(&mut out, s("Notas", "Notes"), empty_note, parts, |p| {
+        &p.notas
+    });
+    push_report_section(&mut out, s("Dados", "Data"), empty_note, parts, |p| {
+        &p.dados
+    });
     // owner decision (2026-07-28): no "## Estatísticas" counter block — the
     // counts carried no meaning for the reader and were dropped everywhere.
     out
@@ -1112,6 +1180,7 @@ fn build_brainstorm_report(
     selection: &[SelItem],
     today: &str,
     stamp: &str,
+    lang: &str,
 ) -> Result<String, String> {
     if !valid_context(slug) {
         return Err("err.invalid_brainstorm".into());
@@ -1132,7 +1201,7 @@ fn build_brainstorm_report(
     for it in items {
         parts.push(gather_part(base, it)?);
     }
-    let report = assemble_brainstorm_report(slug, today, &parts);
+    let report = assemble_brainstorm_report(slug, today, &parts, lang);
     let dir = root.join("relatorios");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let fname = format!("{stamp}-relatorio.md");
@@ -1352,7 +1421,14 @@ pub fn brain_brainstorm_build_report(
     selection: Vec<SelItem>,
 ) -> Result<BuildReportOut, String> {
     let base = acervo_base()?;
-    let rel = build_brainstorm_report(&base, &slug, &selection, &today_iso(), &now_stamp())?;
+    let rel = build_brainstorm_report(
+        &base,
+        &slug,
+        &selection,
+        &today_iso(),
+        &now_stamp(),
+        &crate::config::ui_lang(),
+    )?;
     emit_brainstorming_changed(&app, serde_json::json!({ "slug": slug, "rel": rel }));
     Ok(BuildReportOut { rel })
 }
@@ -1652,9 +1728,15 @@ mod tests {
     fn assemble_brainstorm_report_merges_all_parts_and_aggregates_stats() {
         let base = tmp("report");
         seed_report_fixture(&base, "frota-2026");
-        let rel =
-            build_brainstorm_report(&base, "frota-2026", &[], "2026-07-28", "2026-07-28-0900")
-                .unwrap();
+        let rel = build_brainstorm_report(
+            &base,
+            "frota-2026",
+            &[],
+            "2026-07-28",
+            "2026-07-28-0900",
+            "pt",
+        )
+        .unwrap();
         assert_eq!(
             rel,
             "brainstorming/frota-2026/relatorios/2026-07-28-0900-relatorio.md"
@@ -1692,6 +1774,46 @@ mod tests {
         assert!(!r.contains("- Decisões: ") && !r.contains("- Dúvidas: "));
     }
 
+    // ADR-0002 §1 — generated content is born in the active UI language.
+    #[test]
+    fn brainstorm_report_is_english_when_lang_is_en() {
+        let base = tmp("report-en");
+        seed_report_fixture(&base, "frota-2026");
+        let rel = build_brainstorm_report(
+            &base,
+            "frota-2026",
+            &[],
+            "2026-07-28",
+            "2026-07-28-0900",
+            "en",
+        )
+        .unwrap();
+        let r = std::fs::read_to_string(base.join(&rel)).unwrap();
+        for h in [
+            "## Origin",
+            "## Summary",
+            "## Decisions",
+            "## Questions & Answers",
+            "## Investigations",
+            "## Notes",
+            "## Data",
+        ] {
+            assert!(r.contains(h), "missing {h}");
+        }
+        assert!(!r.contains("## Resumo"));
+        // pt-authored source meetings still feed an en report (tolerant extraction)
+        assert!(r.contains("Resumo de 2026-07-27-1000-planejamento"));
+    }
+
+    #[test]
+    fn extract_section_any_reads_pt_or_en_headings() {
+        let en = "## Summary\n\nAll good.\n\n## Decisions\n\nShip it.\n";
+        assert_eq!(extract_section_any(en, &["Resumo", "Summary"]), "All good.");
+        let pt = "## Resumo\n\nTudo bem.\n";
+        assert_eq!(extract_section_any(pt, &["Resumo", "Summary"]), "Tudo bem.");
+        assert_eq!(extract_section_any(pt, &["Decisões", "Decisions"]), "");
+    }
+
     #[test]
     fn build_report_subset_selection_only_includes_chosen_parts() {
         let base = tmp("report-sub");
@@ -1700,9 +1822,15 @@ mod tests {
             kind: "pergunta".into(),
             rel: "brainstorming/frota-2026/perguntas/q1.md".into(),
         }];
-        let rel =
-            build_brainstorm_report(&base, "frota-2026", &sel, "2026-07-28", "2026-07-28-1000")
-                .unwrap();
+        let rel = build_brainstorm_report(
+            &base,
+            "frota-2026",
+            &sel,
+            "2026-07-28",
+            "2026-07-28-1000",
+            "pt",
+        )
+        .unwrap();
         let r = std::fs::read_to_string(base.join(&rel)).unwrap();
         assert!(r.contains("Qual o prazo?"));
         // a meeting NOT selected must not leak in
