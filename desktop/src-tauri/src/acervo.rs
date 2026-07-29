@@ -397,6 +397,8 @@ fn create_brainstorming(
         "perguntas",
         "notas",
         "relatorios",
+        "apresentacoes",
+        "anexos",
     ] {
         std::fs::create_dir_all(dir.join(sub)).map_err(|e| e.to_string())?;
     }
@@ -1241,6 +1243,8 @@ fn all_parts_of(base: &Path, slug: &str) -> Vec<SelItem> {
         ("investigacoes", "investigacao"),
         ("perguntas", "pergunta"),
         ("notas", "nota"),
+        ("apresentacoes", "apresentacao"),
+        ("anexos", "anexo"),
     ] {
         if let Ok(rd) = std::fs::read_dir(root.join(sub)) {
             for e in rd.flatten().filter(|e| e.path().is_file()) {
@@ -1670,6 +1674,8 @@ mod tests {
         assert_eq!(t.rel, "brainstorming/frota-2026");
         assert!(base.join("brainstorming/frota-2026/reunioes").is_dir());
         assert!(base.join("brainstorming/frota-2026/relatorios").is_dir());
+        assert!(base.join("brainstorming/frota-2026/apresentacoes").is_dir());
+        assert!(base.join("brainstorming/frota-2026/anexos").is_dir());
         assert!(base.join("brainstorming/frota-2026/indice.md").is_file());
         assert!(base.join("brainstorming/frota-2026/meta.json").is_file());
 
@@ -2140,6 +2146,38 @@ mod tests {
         // a meeting NOT selected must not leak in
         assert!(!r.contains("Resumo de 2026-07-27-1000-planejamento"));
         assert!(r.contains("- Partes: 1"));
+    }
+
+    // ADR-0007: anexos/ and apresentacoes/ are new brainstorming subfolders —
+    // all_parts_of must enumerate them (empty selection = "everything") and
+    // gather_part's unknown-kind fallback routes them into "## Notas", with no
+    // further code needed (confirmed by this test, not just by reading).
+    #[test]
+    fn all_parts_of_includes_anexos_and_apresentacoes() {
+        let base = tmp("report-anexos");
+        create_brainstorming(&base, "Frota 2026", None, "2026-07-28").unwrap();
+        std::fs::write(
+            base.join("brainstorming/frota-2026/anexos/ata-drive.md"),
+            "---\nloro: 1\nfonte: drive\n---\n\n# Ata da reunião externa\n\nPontos discutidos no Drive.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            base.join("brainstorming/frota-2026/apresentacoes/deck-v1.md"),
+            "---\nloro: 1\n---\n\n# Deck v1\n\n## Slide 1\n\nProposta inicial.\n",
+        )
+        .unwrap();
+        let rel = build_brainstorm_report(
+            &base,
+            "frota-2026",
+            &[],
+            "2026-07-28",
+            "2026-07-28-1100",
+            "pt",
+        )
+        .unwrap();
+        let r = std::fs::read_to_string(base.join(&rel)).unwrap();
+        assert!(r.contains("Pontos discutidos no Drive."));
+        assert!(r.contains("Proposta inicial."));
     }
 
     #[test]

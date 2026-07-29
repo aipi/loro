@@ -1566,6 +1566,15 @@ async function loadTemaChildren(slug) {
   let notas = [];
   try { notas = ((await invoke("brain_list_dir", { rel: `brainstorming/${slug}/notas` })) || []).filter((f) => !f.dir); }
   catch (_) {}
+  // ADR-0007: anexos/apresentacoes are fed by habilidades (sincronizar,
+  // apresentação, artefato) or by the user dropping files straight into the
+  // real folder on disk — no dedicated "importar" UI for that second path.
+  let apresentacoes = [];
+  try { apresentacoes = ((await invoke("brain_list_dir", { rel: `brainstorming/${slug}/apresentacoes` })) || []).filter((f) => !f.dir); }
+  catch (_) {}
+  let anexos = [];
+  try { anexos = ((await invoke("brain_list_dir", { rel: `brainstorming/${slug}/anexos` })) || []).filter((f) => !f.dir); }
+  catch (_) {}
   let inner = "";
   // ADR-0002 §6: the whole notes block leads the brainstorming (creation-first),
   // above the meetings — "＋ nova nota" is the top row.
@@ -1577,6 +1586,8 @@ async function loadTemaChildren(slug) {
     `<button class="bsaddbtn" data-syncdrive="${esc(slug)}" title="${t("Anexar uma nota de reunião externa (Google Drive/Gemini), sem ler o conteúdo")}">⇄ ${t("sincronizar reunião")}</button>` +
     `</div>`;
   for (const f of notas) inner += bsPartRow("nota", f.path, f.path, shortName(f.name), f.name, false);
+  for (const f of apresentacoes) inner += bsPartRow("apresentacao", f.path, f.path, shortName(f.name), f.name, false);
+  for (const f of anexos) inner += bsPartRow("anexo", f.path, f.path, shortName(f.name), f.name, false);
   for (const m of meetings) {
     // título do manifest (renomeável); cai para o id humanizado quando ausente
     const title = LM.meetingTitleFromManifest({ titulo: m.titulo }, m.id);
@@ -1586,7 +1597,7 @@ async function loadTemaChildren(slug) {
     inner += `<div class="bchild" data-mtgchild="${esc(m.id)}" data-mtgrel="${esc(m.rel)}" ${mopen ? "" : "hidden"}></div>`;
     if (mopen) await fillMeetingChild(m.id, m.rel);
   }
-  if (!meetings.length && !notas.length) {
+  if (!meetings.length && !notas.length && !apresentacoes.length && !anexos.length) {
     inner += `<div class="bempty">${t("vazio — grave uma reunião (●) ou escreva uma nota")}</div>`;
   }
   holder.innerHTML = inner;
