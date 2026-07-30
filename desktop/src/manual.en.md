@@ -82,6 +82,16 @@ palette: `Cmd/Ctrl+Shift+P` → "Loro tour".
   request; **✦ ask the AI** (a note's/analysis' ⋯ menu **and the right-side
   rail of any open file**) applies a request to the existing content — the
   AI evolves it, never erases.
+- **⋯ menu on any file** (note, attachment, misc, meeting note): beyond
+  **rename** and **delete**, it offers **⇄ move to…** (pick the destination
+  folder — misc, or any brainstorming's notes/attachments folders) and
+  **⧉ copy path** — **relative** (portable, the format used by `acervo://`
+  references) or **absolute** (the full on-disk path, handy to open in
+  Finder/terminal). A same-named file at the destination is never overwritten.
+- **Drag and drop:** drag a file's **icon** (the cursor turns into a grab
+  hand) onto a folder header (📁 notes, 📁 attachments or 📁 misc) to move it —
+  the same effect as **move to…**, confined to the brainstorming world (never
+  touches versioned content). The rest of the row stays click-to-open.
 - **Right-side actions rail:** opening any note/document shows separate
   action cards on the right — **habilidade** (a dropdown with friendly
   names; the selected habilidade's description stays visible right below
@@ -108,7 +118,7 @@ palette: `Cmd/Ctrl+Shift+P` → "Loro tour".
   folders).
 - Every brainstorming has exactly three folders, visible in the sidebar as
   collapsible groups with a folder icon (📁 **reuniões**, 📁 **notas**,
-  📁 **anexos** — each with an item count): **reunioes/** (every meeting is
+  📁 **anexos**): **reunioes/** (every meeting is
   born there), **notas/**, and **anexos/** (a presentation is just one kind
   of anexo — no folder of its own). `anexos/` is fed by a habilidade (sync,
   presentation, artifact) or by dropping a file straight into the real

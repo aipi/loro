@@ -1656,9 +1656,10 @@ function renderPessoal(allTemas, avulso) {
     }
     if (avulso.length) {
       const key = "pes:avulso", open = bOpen.has(key);
-      html += `<div class="bitem ctx${open ? " open" : ""}" data-pestoggle="${key}">${ico("note", "ac")}<span class="bn">${t("avulso")}</span><span class="pill">${avulso.length}</span></div>` +
+      html += `<div class="bitem ctx${open ? " open" : ""}" data-pestoggle="${key}">${ico("note", "ac")}<span class="bn">${t("avulso")}</span></div>` +
         `<div class="bchild" ${open ? "" : "hidden"}>` +
-        avulso.map((f) => `<div class="bitem file" data-doc="${esc(f.path)}" title="${esc(f.name)}">${ico("file")}<span class="bn">${esc(shortName(f.name))}</span></div>`).join("") +
+        avulso.map((f) => `<div class="bitem file" data-doc="${esc(f.path)}" title="${esc(f.name)}">${ico("file")}<span class="bn">${esc(shortName(f.name))}</span>` +
+          `<button class="rowmenu" data-artmenu="${esc(f.path)}" data-artlabel="${esc(f.name)}" title="${t("ações (renomear, mover, copiar caminho, apagar)")}">⋯</button></div>`).join("") +
         `</div>`;
     }
   } else if (pessoalFilterQuery) {
@@ -1683,9 +1684,8 @@ function renderPessoal(allTemas, avulso) {
 function renderTemaNode(t) {
   const key = "pes:tema:" + t.slug, open = bOpen.has(key);
   const holder = `<div class="bchild" data-temachild="${esc(t.slug)}" ${open ? "" : "hidden"}></div>`;
-  const pill = t.reunioes ? `<span class="pill">${t.reunioes}</span>` : "";
   return `<div class="bitem ctx${open ? " open" : ""}" data-tema="${esc(t.slug)}" title="${esc(t.nome || t.slug)}">` +
-    `${ico("idea", "ac")}<span class="bn">${esc(t.nome || t.slug)}</span>${pill}` +
+    `${ico("idea", "ac")}<span class="bn">${esc(t.nome || t.slug)}</span>` +
     `<button class="rowmenu" data-bsmenu="${esc(t.slug)}" title="${window.LoroI18n.t("ações do brainstorming")}">⋯</button></div>${holder}`;
 }
 // Dentro de um brainstorming a árvore é PLANA (revisão de UX sobre o ADR-0013):
@@ -1748,9 +1748,11 @@ async function loadTemaChildren(slug) {
   const anexosActions =
     `<button class="bsaddbtn" data-syncdrive="${esc(slug)}" title="${t("Trazer uma nota de reunião externa (Google Drive/Gemini) para os anexos deste tema")}">⇄ ${t("sincronizar")}</button>` +
     `<button class="bsaddbtn" data-addanexo="${esc(slug)}" title="${t("Adicionar um arquivo do computador aos anexos deste tema")}">＋ ${t("do computador")}</button>`;
-  inner += folderGroupHtml(`bsfolder:${slug}:reunioes`, t("reuniões"), meetings.length, reunioesRows, t("nenhuma reunião ainda"), reunioesActions);
-  inner += folderGroupHtml(`bsfolder:${slug}:notas`, t("notas"), notas.length, notasRows, t("nenhuma nota ainda"), notasActions);
-  inner += folderGroupHtml(`bsfolder:${slug}:anexos`, t("anexos"), anexos.length, anexosRows, t("nenhum anexo ainda"), anexosActions);
+  // counts are suppressed in the brainstorming tree (0 = no pill) — owner
+  // request; the contextos tree keeps its counts (loadCtxChildren).
+  inner += folderGroupHtml(`bsfolder:${slug}:reunioes`, t("reuniões"), 0, reunioesRows, t("nenhuma reunião ainda"), reunioesActions);
+  inner += folderGroupHtml(`bsfolder:${slug}:notas`, t("notas"), 0, notasRows, t("nenhuma nota ainda"), notasActions);
+  inner += folderGroupHtml(`bsfolder:${slug}:anexos`, t("anexos"), 0, anexosRows, t("nenhum anexo ainda"), anexosActions);
   holder.innerHTML = inner;
   wirePessoal();
   // fillMeetingChild queries the live DOM — must run AFTER innerHTML is set,
@@ -1863,6 +1865,56 @@ function wirePessoal() {
       wirePessoal(); markSel();
     }
   }));
+  wirePessoalDnd();
+}
+
+// A folder-group key (data-pestoggle) → the acervo-relative directory a dropped
+// file should move into. Only the flat file folders are valid targets; reuniões
+// holds meeting FOLDERS, not loose files, so it is not droppable.
+function pestoggleDestDir(key) {
+  if (key === "pes:avulso") return "brainstorming/avulso";
+  const m = /^bsfolder:(.+):(notas|anexos)$/.exec(key);
+  return m ? `brainstorming/${m[1]}/${m[2]}` : null;
+}
+
+// Drag a movable file (notes/anexos/avulso/meeting-notes all carry
+// data-artmenu) onto a folder-group header to move it (brain_move_pessoal).
+// The drag handle is the file ICON, NOT the whole row: a draggable row makes
+// the WebView interpret a slightly-moved click (common on trackpads) as a drag
+// and swallow the `click`, so single-clicking a file would sometimes fail to
+// open it. Keeping the row itself non-draggable makes click-to-open reliable;
+// only the icon starts a move. Property assignment keeps this idempotent across
+// the repeated wirePessoal() calls on persistent nodes.
+function wirePessoalDnd() {
+  B.navPessoal.querySelectorAll(".bitem.file[data-artmenu]").forEach((row) => {
+    row.draggable = false;
+    const handle = row.querySelector(".nico");
+    if (!handle) return;
+    handle.draggable = true;
+    handle.style.cursor = "grab";
+    handle.title = t("arraste para mover");
+    handle.ondragstart = (e) => {
+      e.dataTransfer.setData("text/loro-file", row.dataset.doc);
+      e.dataTransfer.effectAllowed = "move";
+    };
+  });
+  B.navPessoal.querySelectorAll("[data-pestoggle]").forEach((el2) => {
+    const dest = pestoggleDestDir(el2.dataset.pestoggle);
+    if (!dest) return;
+    el2.ondragover = (e) => { e.preventDefault(); el2.classList.add("drop"); };
+    el2.ondragleave = () => el2.classList.remove("drop");
+    el2.ondrop = async (e) => {
+      e.preventDefault(); el2.classList.remove("drop");
+      const rel = e.dataTransfer.getData("text/loro-file");
+      if (!rel) return;
+      if (rel.split("/").slice(0, -1).join("/") === dest) return; // already here
+      try {
+        await invoke("brain_move_pessoal", { rel, destDir: dest });
+        toast(t("movido"));
+        pessoalSig = ""; refreshPessoal();
+      } catch (err) { toast(tErr(String(err))); }
+    };
+  });
 }
 
 // ADR-0005: per-source copy for the /loro-sync modal. `required` gates
@@ -2392,7 +2444,8 @@ function openMeetingMenu(rel, id, title, status, anchor) {
   placeMenu(anchor);
 }
 
-// notes and analysis artifacts: rename in place (world-confined backend) + delete
+// notes and analysis artifacts: rename in place (world-confined backend),
+// move to another folder, copy path (relative/absolute) + delete
 function openArtefatoMenu(rel, label, anchor) {
   B.acervoMenu.hidden = true;
   B.bMenu.innerHTML =
@@ -2400,11 +2453,81 @@ function openArtefatoMenu(rel, label, anchor) {
     `<div class="fitem2 strong" data-ainote><span class="fn">✦ ${t("pedir à IA…")}</span></div>` +
     `<div class="fsep"></div>` +
     `<div class="fitem2" data-ren><span class="fn">✎ ${t("renomear")}</span></div>` +
+    `<div class="fitem2" data-mv><span class="fn">⇄ ${t("mover para…")}</span></div>` +
+    `<div class="fitem2" data-cprel><span class="fn">⧉ ${t("copiar caminho relativo")}</span></div>` +
+    `<div class="fitem2" data-cpabs><span class="fn">⧉ ${t("copiar caminho absoluto")}</span></div>` +
+    `<div class="fsep"></div>` +
     `<div class="fitem2 danger" data-del><span class="fn">${t("apagar")}</span></div>`;
   B.bMenu.querySelector("[data-ainote]").onclick = () => { closeFloat(); promptNoteAI(rel, true); };
   B.bMenu.querySelector("[data-ren]").onclick = () => { closeFloat(); promptRenameArtefato(rel); };
+  B.bMenu.querySelector("[data-mv]").onclick = () => { closeFloat(); promptMoveFile(rel); };
+  B.bMenu.querySelector("[data-cprel]").onclick = () => { closeFloat(); copyFilePath(rel, false); };
+  B.bMenu.querySelector("[data-cpabs]").onclick = () => { closeFloat(); copyFilePath(rel, true); };
   B.bMenu.querySelector("[data-del]").onclick = () => { closeFloat(); delPessoal(rel); };
   placeMenu(anchor);
+}
+
+// Copy a file's acervo-relative path (portable, mirrors acervo:// refs) or its
+// absolute on-disk path (resolved by the backend, guarded to the acervo root).
+async function copyFilePath(rel, absolute) {
+  let text = rel;
+  if (absolute) {
+    try { text = await invoke("brain_abs_path", { rel }); }
+    catch (e) { toast(tErr(String(e))); return; }
+  }
+  toast((await copyToClipboard(text)) ? t("caminho copiado") : t("não consegui copiar"));
+}
+
+// Dependency-light clipboard write: the WebView clipboard API first, a hidden
+// textarea + execCommand fallback for contexts where it is unavailable.
+async function copyToClipboard(text) {
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch (_) {}
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+    document.body.appendChild(ta); ta.focus(); ta.select();
+    const ok = document.execCommand("copy");
+    ta.remove();
+    return ok;
+  } catch (_) { return false; }
+}
+
+// "mover para…": pick a destination folder within the brainstorming world
+// (avulso, or any brainstorming's notas/anexos). The backend confines the move
+// to the non-versioned world and never overwrites (brain_move_pessoal).
+async function promptMoveFile(rel) {
+  let temas = [];
+  try { temas = (await invoke("brain_list_brainstorms")) || []; } catch (_) {}
+  const cur = rel.split("/").slice(0, -1).join("/");
+  const opts = [{ dir: "brainstorming/avulso", label: t("avulso") }];
+  for (const b of temas) {
+    opts.push({ dir: `brainstorming/${b.slug}/notas`, label: `${b.nome || b.slug} › ${t("notas")}` });
+    opts.push({ dir: `brainstorming/${b.slug}/anexos`, label: `${b.nome || b.slug} › ${t("anexos")}` });
+  }
+  const dests = opts.filter((o) => o.dir !== cur);
+  if (!dests.length) { toast(t("nenhum destino disponível")); return; }
+  openModal(
+    t("Mover arquivo"),
+    `<label class="wfield"><span class="mono">${t("destino")}</span>` +
+      `<select id="mvDest">` +
+      dests.map((d) => `<option value="${esc(d.dir)}">${esc(d.label)}</option>`).join("") +
+      `</select></label>`,
+    t("mover"),
+    async () => {
+      const destDir = ($("mvDest") && $("mvDest").value) || "";
+      if (!destDir) return;
+      try {
+        await invoke("brain_move_pessoal", { rel, destDir });
+        toast(t("movido"));
+        pessoalSig = ""; refreshPessoal();
+      } catch (e) { toast(tErr(String(e))); }
+    }
+  );
 }
 
 // /loro-note: create a note from a prompt (target = notes folder) or evolve an
@@ -2790,7 +2913,7 @@ async function renderView(tab, stale) {
     ? `<div class="annotatable">${mdRender(body || fallback)}</div>`
     : mdRender(body || fallback));
   wireDocLinks();
-  if (annotatable) await decorateAnnotations(tab.rel);
+  if (annotatable) await decorateAnnotations(tab.rel, stale);
 }
 
 // ADR-0009: front-matter refs (+ audio) as a collapsible panel; each row is a
@@ -2830,7 +2953,7 @@ async function renderMeetingLiving(tab, stale) {
   const artefatos = await listArtefatos(LM.meetingDir(tab.rel));
   if (stale && stale()) return;
   const status = manifest ? manifest.status : (meeting.id === id ? meeting.phase : "done");
-  paintMeetingSurface(id, raw, manifest, status, artefatos, tab.rel);
+  paintMeetingSurface(id, raw, manifest, status, artefatos, tab.rel, stale);
 }
 
 // Lista os ARQUIVOS reais sob <reunião>/notas/ — o skill grava direto em disco
@@ -2859,7 +2982,7 @@ async function refreshLivingInPlace(id) {
   const artefatos = await listArtefatos(LM.meetingDir(tab.rel));
   if (ws.activeId !== tab.id) return;
   const status = manifest ? manifest.status : (meeting.id === id ? meeting.phase : "done");
-  paintMeetingSurface(id, raw, manifest, status, artefatos, tab.rel);
+  paintMeetingSurface(id, raw, manifest, status, artefatos, tab.rel, () => ws.activeId !== tab.id);
   if (wasBottom) scrollMeetingBottom();
   else { B.wsBody.scrollTop = prevTop; showPill(); }
 }
@@ -2869,7 +2992,7 @@ function renderIfLiving(id) {
   if (t && LM.livingId(t.rel) === id) renderActive();
 }
 
-function paintMeetingSurface(id, raw, manifest, status, artefatos, rel) {
+function paintMeetingSurface(id, raw, manifest, status, artefatos, rel, stale) {
   const body = LM.stripMarker(R.splitFrontMatter ? R.splitFrontMatter(raw || "").body : (raw || ""));
   // ADR-0012: mostra o status do pseudo-stream enquanto grava (preview ao vivo),
   // para o problema "não aparece nada" ser diagnosticável sem olhar logs.
@@ -2889,7 +3012,7 @@ function paintMeetingSurface(id, raw, manifest, status, artefatos, rel) {
     `</div>`;
   wireMeetingSurface(id);
   wireDocLinks();
-  if (body.trim() && rel) decorateAnnotations(rel);
+  if (body.trim() && rel) decorateAnnotations(rel, stale);
 }
 
 function meetingStatusBar(status) {
@@ -2972,13 +3095,18 @@ function paintAnnotations(container, list) {
 }
 
 // Load + paint + wire annotations for the currently-rendered doc. Called at the
-// end of renderView / paintMeetingSurface; a stale guard drops the result if a
-// newer render replaced the container.
-async function decorateAnnotations(rel) {
+// end of renderView / paintMeetingSurface. Two guards drop a superseded run:
+// `stale()` (the renderActive renderGen — the annotation load is a slow IPC
+// round-trip during which the user can switch docs) AND container identity (a
+// newer render replaced the .annotatable). `annotState.rel` is committed
+// SYNCHRONOUSLY up front so a selection made before the load resolves targets
+// THIS doc, never the previous one (a highlight would otherwise land elsewhere).
+async function decorateAnnotations(rel, stale) {
   const container = annotContainer();
   if (!container || !rel) { annotState = { rel: null, list: [], orphans: [] }; return; }
+  annotState = { rel, list: [], orphans: [] };
   const list = await loadAnnotations(rel);
-  if (annotContainer() !== container) return; // a newer render won
+  if ((stale && stale()) || annotContainer() !== container) return; // a newer render won
   const orphans = paintAnnotations(container, list);
   annotState = { rel, list, orphans };
   wireMarks(container);

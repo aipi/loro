@@ -932,7 +932,6 @@ body {
 #navPessoal .bitem.on { background: color-mix(in srgb, var(--yellow) 14%, transparent); color: var(--yellow); }
 #navPessoal .bitem.file.on, #navPessoal .bitem.file:hover { color: var(--yellow); }
 #navPessoal .bitem.on > .nico, #navPessoal .bitem.on > .bn { color: var(--yellow); }
-#navPessoal .pill { background: color-mix(in srgb, var(--yellow) 16%, transparent); color: var(--yellow); }
 #navPessoal .bitem.addctx {
   border-color: color-mix(in srgb, var(--yellow) 55%, transparent); color: var(--yellow);
 }
