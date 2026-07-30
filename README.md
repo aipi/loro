@@ -51,8 +51,8 @@ Three parts work together:
 
 | Component | Purpose | How |
 |---|---|---|
-| **whisper-cpp** (`whisper-cli` + `whisper-stream`) | transcription engine (system dependency, never vendored) | `./loro.sh setup` (macOS: `brew install whisper-cpp`) |
-| **ffmpeg** | audio conversion/mixing | `./loro.sh setup` |
+| **whisper-cpp** (`whisper-cli` + `whisper-stream`) | transcription engine (system dependency, never vendored) | `./loro.sh setup` (macOS: `brew install whisper-cpp`) · Windows: the in-app setup button builds it (ADR-0012) |
+| **ffmpeg** | audio conversion/mixing | `./loro.sh setup` (Windows: `winget install Gyan.FFmpeg`) |
 | **Node.js ≥ 18** + **Rust (rustup)** | desktop app (Tauri) | https://nodejs.org · https://rustup.rs |
 | **Python ≥ 3.12** | diarization (optional) | — |
 | **git** + **gh** | optional: knowledge versioning / remote collaboration | opt-in, validated by an in-app doctor |
@@ -114,7 +114,82 @@ into `~/.loro/models`. Then you are ready to transcribe.
 | `… is not in the sudoers file` (install hangs on a password prompt) | you're a non-admin user and can't write `/Applications`; reinstall with `brew install --cask --appdir="$HOME/Applications" loro` |
 | macOS says the app is "damaged" / offers **Move to Trash** | click **Cancel** (the app is ad-hoc signed, not damaged), then `xattr -dr com.apple.quarantine <path-to>/Loro.app` |
 
+## Install (Windows 10/11, x64)
+
+There is no Homebrew cask and no prebuilt installer yet, so on Windows you build
+Loro from source once. Everything runs in **PowerShell** — `loro.sh` and the
+`Makefile` need a POSIX shell and are not the Windows path.
+
+**1. Install the toolchain.** Rust and Node are needed to build the app; MSVC and
+CMake are needed later to build the transcription engine.
+
+```powershell
+winget install Rustlang.Rustup OpenJS.NodeJS Kitware.CMake Git.Git Gyan.FFmpeg
+```
+
+Visual Studio Build Tools with the **C++ workload** is also required (Rust uses
+the MSVC linker). If you don't have it:
+
+```powershell
+winget install Microsoft.VisualStudio.2022.BuildTools --override "--quiet --wait --norestart --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+```
+
+**2. Build Loro.**
+
+```powershell
+git clone https://github.com/aipi/loro.git
+```
+
+```powershell
+cd loro\desktop; npm install; npm run tauri build
+```
+
+That produces an installer and a standalone binary under
+`desktop\src-tauri\target\release`:
+
+| Artifact | Path |
+|---|---|
+| MSI installer | `bundle\msi\Loro_<version>_x64_en-US.msi` |
+| NSIS setup | `bundle\nsis\Loro_<version>_x64-setup.exe` |
+| Standalone exe | `Loro.exe` |
+
+**3. Open Loro.** Run either installer, then launch **Loro** from the Start menu.
+To skip installing, run `Loro.exe` from the path above — it is the same app.
+
+To work on the code instead, `npm run tauri dev` compiles and opens the app with
+the dev reload loop. The first build takes a few minutes either way; later runs
+are incremental.
+
+**4. Install the transcription engine.** Loro opens with a banner reading
+*"faltam dependências"* and a **configurar agora no terminal** button. Click it —
+on Windows that runs a bundled PowerShell script in the embedded terminal which
+builds `whisper-stream` and `whisper-cli` from source with SDL2 and installs them
+into `%USERPROFILE%\.loro\bin`, where Loro looks for them (so your `PATH` is left
+alone).
+
+whisper.cpp publishes prebuilt Windows binaries for `whisper-cli` but **not** for
+`whisper-stream`, because live mode needs SDL2 — that is why this step compiles
+instead of downloading. It is idempotent: rerun it after a failure and it resumes.
+Restart Loro when it finishes so the engine is detected.
+
+**5. Download a model.** **Settings (⚙) → model → + download**, same as macOS —
+`large-v3-turbo` (accurate) or `small` (fast), verified by SHA-256 into
+`%USERPROFILE%\.loro\models`.
+
+### Windows notes
+
+| Topic | Detail |
+|---|---|
+| **The app is unsigned** | there is no code-signing certificate, so SmartScreen shows *"Windows protected your PC"* on first run of the installer. **More info → Run anyway**. |
+| **`failed to bundle project: Acesso negado (os error 5)`** | the cached NSIS toolchain extracted only partially (a giveaway is a `makensis.exe` of a few KB). Delete `%LOCALAPPDATA%\tauri\nsis-3.11` and rebuild; the MSI is unaffected and is produced before this step. |
+| **Meeting mode is macOS-only** | it captures both sides through a ScreenCaptureKit sidecar (ADR-0005), which is an Apple framework. On Windows the mode reports `err.syscap_not_found`; use **live** or **file** mode instead. |
+| **System audio** | Windows has no BlackHole. Loro matches your driver's own loopback device — "Mixagem estéreo" on a pt-BR install, "Stereo Mix" in English — which usually just needs enabling in the Sound panel's Recording tab. If your driver has none, install [VB-Cable](https://vb-audio.com/Cable/) and set it as the default output. The in-app flow walks through both (ADR-0012). |
+| **Data location** | `%USERPROFILE%\.loro` (models, logs, engine, config), resolved from `USERPROFILE`. Override with `LORO_HOME`. |
+| **`loro.sh` / `make`** | bash and POSIX-shell only. Use the PowerShell commands in [Development](#development) instead. |
+
 ## Quick start (developing from source)
+
+macOS/Linux:
 
 ```bash
 ./loro.sh setup     # install engine + download models to ~/.loro/models
@@ -124,19 +199,29 @@ into `~/.loro/models`. Then you are ready to transcribe.
 ./loro.sh doctor    # report the detected environment
 ```
 
+Windows (PowerShell) — the app itself replaces the CLI here; use the setup banner
+for the engine and the ⚙ Settings for models:
+
+```powershell
+cd desktop; npm run tauri dev
+```
+
 ## Capture modes
 
 - **Live** — `whisper-stream` (VAD) streams lines as you speak. `SOURCE=mic`
   (default) needs no setup; `SOURCE=system` captures the computer's output through
-  the **BlackHole** loopback driver (`./loro.sh sysaudio-setup`), which is a
-  system audio driver and therefore **requires admin rights** to install.
+  a loopback capture device. On macOS that is the **BlackHole** driver
+  (`./loro.sh sysaudio-setup`), which **requires admin rights** to install; on
+  Windows it is the audio driver's own "Mixagem estéreo"/"Stereo Mix", which
+  usually only needs enabling, with VB-Cable as the fallback (ADR-0012).
 - **File** — record the whole session, transcribe it at once (`whisper-cli`,
   more faithful than streaming).
-- **Meeting** — your voice + the computer's audio (Meet/Zoom both sides) via a
-  ScreenCaptureKit sidecar: one Screen Recording permission, **no virtual audio
-  driver and no admin** — so on a locked-down machine this is the way to capture
-  both sides. The transcript accretes live into the meeting's notebook; **audio
-  is transient** — deleted once transcribed.
+- **Meeting** (macOS only) — your voice + the computer's audio (Meet/Zoom both
+  sides) via a ScreenCaptureKit sidecar: one Screen Recording permission, **no
+  virtual audio driver and no admin** — so on a locked-down Mac this is the way to
+  capture both sides. The transcript accretes live into the meeting's notebook;
+  **audio is transient** — deleted once transcribed. ScreenCaptureKit is an Apple
+  framework, so on Windows this mode is unavailable — use live or file mode.
 
 ## The knowledge base ("acervo")
 
@@ -172,6 +257,22 @@ See `docs/adr/0001-baseline.md` §3 for the full posture.
 ## Development
 
 `make test` · `make lint` · `make build` · `make test-docker` (see `Makefile`).
+
+On Windows the `Makefile` recipes need a POSIX shell, so run the same checks
+directly in PowerShell:
+
+```powershell
+cd desktop\src-tauri; cargo test
+```
+
+```powershell
+cd desktop; node --test tests/*.test.js
+```
+
+```powershell
+cargo clippy --manifest-path desktop/src-tauri/Cargo.toml -- -D warnings; cargo fmt --manifest-path desktop/src-tauri/Cargo.toml -- --check
+```
+
 Contribution rules and the AI-agent workflow are in `CONTRIBUTING.md` and
 `CLAUDE.md`. The desktop app's UI details: `desktop/README.md`.
 

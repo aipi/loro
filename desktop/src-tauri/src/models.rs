@@ -92,20 +92,41 @@ pub fn download_tmp_path(id: &str) -> std::path::PathBuf {
     models_dir().join(format!("ggml-{id}.bin.part"))
 }
 
+// The lowercase 64-char hex digest found in a checksum tool's output, if any.
+// Parsed by shape rather than position or label: shasum/sha256sum lead with the
+// digest, while Windows certutil prints it on its own line under a *localized*
+// header, and older certutil groups it in space-separated quads. Matching "the
+// first token that looks like a SHA-256" covers all of them.
+fn parse_sha256(out: &str) -> Option<String> {
+    let is_digest = |s: &str| s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit());
+    for line in out.lines() {
+        if let Some(tok) = line.split_whitespace().next().filter(|t| is_digest(t)) {
+            return Some(tok.to_lowercase());
+        }
+        // certutil may space the digest into quads: join the line and retry
+        let joined: String = line.split_whitespace().collect();
+        if is_digest(&joined) {
+            return Some(joined.to_lowercase());
+        }
+    }
+    None
+}
+
 // Compute a file's SHA-256 via the system tool (shasum on macOS, sha256sum on
-// Linux). Returns the lowercase hex digest.
+// Linux, certutil on Windows — which ships with the OS, unlike the other two).
+// Returns the lowercase hex digest.
 pub fn sha256_of(path: &Path) -> Result<String, String> {
     let run = |prog: &str, args: &[&str]| -> Option<String> {
         let out = std::process::Command::new(prog).args(args).output().ok()?;
         if !out.status.success() {
             return None;
         }
-        let s = String::from_utf8_lossy(&out.stdout);
-        s.split_whitespace().next().map(|h| h.to_lowercase())
+        parse_sha256(&String::from_utf8_lossy(&out.stdout))
     };
     let p = path.to_string_lossy();
     run("shasum", &["-a", "256", &p])
         .or_else(|| run("sha256sum", &[&p]))
+        .or_else(|| run("certutil", &["-hashfile", &p, "SHA256"]))
         .ok_or_else(|| "err.sha_tool_missing".into())
 }
 
@@ -191,6 +212,35 @@ mod tests {
             "https://mirror.example/x/ggml-small.bin"
         );
         std::env::remove_var("LORO_HF_BASE");
+    }
+
+    #[test]
+    fn parse_sha256_reads_every_tool_format() {
+        // shasum / sha256sum: digest first, filename after
+        assert_eq!(
+            parse_sha256(&format!("{HELLO_SHA}  hello.txt\n")).unwrap(),
+            HELLO_SHA
+        );
+        // certutil: localized header, digest alone on the next line. The header
+        // must not be mistaken for the digest, hence matching on shape.
+        let certutil =
+            format!("SHA256 hash de C:\\t\\hello.txt:\n{HELLO_SHA}\nCertUtil: concluido.\n");
+        assert_eq!(parse_sha256(&certutil).unwrap(), HELLO_SHA);
+        // older certutil groups the digest into space-separated quads
+        let quads = HELLO_SHA
+            .as_bytes()
+            .chunks(4)
+            .map(|c| std::str::from_utf8(c).unwrap())
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert_eq!(
+            parse_sha256(&format!("header:\n{quads}\n")).unwrap(),
+            HELLO_SHA
+        );
+        // uppercase is normalized
+        assert_eq!(parse_sha256(&HELLO_SHA.to_uppercase()).unwrap(), HELLO_SHA);
+        // nothing digest-shaped
+        assert!(parse_sha256("CertUtil: falhou\n").is_none());
     }
 
     #[test]
