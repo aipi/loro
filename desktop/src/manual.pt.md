@@ -65,6 +65,14 @@ quando quiser pela paleta: `Cmd/Ctrl+Shift+P` → "apresentação do Loro".
   final, com mais fidelidade).
 - O áudio é **transitório**: usado para transcrever e descartado. O indicador
   de privacidade na barra mostra o estado ("sem gravar" / "grava áudio").
+- **Fidelidade**: a captura desliga o processamento de voz do navegador, então
+  o macOS não entra em modo de "processamento de voz" — que antes **abafava
+  todo o áudio do computador** (música, vídeo, chamada) enquanto o Loro gravava,
+  e degradava o áudio de sistema da reunião.
+- **Onda ao vivo**: anima no microfone (ditado) e no áudio do sistema. Na
+  **reunião** a onda do microfone fica parada de propósito — priorizamos gravar
+  o áudio do sistema (as vozes dos participantes) sem abafar, o que impede
+  animar a onda do mic ao mesmo tempo.
 
 ## Brainstorming (o mundo não versionado)
 

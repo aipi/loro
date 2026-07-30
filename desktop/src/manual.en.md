@@ -67,6 +67,14 @@ palette: `Cmd/Ctrl+Shift+P` → "Loro tour".
   the end, with better fidelity).
 - Audio is **transient**: used to transcribe, then discarded. The privacy
   indicator in the bar shows the state ("not recording" / "records audio").
+- **Fidelity**: capture disables the browser's voice DSP, keeping macOS out of
+  voice-processing mode — which used to **muffle all computer audio** (music,
+  video, a call) while Loro was recording, and degraded the meeting's system
+  audio.
+- **Live waveform**: animates for the microphone (dictation) and for system
+  audio. In a **meeting** the mic waveform stays flat on purpose — we prioritize
+  recording the system audio (the participants' voices) without muffling, which
+  rules out animating the mic wave at the same time.
 
 ## Brainstorming (the non-versioned world)
 

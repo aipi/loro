@@ -267,19 +267,24 @@ async function startAudio(deviceLabel) {
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     clog("getUserMedia unavailable — no audio meter"); setMeter("off"); return;
   }
-  let constraints = { audio: true };
+  // echoCancellation por fonte (ADR-0010; ver LoroAudio.audioConstraints):
+  // ligado SÓ no ditado mic-só (única forma de o WebKit alimentar o mic ao Web
+  // Audio p/ a onda). Sistema e reunião ficam com EC desligado — sem abafar o
+  // áudio do sistema (na reunião, o que o ScreenCaptureKit grava).
+  const micEC = !deviceLabel && !state.meetingMode;
+  let constraints = LoroAudio.audioConstraints(undefined, { echoCancellation: micEC });
   if (deviceLabel) {
     try {
       // os labels de enumerateDevices só aparecem após uma permissão de áudio:
       // fazemos um "priming" e paramos o stream antes de casar o dispositivo certo
       let devs = await navigator.mediaDevices.enumerateDevices();
       if (!devs.some((x) => x.kind === "audioinput" && x.label)) {
-        const prime = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const prime = await navigator.mediaDevices.getUserMedia(LoroAudio.audioConstraints());
         prime.getTracks().forEach((t) => t.stop());
         devs = await navigator.mediaDevices.enumerateDevices();
       }
       const d = devs.find((x) => x.kind === "audioinput" && new RegExp(deviceLabel, "i").test(x.label));
-      if (d && d.deviceId) constraints = { audio: { deviceId: { exact: d.deviceId } } };
+      if (d && d.deviceId) constraints = LoroAudio.audioConstraints(d.deviceId, { echoCancellation: micEC });
       else {
         clog("meter: input '" + deviceLabel + "' not found — no wave");
         setMeter("nosignal"); return;
@@ -289,9 +294,24 @@ async function startAudio(deviceLabel) {
   audio.stream = await navigator.mediaDevices.getUserMedia(constraints);
   setMeter(settings.source === "meeting" ? "meeting" : (deviceLabel ? "system" : "mic"));
   audio.ctx = new (window.AudioContext || window.webkitAudioContext)();
+  // WKWebView cria o AudioContext SUSPENSO; suspenso o analyser só devolve
+  // silêncio (linha reta) mesmo com o MediaRecorder gravando normalmente.
+  // startAudio roda dentro do gesto do usuário (clicar em gravar), então o
+  // resume é permitido.
+  if (audio.ctx.state === "suspended") { try { await audio.ctx.resume(); } catch (e) { clog("audioctx resume error: " + e); } }
   audio.analyser = audio.ctx.createAnalyser();
   audio.analyser.fftSize = 1024;
-  audio.ctx.createMediaStreamSource(audio.stream).connect(audio.analyser);
+  const src = audio.ctx.createMediaStreamSource(audio.stream);
+  src.connect(audio.analyser);
+  // WKWebView (WebKit) só "puxa" um MediaStreamAudioSourceNode quando o grafo
+  // alcança o destination; ligado só ao analyser, o node fica mudo e
+  // getByteTimeDomainData devolve ~128 constante (onda reta) mesmo com o mic
+  // ativo. Um ganho ZERO até o destination mantém o grafo sendo processado sem
+  // tocar a captura nos alto-falantes.
+  const sink = audio.ctx.createGain();
+  sink.gain.value = 0;
+  audio.analyser.connect(sink);
+  sink.connect(audio.ctx.destination);
   // ADR-0012 model A: a MEETING does NOT use the continuous mic recorder — the
   // transcript is built live from the rotating preview segments + the system tail,
   // and audio is transient. Running a second continuous MediaRecorder on the same

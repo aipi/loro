@@ -20,5 +20,29 @@
     return { capture: undefined };
   }
 
-  return { pickCaptureDevice };
+  // Monta as constraints do getUserMedia. `noiseSuppression`/`autoGainControl`
+  // ficam SEMPRE desligados: ligados (o padrão do WKWebView) processam a voz e
+  // colocam o macOS em voice-processing (VPIO), abafando toda a saída de áudio
+  // do sistema durante a captura. `echoCancellation` é o único ajustável e tem
+  // um efeito colateral do WebKit que obriga a escolha POR FONTE:
+  //   - false: o loopback do sistema (BlackHole) chega ao Web Audio e nada é
+  //     abafado — usado p/ captura de sistema e p/ reunião (protege o áudio de
+  //     sistema que o ScreenCaptureKit grava);
+  //   - true: o WebKit passa a alimentar o MICROFONE ao Web Audio (sem isso o
+  //     AnalyserNode do mic devolve zeros e a onda não anima), ao custo de
+  //     reativar o VPIO — aceitável só no ditado mic-só, onde não há captura de
+  //     sistema junto.
+  // A transcrição recebe 16 kHz mono via ffmpeg independentemente (ADR-0010).
+  // Função pura — sem IPC nem UI.
+  function audioConstraints(deviceId, opts) {
+    const audio = {
+      echoCancellation: !!(opts && opts.echoCancellation),
+      noiseSuppression: false,
+      autoGainControl: false,
+    };
+    if (deviceId) audio.deviceId = { exact: deviceId };
+    return { audio };
+  }
+
+  return { pickCaptureDevice, audioConstraints };
 });
