@@ -96,7 +96,7 @@ test("selection model toggles rels and maps to backend SelItems in parts order",
 });
 
 test("reportInboxName steers a report to a context via the <ctx>-- prefix", () => {
-  const rel = "brainstorming/frota/relatorios/2026-07-28-0900-relatorio.md";
+  const rel = "brainstorming/frota/anexos/2026-07-28-0900-relatorio.md";
   assert.strictEqual(B.reportInboxName(rel, "frota"), "frota--2026-07-28-0900-relatorio.md");
   // hierarchical context collapses '/' to '-' so the queue name stays flat
   assert.strictEqual(B.reportInboxName(rel, "engenharia/frontend"), "engenharia-frontend--2026-07-28-0900-relatorio.md");

@@ -1550,7 +1550,7 @@ async function loadCtxChildren(name) {
 }
 
 // ============================ produção (mundo pessoal — ADR-0009) ============================
-// A árvore da produção espelha pessoal/temas/<slug>/{reunioes,investigacoes,perguntas,notas}
+// A árvore da produção espelha pessoal/temas/<slug>/{reunioes,notas,anexos}
 // + pessoal/avulso. É o mundo NÃO versionado (âmbar); clicar abre uma aba de preview.
 // Só re-renderiza quando os dados mudam (assinatura) — a expansão é preservada em bOpen.
 let pessoalSig = "";
@@ -1632,9 +1632,9 @@ function renderTemaNode(t) {
 // Dentro de um brainstorming a árvore é PLANA (revisão de UX sobre o ADR-0013):
 // as reuniões aparecem direto no nível do brainstorming — com os artefatos de
 // análise (investigações/respostas) logo abaixo de cada uma — e as notas como
-// subitem ao final. As pastas investigacoes/ e perguntas/ continuam no disco (o
-// relatório "tudo" ainda as lê), mas deixam de ser um nível de navegação: a
-// segmentação em quatro pastas era atrito, não estrutura.
+// subitem ao final. A pasta perguntas/ continua no disco (o relatório "tudo"
+// ainda a lê), mas deixa de ser um nível de navegação: a segmentação em várias
+// pastas era atrito, não estrutura.
 // A selectable part row: a checkbox (data-bssel/data-bskind) + the open target.
 // A meeting row carries a ⋯ menu (renomear/apagar); files keep the plain ×.
 function bsPartRow(kind, openRel, selRel, label, title, indent, meetingId, meetingStatus, mopen) {

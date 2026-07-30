@@ -390,15 +390,11 @@ fn create_brainstorming(
 ) -> Result<BrainstormingRef, String> {
     let slug = sanitize_slug(nome)?;
     let dir = brainstorming_dir(base).join(&slug);
-    for sub in [
-        "",
-        "reunioes",
-        "investigacoes",
-        "perguntas",
-        "notas",
-        "relatorios",
-        "anexos",
-    ] {
+    // ADR-0005: the canonical brainstorming subfolders are reunioes/, notas/ and
+    // anexos/ (perguntas/ kept while it still feeds the "all" report). The legacy
+    // investigacoes/ and relatorios/ folders are no longer scaffolded — non-meeting
+    // output (e.g. the brainstorming report) lands in anexos/.
+    for sub in ["", "reunioes", "perguntas", "notas", "anexos"] {
         std::fs::create_dir_all(dir.join(sub)).map_err(|e| e.to_string())?;
     }
     let indice = dir.join("indice.md");
@@ -1280,7 +1276,7 @@ fn assemble_brainstorm_report(slug: &str, today: &str, parts: &[ReportPart], lan
 }
 
 // If the selection is empty, gather ALL parts of the brainstorming: every meeting
-// under reunioes/ plus every file under investigacoes/, perguntas/, notas/.
+// under reunioes/ plus every file under perguntas/, notas/ and anexos/.
 fn all_parts_of(base: &Path, slug: &str) -> Vec<SelItem> {
     let root = brainstorming_dir(base).join(slug);
     let mut items = Vec::new();
@@ -1294,7 +1290,6 @@ fn all_parts_of(base: &Path, slug: &str) -> Vec<SelItem> {
         }
     }
     for (sub, kind) in [
-        ("investigacoes", "investigacao"),
         ("perguntas", "pergunta"),
         ("notas", "nota"),
         ("anexos", "anexo"),
@@ -1303,6 +1298,10 @@ fn all_parts_of(base: &Path, slug: &str) -> Vec<SelItem> {
             for e in rd.flatten().filter(|e| e.path().is_file()) {
                 let n = e.file_name().to_string_lossy().to_string();
                 if n.starts_with('.') {
+                    continue;
+                }
+                // the generated report itself lands in anexos/ — never re-ingest it
+                if n.ends_with("-relatorio.md") {
                     continue;
                 }
                 items.push(SelItem {
@@ -1315,7 +1314,7 @@ fn all_parts_of(base: &Path, slug: &str) -> Vec<SelItem> {
     items
 }
 
-// Testable core: gather + assemble + write the report under relatorios/. Returns
+// Testable core: gather + assemble + write the report under anexos/. Returns
 // the acervo-relative rel of the written report.
 fn build_brainstorm_report(
     base: &Path,
@@ -1345,11 +1344,11 @@ fn build_brainstorm_report(
         parts.push(gather_part(base, it)?);
     }
     let report = assemble_brainstorm_report(slug, today, &parts, lang);
-    let dir = root.join("relatorios");
+    let dir = root.join("anexos");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let fname = format!("{stamp}-relatorio.md");
     std::fs::write(dir.join(&fname), report).map_err(|e| e.to_string())?;
-    Ok(format!("brainstorming/{slug}/relatorios/{fname}"))
+    Ok(format!("brainstorming/{slug}/anexos/{fname}"))
 }
 
 // ---- Tauri commands (thin wrappers) -----------------------------------------
@@ -1627,7 +1626,7 @@ pub struct BuildReportOut {
 
 // ADR-0013: build ONE consolidated report from the selected brainstorming parts
 // (empty selection == all parts). The report is written under the brainstorming's
-// relatorios/ (visible/openable) and is what the user then sends to the fila.
+// anexos/ (visible/openable) and is what the user then sends to the fila.
 #[tauri::command]
 pub fn brain_brainstorm_build_report(
     app: AppHandle,
@@ -1749,8 +1748,10 @@ mod tests {
         assert_eq!(t.slug, "frota-2026");
         assert_eq!(t.rel, "brainstorming/frota-2026");
         assert!(base.join("brainstorming/frota-2026/reunioes").is_dir());
-        assert!(base.join("brainstorming/frota-2026/relatorios").is_dir());
         assert!(base.join("brainstorming/frota-2026/anexos").is_dir());
+        // legacy folders are no longer scaffolded (ADR-0005)
+        assert!(!base.join("brainstorming/frota-2026/investigacoes").exists());
+        assert!(!base.join("brainstorming/frota-2026/relatorios").exists());
         assert!(base.join("brainstorming/frota-2026/indice.md").is_file());
         assert!(base.join("brainstorming/frota-2026/meta.json").is_file());
 
@@ -2117,12 +2118,6 @@ mod tests {
             std::fs::create_dir_all(d.join("audio")).unwrap();
             std::fs::write(d.join("audio/system.wav"), b"RIFF").unwrap();
         }
-        std::fs::create_dir_all(root.join("investigacoes")).unwrap();
-        std::fs::write(
-            root.join("investigacoes/analise-a.md"),
-            "---\nloro: 1\n---\n\n# Custo por rota\n\nDados apontam alta de 12%.\n",
-        )
-        .unwrap();
         std::fs::create_dir_all(root.join("perguntas")).unwrap();
         std::fs::write(
             root.join("perguntas/q1.md"),
@@ -2152,7 +2147,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             rel,
-            "brainstorming/frota-2026/relatorios/2026-07-28-0900-relatorio.md"
+            "brainstorming/frota-2026/anexos/2026-07-28-0900-relatorio.md"
         );
         let r = std::fs::read_to_string(base.join(&rel)).unwrap();
 
@@ -2173,7 +2168,6 @@ mod tests {
         // merges BOTH meetings' prose + the standalone items
         assert!(r.contains("Resumo de 2026-07-27-1000-planejamento"));
         assert!(r.contains("Resumo de 2026-07-27-1400-custos"));
-        assert!(r.contains("Custo por rota")); // investigacao body under Investigações
         assert!(r.contains("Qual o prazo?")); // pergunta body under Dúvidas
                                               // nota body lands under its own "## Notas" section, not in Resumo
         let notas_sec = r.split("## Notas").nth(1).unwrap_or("");
