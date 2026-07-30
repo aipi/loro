@@ -107,7 +107,9 @@ quando quiser pela paleta: `Cmd/Ctrl+Shift+P` → "apresentação do Loro".
   sempre visível logo abaixo, e **▶ executar** roda sobre o arquivo aberto),
   **pedir à IA…**, e **versionar** (quando o arquivo é de um contexto).
   Mesmo padrão em todo lugar onde essas ações existem — reunião, documento
-  comum, cabeçalho do acervo.
+  comum, cabeçalho do acervo. No **modo edição** o editor ocupa o painel
+  inteiro e o rail fica oculto; as ações continuam disponíveis no modo
+  visualizar.
 - As ações **analisar**, **perguntar…**, **ver relatório** e **enviar para a
   fila** ficam no menu **⋯** da reunião na lateral. **Perguntar** funciona já
   durante a gravação; as outras três habilitam quando a reunião termina (o

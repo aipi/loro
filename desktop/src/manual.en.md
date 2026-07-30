@@ -107,6 +107,8 @@ palette: `Cmd/Ctrl+Shift+P` → "Loro tour".
   it, and **▶ executar** runs it against the open file), **ask the AI…**,
   and **version** (when the file is part of a context). Same pattern
   everywhere these actions exist — meeting, regular document, acervo header.
+  In **edit mode** the editor fills the whole panel and the rail is hidden;
+  the actions stay available in view mode.
 - The **analyse**, **ask…**, **view report** and **send to queue** actions
   live in the meeting's **⋯** menu in the sidebar. **Ask…** already works
   while the meeting is still recording; the other three enable once the

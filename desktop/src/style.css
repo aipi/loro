@@ -520,6 +520,13 @@ body {
 #wsBody.editing .docbody { flex: 1; min-height: 0; display: flex; align-items: stretch; }
 #wsBody.editing .docmain { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 #wsBody.editing .edithost { flex: 1; min-height: 0; border: 0; border-radius: 0; background: transparent; }
+/* ADR-0008: in edit mode the CM6 editor owns the whole panel, so the actions
+   rail is not shown. Leaving it visible let the ≤900px breakpoint (line ~536)
+   stack it below the editor as a flex column and take the vertical space it
+   needs, collapsing the editor (flex:1) to ~0px on the default 560×520 window —
+   the document then had no viewport and could not scroll. The rail's actions
+   stay available in view mode and the acervo header. */
+#wsBody.editing .doc-rail { display: none; }
 /* Belt-and-suspenders once the chain above is bounded: the contained-card 60vh
    floor (line ~506) has no place in edit mode, where the editor fills the panel
    exactly. On a very short window it would exceed edithost and get clipped by
