@@ -56,8 +56,22 @@ Three parts work together:
 | **AI agent CLI** (`claude` by default) | optional: the agent loop and meeting AI skills | runs in the embedded terminal, user's own account; configurable per acervo (any CLI, including local models — ADR-0003) |
 
 Models are ggml files under `~/.loro/models` (configurable via `LORO_MODELS_DIR`).
+The desktop app **downloads the model you pick on first use** (Settings → model),
+verified by SHA-256 (ADR-0006) — no manual setup step needed.
 
-## Quick start
+## Install (macOS, Apple Silicon)
+
+```bash
+brew tap aipi/loro
+brew install --cask loro     # installs Loro.app + whisper-cpp + ffmpeg
+```
+
+The cask pulls the engine (`whisper-cpp`, `ffmpeg`) automatically; pick and
+download a transcription model on first launch. The unsigned `.dmg` is also
+attached to each [GitHub Release](https://github.com/aipi/loro/releases) for a
+manual install.
+
+## Quick start (developing from source)
 
 ```bash
 ./loro.sh setup     # install engine + download models to ~/.loro/models

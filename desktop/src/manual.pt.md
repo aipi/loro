@@ -42,8 +42,12 @@ quando quiser pela paleta: `Cmd/Ctrl+Shift+P` → "apresentação do Loro".
    então qualquer agente — inclusive um modelo local — consegue trabalhar
    nele; para agentes que não entendem slash-commands, o Loro envia as
    instruções da skill como texto.
-4. **Dependências** — o Loro avisa se faltar o whisper (transcrição) ou um
-   modelo de voz, e instala pelos botões do banner usando o terminal embutido.
+4. **Modelos de transcrição** — em Configurações (⚙) → *modelo*, cada modelo
+   aparece como **instalado** ou com um botão **+ baixar**. O download roda no
+   seu computador, mostra o progresso e é verificado por SHA-256 antes de valer.
+   `large-v3-turbo` é mais preciso; `small` é mais rápido e leve. Se você tentar
+   transcrever sem um modelo, o Loro abre as Configurações para você baixar.
+   (Instalado pelo Homebrew, o whisper e o ffmpeg já vêm juntos.)
 5. **Idioma** — na engrenagem (⚙), "idioma da interface" alterna pt-BR/inglês.
    Tudo que o app **gera** (relatórios, documentos de reunião, contextos)
    nasce no idioma ativo da interface.
