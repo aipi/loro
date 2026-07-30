@@ -545,7 +545,7 @@ async fn transcribe_file(app: AppHandle, path: String, cfg: StartCfg) -> Result<
         return Err(format!("err.model_not_found:{}", model.display()));
     }
     let Some(ffmpeg) = which("ffmpeg") else {
-        return Err("err.ffmpeg_not_found".into());
+        return Err(ffmpeg_not_found_err());
     };
     let ffmpeg = PathBuf::from(ffmpeg);
     let threads = cfg.threads.unwrap_or(8).to_string();
@@ -956,7 +956,7 @@ async fn transcribe_meeting(
         return Err(format!("err.model_not_found:{}", model.display()));
     }
     let Some(ffmpeg) = which("ffmpeg") else {
-        return Err("err.ffmpeg_not_found".into());
+        return Err(ffmpeg_not_found_err());
     };
     let ffmpeg = PathBuf::from(ffmpeg);
     let mic = mic_path.map(PathBuf::from);
@@ -1608,14 +1608,70 @@ fn brain_move_context_to_acervo(name: String, target_id: String) -> Result<(), S
     std::fs::rename(&src, &dest).map_err(|e| e.to_string())
 }
 
-// macOS: opens Audio MIDI Setup (Multi-Output Device is created by the user)
+// Where the user configures loopback capture (ADR-0012): the Audio MIDI Setup on
+// macOS (where a Multi-Output Device is created by hand), the Sound panel's
+// Recording tab on Windows (where "Mixagem estéreo" is enabled).
+fn audio_setup_cmd() -> (&'static str, Vec<&'static str>) {
+    if cfg!(target_os = "windows") {
+        ("control.exe", vec!["mmsys.cpl,,1"])
+    } else {
+        ("open", vec!["-a", "Audio MIDI Setup"])
+    }
+}
+
 #[tauri::command]
-fn open_audio_midi() -> Result<(), String> {
-    Command::new("open")
-        .args(["-a", "Audio MIDI Setup"])
+fn open_audio_setup() -> Result<(), String> {
+    let (bin, args) = audio_setup_cmd();
+    Command::new(bin)
+        .args(args)
         .spawn()
         .map(|_| ())
         .map_err(|e| e.to_string())
+}
+
+// VB-Cable is not installable from any package manager, so the guided Windows
+// flow can only hand the user the official download (ADR-0012).
+#[tauri::command]
+fn open_vbcable_download() -> Result<(), String> {
+    const URL: &str = "https://vb-audio.com/Cable/";
+    let (bin, args) = if cfg!(target_os = "windows") {
+        ("cmd", vec!["/C", "start", "", URL])
+    } else {
+        ("open", vec![URL])
+    };
+    Command::new(bin)
+        .args(args)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+// Guided Windows setup: whisper.cpp has no prebuilt whisper-stream (live mode
+// needs SDL2), so the engine is built from source. The script is bundled in the
+// binary and materialized into the Loro data dir on demand; the setup button
+// runs it in the embedded terminal. See scripts/setup-whisper-windows.ps1.
+#[cfg(target_os = "windows")]
+const WIN_SETUP_SCRIPT: &str = include_str!("../scripts/setup-whisper-windows.ps1");
+
+#[tauri::command]
+fn whisper_setup_script() -> Result<String, String> {
+    #[cfg(target_os = "windows")]
+    {
+        let dir = loro_data_dir();
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let path = dir.join("setup-whisper-windows.ps1");
+        // Written BOM-first: Windows PowerShell 5.1 falls back to CP1252 for a
+        // BOM-less .ps1, and the script's accented pt-BR text then decodes into
+        // smart quotes that unbalance the parser. The BOM pins it to UTF-8.
+        let mut bytes = Vec::from("\u{feff}");
+        bytes.extend_from_slice(WIN_SETUP_SCRIPT.trim_start_matches('\u{feff}').as_bytes());
+        std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+        Ok(path.display().to_string())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err("err.windows_only".into())
+    }
 }
 
 // ---- git/GitHub environment doctor + collaboration commands ----------------
@@ -3461,7 +3517,9 @@ pub fn run() {
             brain_add_context,
             brain_rename_context,
             brain_move_context_to_acervo,
-            open_audio_midi,
+            open_audio_setup,
+            open_vbcable_download,
+            whisper_setup_script,
             brain_delete_context,
             brain_move_to_acervo,
             brain_move,
@@ -3684,9 +3742,51 @@ mod tests {
     }
 
     #[test]
+    fn audio_setup_cmd_opens_the_platform_panel() {
+        // ADR-0012: each OS has its own audio panel, and the wrong command only
+        // fails at runtime, so the choice is pinned here.
+        let (bin, args) = audio_setup_cmd();
+        if cfg!(target_os = "windows") {
+            assert_eq!(bin, "control.exe");
+            // ",,1" selects the Recording tab, where Stereo Mix lives
+            assert_eq!(args, vec!["mmsys.cpl,,1"]);
+        } else {
+            assert_eq!(bin, "open");
+            assert_eq!(args, vec!["-a", "Audio MIDI Setup"]);
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn whisper_setup_script_is_written_as_bom_prefixed_utf8() {
+        // Windows PowerShell 5.1 decodes a BOM-less .ps1 as CP1252, where the
+        // UTF-8 em dash (E2 80 94) becomes "â€”" — and that trailing U+201D is a
+        // smart quote the parser accepts as a string delimiter, which unbalances
+        // the quoting and kills the whole script. The BOM forces UTF-8.
+        let tmp = std::env::temp_dir().join(format!("loro-setup-{}", std::process::id()));
+        std::env::set_var("LORO_HOME", &tmp);
+        let path = whisper_setup_script().expect("script deve ser escrito");
+
+        let bytes = std::fs::read(&path).unwrap();
+        assert_eq!(&bytes[..3], b"\xEF\xBB\xBF", "script precisa de BOM UTF-8");
+        assert_ne!(&bytes[3..6], b"\xEF\xBB\xBF", "BOM duplicado");
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("WHISPER_SDL2")); // build do modo ao vivo
+        assert!(content.contains("whisper-stream"));
+
+        std::env::remove_var("LORO_HOME");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
     fn pty_opens_spawns_and_exits() {
-        // exercises the same path as term_open (openpty + spawn + reader + writer)
-        // without a blocking read: proves the portable-pty stack works on this machine.
+        // Exercises the same path as term_open (openpty + spawn + reader + writer)
+        // without a blocking read: proves the portable-pty stack works on this
+        // machine. Windows has no /bin/sh, and ConPTY has finicky
+        // natural-exit/wait semantics, so there we spawn the same kind of
+        // interactive shell term_open uses and tear it down with kill() instead
+        // of waiting on a child to exit on its own (which deadlocks).
         let sys = portable_pty::native_pty_system();
         let pair = sys
             .openpty(portable_pty::PtySize {
@@ -3696,14 +3796,24 @@ mod tests {
                 pixel_height: 0,
             })
             .unwrap();
-        let mut cmd = portable_pty::CommandBuilder::new("/bin/sh");
-        cmd.args(["-c", "exit 0"]);
-        let mut child = pair.slave.spawn_command(cmd).unwrap();
-        drop(pair.slave);
-        let _reader = pair.master.try_clone_reader().unwrap();
-        let _writer = pair.master.take_writer().unwrap();
-        let status = child.wait().unwrap();
-        assert!(status.success());
+        if cfg!(target_os = "windows") {
+            let cmd = portable_pty::CommandBuilder::new("cmd.exe");
+            let mut child = pair.slave.spawn_command(cmd).unwrap();
+            drop(pair.slave);
+            let _reader = pair.master.try_clone_reader().unwrap();
+            let _writer = pair.master.take_writer().unwrap();
+            // killing a live pty child proves teardown works on this OS
+            child.kill().unwrap();
+        } else {
+            let mut cmd = portable_pty::CommandBuilder::new("/bin/sh");
+            cmd.args(["-c", "exit 0"]);
+            let mut child = pair.slave.spawn_command(cmd).unwrap();
+            drop(pair.slave);
+            let _reader = pair.master.try_clone_reader().unwrap();
+            let _writer = pair.master.take_writer().unwrap();
+            let status = child.wait().unwrap();
+            assert!(status.success());
+        }
     }
 
     #[test]
