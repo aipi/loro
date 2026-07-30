@@ -1689,11 +1689,10 @@ function renderTemaNode(t) {
     `<button class="rowmenu" data-bsmenu="${esc(t.slug)}" title="${window.LoroI18n.t("ações do brainstorming")}">⋯</button></div>${holder}`;
 }
 // Dentro de um brainstorming a árvore é PLANA (revisão de UX sobre o ADR-0013):
-// as reuniões aparecem direto no nível do brainstorming — com os artefatos de
-// análise (investigações/respostas) logo abaixo de cada uma — e as notas como
-// subitem ao final. As pastas segmentadas (investigacoes/, perguntas/,
-// relatorios/) deixaram de existir: eram atrito, não estrutura — a saída de
-// não-reunião vai para anexos/.
+// as reuniões aparecem direto no nível do brainstorming — com as notas da
+// reunião (análises, respostas e qualquer documento gerado) logo abaixo de
+// cada uma (ADR-0008). As pastas segmentadas (artefatos/, investigacoes/,
+// perguntas/, relatorios/) deixaram de existir: eram atrito, não estrutura.
 // A selectable part row: a checkbox (data-bssel/data-bskind) + the open target.
 // A meeting row carries a ⋯ menu (renomear/apagar); files keep the plain ×.
 function bsPartRow(kind, openRel, selRel, label, title, indent, meetingId, meetingStatus, mopen) {
@@ -1777,12 +1776,12 @@ async function fillMeetingChild(meetingId, meetingRel) {
   const child = [...B.navPessoal.querySelectorAll("[data-mtgchild]")].find((h) => h.dataset.mtgchild === meetingId);
   if (!child) return;
   let inner = "";
-  for (const [asub, akind] of [["investigacoes", "investigacao"], ["respostas", "nota"]]) {
-    let arts = [];
-    try { arts = ((await invoke("brain_list_dir", { rel: `${meetingRel}/artefatos/${asub}` })) || []).filter((a) => !a.dir); }
-    catch (_) {}
-    for (const a of arts) inner += bsPartRow(akind, a.path, a.path, shortName(a.name), a.name, true);
-  }
+  // ADR-0008: every skill-generated document lands in the meeting's notas/
+  // (analyses, answers, any produced doc) — one flat folder, no artefatos/<kind>.
+  let arts = [];
+  try { arts = ((await invoke("brain_list_dir", { rel: `${meetingRel}/notas` })) || []).filter((a) => !a.dir); }
+  catch (_) {}
+  for (const a of arts) inner += bsPartRow("nota", a.path, a.path, shortName(a.name), a.name, true);
   child.innerHTML = inner || `<div class="bempty sub">${t("nada por aqui ainda")}</div>`;
 }
 // Selection of brainstorming parts to send to the fila (ADR-0013). A plain Set of
@@ -2834,18 +2833,14 @@ async function renderMeetingLiving(tab, stale) {
   paintMeetingSurface(id, raw, manifest, status, artefatos, tab.rel);
 }
 
-// Lista os ARQUIVOS reais sob <reunião>/artefatos/<kind>/ — o skill grava direto
-// em disco (não no manifest), então o rail precisa escanear para mostrá-los.
+// Lista os ARQUIVOS reais sob <reunião>/notas/ — o skill grava direto em disco
+// (não no manifest), então o rail precisa escanear para mostrá-los. ADR-0008:
+// todo documento gerado é uma nota, numa pasta plana (sem artefatos/<kind>).
 async function listArtefatos(dirRel) {
-  const kinds = ["respostas", "investigacoes", "graficos", "consultas", "prompts", "documentos", "tabelas", "mcp"];
-  const out = [];
-  for (const k of kinds) {
-    let files = [];
-    try { files = (await invoke("brain_list_dir", { rel: `${dirRel}/artefatos/${k}` })) || []; }
-    catch (_) {}
-    for (const f of files) if (!f.dir) out.push({ kind: k, name: f.name, rel: f.path });
-  }
-  return out;
+  let files = [];
+  try { files = ((await invoke("brain_list_dir", { rel: `${dirRel}/notas` })) || []).filter((f) => !f.dir); }
+  catch (_) {}
+  return files.map((f) => ({ kind: "nota", name: f.name, rel: f.path }));
 }
 
 // Re-render the living surface in place on meeting-appended, preserving the
@@ -3190,7 +3185,7 @@ function askMeetingQuestion(id, dirOverride) {
   if (!dir) { toast(t("abra a reunião para responder")); return; }
   openModal(
     t("Perguntar sobre a reunião"),
-    `<p class="pmnote mono">${t("a pergunta roda no Claude do terminal (ADR-0012); a resposta aparece lá e em artefatos/respostas.")}</p>` +
+    `<p class="pmnote mono">${t("a pergunta roda no Claude do terminal (ADR-0012); a resposta aparece lá e nas notas da reunião.")}</p>` +
       `<label class="wfield"><span class="mono">${t("pergunta")}</span>` +
       `<input id="mtgQuestion" type="text" placeholder="${t("ex.: quais decisões ficaram em aberto?")}" spellcheck="false"></label>`,
     t("perguntar"),

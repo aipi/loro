@@ -449,6 +449,94 @@ fn ensure_brainstorming_subfolders(dir: &Path) {
     let _ = std::fs::create_dir_all(dir.join("anexos"));
 }
 
+// ADR-0008: every skill-generated document is a note — it lives in the meeting's
+// own notas/. Older meetings wrote analyses/answers under artefatos/<kind>/ (and
+// even bare investigacoes/perguntas/respostas/relatorios folders); move those
+// files into notas/ and drop the now-empty legacy dirs. Self-heal (like the
+// brainstorming-subfolder backfill) — no explicit "migrate" command, and
+// non-destructive (dedupes on name collision, never overwrites).
+const LEGACY_MEETING_FOLDERS: [&str; 5] = [
+    "artefatos",
+    "investigacoes",
+    "perguntas",
+    "respostas",
+    "relatorios",
+];
+fn migrate_meeting_to_notas(meeting_dir: &Path) {
+    let notas = meeting_dir.join("notas");
+    for name in LEGACY_MEETING_FOLDERS {
+        let src = meeting_dir.join(name);
+        if src.is_dir() {
+            move_files_flat(&src, &notas);
+            if !dir_has_files(&src) {
+                let _ = std::fs::remove_dir_all(&src);
+            }
+        }
+    }
+}
+
+// Move every FILE under `src` (recursively) into a FLAT `dst`, deduping names.
+fn move_files_flat(src: &Path, dst: &Path) {
+    let mut stack = vec![src.to_path_buf()];
+    let mut files: Vec<PathBuf> = Vec::new();
+    while let Some(d) = stack.pop() {
+        if let Ok(rd) = std::fs::read_dir(&d) {
+            for e in rd.flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    stack.push(p);
+                } else {
+                    files.push(p);
+                }
+            }
+        }
+    }
+    if files.is_empty() {
+        return;
+    }
+    let _ = std::fs::create_dir_all(dst);
+    for p in files {
+        if let Some(name) = p.file_name().and_then(|s| s.to_str()) {
+            let _ = std::fs::rename(&p, next_free_name(dst, name));
+        }
+    }
+}
+
+fn dir_has_files(dir: &Path) -> bool {
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        if let Ok(rd) = std::fs::read_dir(&d) {
+            for e in rd.flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    stack.push(p);
+                } else {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+// A collision-free path in `dir` for `name` (numeric suffix before the ext).
+fn next_free_name(dir: &Path, name: &str) -> PathBuf {
+    let mut target = dir.join(name);
+    if !target.exists() {
+        return target;
+    }
+    let (stem, ext) = match name.rsplit_once('.') {
+        Some((s, e)) => (s.to_string(), format!(".{e}")),
+        None => (name.to_string(), String::new()),
+    };
+    let mut n = 1;
+    while target.exists() {
+        n += 1;
+        target = dir.join(format!("{stem}-{n}{ext}"));
+    }
+    target
+}
+
 fn list_brainstormings(base: &Path) -> Vec<BrainstormingListItem> {
     let mut out: Vec<BrainstormingListItem> = std::fs::read_dir(brainstorming_dir(base))
         .map(|rd| {
@@ -518,6 +606,7 @@ fn list_meetings(base: &Path, slug: &str) -> Vec<MeetingListItem> {
             rd.flatten()
                 .filter(|e| e.path().join("manifest.json").is_file())
                 .map(|e| {
+                    migrate_meeting_to_notas(&e.path()); // ADR-0008 self-heal
                     let id = e.file_name().to_string_lossy().to_string();
                     let man: MeetingManifestLite =
                         std::fs::read_to_string(e.path().join("manifest.json"))
@@ -2079,6 +2168,44 @@ mod tests {
         assert!(resolve_ref(&base, "a/b.md", "../../../etc/passwd").is_err());
     }
 
+    // ADR-0008: skill-generated docs are notes. A meeting created before this
+    // change kept analyses/answers under artefatos/<kind>/ (and legacy bare
+    // folders); listing meetings self-heals them into the meeting's notas/,
+    // non-destructively (dedup on name collision) and drops the empty legacy dirs.
+    #[test]
+    fn list_meetings_migrates_legacy_artefatos_into_notas() {
+        let base = tmp("meeting-migrate");
+        let mdir = base.join("brainstorming/turbo/reunioes/2026-07-30-1000-x");
+        std::fs::create_dir_all(mdir.join("artefatos/investigacoes")).unwrap();
+        std::fs::create_dir_all(mdir.join("artefatos/respostas")).unwrap();
+        std::fs::create_dir_all(mdir.join("perguntas")).unwrap();
+        std::fs::write(
+            mdir.join("manifest.json"),
+            b"{\"titulo\":\"X\",\"status\":\"done\"}",
+        )
+        .unwrap();
+        std::fs::write(mdir.join("relatorio.md"), b"# rel").unwrap(); // a real meeting FILE — must survive
+        std::fs::write(mdir.join("artefatos/investigacoes/analise-1.md"), b"a").unwrap();
+        std::fs::write(mdir.join("artefatos/respostas/r.md"), b"b").unwrap();
+        std::fs::write(mdir.join("perguntas/q.md"), b"c").unwrap();
+        // a name collision across legacy folders must NOT overwrite
+        std::fs::write(mdir.join("artefatos/respostas/dup.md"), b"one").unwrap();
+        std::fs::write(mdir.join("perguntas/dup.md"), b"two").unwrap();
+
+        let _ = list_meetings(&base, "turbo");
+
+        let notas = mdir.join("notas");
+        assert!(notas.join("analise-1.md").is_file());
+        assert!(notas.join("r.md").is_file());
+        assert!(notas.join("q.md").is_file());
+        // both dup.md survived (one got a numeric suffix)
+        assert!(notas.join("dup.md").is_file() && notas.join("dup-2.md").is_file());
+        // legacy folders are gone; the real meeting file stayed put
+        assert!(!mdir.join("artefatos").exists());
+        assert!(!mdir.join("perguntas").exists());
+        assert!(mdir.join("relatorio.md").is_file());
+    }
+
     // ADR-0007: an excerpt-addressable ref `acervo://<rel>#<annot-id>` resolves
     // the FILE (the fragment never becomes part of the on-disk path) and echoes
     // the annotation id back so a habilidade alvo keeps its anchor.
@@ -2347,15 +2474,12 @@ mod tests {
     #[test]
     fn rename_pessoal_file_renames_and_keeps_extension() {
         let base = tmp("ren");
-        let dir = base.join("brainstorming/vendas/r1/artefatos/investigacoes");
+        let dir = base.join("brainstorming/vendas/r1/notas");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("analise-1.md"), "corpo").unwrap();
-        let rel = "brainstorming/vendas/r1/artefatos/investigacoes/analise-1.md";
+        let rel = "brainstorming/vendas/r1/notas/analise-1.md";
         let out = rename_pessoal_file(&base, rel, "riscos do contrato").unwrap();
-        assert_eq!(
-            out,
-            "brainstorming/vendas/r1/artefatos/investigacoes/riscos do contrato.md"
-        );
+        assert_eq!(out, "brainstorming/vendas/r1/notas/riscos do contrato.md");
         assert!(dir.join("riscos do contrato.md").is_file());
         assert!(!dir.join("analise-1.md").exists());
     }

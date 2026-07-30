@@ -100,9 +100,12 @@ palette: `Cmd/Ctrl+Shift+P` → "Loro tour".
   (via the palette `Cmd/Ctrl+Shift+P` or the buttons); then run **analyse**
   (⋯ menu) so Claude fills in the meeting report.
 - Nothing in a brainstorming is versioned or leaves the machine.
-- A meeting's investigations/answers are **collapsed by default** in the
-  sidebar (tap the ▸ arrow next to the meeting to open) — keeps the list from
-  growing huge once you've analysed several meetings.
+- A meeting's **notes** (analyses, answers and any document a habilidade
+  produces) are **collapsed by default** in the sidebar (tap the ▸ arrow next
+  to the meeting to open) — keeps the list from growing huge once you've
+  analysed several meetings. Everything a habilidade produces about the meeting
+  goes into its **notas/** folder (no more separate investigations/answers
+  folders).
 - Every brainstorming has exactly three folders, visible in the sidebar as
   collapsible groups with a folder icon (📁 **reuniões**, 📁 **notas**,
   📁 **anexos** — each with an item count): **reunioes/** (every meeting is
@@ -280,6 +283,6 @@ never creates anything new by itself — it leaves the item pending in the
 queue and reports that it needs your manual decision. It never affects
 assigning to a context that already exists.
 
-**Why don't a meeting's investigations/answers show up right away?** They're
+**Why don't a meeting's notes show up right away?** They're
 collapsed by default so the sidebar doesn't grow too large — tap the ▸ arrow
 next to the meeting to open it.

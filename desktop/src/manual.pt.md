@@ -99,9 +99,12 @@ quando quiser pela paleta: `Cmd/Ctrl+Shift+P` → "apresentação do Loro".
   paleta `Cmd/Ctrl+Shift+P` ou pelos botões); depois rode **analisar** (menu
   ⋯) para o Claude preencher o relatório da reunião.
 - Nada do brainstorming é versionado nem sai da máquina.
-- Investigações e respostas de cada reunião ficam **recolhidas por padrão**
-  na lateral (toque na seta ▸ ao lado da reunião para abrir) — evita que a
-  lista cresça demais quando há muitas reuniões analisadas.
+- As **notas** de cada reunião (análises, respostas e qualquer documento que
+  uma habilidade gere) ficam **recolhidas por padrão** na lateral (toque na
+  seta ▸ ao lado da reunião para abrir) — evita que a lista cresça demais
+  quando há muitas reuniões analisadas. Tudo o que uma habilidade produz sobre
+  a reunião vai para a pasta **notas/** dela (não mais em pastas separadas como
+  investigações/respostas).
 - Cada brainstorming tem exatamente três pastas, visíveis na lateral como
   grupos com ícone de pasta (📁 **reuniões**, 📁 **notas**, 📁 **anexos** —
   cada uma clicável para expandir/recolher, com a contagem de itens):
@@ -280,6 +283,7 @@ não cria nada novo por conta própria — deixa o item pendente na fila e avisa
 que precisa da sua decisão manual. Não afeta atribuir a um contexto que já
 existe.
 
-**Por que as investigações/respostas de uma reunião não aparecem de cara?**
+**Por que as notas de uma reunião não aparecem de cara?**
 Ficam recolhidas por padrão para a lateral não crescer demais — toque na
-seta ▸ ao lado da reunião para abrir.
+seta ▸ ao lado da reunião para abrir. Análises, respostas e qualquer documento
+gerado por uma habilidade ficam todos na pasta **notas/** da reunião.

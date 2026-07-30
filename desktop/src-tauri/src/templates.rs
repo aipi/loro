@@ -472,11 +472,13 @@ editar aqui geraria corrida com esse escritor).
    Deixe claro no resultado o que veio da base local e o que veio de fora.
 3. Produza, de forma OBJETIVA (prosa de negócio, sem metodologia): tema
    predominante, decisões, riscos, inconsistências e perguntas sugeridas.
-4. Escreva o resultado em `$ARGUMENTS/artefatos/investigacoes/analise-<ISO>.md`
-   (carimbo ISO 8601 em UTC, ex.: `analise-2026-07-27T1430Z.md`).
+4. Escreva o resultado em `$ARGUMENTS/notas/analise-<ISO>.md` (carimbo ISO 8601
+   em UTC, ex.: `analise-2026-07-27T1430Z.md`). Todo documento gerado por uma
+   habilidade vai para `notas/` (ADR-0008) — nunca em `artefatos/` ou pastas
+   antigas como `investigacoes/`, `perguntas/`, `respostas/`.
 5. Registre estatísticas SEM PII: para cada dúvida/decisão/investigação/pergunta
    identificada, acrescente UMA linha JSON em `$ARGUMENTS/marcadores.jsonl` no
-   formato `{"tipo":"decisao","ref":"artefatos/investigacoes/analise-<ISO>.md"}`
+   formato `{"tipo":"decisao","ref":"notas/analise-<ISO>.md"}`
    (só `tipo` + `t_ms?`/`ref?`, NUNCA texto de transcrição). O app incorpora esses
    marcadores ao relatório — não edite `manifest.json`.
 6. Atualize `$ARGUMENTS/relatorio.md`: substitua a prosa provisória das seções
@@ -488,7 +490,7 @@ editar aqui geraria corrida com esse escritor).
 7. Acrescente UMA linha JSON, orientada a evento, em `$ARGUMENTS/auditoria.jsonl`
    registrando o que leu e produziu — nunca texto de transcrição, PII ou segredos
    (BR-8/BR-9), ex.:
-   `{"em":"<ISO>","event":"analyse","read":["reuniao.md","manifest.json"],"wrote":["artefatos/investigacoes/analise-<ISO>.md","relatorio.md","marcadores.jsonl"]}`.
+   `{"em":"<ISO>","event":"analyse","read":["reuniao.md","manifest.json"],"wrote":["notas/analise-<ISO>.md","relatorio.md","marcadores.jsonl"]}`.
 
 Ao final, responda em pt-BR com 1–2 linhas do que você escreveu.
 
@@ -533,8 +535,9 @@ escritor atômico).
    de fato dizem. **SOMENTE DEPOIS** de esgotar a base local, se ainda faltar
    evidência, você PODE buscar em fontes externas (internet, MCP, qualquer lugar) —
    deixando claro o que veio de fora. Se nada resolver, diga isso claramente.
-3. Quando um artefato escrito ajudar (uma tabela, uma nota curta), escreva-o em
-   `<dir>/artefatos/respostas/<slug>.md` e referencie-o na resposta.
+3. Quando um documento escrito ajudar (uma tabela, uma nota curta), escreva-o em
+   `<dir>/notas/<slug>.md` — todo documento gerado vai para `notas/` (ADR-0008),
+   nunca em `artefatos/` ou pastas antigas — e referencie-o na resposta.
 4. Acrescente UMA linha JSON sem PII em `<dir>/auditoria.jsonl` (evento `answer`,
    o que leu/produziu — nunca texto de transcrição, PII ou segredos: BR-8/BR-9).
 
@@ -581,11 +584,13 @@ race that writer).
    local base and what came from outside.
 3. Produce, OBJECTIVELY (business prose, no methodology talk): predominant theme,
    decisions, risks, inconsistencies and suggested questions.
-4. Write the result to `$ARGUMENTS/artefatos/investigacoes/analise-<ISO>.md`
-   (ISO 8601 UTC stamp, e.g. `analise-2026-07-27T1430Z.md`).
+4. Write the result to `$ARGUMENTS/notas/analise-<ISO>.md` (ISO 8601 UTC stamp,
+   e.g. `analise-2026-07-27T1430Z.md`). Every skill-generated document goes into
+   `notas/` (ADR-0008) — never into `artefatos/` or legacy folders such as
+   `investigacoes/`, `perguntas/`, `respostas/`.
 5. Record PII-free stats: for each doubt/decision/investigation/question, append
    ONE JSON line to `$ARGUMENTS/marcadores.jsonl` like
-   `{"tipo":"decisao","ref":"artefatos/investigacoes/analise-<ISO>.md"}` (only
+   `{"tipo":"decisao","ref":"notas/analise-<ISO>.md"}` (only
    `tipo` + `t_ms?`/`ref?`, NEVER transcript text). The app folds these markers
    into the report — do not edit `manifest.json`.
 6. Update `$ARGUMENTS/relatorio.md`: replace the placeholder prose in the
@@ -640,8 +645,10 @@ only your own Read/Write tools — do not call loro IPC and do NOT edit
    actually say. **ONLY AFTER** exhausting the local base, if evidence is still
    missing, you MAY search external sources (internet, MCP, anywhere), making clear
    what came from outside. If nothing settles it, say so plainly.
-3. When a written artifact helps (a table, a short note), write it under
-   `<dir>/artefatos/respostas/<slug>.md` and reference it from the answer.
+3. When a written document helps (a table, a short note), write it under
+   `<dir>/notas/<slug>.md` — every generated document goes into `notas/`
+   (ADR-0008), never into `artefatos/` or legacy folders — and reference it
+   from the answer.
 4. Append ONE PII-free JSON line to `<dir>/auditoria.jsonl` (event `answer`, what
    you read/produced — never transcript text, PII or secrets: BR-8/BR-9).
 
@@ -1543,7 +1550,7 @@ mod tests {
     // ADR-0012: the terminal Claude runs `analyse`/`answer` skills that take the
     // meeting dir as an argument. Assert both render (both languages) with the
     // meeting-dir placeholder and the acervo-facing contract (read the live
-    // stream, do NOT touch manifest.json, write to the fixed artefatos subtree).
+    // stream, do NOT touch manifest.json, write generated docs into notas/).
     #[test]
     fn meeting_skills_render_with_meeting_dir_argument() {
         for lang in ["pt", "en"] {
@@ -1575,13 +1582,15 @@ mod tests {
                 answer.contains(edict),
                 "answer [{lang}] must forbid editing manifest"
             );
-            // analyse writes its findings under the fixed investigacoes subtree
-            assert!(analyse.contains("artefatos/investigacoes/analise-"));
+            // ADR-0008: analyse writes its findings into the meeting's notas/,
+            // never the old artefatos/investigacoes subtree
+            assert!(analyse.contains("notas/analise-"));
+            assert!(!analyse.contains("artefatos/investigacoes/analise-"));
             assert!(analyse.contains("auditoria.jsonl"));
             // ADR-0013: analyse persists PII-free markers via the sidecar the app folds in
             assert!(analyse.contains("marcadores.jsonl"));
-            // answer writes optional artifacts under respostas + audits
-            assert!(answer.contains("artefatos/respostas/"));
+            // ADR-0008: answer writes optional documents into notas/ too
+            assert!(answer.contains("notas/") && !answer.contains("artefatos/respostas/"));
             assert!(answer.contains("auditoria.jsonl"));
             // ADR-0012 is cited so the WHY is traceable
             assert!(analyse.contains("ADR-0012") && answer.contains("ADR-0012"));
