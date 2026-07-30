@@ -450,6 +450,12 @@ argument-hint: <dir-da-reuniao>
 
 Diretório da reunião (relativo à raiz do acervo): `$ARGUMENTS`
 
+**Modo trecho (ADR-0007).** Se `$ARGUMENTS` começar com uma referência
+`acervo://<rel>#<annot-id>` em vez de um diretório, resolva-a: `<rel>` é o
+documento (ex. `.../reuniao.md`) e a pasta dele é o diretório da reunião; leia o
+sidecar `<rel sem .md>.anotacoes.json`, ache a anotação por `id` e trate o
+`anchor.quote` como o FOCO explícito da análise (evidencie o trecho grifado).
+
 Você é o analista de reunião do Loro (ADR-0012). Trabalhe SOMENTE dentro do
 diretório acima. Use apenas suas próprias ferramentas Read/Write — não chame IPC
 do loro e NÃO edite `manifest.json` (o app é o dono e o escreve de forma atômica;
@@ -507,6 +513,12 @@ Argumentos: `$ARGUMENTS`
 O PRIMEIRO token é o diretório da reunião (relativo à raiz do acervo); o RESTANTE
 é a pergunta.
 
+**Modo trecho (ADR-0007).** Se o PRIMEIRO token for uma referência
+`acervo://<rel>#<annot-id>` em vez de um diretório, resolva-a: `<rel>` é o
+documento e a pasta dele é o diretório da reunião; leia o sidecar
+`<rel sem .md>.anotacoes.json`, ache a anotação por `id` e trate o `anchor.quote`
+como o FOCO explícito da pergunta (evidencie o trecho grifado).
+
 Você é o assistente de reunião do Loro (ADR-0012). Trabalhe SOMENTE dentro desse
 diretório. Use apenas suas próprias ferramentas Read/Write — não chame IPC do loro
 e NÃO edite `manifest.json` (o app é o dono; editar aqui geraria corrida com o
@@ -546,6 +558,13 @@ argument-hint: <meeting-dir>
 ---
 
 Meeting directory (relative to the acervo root): `$ARGUMENTS`
+
+**Excerpt mode (ADR-0007).** If `$ARGUMENTS` begins with an
+`acervo://<rel>#<annot-id>` reference instead of a directory, resolve it: `<rel>`
+is the document (e.g. `.../reuniao.md`) and its folder is the meeting directory;
+read the sidecar `<rel without .md>.anotacoes.json`, find the annotation by `id`
+and treat its `anchor.quote` as the EXPLICIT focus of the analysis (evidence the
+highlighted excerpt).
 
 You are Loro's meeting analyst (ADR-0012). Work ONLY inside the directory above.
 Use only your own Read/Write tools — do not call loro IPC and do NOT edit
@@ -600,6 +619,13 @@ argument-hint: <meeting-dir> <question>
 Arguments: `$ARGUMENTS`
 The FIRST token is the meeting directory (relative to the acervo root); the REST
 is the question.
+
+**Excerpt mode (ADR-0007).** If the FIRST token is an
+`acervo://<rel>#<annot-id>` reference instead of a directory, resolve it: `<rel>`
+is the document and its folder is the meeting directory; read the sidecar
+`<rel without .md>.anotacoes.json`, find the annotation by `id` and treat its
+`anchor.quote` as the EXPLICIT focus of the question (evidence the highlighted
+excerpt).
 
 You are Loro's meeting assistant (ADR-0012). Work ONLY inside that directory. Use
 only your own Read/Write tools — do not call loro IPC and do NOT edit
@@ -927,6 +953,109 @@ pub fn loro_sync_skill(lang: &str) -> &'static str {
         LORO_SYNC_SKILL_EN
     } else {
         LORO_SYNC_SKILL
+    }
+}
+
+// ---- outbound Slack question over an excerpt (/loro-slack, ADR-0007) ----
+// The outbound mirror of `/loro-sync slack`: it SENDS a question about a
+// highlighted excerpt to a channel/person, using the terminal agent's OWN Slack
+// connector — the Loro binary never holds a credential (BR-9). The alvo is an
+// excerpt-addressable ref `acervo://<rel>#<annot-id>`; the skill resolves it via
+// the co-located `<rel sans .md>.anotacoes.json` sidecar (ADR-0007). Sending is
+// an explicit, confirmed action (BR-1) and the excerpt lives only in the
+// acervo's material + the Slack message, never a log (BR-8).
+pub const LORO_SLACK_SKILL: &str = r#"---
+description: Envia uma pergunta sobre um trecho grifado para um canal/pessoa no Slack, pelo conector do agente (ADR-0007)
+argument-hint: <alvo:acervo://<rel>#<annot-id>> <#canal-ou-@pessoa> [mensagem]
+---
+
+Argumentos: `$ARGUMENTS`
+O PRIMEIRO token é o ALVO — uma referência de trecho `acervo://<rel>#<annot-id>`;
+o SEGUNDO é o destino no Slack (`#canal` ou `@pessoa`); o RESTANTE (opcional) é a
+sua mensagem/pergunta.
+
+Você envia, pelo SEU conector de Slack, uma pergunta sobre um trecho grifado de um
+documento do acervo (uma reunião, um contexto, uma nota). O Loro nunca guarda
+credencial (BR-9): quem fala com o Slack é o agente, com o conector já
+autenticado. Se não houver conector de Slack disponível, diga isso claramente e
+pare — não invente um envio.
+
+1. **Resolva o trecho.** Do alvo `acervo://<rel>#<annot-id>`, separe `<rel>` (o
+   arquivo) do `#<annot-id>` (o grifo). Leia o sidecar co-locado
+   `<rel sem .md>.anotacoes.json`, ache a anotação com esse `id` e pegue o
+   `anchor.quote` (o trecho) e os `comentarios` (se houver). Se o arquivo, o
+   sidecar ou o id não existirem, diga claramente e pare.
+2. **Componha a mensagem.** Cite o trecho entre aspas, o documento de origem
+   (`<rel>`) e a sua pergunta (o RESTANTE dos argumentos; se vazio, use o texto
+   dos comentários da anotação ou peça a pergunta). Deixe curto e objetivo — o
+   contexto é uma reunião/brainstorming em andamento.
+3. **Confirme antes de enviar (BR-1).** Mostre o destino (`#canal`/`@pessoa`) e a
+   mensagem final e peça confirmação explícita. Só envie após o "ok".
+4. **Envie** pelo conector do Slack para o destino confirmado. Reporte o link/ts
+   da mensagem enviada. NÃO cole a transcrição inteira nem dados pessoais — só o
+   trecho e a pergunta (BR-8).
+
+Não modifique arquivos do acervo (isto é um envio, não uma edição). Responda em
+pt-BR.
+
+Regras de rigor (ADR-0002 §5):
+- **Nunca assuma premissas** não declaradas: destino, pergunta ou trecho ausentes
+  são incerteza — pergunte, não adivinhe (e nunca envie sem confirmação).
+- **Varredura eficiente:** para ler muitos arquivos, delegue a leitura a
+  subagentes (Task) num modelo rápido (ex. Haiku) retornando só o essencial;
+  reserve o modelo principal para a síntese.
+- **Leitura barata (ADR-0004):** vá direto ao sidecar de anotações e à anotação
+  pelo `id` — não leia o documento inteiro se o trecho já basta.
+"#;
+
+pub const LORO_SLACK_SKILL_EN: &str = r#"---
+description: Sends a question about a highlighted excerpt to a Slack channel/person via the agent's connector (ADR-0007)
+argument-hint: <target:acervo://<rel>#<annot-id>> <#channel-or-@person> [message]
+---
+
+Arguments: `$ARGUMENTS`
+The FIRST token is the TARGET — an excerpt reference `acervo://<rel>#<annot-id>`;
+the SECOND is the Slack destination (`#channel` or `@person`); the REST (optional)
+is your message/question.
+
+You send, via YOUR OWN Slack connector, a question about a highlighted excerpt of
+an acervo document (a meeting, a context, a note). Loro never holds a credential
+(BR-9): the agent talks to Slack, with its already-authenticated connector. If no
+Slack connector is available, say so plainly and stop — do not fake a send.
+
+1. **Resolve the excerpt.** From the target `acervo://<rel>#<annot-id>`, split
+   `<rel>` (the file) from `#<annot-id>` (the highlight). Read the co-located
+   sidecar `<rel without .md>.anotacoes.json`, find the annotation with that `id`
+   and take its `anchor.quote` (the excerpt) and `comentarios` (if any). If the
+   file, the sidecar or the id do not exist, say so plainly and stop.
+2. **Compose the message.** Quote the excerpt, name the source document
+   (`<rel>`) and your question (the REST of the arguments; if empty, use the
+   annotation's comment text or ask for the question). Keep it short and
+   objective — the context is a meeting/brainstorm in progress.
+3. **Confirm before sending (BR-1).** Show the destination (`#channel`/`@person`)
+   and the final message and ask for explicit confirmation. Only send after the
+   "ok".
+4. **Send** via the Slack connector to the confirmed destination. Report the sent
+   message's link/ts. Do NOT paste the whole transcript or any personal data —
+   only the excerpt and the question (BR-8).
+
+Do not modify acervo files (this is a send, not an edit). Reply in English.
+
+Rigor rules (ADR-0002 §5):
+- **Never assume unstated premises.** A missing destination, question or excerpt
+  is an uncertainty — ask, do not guess (and never send without confirmation).
+- **Efficient scanning:** to read many files, delegate reading to subagents
+  (Task) on a fast model (e.g. Haiku) returning only the essentials; keep the
+  main model for synthesis.
+- **Cheap reading (ADR-0004):** go straight to the annotations sidecar and the
+  annotation by `id` — do not read the whole document if the excerpt suffices.
+"#;
+
+pub fn loro_slack_skill(lang: &str) -> &'static str {
+    if lang == "en" {
+        LORO_SLACK_SKILL_EN
+    } else {
+        LORO_SLACK_SKILL
     }
 }
 
@@ -1387,6 +1516,7 @@ mod tests {
                 ("tool", loro_tool_skill(lang)),
                 ("presentation", loro_presentation_skill(lang)),
                 ("artifact", loro_artifact_skill(lang)),
+                ("slack", loro_slack_skill(lang)),
             ] {
                 assert!(
                     body.contains(no_assume),

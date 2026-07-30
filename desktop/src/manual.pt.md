@@ -159,6 +159,32 @@ poluir a tela quando houver muitas.
   "habilidades" para **recolher/exibir** a lista inteira (o caret ▾/▸
   mostra o estado).
 
+## Grifar, comentar e agir sobre um trecho
+
+Em qualquer markdown do acervo — a transcrição de uma reunião, um contexto,
+uma nota — **selecione um trecho** com o mouse e uma pequena ferramenta
+flutuante aparece com cinco ações:
+
+- **✎ grifar** — destaca o trecho (fica evidenciado, como sublinhar na vida
+  real). Clique no grifo depois para **✕ desgrifar** e removê-lo.
+- **💬 comentar** — escreve um comentário preso àquele trecho. O grifo ganha
+  um traço mais forte e todos os comentários do documento se reúnem num
+  painel **"💬 comentários"** logo abaixo do texto (cada linha leva de volta
+  ao trecho).
+- **? perguntar** / **✦ analisar** — roda a habilidade só sobre aquele
+  trecho: ele é grifado e entregue **evidenciado** ao agente, que foca a
+  análise/pergunta nele.
+- **➤ Slack** — envia uma pergunta sobre o trecho para um **#canal** ou
+  **@pessoa** no Slack (ex.: "estamos num brainstorming, preciso da sua ajuda
+  com isto"). Quem fala com o Slack é o **agente do terminal**, com o conector
+  dele — o Loro nunca guarda credencial, e nada é enviado sem sua confirmação.
+
+Os grifos e comentários ficam num arquivo ao lado do documento
+(`<doc>.anotacoes.json`) e **viajam com o acervo** — não sujam o texto
+original nem entram em nenhum log. Se um documento for muito editado e um
+trecho grifado não for mais encontrado, ele não é perdido em silêncio:
+aparece como **"trecho órfão"** no painel de comentários.
+
 ## Contextos também têm anexos
 
 Cada contexto tem sua pasta **anexos/**, sempre visível na árvore — com

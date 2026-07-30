@@ -110,7 +110,11 @@ OS/serde errors may still pass through and are shown untranslated.
 | `brain_new_note_in` | `destRel, titulo` | rel | create a living-front-matter note inside an `anexos/` folder (context counterpart of `brain_new_notebook`, ADR-0005) |
 | `brain_delete_inbox` | `name` | `()` | delete an unprocessed queue item |
 | `brain_set_auto_context` | `value: bool` | `()` | post-creation toggle (Settings) for autoContext — global config + local `.loro/settings.json` (ADR-0005 §3) |
-| `brain_new_tool` / `brain_delete_tool` | `nome, conteudo` / `rel` | rel / `()` | create (imported skill content) or delete a custom habilidade — any `.claude/commands/*.md` outside the 9 built-in skills (ADR-0005) |
+| `brain_new_tool` / `brain_delete_tool` | `nome, conteudo` / `rel` | rel / `()` | create (imported skill content) or delete a custom habilidade — any `.claude/commands/*.md` outside the 10 built-in skills (ADR-0005) |
+| `brain_annotations_get` | `rel` | `{doc, anotacoes[]}` | read a document's annotation sidecar `<doc>.anotacoes.json` (empty if none); highlights/comments anchored by text-quote (ADR-0007) |
+| `brain_annotation_add` | `rel, anotacao` | id | add a highlight/comment; returns the assigned stable `an_…` id (ADR-0007) |
+| `brain_annotation_update` | `rel, id, patch` | `()` | patch an annotation — change `cor` and/or append a `comentario` (ADR-0007) |
+| `brain_annotation_delete` | `rel, id` | `()` | remove a highlight/comment ("desgrifar") (ADR-0007) |
 
 Brainstorming world + the fila → contexto flow (ADR-0001 §7):
 
@@ -204,10 +208,10 @@ Path resolution: `LORO_HOME` (exported by `loro.sh`) or a sensible default;
   ("executar habilidade…", ADR-0005).
 - **Habilidades (built-in + custom, ADR-0005):** any `.claude/
   commands/*.md` is a "habilidade" (UI label; code says `tool`) — the
-  filename IS the slash-command. 9 built-ins ship with the acervo
+  filename IS the slash-command. 10 built-ins ship with the acervo
   (`/loro-context`, `/loro-analyse`, `/loro-question`, `/loro-ask`,
   `/loro-note`, `/loro-sync`, `/loro-tool`, `/loro-presentation`,
-  `/loro-artifact`); built-ins can be edited but never deleted. Custom ones
+  `/loro-artifact`, `/loro-slack`); built-ins can be edited but never deleted. Custom ones
   are created either by describing them to `/loro-tool` (AI drafts the
   skill, same dual create-or-evolve shape as `/loro-note`) or by importing
   an already-written skill file directly (`brain_new_tool`, no AI). Listed
@@ -269,7 +273,8 @@ All technical decisions are consolidated in the single **`docs/adr/0001-baseline
 | Meeting AI | terminal-Claude skills, local-first | ADR-0001 §9 |
 | Doc language | English | ADR-0001 |
 | External-source sync | `/loro-sync <fonte>` (drive/slack/jira/confluence) → local anexo + ref, ambient terminal-agent connector | ADR-0005 |
-| Habilidades (built-in + custom) | any `.claude/commands/*.md`; 9 built-ins, editable-not-deletable; `/loro-tool` (AI-drafted) or direct import for custom ones | ADR-0005 |
+| Habilidades (built-in + custom) | any `.claude/commands/*.md`; 10 built-ins, editable-not-deletable; `/loro-tool` (AI-drafted) or direct import for custom ones | ADR-0005 |
+| Annotation layer | select a passage in any markdown → grifar/comentar + excerpt-scoped habilidade (perguntar/analisar/Slack); highlights/comments in a co-located `<doc>.anotacoes.json` sidecar anchored by text-quote; alvo `acervo://<rel>#<annot-id>`; outbound `/loro-slack` via the agent's connector | ADR-0007 |
 | `autoContext` | per-acervo `.loro/settings.json` gate on the loop creating a brand-new context; toggle in wizard + Settings | ADR-0005 |
 | Terminal launch/status | `active_agent()` used for auto-launch (not hardcoded); `justLaunched` grace window avoids retyping into a live session | ADR-0005 |
 | Distribution | Homebrew Cask (`brew install --cask loro`) with `whisper-cpp`+`ffmpeg` as formula deps; tap `aipi/homebrew-loro` bumped by release CI | ADR-0006 |

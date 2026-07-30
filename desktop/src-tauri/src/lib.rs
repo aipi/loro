@@ -1236,6 +1236,7 @@ fn ensure_acervo_structure(
             ".claude/commands/loro-artifact.md",
             loro_artifact_skill(lang),
         ),
+        (".claude/commands/loro-slack.md", loro_slack_skill(lang)),
     ] {
         let p = base.join(rel);
         if !p.exists() {
@@ -2152,6 +2153,10 @@ fn migrate_acervo(base: &Path, apply: bool, lang: &str) -> Result<MigrationRepor
         (
             ".claude/commands/loro-artifact.md",
             loro_artifact_skill(lang).to_string(),
+        ),
+        (
+            ".claude/commands/loro-slack.md",
+            loro_slack_skill(lang).to_string(),
         ),
     ] {
         let p = base.join(rel);
@@ -3082,6 +3087,7 @@ fn ensure_meeting_skills(base: &Path, lang: &str) {
             ".claude/commands/loro-artifact.md",
             loro_artifact_skill(lang),
         ),
+        (".claude/commands/loro-slack.md", loro_slack_skill(lang)),
     ] {
         let p = base.join(rel);
         if !p.exists() {
@@ -3503,6 +3509,10 @@ pub fn run() {
             brain_open_external,
             brain_open_link,
             brain_resolve_ref,
+            brain_annotations_get,
+            brain_annotation_add,
+            brain_annotation_update,
+            brain_annotation_delete,
             brain_add_ref,
             brain_promote,
             brain_meeting_start,

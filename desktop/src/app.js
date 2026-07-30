@@ -1944,7 +1944,7 @@ async function promptSyncTool(fonte, slug) {
 const TOOL_BUILTINS = new Set([
   "loro-context.md", "loro-analyse.md", "loro-question.md",
   "loro-ask.md", "loro-note.md", "loro-sync.md", "loro-tool.md",
-  "loro-presentation.md", "loro-artifact.md",
+  "loro-presentation.md", "loro-artifact.md", "loro-slack.md",
 ]);
 // Subset offered by the generic "executar habilidade" picker (brainstorming/
 // meeting ⋯ menus): the workflow-specific built-ins already have their own
@@ -1954,6 +1954,9 @@ const TOOL_BUILTINS = new Set([
 const TOOL_PICKER_EXCLUDE = new Set([
   "loro-context.md", "loro-analyse.md", "loro-question.md",
   "loro-ask.md", "loro-note.md", "loro-tool.md",
+  // loro-slack only makes sense with an excerpt alvo, reached from the
+  // selection popover (ADR-0007) — never from the generic file-level picker.
+  "loro-slack.md",
 ]);
 let toolsSig = "";
 async function refreshTools() {
@@ -2169,6 +2172,7 @@ const TOOL_LABELS = {
   "loro-question.md": "perguntar à reunião",
   "loro-context.md": "gerar contexto",
   "loro-tool.md": "criar habilidade",
+  "loro-slack.md": "perguntar no Slack",
 };
 function habilidadeEntriesFrom(files) {
   const entries = [];
@@ -2779,8 +2783,15 @@ async function renderView(tab, stale) {
   } catch (_) { fm = null; body = raw || ""; }
   fmById.set(tab.id, fm);
   const panel = fm ? renderRefsPanel(fm) : "";
-  B.doc.innerHTML = panel + mdRender(body || fallback);
+  // ADR-0007: the rendered markdown body is wrapped in an .annotatable container
+  // so selection offsets and painted marks are scoped to the content (never the
+  // refs panel). GUIDE_REL is not an acervo doc, so it is not annotatable.
+  const annotatable = tab.rel !== GUIDE_REL;
+  B.doc.innerHTML = panel + (annotatable
+    ? `<div class="annotatable">${mdRender(body || fallback)}</div>`
+    : mdRender(body || fallback));
   wireDocLinks();
+  if (annotatable) await decorateAnnotations(tab.rel);
 }
 
 // ADR-0009: front-matter refs (+ audio) as a collapsible panel; each row is a
@@ -2820,7 +2831,7 @@ async function renderMeetingLiving(tab, stale) {
   const artefatos = await listArtefatos(LM.meetingDir(tab.rel));
   if (stale && stale()) return;
   const status = manifest ? manifest.status : (meeting.id === id ? meeting.phase : "done");
-  paintMeetingSurface(id, raw, manifest, status, artefatos);
+  paintMeetingSurface(id, raw, manifest, status, artefatos, tab.rel);
 }
 
 // Lista os ARQUIVOS reais sob <reunião>/artefatos/<kind>/ — o skill grava direto
@@ -2853,7 +2864,7 @@ async function refreshLivingInPlace(id) {
   const artefatos = await listArtefatos(LM.meetingDir(tab.rel));
   if (ws.activeId !== tab.id) return;
   const status = manifest ? manifest.status : (meeting.id === id ? meeting.phase : "done");
-  paintMeetingSurface(id, raw, manifest, status, artefatos);
+  paintMeetingSurface(id, raw, manifest, status, artefatos, tab.rel);
   if (wasBottom) scrollMeetingBottom();
   else { B.wsBody.scrollTop = prevTop; showPill(); }
 }
@@ -2863,7 +2874,7 @@ function renderIfLiving(id) {
   if (t && LM.livingId(t.rel) === id) renderActive();
 }
 
-function paintMeetingSurface(id, raw, manifest, status, artefatos) {
+function paintMeetingSurface(id, raw, manifest, status, artefatos, rel) {
   const body = LM.stripMarker(R.splitFrontMatter ? R.splitFrontMatter(raw || "").body : (raw || ""));
   // ADR-0012: mostra o status do pseudo-stream enquanto grava (preview ao vivo),
   // para o problema "não aparece nada" ser diagnosticável sem olhar logs.
@@ -2872,15 +2883,18 @@ function paintMeetingSurface(id, raw, manifest, status, artefatos) {
   const emptyMsg = status === "recording"
     ? `<p class="bempty">${t("gravando — o preview ao vivo aparece a cada ~18s conforme houver fala.")}</p>`
     : `<p class="bempty">${t("sem transcrição — não houve fala capturada nesta reunião.")}</p>`;
+  // ADR-0007: the transcript body is annotatable (append-only, so anchors stay
+  // valid as new lines arrive); the status bar/preview stay outside .annotatable.
   B.doc.innerHTML =
     `<div class="mtg-surface">` +
       `<div class="mtg-doc">${meetingStatusBar(status)}${preview}` +
-        (body.trim() ? mdRender(body) : emptyMsg) +
+        (body.trim() ? `<div class="annotatable">${mdRender(body)}</div>` : emptyMsg) +
       `</div>` +
       `<aside class="mtg-rail">${meetingRailHtml()}</aside>` +
     `</div>`;
   wireMeetingSurface(id);
   wireDocLinks();
+  if (body.trim() && rel) decorateAnnotations(rel);
 }
 
 function meetingStatusBar(status) {
@@ -2902,6 +2916,236 @@ function meetingRailHtml() {
   // "mesmo padrão em todo lugar" (owner request).
   return habilidadeCardHtml("mtgSkill");
 }
+
+// ============================ anotações (ADR-0007) ============================
+// A selection over any rendered markdown (a context doc OR a meeting transcript)
+// raises a floating popover: grifar · comentar · perguntar · analisar · Slack.
+// Highlights/comments persist in a co-located sidecar (Rust), anchored by TEXT
+// QUOTE (src/annotate.js) so they survive re-render and — since a transcript is
+// append-only — live appends. The excerpt is addressable as `acervo://<rel>#id`,
+// which feeds the excerpt-scoped habilidades. Read-view only for now; CM6 edit
+// decorations are recorded as GUI-verification debt (ADR-0007).
+let annotState = { rel: null, list: [], orphans: [] };
+let _annotPop = null;
+
+function annotPop() {
+  if (!_annotPop) {
+    _annotPop = document.createElement("div");
+    _annotPop.className = "annot-pop";
+    _annotPop.hidden = true;
+    _annotPop.addEventListener("mousedown", (e) => e.stopPropagation());
+    document.body.appendChild(_annotPop);
+  }
+  return _annotPop;
+}
+function hideAnnotPop() { if (_annotPop) _annotPop.hidden = true; }
+function annotBtn(a, label, extra) { return `<button class="annot-act${extra ? " " + extra : ""}" data-a="${a}">${esc(label)}</button>`; }
+
+function positionPop(rect) {
+  const pop = annotPop();
+  pop.hidden = false;
+  const h = pop.offsetHeight || 40, w = pop.offsetWidth || 220;
+  let top = rect.top - h - 8;
+  if (top < 8) top = rect.bottom + 8;
+  const left = Math.min(Math.max(8, rect.left), window.innerWidth - w - 8);
+  pop.style.top = top + "px";
+  pop.style.left = left + "px";
+}
+
+function annotContainer() { return B.doc.querySelector(".annotatable"); }
+function toolRelByName(name) { const f = lastToolFiles.find((x) => x.name === name); return f ? f.path : null; }
+
+async function loadAnnotations(rel) {
+  try { const f = await invoke("brain_annotations_get", { rel }); return (f && f.anotacoes) || []; }
+  catch (_) { return []; }
+}
+
+// Paint every locatable annotation as <mark data-annot-id>; return the ones that
+// no longer resolve (orphans) so the panel can surface them instead of dropping
+// them silently (ADR-0007 — nothing by accident).
+function paintAnnotations(container, list) {
+  const text = container.textContent;
+  const orphans = [];
+  for (const a of list) {
+    const loc = window.LoroAnnotate.locate(text, (a && a.anchor) || {});
+    if (!loc) { orphans.push(a); continue; }
+    const cls = "annot" + (a.comentarios && a.comentarios.length ? " has-comment" : "") +
+      (a.cor ? " cor-" + String(a.cor).replace(/[^a-z]/gi, "") : "");
+    window.LoroAnnotate.paintRange(container, loc.start, loc.end, { "data-annot-id": a.id, class: cls });
+  }
+  return orphans;
+}
+
+// Load + paint + wire annotations for the currently-rendered doc. Called at the
+// end of renderView / paintMeetingSurface; a stale guard drops the result if a
+// newer render replaced the container.
+async function decorateAnnotations(rel) {
+  const container = annotContainer();
+  if (!container || !rel) { annotState = { rel: null, list: [], orphans: [] }; return; }
+  const list = await loadAnnotations(rel);
+  if (annotContainer() !== container) return; // a newer render won
+  const orphans = paintAnnotations(container, list);
+  annotState = { rel, list, orphans };
+  wireMarks(container);
+  renderAnnotPanel(container);
+}
+
+function wireMarks(container) {
+  container.querySelectorAll("mark.annot[data-annot-id]").forEach((m) => {
+    m.onclick = (e) => {
+      e.stopPropagation();
+      const a = (annotState.list || []).find((x) => x.id === m.getAttribute("data-annot-id"));
+      if (a) openMarkPopover(a, m.getBoundingClientRect());
+    };
+  });
+}
+
+// Selection → popover. Deferred a tick so the browser has committed the
+// selection; ignored unless the range sits inside the annotatable container.
+function annotOnMouseUp() {
+  setTimeout(() => {
+    const container = annotContainer();
+    if (!container) return;
+    const sel = window.getSelection && window.getSelection();
+    if (!sel || sel.isCollapsed || !sel.rangeCount) return;
+    const range = sel.getRangeAt(0);
+    if (!container.contains(range.commonAncestorContainer) || !sel.toString().trim()) return;
+    const a = rangeLenTo(container, range.startContainer, range.startOffset);
+    const b = rangeLenTo(container, range.endContainer, range.endOffset);
+    const s = Math.min(a, b), e = Math.max(a, b);
+    if (e - s < 1) return;
+    const anchor = window.LoroAnnotate.makeAnchor(container.textContent, s, e);
+    openSelectionPopover(anchor, range.getBoundingClientRect());
+  }, 0);
+}
+// Length of text from the container start up to (node, offset) — the plain-text
+// offset the anchor is expressed in (Range.toString adds no newlines, matching
+// textContent, so it lines up with makeAnchor/locate).
+function rangeLenTo(container, node, offset) {
+  const r = document.createRange();
+  r.setStart(container, 0);
+  r.setEnd(node, offset);
+  return r.toString().length;
+}
+
+function openSelectionPopover(anchor, rect) {
+  const pop = annotPop();
+  pop.innerHTML =
+    annotBtn("grifar", "✎ " + t("grifar")) +
+    annotBtn("comentar", "💬 " + t("comentar")) +
+    annotBtn("perguntar", "? " + t("perguntar")) +
+    annotBtn("analisar", "✦ " + t("analisar")) +
+    annotBtn("slack", "➤ Slack");
+  pop.querySelector('[data-a="grifar"]').onclick = async () => { hideAnnotPop(); await ensureHighlight(anchor); };
+  pop.querySelector('[data-a="comentar"]').onclick = () => { hideAnnotPop(); promptComment((txt) => ensureHighlight(anchor, { comentarios: [{ texto: txt }] })); };
+  pop.querySelector('[data-a="perguntar"]').onclick = () => { hideAnnotPop(); runExcerptSkill("loro-question.md", anchor); };
+  pop.querySelector('[data-a="analisar"]').onclick = () => { hideAnnotPop(); runExcerptSkill("loro-analyse.md", anchor); };
+  pop.querySelector('[data-a="slack"]').onclick = () => { hideAnnotPop(); runExcerptSkill("loro-slack.md", anchor); };
+  positionPop(rect);
+}
+
+function openMarkPopover(a, rect) {
+  const pop = annotPop();
+  const rel = annotState.rel;
+  const comments = (a.comentarios || []).map((c) => `<div class="annot-cmt">${esc(c.texto)}</div>`).join("") ||
+    `<div class="annot-none mono">${t("sem comentários")}</div>`;
+  pop.innerHTML = `<div class="annot-cmts">${comments}</div>` +
+    annotBtn("comentar", "💬 " + t("comentar")) +
+    annotBtn("perguntar", "? " + t("perguntar")) +
+    annotBtn("analisar", "✦ " + t("analisar")) +
+    annotBtn("slack", "➤ Slack") +
+    annotBtn("desgrifar", "✕ " + t("desgrifar"), "danger");
+  const alvo = `acervo://${rel}#${a.id}`;
+  pop.querySelector('[data-a="comentar"]').onclick = () => { hideAnnotPop(); promptComment(async (txt) => {
+    try { await invoke("brain_annotation_update", { rel, id: a.id, patch: { addComentario: { texto: txt } } }); await renderActive(); }
+    catch (e) { toast(tErr(String(e))); }
+  }); };
+  pop.querySelector('[data-a="perguntar"]').onclick = () => { hideAnnotPop(); useExcerptTool("loro-question.md", alvo); };
+  pop.querySelector('[data-a="analisar"]').onclick = () => { hideAnnotPop(); useExcerptTool("loro-analyse.md", alvo); };
+  pop.querySelector('[data-a="slack"]').onclick = () => { hideAnnotPop(); useExcerptTool("loro-slack.md", alvo); };
+  pop.querySelector('[data-a="desgrifar"]').onclick = async () => {
+    hideAnnotPop();
+    try { await invoke("brain_annotation_delete", { rel, id: a.id }); await renderActive(); toast(t("grifo removido")); }
+    catch (e) { toast(tErr(String(e))); }
+  };
+  positionPop(rect);
+}
+
+function useExcerptTool(name, alvo) {
+  const rel = toolRelByName(name);
+  if (!rel) { toast("Slack / " + t("habilidade indisponível")); return; }
+  promptUseTool(rel, alvo);
+}
+
+// A fresh selection sent to a habilidade first MATERIALIZES a highlight, so the
+// excerpt is both evidenced on screen and addressable (`acervo://rel#id`) when
+// the skill runs — exactly the "destaco o trecho para evidenciá-lo na análise"
+// flow (owner request).
+async function ensureHighlight(anchor, extra) {
+  const rel = annotState.rel;
+  if (!rel) return null;
+  try {
+    const anotacao = Object.assign({ tipo: "grifo", cor: "amarelo", anchor }, extra || {});
+    const id = await invoke("brain_annotation_add", { rel, anotacao });
+    await renderActive();
+    return id;
+  } catch (e) { toast(tErr(String(e))); return null; }
+}
+async function runExcerptSkill(name, anchor) {
+  const rel = annotState.rel;
+  if (!rel) return;
+  const id = await ensureHighlight(anchor);
+  if (id) useExcerptTool(name, `acervo://${rel}#${id}`);
+}
+
+function promptComment(onText) {
+  openModal(
+    t("comentar trecho"),
+    `<label class="wfield"><span class="mono">${t("comentário")}</span>` +
+    `<input id="annotCmt" type="text" spellcheck="false" placeholder="${t("ex.: preciso da sua ajuda com isso")}"></label>`,
+    t("salvar"),
+    () => {
+      const txt = (($("annotCmt") && $("annotCmt").value) || "").trim();
+      if (!txt) { toast(t("escreva um comentário")); return; }
+      onText(txt);
+    }
+  );
+  const i = $("annotCmt"); if (i) i.focus();
+}
+
+// "Reunir os comentários" (owner request): a collapsible panel, rendered as a
+// SIBLING after the annotatable container (never inside it — its text must not
+// pollute the offsets the anchors are measured against). Lists every commented
+// passage plus any orphans, each row scrolling to its mark.
+function renderAnnotPanel(container) {
+  const old = B.doc.querySelector(".annot-panel");
+  if (old) old.remove();
+  const withC = (annotState.list || []).filter((a) => a.comentarios && a.comentarios.length);
+  const orphans = annotState.orphans || [];
+  if (!withC.length && !orphans.length) return;
+  const quote = (a) => esc(String((a.anchor && a.anchor.quote) || "").slice(0, 80));
+  const rows = withC.map((a) =>
+    `<div class="annot-prow" data-goto="${esc(a.id)}"><div class="annot-pquote mono">“${quote(a)}”</div>` +
+    (a.comentarios || []).map((c) => `<div class="annot-pcmt">${esc(c.texto)}</div>`).join("") + `</div>`).join("");
+  const orph = orphans.length
+    ? `<div class="annot-orphans"><div class="annot-ohead mono">${t("trechos órfãos")} (${orphans.length})</div>` +
+      orphans.map((a) => `<div class="annot-pcmt">“${quote(a)}”</div>`).join("") + `</div>`
+    : "";
+  const panel = document.createElement("details");
+  panel.className = "annot-panel";
+  panel.innerHTML = `<summary>💬 ${t("comentários")} (${withC.length})</summary>${rows}${orph}`;
+  container.insertAdjacentElement("afterend", panel);
+  panel.querySelectorAll("[data-goto]").forEach((el) => (el.onclick = () => {
+    const m = container.querySelector(`mark[data-annot-id="${el.getAttribute("data-goto")}"]`);
+    if (m) m.scrollIntoView({ block: "center" });
+  }));
+}
+
+// Global wiring (once): selection inside the doc opens the popover; a click
+// elsewhere or a scroll dismisses it.
+B.doc.addEventListener("mouseup", annotOnMouseUp);
+document.addEventListener("mousedown", (e) => { if (!_annotPop || _annotPop.hidden) return; if (!_annotPop.contains(e.target)) hideAnnotPop(); });
+B.wsBody.addEventListener("scroll", hideAnnotPop, { passive: true });
 
 function wireMeetingSurface(id) {
   wireHabilidadeCard("mtgSkill", () => currentMeetingDir(id));
