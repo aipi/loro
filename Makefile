@@ -13,14 +13,17 @@ export PATH := $(HOME)/.cargo/bin:$(PATH)
 # Vanilla JS frontend files that must at least parse (node --check).
 JS_SRC := desktop/src/app.js desktop/src/overlay.js desktop/src/text.js desktop/src/audio.js
 
-.PHONY: help test test-rust test-js lint fmt build app test-docker syscap vendor-cm6 require-rust
+.PHONY: help test test-rust test-js test-cli lint fmt build app test-docker syscap vendor-cm6 require-rust
 
 help: ## Show this help menu
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
 		| sort \
 		| awk 'BEGIN {FS = ":.*?## "} {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
 
-test: test-rust test-js ## Run the full suite (Rust + JS)
+test: test-cli test-rust test-js ## Run the full suite (CLI + Rust + JS)
+
+test-cli: ## Run loro.sh regression tests under the system bash (macOS bash 3.2 floor)
+	/bin/bash tests/cli.sh
 
 test-rust: ## Run the Rust backend tests (cargo test)
 	cd desktop/src-tauri && cargo test
