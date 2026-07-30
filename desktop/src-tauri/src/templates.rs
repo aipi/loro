@@ -1328,6 +1328,132 @@ pub fn loro_artifact_skill(lang: &str) -> &'static str {
     }
 }
 
+// ---- brainstorming digest into indice.md (ADR-0011) -------------------------
+//
+// `/loro-digest brainstorming/<slug>` reads every piece of the brainstorming
+// (meeting reports, notes, anexos) and (re)writes the topic's `indice.md` as a
+// living reading surface: a prose summary, key points/highlights, and a linked
+// index of all material, with the front-matter `refs:` populated so the
+// "Referências" panel renders. It stamps `digest_em` and `digest_itens` so the
+// UI can nudge "N new items since the index" (ADR-0011). BR-8: it reads the
+// PII-free `relatorio.md`, never the raw `reuniao.md` transcript or audio.
+pub const LORO_DIGEST_SKILL: &str = r#"---
+description: Resume TODO o material de um brainstorming (reuniões, notas, anexos) no indice.md — resumo, pontos-chave, índice e referências (ADR-0011)
+argument-hint: <alvo:brainstorming/tema>
+---
+
+Argumentos: `$ARGUMENTS`
+O PRIMEIRO token é o ALVO: um tema `brainstorming/<slug>` (aceite também só o
+`<slug>` e resolva para `brainstorming/<slug>`). Não há mais nada a interpretar.
+
+Objetivo: (re)escrever `brainstorming/<slug>/indice.md` como a superfície de
+leitura viva do tema — um resumão de tudo que existe ali, sempre reproduzível.
+
+1. **Levante o material** do tema (delegue a leitura a subagentes num modelo
+   rápido — ADR-0002 §5 — devolvendo só o essencial de cada arquivo):
+   - Reuniões: para cada `reunioes/<id>/`, leia o `manifest.json` (só o
+     `titulo`/`status`) e o `relatorio.md`. **BR-8: nunca leia o `reuniao.md`
+     (transcrição) nem áudio** — o `relatorio.md` já é o resumo sem PII.
+     Inclua também as notas geradas em `reunioes/<id>/notas/`.
+   - Notas: cada `.md` em `notas/`.
+   - Anexos: cada arquivo em `anexos/` que você consiga ler (`.md`, `.txt`,
+     `.pdf`, planilhas). Se não conseguir abrir um formato, liste-o mesmo assim
+     no índice, sem inventar conteúdo.
+   - **Ignore** o próprio `indice.md` e qualquer `*-relatorio.md` gerado (evita
+     re-ingestão).
+2. **Escreva o `indice.md`** com este esqueleto (no idioma do acervo), fundindo
+   só o que a base sustenta — **nunca invente fatos**:
+   - **Front-matter** (preserve `loro`, `id`, `tema` e `criado_em` do arquivo
+     atual; se ausente, `criado_em` = hoje): atualize `atualizado_em` = hoje,
+     acrescente `digest_em: <hoje ISO>` e `digest_itens: <N>` (N = total de
+     materiais indexados: reuniões + notas + anexos), e preencha `refs:` com uma
+     entrada por material — `- {id: <id-curto>, tipo: <reuniao|nota|anexo>,
+     caminho: acervo://<caminho-do-material>}`.
+   - `# <tema>`
+   - `## Resumo geral` — 1–3 parágrafos: do que trata o tema, onde está.
+   - `## Pontos-chave & highlights` — bullets com decisões, dúvidas em aberto e
+     os trechos mais relevantes (cada bullet pode citar a origem em
+     `acervo://…`).
+   - `## Índice do material` — subseções **Reuniões**, **Notas**, **Anexos**;
+     cada item é `- [<título>](acervo://<caminho>) — <resumo de 1 linha>`.
+3. Reescreva o arquivo por inteiro (a seção anterior é descartável); o
+   `indice.md` é derivado, não uma nota editada à mão.
+4. Ao final, diga quantos materiais foram indexados e onde o índice ficou.
+
+Regras de rigor (ADR-0002 §5):
+- **Nunca assuma premissas** não declaradas nem invente conteúdo ausente.
+- **BR-8:** o índice é material do acervo (nunca um log); jamais inclua a
+  transcrição bruta, áudio, PII ou segredos — só o que já está nos relatórios
+  e notas.
+- **Varredura eficiente:** delegue a leitura de muitos arquivos a subagentes
+  (Task) num modelo rápido; reserve o modelo principal para a síntese.
+- **Leitura barata (ADR-0004):** prefira o Sumário/§0 e IDs estáveis ao arquivo
+  inteiro.
+"#;
+
+pub const LORO_DIGEST_SKILL_EN: &str = r#"---
+description: Summarizes ALL of a brainstorming's material (meetings, notes, attachments) into indice.md — summary, key points, index and references (ADR-0011)
+argument-hint: <target:brainstorming/topic>
+---
+
+Arguments: `$ARGUMENTS`
+The FIRST token is the TARGET: a topic `brainstorming/<slug>` (a bare `<slug>`
+is also accepted and resolves to `brainstorming/<slug>`). There is nothing else
+to interpret.
+
+Goal: (re)write `brainstorming/<slug>/indice.md` as the topic's living reading
+surface — a digest of everything that lives there, always reproducible.
+
+1. **Gather the material** of the topic (delegate reading to subagents on a
+   fast model — ADR-0002 §5 — returning only each file's essentials):
+   - Meetings: for each `reunioes/<id>/`, read the `manifest.json` (only
+     `titulo`/`status`) and `relatorio.md`. **BR-8: never read `reuniao.md`
+     (the transcript) or audio** — `relatorio.md` is already the PII-free
+     summary. Include the generated notes in `reunioes/<id>/notas/` too.
+   - Notes: each `.md` in `notas/`.
+   - Attachments: each file in `anexos/` you can read (`.md`, `.txt`, `.pdf`,
+     spreadsheets). If a format won't open, still list it in the index without
+     inventing content.
+   - **Skip** `indice.md` itself and any generated `*-relatorio.md` (avoids
+     re-ingestion).
+2. **Write `indice.md`** with this skeleton (in the acervo's language), grounded
+   only in what the base supports — **never invent facts**:
+   - **Front-matter** (preserve the current file's `loro`, `id`, `tema` and
+     `criado_em`; if absent, `criado_em` = today): set `atualizado_em` = today,
+     add `digest_em: <today ISO>` and `digest_itens: <N>` (N = total materials
+     indexed: meetings + notes + attachments), and fill `refs:` with one entry
+     per material — `- {id: <short-id>, tipo: <reuniao|nota|anexo>, caminho:
+     acervo://<path-of-the-material>}`.
+   - `# <topic>`
+   - `## Resumo geral` — 1–3 paragraphs: what the topic is about, where it sits.
+   - `## Pontos-chave & highlights` — bullets with decisions, open questions and
+     the most relevant excerpts (each bullet may cite its origin in
+     `acervo://…`).
+   - `## Índice do material` — subsections **Reuniões**, **Notas**, **Anexos**;
+     each item is `- [<title>](acervo://<path>) — <one-line summary>`.
+3. Rewrite the whole file (the previous section is disposable); `indice.md` is
+   derived, not a hand-edited note.
+4. At the end, state how many materials were indexed and where the index landed.
+
+Rigor rules (ADR-0002 §5):
+- **Never assume unstated premises** and never invent missing content.
+- **BR-8:** the index is acervo material (never a log); never include the raw
+  transcript, audio, PII or secrets — only what is already in the reports and
+  notes.
+- **Efficient scanning:** delegate reading many files to subagents (Task) on a
+  fast model; keep the main model for synthesis.
+- **Cheap reading (ADR-0004):** prefer the Summary/§0 and stable IDs over the
+  whole file.
+"#;
+
+pub fn loro_digest_skill(lang: &str) -> &'static str {
+    if lang == "en" {
+        LORO_DIGEST_SKILL_EN
+    } else {
+        LORO_DIGEST_SKILL
+    }
+}
+
 // ---- general Q&A over the knowledge base (ADR-0013) ----
 //
 // `/loro-ask` answers ANY question from the acervo's versioned contexts (the local
@@ -1524,6 +1650,7 @@ mod tests {
                 ("presentation", loro_presentation_skill(lang)),
                 ("artifact", loro_artifact_skill(lang)),
                 ("slack", loro_slack_skill(lang)),
+                ("digest", loro_digest_skill(lang)),
             ] {
                 assert!(
                     body.contains(no_assume),
@@ -1534,6 +1661,43 @@ mod tests {
                     "{name}/{lang}: missing fast-scanning rule"
                 );
             }
+        }
+    }
+
+    // ADR-0011 — the digest skill targets a brainstorming, writes indice.md
+    // (summary + key points + index + refs), stamps the staleness fields, and
+    // upholds BR-8 (never the raw transcript/audio), in both languages.
+    #[test]
+    fn digest_skill_targets_brainstorming_and_writes_indice() {
+        for lang in ["pt", "en"] {
+            let s = loro_digest_skill(lang);
+            assert!(s.contains("$ARGUMENTS"), "digest/{lang}: lacks $ARGUMENTS");
+            assert!(
+                s.contains("brainstorming/<slug>") && s.contains("indice.md"),
+                "digest/{lang}: must target brainstorming and write indice.md"
+            );
+            // staleness stamps the UI reads back (LoroBrainstorm.digestNotice)
+            assert!(
+                s.contains("digest_em") && s.contains("digest_itens"),
+                "digest/{lang}: must stamp digest_em/digest_itens"
+            );
+            // populates the refs panel + the four content sections
+            assert!(s.contains("refs:"));
+            assert!(s.contains("## Resumo geral"));
+            assert!(s.contains("## Pontos-chave & highlights"));
+            assert!(s.contains("## Índice do material"));
+            // BR-8: reads the PII-free report, never the raw transcript/audio
+            assert!(s.contains("relatorio.md") && s.contains("BR-8"));
+            let never_transcript = if lang == "en" {
+                "never read `reuniao.md`"
+            } else {
+                "nunca leia o `reuniao.md`"
+            };
+            assert!(
+                s.contains(never_transcript),
+                "digest/{lang}: must forbid reading the raw transcript"
+            );
+            assert!(s.contains("ADR-0011"));
         }
     }
 

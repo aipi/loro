@@ -80,6 +80,15 @@ quando quiser pela paleta: `Cmd/Ctrl+Shift+P` → "apresentação do Loro".
   pedido seu; **✦ pedir à IA** (menu ⋯ de uma nota/análise **e no rail à
   direita de qualquer arquivo aberto**) aplica um pedido sobre o conteúdo
   existente — a IA evolui, nunca apaga.
+- **Atualizar índice (resumão)** (menu ⋯ do brainstorming) roda a habilidade
+  `/loro-digest`: ela lê **todo** o material do tema (relatórios de reunião,
+  notas e anexos) e (re)escreve o `indice.md` — o markdown principal — com um
+  **resumo geral**, os **pontos-chave & highlights**, um **índice** com links
+  para cada material e as **referências** (o painel no topo do arquivo). É
+  disparada por você e reescreve o índice do zero (não lê a transcrição bruta
+  nem áudio — só os relatórios e notas). Quando surge material novo desde o
+  último índice, o próprio `indice.md` mostra um aviso sutil no topo ("N itens
+  novos — atualizar índice") com um botão para regerar.
 - **Menu ⋯ de qualquer arquivo** (nota, anexo, avulso, nota de reunião):
   além de **renomear** e **apagar**, traz **⇄ mover para…** (escolha a pasta
   de destino — avulso, ou as pastas notas/anexos de qualquer brainstorming) e
