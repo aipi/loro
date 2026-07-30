@@ -1749,6 +1749,72 @@ pub fn brain_rename_pessoal(app: AppHandle, rel: String, name: String) -> Result
     Ok(new_rel)
 }
 
+// Move a brainstorming FILE into another folder of the SAME non-versioned world
+// (brainstorming/ or pessoal/). The filename is preserved; a name clash in the
+// destination is refused (never overwrites). Confinement mirrors
+// `rename_pessoal_file` — the versioned contextos/ tree is off-limits on both
+// ends. Returns the new acervo-relative path. Pure core, testable without Tauri.
+pub(crate) fn move_pessoal_file(base: &Path, rel: &str, dest_dir: &str) -> Result<String, String> {
+    let rel = rel.replace('\\', "/");
+    let dest_dir = dest_dir
+        .replace('\\', "/")
+        .trim_end_matches('/')
+        .to_string();
+    let world_of = |p: &str| -> Option<&'static str> {
+        if p == "brainstorming" || p.starts_with("brainstorming/") {
+            Some("brainstorming")
+        } else if p == "pessoal" || p.starts_with("pessoal/") {
+            Some("pessoal")
+        } else {
+            None
+        }
+    };
+    let src_world = world_of(&rel).ok_or("err.outside_brainstorm")?;
+    let dst_world = world_of(&dest_dir).ok_or("err.outside_brainstorm")?;
+    if rel.contains("..") || dest_dir.contains("..") {
+        return Err("err.invalid_path".into());
+    }
+    let src = guarded_existing(base, &rel)?;
+    if !src.starts_with(base.join(src_world)) {
+        return Err("err.outside_brainstorm".into());
+    }
+    if !src.is_file() {
+        return Err("err.not_found".into());
+    }
+    let dst = guarded_existing(base, &dest_dir)?;
+    if !dst.starts_with(base.join(dst_world)) {
+        return Err("err.outside_brainstorm".into());
+    }
+    if !dst.is_dir() {
+        return Err("err.not_found".into());
+    }
+    let fname = src.file_name().ok_or("err.invalid_path")?;
+    let dest = dst.join(fname);
+    if dest.exists() {
+        return Err("err.file_exists_in_target".into());
+    }
+    std::fs::rename(&src, &dest).map_err(|e| e.to_string())?;
+    normalize_rel(&format!("{dest_dir}/{}", fname.to_string_lossy()))
+}
+
+#[tauri::command]
+pub fn brain_move_pessoal(app: AppHandle, rel: String, dest_dir: String) -> Result<String, String> {
+    let base = acervo_base()?;
+    let new_rel = move_pessoal_file(&base, &rel, &dest_dir)?;
+    emit_brainstorming_changed(&app, serde_json::json!({ "rel": new_rel }));
+    Ok(new_rel)
+}
+
+// Resolve an acervo-relative path to its absolute on-disk path (guarded to the
+// acervo root). Backs the sidebar "copy absolute path" action — the relative
+// path the UI already holds needs no backend round-trip.
+#[tauri::command]
+pub fn brain_abs_path(rel: String) -> Result<String, String> {
+    let base = acervo_base()?;
+    let p = guarded_existing(&base, &rel)?;
+    Ok(p.to_string_lossy().to_string())
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateBrainstormInput {
@@ -2510,6 +2576,65 @@ mod tests {
         assert_eq!(
             rename_pessoal_file(&base, "brainstorming/x/a.md", "b.md").unwrap_err(),
             "err.file_exists_in_target"
+        );
+    }
+
+    // moving a note/anexo between folders of the non-versioned world
+    #[test]
+    fn move_pessoal_file_moves_between_folders() {
+        let base = tmp("mv");
+        let src_dir = base.join("brainstorming/vendas/notas");
+        let dst_dir = base.join("brainstorming/vendas/anexos");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        std::fs::create_dir_all(&dst_dir).unwrap();
+        std::fs::write(src_dir.join("a.md"), "corpo").unwrap();
+        let out = move_pessoal_file(
+            &base,
+            "brainstorming/vendas/notas/a.md",
+            "brainstorming/vendas/anexos",
+        )
+        .unwrap();
+        assert_eq!(out, "brainstorming/vendas/anexos/a.md");
+        assert!(dst_dir.join("a.md").is_file());
+        assert!(!src_dir.join("a.md").exists());
+    }
+
+    #[test]
+    fn move_pessoal_file_refuses_escapes_collisions_and_versioned() {
+        let base = tmp("mv2");
+        std::fs::create_dir_all(base.join("brainstorming/x/notas")).unwrap();
+        std::fs::create_dir_all(base.join("brainstorming/y")).unwrap();
+        std::fs::write(base.join("brainstorming/x/notas/a.md"), "a").unwrap();
+        std::fs::write(base.join("brainstorming/y/a.md"), "dup").unwrap();
+        std::fs::create_dir_all(base.join("contextos/c")).unwrap();
+        std::fs::write(base.join("contextos/c/context.md"), "x").unwrap();
+        // the versioned world is off-limits as source...
+        assert_eq!(
+            move_pessoal_file(&base, "contextos/c/context.md", "brainstorming/x").unwrap_err(),
+            "err.outside_brainstorm"
+        );
+        // ...and as destination
+        assert_eq!(
+            move_pessoal_file(&base, "brainstorming/x/notas/a.md", "contextos/c").unwrap_err(),
+            "err.outside_brainstorm"
+        );
+        // traversal in the destination is refused
+        assert!(move_pessoal_file(
+            &base,
+            "brainstorming/x/notas/a.md",
+            "brainstorming/../contextos/c"
+        )
+        .is_err());
+        // a name clash in the destination never overwrites
+        assert_eq!(
+            move_pessoal_file(&base, "brainstorming/x/notas/a.md", "brainstorming/y").unwrap_err(),
+            "err.file_exists_in_target"
+        );
+        // the destination folder must already exist
+        assert_eq!(
+            move_pessoal_file(&base, "brainstorming/x/notas/a.md", "brainstorming/zzz")
+                .unwrap_err(),
+            "err.not_found"
         );
     }
 
