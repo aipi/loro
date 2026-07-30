@@ -87,8 +87,10 @@ pub fn engine_search_dirs() -> Vec<PathBuf> {
 // engine discovery works the same as on Unix.
 fn exe_candidates(dir: &Path, name: &str) -> Vec<PathBuf> {
     let mut cands = vec![dir.join(name)];
-    #[cfg(windows)]
-    if Path::new(name).extension().is_none() {
+    // cfg!() rather than #[cfg]: the body then compiles on every platform, so
+    // `cands` is always seen as mutated (an attribute would strip the only push
+    // off-Windows and trip clippy's unused_mut). The branch is folded away.
+    if cfg!(windows) && Path::new(name).extension().is_none() {
         cands.push(dir.join(format!("{name}.exe")));
     }
     cands
@@ -148,6 +150,20 @@ pub fn syscap_bin() -> PathBuf {
     PathBuf::from("loro-syscap")
 }
 
+// ffmpeg is a system dependency (ADR-0003). The install hint travels as the
+// error's `detail` so the frontend renders it in the active language while still
+// naming the installer that actually exists on the running platform. Every
+// caller must use this: the message template interpolates {detail}, so a bare
+// "err.ffmpeg_not_found" would render as "Install ()".
+pub fn ffmpeg_not_found_err() -> String {
+    let hint = if cfg!(target_os = "windows") {
+        "winget install Gyan.FFmpeg"
+    } else {
+        "brew install ffmpeg"
+    };
+    format!("err.ffmpeg_not_found:{hint}")
+}
+
 // find an executable (PATH + known locations) — same search the engine uses
 pub fn which(name: &str) -> Option<String> {
     engine_search_dirs()
@@ -198,6 +214,25 @@ mod tests {
 
         // An explicit extension is left untouched on every platform.
         assert_eq!(exe_candidates(Path::new("/x"), "ffmpeg.exe").len(), 1);
+    }
+
+    #[test]
+    fn ffmpeg_error_carries_a_platform_install_hint() {
+        // the detail must name the installer that exists on THIS os — pointing a
+        // Windows user at Homebrew is a dead end
+        let e = ffmpeg_not_found_err();
+        let (code, hint) = e.split_once(':').expect("formato err.code:detail");
+        assert_eq!(code, "err.ffmpeg_not_found");
+        assert!(
+            !hint.is_empty(),
+            "a mensagem interpola {{detail}}, nao pode vir vazio"
+        );
+        if cfg!(target_os = "windows") {
+            assert!(hint.contains("winget"), "esperava winget, veio: {hint}");
+            assert!(!hint.contains("brew"), "dica de macOS no Windows: {hint}");
+        } else {
+            assert!(hint.contains("brew"));
+        }
     }
 
     #[test]

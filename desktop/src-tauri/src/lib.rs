@@ -520,18 +520,6 @@ fn stop(app: AppHandle, state: State<AppState>) -> Result<(), String> {
 
 // Offline mode (ADR-0003 "two transcription modes"): the whole recording is transcribed at once with
 // whisper-cli (no VAD/streaming) — meant to be more faithful than the live
-// ffmpeg is a system dependency (ADR-0003). The install hint travels as the
-// error's `detail` so the frontend renders it in the active language while still
-// naming the installer that actually exists on the running platform.
-fn ffmpeg_not_found_err() -> String {
-    let hint = if cfg!(target_os = "windows") {
-        "winget install Gyan.FFmpeg"
-    } else {
-        "brew install ffmpeg"
-    };
-    format!("err.ffmpeg_not_found:{hint}")
-}
-
 // whisper-stream/VAD path. Converts to 16kHz mono WAV via ffmpeg first, same
 // as loro.sh's `cmd_file`.
 //
@@ -3765,21 +3753,6 @@ mod tests {
         } else {
             assert_eq!(bin, "open");
             assert_eq!(args, vec!["-a", "Audio MIDI Setup"]);
-        }
-    }
-
-    #[test]
-    fn ffmpeg_error_carries_a_platform_install_hint() {
-        // the detail must name the installer that exists on THIS os — pointing a
-        // Windows user at Homebrew is a dead end
-        let e = ffmpeg_not_found_err();
-        let (code, hint) = e.split_once(':').expect("err.code:detail");
-        assert_eq!(code, "err.ffmpeg_not_found");
-        if cfg!(target_os = "windows") {
-            assert!(hint.contains("winget"), "esperava winget, veio: {hint}");
-            assert!(!hint.contains("brew"), "dica de macOS no Windows: {hint}");
-        } else {
-            assert!(hint.contains("brew"));
         }
     }
 
