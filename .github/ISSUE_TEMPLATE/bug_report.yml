@@ -1,0 +1,77 @@
+name: 🐛 Bug report
+description: Report a reproducible problem in Loro
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug.
+
+        ⚠️ **Do not report security vulnerabilities here.** Use
+        [private vulnerability reporting](https://github.com/aipi/loro/security/advisories/new)
+        instead — see [`SECURITY.md`](../blob/main/SECURITY.md).
+
+        🔒 **Never paste transcripts, personal data, credentials, tokens, or
+        secrets.** Redact logs and use synthetic data (BR-8/BR-9).
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
+        - label: My report contains no transcript content, PII, credentials, or secrets.
+          required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: A clear description of the bug and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. …
+        2. …
+        3. See error
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of Loro is affected?
+      options:
+        - Capture / live transcription
+        - Knowledge Studio (brainstorming / fila / contexto)
+        - AI-agent / habilidades
+        - CLI (loro.sh)
+        - Packaging / install (Homebrew, model download)
+        - Other / not sure
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Loro version / commit
+      placeholder: "e.g. 0.5.0 or commit aac2974"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: macOS version
+      placeholder: "e.g. macOS 15.5"
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Structured, content-free logs only. Redact anything sensitive.
+      render: shell
+    validations:
+      required: false
