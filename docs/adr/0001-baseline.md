@@ -211,7 +211,9 @@ the repository (2026-07-28). The owner asked for exactly one authoritative ADR.
 - **Two disjoint on-disk worlds, quarantined by gitignore.** The non-versioned
   world is `brainstorming/<slug>/` (renamed from `pessoal/temas/…`; legacy
   `pessoal/` kept as a second ignore line until old acervos age out) with
-  `reunioes/ investigacoes/ perguntas/ notas/ relatorios/`, a living `indice.md`
+  `reunioes/ notas/ anexos/` (the report and other non-meeting output land in
+  `anexos/`; legacy `investigacoes/`/`perguntas/`/`relatorios/` are no longer
+  created), a living `indice.md`
   and a `meta.json` (optional `categoria`, UI-only grouping). It is invisible to
   the context walk and can never enter a Versionar/Propor commit (also enforced
   by the `stage_and_commit` untrack list and a write guard refusing meeting
