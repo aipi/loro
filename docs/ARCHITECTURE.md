@@ -128,6 +128,8 @@ Brainstorming world + the fila → contexto flow (ADR-0001 §7):
 | `brain_set_brainstorm_category` | `{slug, categoria?}` | `()` | set/clear the UI grouping category |
 | `brain_brainstorm_delete` | `{rel}` | `()` | delete a brainstorming item (guarded to `brainstorming/`) |
 | `brain_rename_pessoal` | `rel, name` | new rel | rename a note/analysis file in place (world-confined, keeps extension, never overwrites — ADR-0003 §5) |
+| `brain_move_pessoal` | `rel, destDir` | new rel | move a file into another folder of the same non-versioned world (brainstorming/pessoal); never overwrites — ADR-0009 |
+| `brain_abs_path` | `rel` | abs path | resolve an acervo-relative path to its absolute on-disk path (guarded to the acervo root); backs "copy absolute path" — ADR-0009 |
 | `brain_brainstorm_build_report` | `slug, selection[]` | `{rel}` | build ONE consolidated report (empty selection = all parts) |
 | `brain_send_report_to_queue` | `reportRel, destContext?` | name | copy a report into the fila (`inbox/`) steered by `<ctx>--` |
 

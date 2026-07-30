@@ -80,6 +80,18 @@ quando quiser pela paleta: `Cmd/Ctrl+Shift+P` → "apresentação do Loro".
   pedido seu; **✦ pedir à IA** (menu ⋯ de uma nota/análise **e no rail à
   direita de qualquer arquivo aberto**) aplica um pedido sobre o conteúdo
   existente — a IA evolui, nunca apaga.
+- **Menu ⋯ de qualquer arquivo** (nota, anexo, avulso, nota de reunião):
+  além de **renomear** e **apagar**, traz **⇄ mover para…** (escolha a pasta
+  de destino — avulso, ou as pastas notas/anexos de qualquer brainstorming) e
+  **⧉ copiar caminho** — **relativo** (portátil, no formato usado pelas
+  referências `acervo://`) ou **absoluto** (o caminho completo no disco, útil
+  para abrir no Finder/terminal). Nunca sobrescreve um arquivo de mesmo nome no
+  destino.
+- **Arrastar e soltar:** arraste o **ícone** de um arquivo (o cursor vira uma
+  mãozinha) e solte sobre o cabeçalho de uma pasta (📁 notas, 📁 anexos ou
+  📁 avulso) para movê-lo — o mesmo efeito do **mover para…**, restrito ao
+  mundo do brainstorming (nunca toca o que é versionado). O resto da linha
+  continua sendo clique-para-abrir.
 - **Rail de ações à direita do arquivo:** ao abrir qualquer nota/documento,
   a lateral direita mostra cartões de ação separados — **habilidade** (um
   dropdown com nomes amigáveis; a descrição da habilidade selecionada fica
@@ -107,7 +119,7 @@ quando quiser pela paleta: `Cmd/Ctrl+Shift+P` → "apresentação do Loro".
   investigações/respostas).
 - Cada brainstorming tem exatamente três pastas, visíveis na lateral como
   grupos com ícone de pasta (📁 **reuniões**, 📁 **notas**, 📁 **anexos** —
-  cada uma clicável para expandir/recolher, com a contagem de itens):
+  cada uma clicável para expandir/recolher):
   **reunioes/** (toda reunião nasce ali), **notas/** e **anexos/** (uma
   apresentação é só mais um tipo de anexo — não tem pasta própria).
   `anexos/` é alimentada por uma habilidade (sincronizar, apresentação,
