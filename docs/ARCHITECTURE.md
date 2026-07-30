@@ -97,6 +97,8 @@ OS/serde errors may still pass through and are shown untranslated.
 | `save_transcript` | `content` | path or `null` | native save dialog + write |
 | `auto_save` | `content, dir, filename` | path | silent save to the configured folder |
 | `list_capture_devices` | — | `[{index,name}]` | enumerate capture devices (for `-c`) |
+| `list_models` | — | `[{id,label,sizeBytes,installed,default}]` | the transcription models Loro uses, each flagged installed or missing, for the first-run model manager (ADR-0006) |
+| `download_model` | `model` | `()` / err | download a catalog model into `~/.loro/models` over HTTPS (system `curl`), verify its pinned SHA-256, install atomically; emits `model-download-progress` (ADR-0006). Idempotent |
 | `brain_get_config` / `brain_setup` / `brain_add_context` / `brain_remove_context` | … | config | acervo config lifecycle; `brain_setup` takes `template?` (usage preset id, ADR-0003) and `agent?` (per-acervo AI CLI command, default `claude`) |
 | `brain_list_templates` | `lang?` | `[{id,name,description,contexts,builtin,dir?}]` | usage templates for the wizard (ADR-0003): builtins + `~/.loro/templates`, localized |
 | `brain_duplicate_template` | `id` | dir path | copy a template into `~/.loro/templates` as an editable custom template |
@@ -151,6 +153,8 @@ Knowledge versioning & collaboration (ADR-0001 §5) — all opt-in, no credentia
 | `transcribe-state` | `bool` | file-mode transcription job running / finished |
 | `transcribe-error` | `string` | file-mode transcription failed with a message |
 | `hotkey-toggle` | — | global shortcut or tray toggle fired |
+| `model-download-progress` | `{model, downloaded, total}` | model download progress in bytes (ADR-0006) |
+| `model-download-done` | `string` | a model finished downloading and was installed (ADR-0006) |
 
 Path resolution: `LORO_HOME` (exported by `loro.sh`) or a sensible default;
 `~/.loro/config.json` holds engine/model/brain configuration.
@@ -237,6 +241,9 @@ model presence and permissions. Logging rules: ADR-0001 §3 (BR-8).
 - 100% local inference (BR-1); restrictive Tauri CSP; minimal command allowlist.
 - `brain_read` and file operations are guarded against path traversal.
 - No secrets requested or persisted (BR-9); no personal paths in code.
+- Model downloads are HTTPS-only and verified against a pinned SHA-256 before
+  install (ADR-0006), so a compromised mirror or MITM cannot substitute the
+  model file; the only host contacted is the model mirror.
 - Remote collaboration is opt-in and credential-free: `git`/`gh` run with fixed
   argument tokens (never a shell), branch slugs are sanitized to `[a-z0-9-]`, and
   the environment doctor reads only booleans/versions/public login — tokens are
@@ -265,3 +272,5 @@ All technical decisions are consolidated in the single **`docs/adr/0001-baseline
 | Habilidades (built-in + custom) | any `.claude/commands/*.md`; 9 built-ins, editable-not-deletable; `/loro-tool` (AI-drafted) or direct import for custom ones | ADR-0005 |
 | `autoContext` | per-acervo `.loro/settings.json` gate on the loop creating a brand-new context; toggle in wizard + Settings | ADR-0005 |
 | Terminal launch/status | `active_agent()` used for auto-launch (not hardcoded); `justLaunched` grace window avoids retyping into a live session | ADR-0005 |
+| Distribution | Homebrew Cask (`brew install --cask loro`) with `whisper-cpp`+`ffmpeg` as formula deps; tap `aipi/homebrew-loro` bumped by release CI | ADR-0006 |
+| First-run models | not bundled; downloaded on demand over HTTPS, verified by pinned SHA-256, atomic install into `~/.loro/models` | ADR-0006 |
