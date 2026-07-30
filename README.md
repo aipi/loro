@@ -63,10 +63,13 @@ verified by SHA-256 (ADR-0006) — no manual setup step needed.
 
 ```bash
 brew tap aipi/loro
+brew trust aipi/loro         # Homebrew 6+: trust this third-party tap
 brew install --cask loro     # installs Loro.app + whisper-cpp + ffmpeg
 ```
 
-The cask pulls the engine (`whisper-cpp`, `ffmpeg`) automatically. The unsigned
+`brew trust` is required once per machine — Homebrew 6+ refuses to load casks
+from a non-official tap until you trust it. The cask pulls the engine
+(`whisper-cpp`, `ffmpeg`) automatically. The unsigned
 `.dmg` is also attached to each
 [GitHub Release](https://github.com/aipi/loro/releases) for a manual install.
 
@@ -86,6 +89,14 @@ flag, so this is the reliable path.)
 **+ download** on the model you want — `large-v3-turbo` (accurate) or `small`
 (fast). It downloads on your machine with a progress bar, verified by SHA-256,
 into `~/.loro/models`. Then you are ready to transcribe.
+
+### Troubleshooting the install (Homebrew 6+)
+
+| Error | Fix |
+|---|---|
+| `Refusing to load cask aipi/loro/loro from untrusted tap` | `brew trust aipi/loro` — Homebrew 6+ requires trusting a third-party tap once per machine |
+| `invalid option: --no-quarantine` | that flag was removed in Homebrew 6.x; install normally, then run the `xattr -dr …` below if Gatekeeper complains |
+| macOS says the app is "damaged" / won't open | `xattr -dr com.apple.quarantine /Applications/Loro.app` (the app is unsigned, not damaged) |
 
 ## Quick start (developing from source)
 
