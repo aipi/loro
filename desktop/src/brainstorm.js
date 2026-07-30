@@ -77,7 +77,7 @@
   }
 
   // A selection model over a brainstorming's parts. Each part is
-  // { kind: "reuniao"|"investigacao"|"pergunta"|"nota", rel }. The model is a
+  // { kind: "reuniao"|"nota"|"anexo", rel }. The model is a
   // plain Set of rels so it stays serializable/testable.
   function emptySelection() { return new Set(); }
   function toggleSelection(sel, rel) {

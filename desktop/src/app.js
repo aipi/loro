@@ -1555,7 +1555,7 @@ async function loadCtxChildren(name) {
 // Só re-renderiza quando os dados mudam (assinatura) — a expansão é preservada em bOpen.
 let pessoalSig = "";
 // ADR-0013: the non-versioned world is "Brainstorming" (disk: brainstorming/).
-// A brainstorming groups reuniões/investigações/perguntas/notas; it can carry an
+// A brainstorming groups reuniões/notas/anexos; it can carry an
 // optional categoria (UI-only grouping). Selection of parts -> one consolidated
 // report -> the fila (see bsSelection / sendSelectionToQueue).
 // ADR-0005: above this many brainstormings the always-expanded tree gets hard
@@ -1632,9 +1632,9 @@ function renderTemaNode(t) {
 // Dentro de um brainstorming a árvore é PLANA (revisão de UX sobre o ADR-0013):
 // as reuniões aparecem direto no nível do brainstorming — com os artefatos de
 // análise (investigações/respostas) logo abaixo de cada uma — e as notas como
-// subitem ao final. A pasta perguntas/ continua no disco (o relatório "tudo"
-// ainda a lê), mas deixa de ser um nível de navegação: a segmentação em várias
-// pastas era atrito, não estrutura.
+// subitem ao final. As pastas segmentadas (investigacoes/, perguntas/,
+// relatorios/) deixaram de existir: eram atrito, não estrutura — a saída de
+// não-reunião vai para anexos/.
 // A selectable part row: a checkbox (data-bssel/data-bskind) + the open target.
 // A meeting row carries a ⋯ menu (renomear/apagar); files keep the plain ×.
 function bsPartRow(kind, openRel, selRel, label, title, indent, meetingId, meetingStatus, mopen) {

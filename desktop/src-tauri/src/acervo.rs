@@ -391,10 +391,10 @@ fn create_brainstorming(
     let slug = sanitize_slug(nome)?;
     let dir = brainstorming_dir(base).join(&slug);
     // ADR-0005: the canonical brainstorming subfolders are reunioes/, notas/ and
-    // anexos/ (perguntas/ kept while it still feeds the "all" report). The legacy
-    // investigacoes/ and relatorios/ folders are no longer scaffolded — non-meeting
-    // output (e.g. the brainstorming report) lands in anexos/.
-    for sub in ["", "reunioes", "perguntas", "notas", "anexos"] {
+    // anexos/. The legacy investigacoes/, relatorios/ and perguntas/ folders are no
+    // longer scaffolded — non-meeting output (e.g. the brainstorming report) lands
+    // in anexos/.
+    for sub in ["", "reunioes", "notas", "anexos"] {
         std::fs::create_dir_all(dir.join(sub)).map_err(|e| e.to_string())?;
     }
     let indice = dir.join("indice.md");
@@ -1276,7 +1276,7 @@ fn assemble_brainstorm_report(slug: &str, today: &str, parts: &[ReportPart], lan
 }
 
 // If the selection is empty, gather ALL parts of the brainstorming: every meeting
-// under reunioes/ plus every file under perguntas/, notas/ and anexos/.
+// under reunioes/ plus every file under notas/ and anexos/.
 fn all_parts_of(base: &Path, slug: &str) -> Vec<SelItem> {
     let root = brainstorming_dir(base).join(slug);
     let mut items = Vec::new();
@@ -1289,11 +1289,7 @@ fn all_parts_of(base: &Path, slug: &str) -> Vec<SelItem> {
             });
         }
     }
-    for (sub, kind) in [
-        ("perguntas", "pergunta"),
-        ("notas", "nota"),
-        ("anexos", "anexo"),
-    ] {
+    for (sub, kind) in [("notas", "nota"), ("anexos", "anexo")] {
         if let Ok(rd) = std::fs::read_dir(root.join(sub)) {
             for e in rd.flatten().filter(|e| e.path().is_file()) {
                 let n = e.file_name().to_string_lossy().to_string();
@@ -2118,12 +2114,6 @@ mod tests {
             std::fs::create_dir_all(d.join("audio")).unwrap();
             std::fs::write(d.join("audio/system.wav"), b"RIFF").unwrap();
         }
-        std::fs::create_dir_all(root.join("perguntas")).unwrap();
-        std::fs::write(
-            root.join("perguntas/q1.md"),
-            "# Qual o prazo?\n\nEm aberto.\n",
-        )
-        .unwrap();
         std::fs::create_dir_all(root.join("notas")).unwrap();
         std::fs::write(
             root.join("notas/n1.md"),
@@ -2168,8 +2158,7 @@ mod tests {
         // merges BOTH meetings' prose + the standalone items
         assert!(r.contains("Resumo de 2026-07-27-1000-planejamento"));
         assert!(r.contains("Resumo de 2026-07-27-1400-custos"));
-        assert!(r.contains("Qual o prazo?")); // pergunta body under Dúvidas
-                                              // nota body lands under its own "## Notas" section, not in Resumo
+        // nota body lands under its own "## Notas" section, not in Resumo
         let notas_sec = r.split("## Notas").nth(1).unwrap_or("");
         assert!(notas_sec.contains("Lembrar do fornecedor"));
         // references the source meetings, never the transcript/audio (BR-8)
@@ -2226,8 +2215,8 @@ mod tests {
         let base = tmp("report-sub");
         seed_report_fixture(&base, "frota-2026");
         let sel = vec![SelItem {
-            kind: "pergunta".into(),
-            rel: "brainstorming/frota-2026/perguntas/q1.md".into(),
+            kind: "nota".into(),
+            rel: "brainstorming/frota-2026/notas/n1.md".into(),
         }];
         let rel = build_brainstorm_report(
             &base,
@@ -2239,7 +2228,7 @@ mod tests {
         )
         .unwrap();
         let r = std::fs::read_to_string(base.join(&rel)).unwrap();
-        assert!(r.contains("Qual o prazo?"));
+        assert!(r.contains("Lembrar do fornecedor"));
         // a meeting NOT selected must not leak in
         assert!(!r.contains("Resumo de 2026-07-27-1000-planejamento"));
         assert!(r.contains("- Partes: 1"));
