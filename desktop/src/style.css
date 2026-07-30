@@ -515,6 +515,13 @@ body {
 #wsBody.editing .docbody { flex: 1; min-height: 0; display: flex; }
 #wsBody.editing .docmain { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 #wsBody.editing .edithost { flex: 1; min-height: 0; border: 0; border-radius: 0; background: transparent; }
+/* The 60vh floor from the contained-card layout (line ~506) fights the flex
+   height here: on shorter windows it makes .cm-editor taller than the panel, so
+   the long document overflows edithost's `overflow: hidden` and gets clipped
+   with no scrollbar. In edit mode the editor fills the panel exactly and rolls
+   internally on its own scroller. */
+#wsBody.editing .edithost .cm-editor { min-height: 0; }
+#wsBody.editing .edithost .cm-scroller { overflow-y: auto; }
 
 /* ADR-0005: doc actions rail — habilidade/pedir à IA/versionar, o mesmo
    padrão em todo lugar onde essas ações existem (documento, reunião,
