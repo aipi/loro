@@ -99,9 +99,12 @@ quando quiser pela paleta: `Cmd/Ctrl+Shift+P` → "apresentação do Loro".
   paleta `Cmd/Ctrl+Shift+P` ou pelos botões); depois rode **analisar** (menu
   ⋯) para o Claude preencher o relatório da reunião.
 - Nada do brainstorming é versionado nem sai da máquina.
-- Investigações e respostas de cada reunião ficam **recolhidas por padrão**
-  na lateral (toque na seta ▸ ao lado da reunião para abrir) — evita que a
-  lista cresça demais quando há muitas reuniões analisadas.
+- As **notas** de cada reunião (análises, respostas e qualquer documento que
+  uma habilidade gere) ficam **recolhidas por padrão** na lateral (toque na
+  seta ▸ ao lado da reunião para abrir) — evita que a lista cresça demais
+  quando há muitas reuniões analisadas. Tudo o que uma habilidade produz sobre
+  a reunião vai para a pasta **notas/** dela (não mais em pastas separadas como
+  investigações/respostas).
 - Cada brainstorming tem exatamente três pastas, visíveis na lateral como
   grupos com ícone de pasta (📁 **reuniões**, 📁 **notas**, 📁 **anexos** —
   cada uma clicável para expandir/recolher, com a contagem de itens):
@@ -158,6 +161,32 @@ poluir a tela quando houver muitas.
   de habilidade, como no próprio Claude). Clique no título da seção
   "habilidades" para **recolher/exibir** a lista inteira (o caret ▾/▸
   mostra o estado).
+
+## Grifar, comentar e agir sobre um trecho
+
+Em qualquer markdown do acervo — a transcrição de uma reunião, um contexto,
+uma nota — **selecione um trecho** com o mouse e uma pequena ferramenta
+flutuante aparece com cinco ações:
+
+- **✎ grifar** — destaca o trecho (fica evidenciado, como sublinhar na vida
+  real). Clique no grifo depois para **✕ desgrifar** e removê-lo.
+- **💬 comentar** — escreve um comentário preso àquele trecho. O grifo ganha
+  um traço mais forte e todos os comentários do documento se reúnem num
+  painel **"💬 comentários"** logo abaixo do texto (cada linha leva de volta
+  ao trecho).
+- **? perguntar** / **✦ analisar** — roda a habilidade só sobre aquele
+  trecho: ele é grifado e entregue **evidenciado** ao agente, que foca a
+  análise/pergunta nele.
+- **➤ Slack** — envia uma pergunta sobre o trecho para um **#canal** ou
+  **@pessoa** no Slack (ex.: "estamos num brainstorming, preciso da sua ajuda
+  com isto"). Quem fala com o Slack é o **agente do terminal**, com o conector
+  dele — o Loro nunca guarda credencial, e nada é enviado sem sua confirmação.
+
+Os grifos e comentários ficam num arquivo ao lado do documento
+(`<doc>.anotacoes.json`) e **viajam com o acervo** — não sujam o texto
+original nem entram em nenhum log. Se um documento for muito editado e um
+trecho grifado não for mais encontrado, ele não é perdido em silêncio:
+aparece como **"trecho órfão"** no painel de comentários.
 
 ## Contextos também têm anexos
 
@@ -254,6 +283,7 @@ não cria nada novo por conta própria — deixa o item pendente na fila e avisa
 que precisa da sua decisão manual. Não afeta atribuir a um contexto que já
 existe.
 
-**Por que as investigações/respostas de uma reunião não aparecem de cara?**
+**Por que as notas de uma reunião não aparecem de cara?**
 Ficam recolhidas por padrão para a lateral não crescer demais — toque na
-seta ▸ ao lado da reunião para abrir.
+seta ▸ ao lado da reunião para abrir. Análises, respostas e qualquer documento
+gerado por uma habilidade ficam todos na pasta **notas/** da reunião.

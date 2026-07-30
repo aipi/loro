@@ -100,9 +100,12 @@ palette: `Cmd/Ctrl+Shift+P` → "Loro tour".
   (via the palette `Cmd/Ctrl+Shift+P` or the buttons); then run **analyse**
   (⋯ menu) so Claude fills in the meeting report.
 - Nothing in a brainstorming is versioned or leaves the machine.
-- A meeting's investigations/answers are **collapsed by default** in the
-  sidebar (tap the ▸ arrow next to the meeting to open) — keeps the list from
-  growing huge once you've analysed several meetings.
+- A meeting's **notes** (analyses, answers and any document a habilidade
+  produces) are **collapsed by default** in the sidebar (tap the ▸ arrow next
+  to the meeting to open) — keeps the list from growing huge once you've
+  analysed several meetings. Everything a habilidade produces about the meeting
+  goes into its **notas/** folder (no more separate investigations/answers
+  folders).
 - Every brainstorming has exactly three folders, visible in the sidebar as
   collapsible groups with a folder icon (📁 **reuniões**, 📁 **notas**,
   📁 **anexos** — each with an item count): **reunioes/** (every meeting is
@@ -156,6 +159,31 @@ doesn't clutter the screen once there are many.
   controls, like Claude's own skills icon). Click the "habilidades" section
   title to **collapse/expand** the whole list (the ▾/▸ caret shows the
   state).
+
+## Highlight, comment, and act on an excerpt
+
+In any acervo markdown — a meeting transcript, a context, a note — **select a
+passage** with the mouse and a small floating tool appears with five actions:
+
+- **✎ highlight** — marks the passage (evidenced, like underlining in real
+  life). Click the highlight afterwards to **✕ remove** it.
+- **💬 comment** — attaches a comment to that passage. The highlight gains a
+  stronger underline and every comment in the document is gathered in a
+  **"💬 comments"** panel just below the text (each row jumps back to its
+  passage).
+- **? ask** / **✦ analyse** — runs the habilidade over that passage only: it
+  is highlighted and handed to the agent **as evidence**, which focuses its
+  analysis/answer on it.
+- **➤ Slack** — sends a question about the passage to a **#channel** or
+  **@person** on Slack (e.g. "we're in a brainstorm, I need your help with
+  this"). The **terminal agent** talks to Slack with its own connector — Loro
+  never holds a credential, and nothing is sent without your confirmation.
+
+Highlights and comments live in a file beside the document
+(`<doc>.anotacoes.json`) and **travel with the acervo** — they never touch the
+original text or any log. If a document is heavily edited and a highlighted
+passage can no longer be found, it is not lost silently: it shows up as an
+**"orphan excerpt"** in the comments panel.
 
 ## Contexts have anexos too
 
@@ -255,6 +283,6 @@ never creates anything new by itself — it leaves the item pending in the
 queue and reports that it needs your manual decision. It never affects
 assigning to a context that already exists.
 
-**Why don't a meeting's investigations/answers show up right away?** They're
+**Why don't a meeting's notes show up right away?** They're
 collapsed by default so the sidebar doesn't grow too large — tap the ▸ arrow
 next to the meeting to open it.

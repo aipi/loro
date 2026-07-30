@@ -557,6 +557,42 @@ body {
 .doc mark.hl { background: color-mix(in srgb, var(--yellow) 40%, transparent); color: inherit; border-radius: 2px; }
 .doc mark.hl.cur { background: var(--accent); color: var(--panel); }
 
+/* ---- anotações: grifos, comentários, popover (ADR-0007) ---- */
+/* the rendered body is selectable again (body sets user-select:none globally) */
+.annotatable { user-select: text; -webkit-user-select: text; }
+.annotatable mark.annot {
+  background: color-mix(in srgb, var(--yellow) 38%, transparent);
+  color: inherit; border-radius: 2px; cursor: pointer;
+  box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--yellow) 70%, transparent);
+}
+.annotatable mark.annot.cor-verde { background: color-mix(in srgb, var(--teal) 30%, transparent); box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--teal) 70%, transparent); }
+.annotatable mark.annot.cor-vermelho { background: color-mix(in srgb, var(--red) 26%, transparent); box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--red) 70%, transparent); }
+.annotatable mark.annot.has-comment { box-shadow: inset 0 -2px 0 var(--accent); }
+.annotatable mark.annot:hover { filter: brightness(1.06); }
+
+.annot-pop {
+  position: fixed; z-index: 60; display: flex; flex-wrap: wrap; gap: 4px;
+  max-width: 280px; padding: 6px; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--panel); box-shadow: 0 10px 32px rgba(0, 0, 0, .18); user-select: none;
+}
+.annot-act {
+  border: 1px solid var(--line); background: var(--paper); color: var(--ink);
+  font: 12px var(--sans); padding: 4px 8px; border-radius: 7px; cursor: pointer; white-space: nowrap;
+}
+.annot-act:hover { border-color: var(--accent); color: var(--accent); }
+.annot-act.danger:hover { border-color: var(--red); color: var(--red); }
+.annot-cmts { flex-basis: 100%; max-height: 160px; overflow-y: auto; margin-bottom: 2px; }
+.annot-cmt { font: 12px var(--sans); padding: 4px 6px; border-left: 2px solid var(--accent); margin-bottom: 3px; background: color-mix(in srgb, var(--accent) 7%, transparent); border-radius: 0 5px 5px 0; }
+.annot-none { flex-basis: 100%; color: var(--muted); font-size: 11px; padding: 2px 4px; }
+
+.annot-panel { margin: 18px 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: color-mix(in srgb, var(--accent) 4%, transparent); }
+.annot-panel > summary { cursor: pointer; color: var(--accent); font-size: 13px; user-select: none; }
+.annot-prow { margin: 8px 0; }
+.annot-pquote { color: var(--muted); font-size: 11px; margin-bottom: 3px; }
+.annot-pcmt { font-size: 12px; padding: 3px 6px; border-left: 2px solid var(--accent); background: color-mix(in srgb, var(--accent) 7%, transparent); border-radius: 0 5px 5px 0; margin: 2px 0; }
+.annot-orphans { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--line); }
+.annot-ohead { color: var(--muted); font-size: 11px; margin-bottom: 4px; }
+
 /* ---- markdown completo no leitor ---- */
 .doc h4 { font-size: .95em; margin: .7em 0 .3em; font-weight: 650; }
 .doc h5, .doc h6 { font-size: .85em; margin: .6em 0 .25em; font-weight: 650; color: var(--muted); }
