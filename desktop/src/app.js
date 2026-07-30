@@ -2228,14 +2228,42 @@ const TOOL_LABELS = {
   "loro-note.md": "nota por IA",
   "loro-ask.md": "perguntar ao acervo",
   "loro-analyse.md": "analisar reunião",
-  "loro-question.md": "perguntar à reunião",
+  "loro-question.md": "perguntar sobre a reunião",
   "loro-context.md": "gerar contexto",
   "loro-tool.md": "criar habilidade",
   "loro-slack.md": "perguntar no Slack",
+  "loro-digest.md": "atualizar índice",
 };
-function habilidadeEntriesFrom(files) {
+// Relevance order for the dropdown/picker (ADR-0005, owner feedback): the most
+// context-relevant habilidades first, least last. On the meeting surface the
+// meeting skills (perguntar sobre a reunião, analisar) lead; elsewhere the
+// general order applies. Custom habilidades (not listed) sink to the end,
+// alphabetically. Filenames not listed rank last too.
+const TOOL_ORDER = {
+  doc: [
+    "loro-ask.md", "loro-note.md", "loro-presentation.md", "loro-artifact.md",
+    "loro-digest.md", "loro-sync.md", "loro-slack.md",
+    "loro-question.md", "loro-analyse.md", "loro-context.md", "loro-tool.md",
+  ],
+  meeting: [
+    "loro-question.md", "loro-analyse.md",
+    "loro-ask.md", "loro-note.md", "loro-presentation.md", "loro-artifact.md",
+    "loro-slack.md", "loro-sync.md", "loro-digest.md",
+    "loro-context.md", "loro-tool.md",
+  ],
+};
+function habilidadeRank(name, surface) {
+  const order = TOOL_ORDER[surface] || TOOL_ORDER.doc;
+  const i = order.indexOf(name);
+  return i === -1 ? order.length : i;
+}
+function habilidadeEntriesFrom(files, surface) {
   const entries = [];
-  for (const f of files) {
+  const ordered = files.slice().sort((a, b) => {
+    const d = habilidadeRank(a.name, surface) - habilidadeRank(b.name, surface);
+    return d !== 0 ? d : shortName(a.name).localeCompare(shortName(b.name));
+  });
+  for (const f of ordered) {
     if (f.name === "loro-sync.md") {
       for (const fonte of ["drive", "slack", "jira", "confluence"]) {
         entries.push({ kind: "sync", fonte, label: `${t("sincronizar")}: ${fonte}`, title: f.desc });
@@ -2249,13 +2277,13 @@ function habilidadeEntriesFrom(files) {
 }
 // Curated: excludes the 5 workflow-specific built-ins (already have dedicated
 // UI) — used by the ⋯ menu picker, which coexists with that dedicated UI.
-function pickableHabilidadeEntries() {
-  return habilidadeEntriesFrom(lastToolFiles.filter((f) => !TOOL_PICKER_EXCLUDE.has(f.name)));
+function pickableHabilidadeEntries(surface) {
+  return habilidadeEntriesFrom(lastToolFiles.filter((f) => !TOOL_PICKER_EXCLUDE.has(f.name)), surface);
 }
 // Unrestricted: every habilidade, no exclusion — used where there is no
 // separate dedicated UI to coexist with (the meeting rail, ADR-0005).
-function allHabilidadeEntries() {
-  return habilidadeEntriesFrom(lastToolFiles);
+function allHabilidadeEntries(surface) {
+  return habilidadeEntriesFrom(lastToolFiles, surface);
 }
 function runHabilidadeEntry(entry, alvoRel) {
   if (entry.kind === "sync") promptSyncTool(entry.fonte, alvoRel);
@@ -2274,10 +2302,10 @@ function habilidadeCardHtml(p) {
     `<button class="railbtn cta" id="${p}RunBtn">▶ ${t("executar")}</button>` +
     `</div>`;
 }
-function wireHabilidadeCard(p, alvoRel) {
+function wireHabilidadeCard(p, alvoRel, surface) {
   const sel = $(p + "Select"), desc = $(p + "Desc"), btn = $(p + "RunBtn");
   if (!sel) return;
-  const entries = allHabilidadeEntries();
+  const entries = allHabilidadeEntries(surface);
   sel.innerHTML = entries.length
     ? entries.map((e, i) => `<option value="${i}">${esc(e.label)}</option>`).join("")
     : `<option value="">${t("nenhuma habilidade disponível")}</option>`;
@@ -2293,9 +2321,9 @@ function wireHabilidadeCard(p, alvoRel) {
 // `all` lifts the workflow-builtin exclusion — used where no dedicated UI
 // coexists (the Visão Geral hero button); alvoRel may be null there (each
 // habilidade then asks for/omits its own target).
-function openHabilidadeMenu(alvoRel, anchor, all) {
+function openHabilidadeMenu(alvoRel, anchor, all, surface) {
   B.acervoMenu.hidden = true;
-  const entries = all ? allHabilidadeEntries() : pickableHabilidadeEntries();
+  const entries = all ? allHabilidadeEntries(surface) : pickableHabilidadeEntries(surface);
   const rows = entries.map((e, i) =>
     `<div class="fitem2" data-entry="${i}" title="${esc(e.title)}"><span class="fn">${esc(e.label)}</span></div>`).join("");
   B.bMenu.innerHTML = `<div class="fhead">${t("executar habilidade")}</div>` +
@@ -3322,7 +3350,7 @@ document.addEventListener("mousedown", (e) => { if (!_annotPop || _annotPop.hidd
 B.wsBody.addEventListener("scroll", hideAnnotPop, { passive: true });
 
 function wireMeetingSurface(id) {
-  wireHabilidadeCard("mtgSkill", () => currentMeetingDir(id));
+  wireHabilidadeCard("mtgSkill", () => currentMeetingDir(id), "meeting");
 }
 
 // Resolve the acervo-relative meeting dir for a skill run: the active living/
@@ -3602,7 +3630,7 @@ function renderDocRail(tab, isGuide) {
       `<button class="railbtn" id="railVersionarBtn">⎇ ${t("versionar")}</button>` +
       `<p class="rail-desc">${t("commita as mudanças deste contexto numa branch rfc/… local.")}</p>` +
     `</div>` : "");
-  if (skillable) wireHabilidadeCard("railSkill", tab.rel);
+  if (skillable) wireHabilidadeCard("railSkill", tab.rel, "doc");
   if (aiable) $("railAskAiBtn").onclick = () => promptNoteAI(tab.rel, true);
   if (versionable) $("railVersionarBtn").onclick = promptVersionar;
 }

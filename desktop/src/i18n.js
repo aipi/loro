@@ -567,6 +567,7 @@
     "perguntar": "ask",
     "perguntar ao acervo": "ask the knowledge base",
     "Perguntar ao acervo": "Ask the knowledge base",
+    "perguntar sobre a reunião": "ask about the meeting",
     "Perguntar sobre a reunião": "Ask about the meeting",
     "permita a Gravação de Tela nas Configurações e tente de novo": "allow Screen Recording in System Settings and try again",
     "português": "portuguese",
