@@ -512,16 +512,19 @@ body {
 #wsBody.editing #bDocWrap { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 #wsBody.editing .dochead { padding: 14px clamp(16px, 3vw, 28px) 0; }
 #wsBody.editing .findbar { margin: 0 clamp(16px, 3vw, 28px) 8px; }
-#wsBody.editing .docbody { flex: 1; min-height: 0; display: flex; }
+/* The view-mode `.docbody` uses `align-items: flex-start` (line ~530) so the
+   reader and the sticky rail top-align. In edit mode that leaks in and stops
+   .docmain from being stretched to the panel height, so it grows to the full
+   document height instead — the editor never gets a bounded height and can't
+   scroll. Reset to stretch so the flex chain constrains the editor. */
+#wsBody.editing .docbody { flex: 1; min-height: 0; display: flex; align-items: stretch; }
 #wsBody.editing .docmain { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 #wsBody.editing .edithost { flex: 1; min-height: 0; border: 0; border-radius: 0; background: transparent; }
-/* The 60vh floor from the contained-card layout (line ~506) fights the flex
-   height here: on shorter windows it makes .cm-editor taller than the panel, so
-   the long document overflows edithost's `overflow: hidden` and gets clipped
-   with no scrollbar. In edit mode the editor fills the panel exactly and rolls
-   internally on its own scroller. */
+/* Belt-and-suspenders once the chain above is bounded: the contained-card 60vh
+   floor (line ~506) has no place in edit mode, where the editor fills the panel
+   exactly. On a very short window it would exceed edithost and get clipped by
+   its `overflow: hidden`; reset it so the editor never outgrows the panel. */
 #wsBody.editing .edithost .cm-editor { min-height: 0; }
-#wsBody.editing .edithost .cm-scroller { overflow-y: auto; }
 
 /* ADR-0005: doc actions rail — habilidade/pedir à IA/versionar, o mesmo
    padrão em todo lugar onde essas ações existem (documento, reunião,
