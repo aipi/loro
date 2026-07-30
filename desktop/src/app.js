@@ -1996,6 +1996,7 @@ const TOOL_BUILTINS = new Set([
   "loro-context.md", "loro-analyse.md", "loro-question.md",
   "loro-ask.md", "loro-note.md", "loro-sync.md", "loro-tool.md",
   "loro-presentation.md", "loro-artifact.md", "loro-slack.md",
+  "loro-digest.md",
 ]);
 // Subset offered by the generic "executar habilidade" picker (brainstorming/
 // meeting ⋯ menus): the workflow-specific built-ins already have their own
@@ -2008,6 +2009,9 @@ const TOOL_PICKER_EXCLUDE = new Set([
   // loro-slack only makes sense with an excerpt alvo, reached from the
   // selection popover (ADR-0007) — never from the generic file-level picker.
   "loro-slack.md",
+  // loro-digest targets the whole brainstorming and has its own ⋯ action
+  // ("atualizar índice") + the indice.md staleness banner (ADR-0011).
+  "loro-digest.md",
 ]);
 let toolsSig = "";
 async function refreshTools() {
@@ -2369,12 +2373,14 @@ function openBsMenu(slug, anchor) {
   B.bMenu.innerHTML =
     `<div class="fhead">${esc(slug)}</div>` +
     `<div class="fitem2 strong" data-ainote><span class="fn">✦ ${t("nota por IA…")}</span></div>` +
+    `<div class="fitem2" data-digest><span class="fn">${ico("note", "ac")} ${t("atualizar índice (resumão)")}</span></div>` +
     `<div class="fitem2" data-tools><span class="fn">${ico("skill")} ${t("executar habilidade…")}</span></div>` +
     `<div class="fsep"></div>` +
     `<div class="fitem2" data-ren><span class="fn">${t("renomear")}</span></div>` +
     `<div class="fitem2" data-toqueue><span class="fn">${t("gerar relatório de tudo → fila")}</span></div>` +
     `<div class="fitem2 danger" data-del><span class="fn">${t("apagar brainstorming")}</span></div>`;
   B.bMenu.querySelector("[data-ainote]").onclick = () => { closeFloat(); promptNoteAI(`brainstorming/${slug}/notas`, false); };
+  B.bMenu.querySelector("[data-digest]").onclick = () => { closeFloat(); runBrainstormDigest(slug); };
   B.bMenu.querySelector("[data-tools]").onclick = () => openHabilidadeMenu(`brainstorming/${slug}`, anchor);
   B.bMenu.querySelector("[data-ren]").onclick = () => { closeFloat(); promptRenameBs(slug); };
   B.bMenu.querySelector("[data-toqueue]").onclick = () => { closeFloat(); sendBrainstormToQueue(slug, []); };
@@ -2383,6 +2389,15 @@ function openBsMenu(slug, anchor) {
   B.bMenu.style.left = Math.max(10, r.left - 120) + "px";
   B.bMenu.style.top = (r.bottom + 4) + "px";
   B.bMenu.hidden = false;
+}
+
+// ADR-0011: (re)generate the brainstorming's indice.md digest via the terminal
+// agent (/loro-digest), showing the target first so the result is visible; the
+// indice.md staleness banner drives the nudge to run this when new material lands.
+function runBrainstormDigest(slug) {
+  openDoc(`brainstorming/${slug}/indice.md`, { preview: true });
+  termRunAgent(`/loro-digest brainstorming/${slug}`);
+  toast(t("gerando o índice — o resumão aparece no indice.md ao final"), 4000);
 }
 
 // Rename via the shared modal — window.prompt is unreliable in the webview
@@ -2914,6 +2929,38 @@ async function renderView(tab, stale) {
     : mdRender(body || fallback));
   wireDocLinks();
   if (annotatable) await decorateAnnotations(tab.rel, stale);
+  await maybeDigestBanner(tab, stale);
+}
+
+// ADR-0011: a subtle "N new items since the index" nudge atop a brainstorming's
+// indice.md, driving a re-run of /loro-digest. Compares the live material count
+// (meetings + notas + anexos) against the `digest_itens` the last digest stamped
+// (LoroBrainstorm.digestNotice). No-op — and no IPC — for any other document.
+async function maybeDigestBanner(tab, stale) {
+  const m = /^brainstorming\/([^/]+)\/indice\.md$/.exec(tab.rel);
+  if (!m) return;
+  const slug = m[1];
+  const fm = fmById.get(tab.id);
+  const stamped = fm ? fm.digest_itens : null;
+  let meetings = [], notas = [], anexos = [];
+  try { meetings = (await invoke("brain_list_meetings", { slug })) || []; } catch (_) {}
+  try { notas = ((await invoke("brain_list_dir", { rel: `brainstorming/${slug}/notas` })) || []).filter((f) => !f.dir); } catch (_) {}
+  try { anexos = ((await invoke("brain_list_dir", { rel: `brainstorming/${slug}/anexos` })) || []).filter((f) => !f.dir); } catch (_) {}
+  if (stale && stale()) return;
+  const notice = LoroBrainstorm.digestNotice(meetings.length + notas.length + anexos.length, stamped);
+  const old = B.doc.querySelector(".digest-banner");
+  if (old) old.remove();
+  if (!notice) return;
+  const msg = notice.kind === "gerar"
+    ? t("este brainstorming ainda não tem índice")
+    : `${notice.n} ${notice.n > 1 ? t("itens novos") : t("item novo")} ${t("desde o último índice")}`;
+  const banner = document.createElement("div");
+  banner.className = "digest-banner mono";
+  banner.innerHTML = `<span>${esc(msg)}</span>` +
+    `<button class="link" id="digestNowBtn" title="${t("Roda /loro-digest e reescreve o resumão do brainstorming")}">${t("atualizar índice")} →</button>`;
+  B.doc.insertAdjacentElement("afterbegin", banner);
+  const btn = $("digestNowBtn");
+  if (btn) btn.onclick = () => runBrainstormDigest(slug);
 }
 
 // ADR-0009: front-matter refs (+ audio) as a collapsible panel; each row is a

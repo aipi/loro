@@ -1237,6 +1237,7 @@ fn ensure_acervo_structure(
             loro_artifact_skill(lang),
         ),
         (".claude/commands/loro-slack.md", loro_slack_skill(lang)),
+        (".claude/commands/loro-digest.md", loro_digest_skill(lang)),
     ] {
         let p = base.join(rel);
         if !p.exists() {
@@ -2157,6 +2158,10 @@ fn migrate_acervo(base: &Path, apply: bool, lang: &str) -> Result<MigrationRepor
         (
             ".claude/commands/loro-slack.md",
             loro_slack_skill(lang).to_string(),
+        ),
+        (
+            ".claude/commands/loro-digest.md",
+            loro_digest_skill(lang).to_string(),
         ),
     ] {
         let p = base.join(rel);
@@ -3088,6 +3093,7 @@ fn ensure_meeting_skills(base: &Path, lang: &str) {
             loro_artifact_skill(lang),
         ),
         (".claude/commands/loro-slack.md", loro_slack_skill(lang)),
+        (".claude/commands/loro-digest.md", loro_digest_skill(lang)),
     ] {
         let p = base.join(rel);
         if !p.exists() {
@@ -3879,6 +3885,8 @@ mod tests {
         // collaboration scaffolding
         assert!(root.join(".github/CODEOWNERS").is_file());
         assert!(root.join(".github/pull_request_template.md").is_file());
+        // ADR-0011: the digest skill is seeded like every other built-in
+        assert!(root.join(".claude/commands/loro-digest.md").is_file());
         // idempotent and non-destructive: running again does not break
         ensure_acervo_structure(&root, &["frota".into()], "pt", None).unwrap();
         let _ = std::fs::remove_dir_all(&root);

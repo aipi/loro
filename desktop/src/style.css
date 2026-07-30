@@ -585,6 +585,12 @@ body {
 .annot-cmt { font: 12px var(--sans); padding: 4px 6px; border-left: 2px solid var(--accent); margin-bottom: 3px; background: color-mix(in srgb, var(--accent) 7%, transparent); border-radius: 0 5px 5px 0; }
 .annot-none { flex-basis: 100%; color: var(--muted); font-size: 11px; padding: 2px 4px; }
 
+/* ADR-0011: indice.md staleness nudge — a quiet amber (brainstorming world) bar */
+.digest-banner { display: flex; align-items: center; gap: 10px; justify-content: space-between;
+  margin: 0 0 16px; padding: 8px 12px; font-size: 12px; color: var(--yellow);
+  border: 1px solid color-mix(in srgb, var(--yellow) 45%, transparent); border-radius: 10px;
+  background: color-mix(in srgb, var(--yellow) 9%, transparent); }
+.digest-banner .link { color: var(--yellow); font-family: var(--mono); font-size: 12px; white-space: nowrap; }
 .annot-panel { margin: 18px 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: color-mix(in srgb, var(--accent) 4%, transparent); }
 .annot-panel > summary { cursor: pointer; color: var(--accent); font-size: 13px; user-select: none; }
 .annot-prow { margin: 8px 0; }

@@ -82,6 +82,15 @@ palette: `Cmd/Ctrl+Shift+P` → "Loro tour".
   request; **✦ ask the AI** (a note's/analysis' ⋯ menu **and the right-side
   rail of any open file**) applies a request to the existing content — the
   AI evolves it, never erases.
+- **Update index (digest)** (the brainstorming's ⋯ menu) runs the
+  `/loro-digest` habilidade: it reads **all** of the topic's material (meeting
+  reports, notes and attachments) and (re)writes `indice.md` — the main
+  markdown — with an **overall summary**, the **key points & highlights**, an
+  **index** linking every material, and the **references** (the panel at the top
+  of the file). You trigger it and it rewrites the index from scratch (it never
+  reads the raw transcript or audio — only the reports and notes). When new
+  material appears since the last index, `indice.md` shows a subtle banner at
+  the top ("N new items — update index") with a button to regenerate.
 - **⋯ menu on any file** (note, attachment, misc, meeting note): beyond
   **rename** and **delete**, it offers **⇄ move to…** (pick the destination
   folder — misc, or any brainstorming's notes/attachments folders) and

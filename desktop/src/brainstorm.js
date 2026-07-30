@@ -160,10 +160,30 @@
     return d ? "/loro-tool " + d : null;
   }
 
+  // ADR-0011: the indice.md staleness nudge. `current` is the live material
+  // count of the brainstorming (meetings + notas + anexos); `stampedRaw` is the
+  // `digest_itens` front-matter value the last /loro-digest wrote (a string or
+  // number, possibly absent). Returns null when no notice is warranted, else
+  // { kind: "gerar" | "novos", n }: "gerar" when there is material but no digest
+  // yet, "novos" when the count grew (n = how many new). A shrink/equal count is
+  // silent — the digest is at least as fresh as the material.
+  function digestNotice(current, stampedRaw) {
+    var cur = Math.max(0, Math.floor(Number(current) || 0));
+    if (cur === 0) return null;
+    if (stampedRaw == null || String(stampedRaw).trim() === "") {
+      return { kind: "gerar", n: cur };
+    }
+    var stamped = Math.floor(Number(stampedRaw));
+    if (!isFinite(stamped)) return { kind: "gerar", n: cur };
+    var delta = cur - stamped;
+    return delta > 0 ? { kind: "novos", n: delta } : null;
+  }
+
   return {
     STAGES, stages,
     groupByCategory, filterAndCapTemas,
     emptySelection, toggleSelection, selectedItems,
     reportInboxName, brainContextCmd, brainAskCmd, noteCmd, syncCmd, toolCmd, newToolCmd,
+    digestNotice,
   };
 });

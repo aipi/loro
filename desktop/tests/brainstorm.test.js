@@ -167,3 +167,20 @@ test("syncCmd builds /loro-sync <fonte> <alvo> [busca-ou-link], null when either
   );
   assert.strictEqual(syncCmd("drive", "vendas", "  "), "/loro-sync drive vendas");
 });
+
+test("digestNotice nudges to generate/update the indice.md digest (ADR-0011)", () => {
+  const { digestNotice } = require("../src/brainstorm.js");
+  // no material at all → no notice
+  assert.strictEqual(digestNotice(0, null), null);
+  // material but never digested → "gerar"
+  assert.deepStrictEqual(digestNotice(3, null), { kind: "gerar", n: 3 });
+  assert.deepStrictEqual(digestNotice(3, ""), { kind: "gerar", n: 3 });
+  // stamp is a string (front-matter is text) → parsed as a number
+  assert.deepStrictEqual(digestNotice(5, "2"), { kind: "novos", n: 3 });
+  assert.deepStrictEqual(digestNotice(5, 2), { kind: "novos", n: 3 });
+  // up to date (equal) or shrunk → silent
+  assert.strictEqual(digestNotice(4, 4), null);
+  assert.strictEqual(digestNotice(3, 5), null);
+  // a non-numeric stamp degrades to "gerar" (treat as never digested)
+  assert.deepStrictEqual(digestNotice(2, "abc"), { kind: "gerar", n: 2 });
+});
