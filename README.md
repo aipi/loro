@@ -66,10 +66,29 @@ brew tap aipi/loro
 brew install --cask loro     # installs Loro.app + whisper-cpp + ffmpeg
 ```
 
-The cask pulls the engine (`whisper-cpp`, `ffmpeg`) automatically; pick and
-download a transcription model on first launch. The unsigned `.dmg` is also
-attached to each [GitHub Release](https://github.com/aipi/loro/releases) for a
-manual install.
+The cask pulls the engine (`whisper-cpp`, `ffmpeg`) automatically. The unsigned
+`.dmg` is also attached to each
+[GitHub Release](https://github.com/aipi/loro/releases) for a manual install.
+
+**Unsigned app (Gatekeeper).** Loro is not yet signed with an Apple Developer ID
+(ADR-0006, future work), so macOS 15+ may refuse to open it. Install without the
+quarantine attribute:
+
+```bash
+brew install --cask --no-quarantine loro
+```
+
+Already installed and macOS claims the app is "damaged" (it is not)? Clear the
+attribute:
+
+```bash
+xattr -d com.apple.quarantine /Applications/Loro.app
+```
+
+**First launch.** Open Loro, go to **Settings (⚙) → model**, and click
+**+ download** on the model you want — `large-v3-turbo` (accurate) or `small`
+(fast). It downloads on your machine with a progress bar, verified by SHA-256,
+into `~/.loro/models`. Then you are ready to transcribe.
 
 ## Quick start (developing from source)
 
