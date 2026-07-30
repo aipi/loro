@@ -10,7 +10,10 @@ device unless you explicitly send it, and the app never holds a credential.
 Three parts work together:
 
 1. **A capture tool** — live transcription (mic, system audio, or both sides of
-   a video meeting with zero driver setup), as a desktop app and a CLI (`loro.sh`).
+   a video meeting), as a desktop app and a CLI (`loro.sh`). The app's **meeting**
+   mode captures both sides with *zero driver setup* (ScreenCaptureKit); the
+   CLI's `SOURCE=system` route instead needs the BlackHole loopback driver — see
+   [Capture modes](#capture-modes).
 2. **A Knowledge Studio** — a VS Code-like workspace where material flows
    through one explicit path: **Brainstorming → Fila → Contexto**. In a
    *brainstorming* you gather **reuniões**, **notas** and **anexos** (files you
@@ -73,10 +76,22 @@ from a non-official tap until you trust it. The cask pulls the engine
 `.dmg` is also attached to each
 [GitHub Release](https://github.com/aipi/loro/releases) for a manual install.
 
-**Unsigned app (Gatekeeper).** Loro is not yet signed with an Apple Developer ID
-(ADR-0006, future work), so macOS 15+ may refuse to open it — sometimes claiming
-the app is "damaged" (it is not). Clear the quarantine attribute once, after
-installing:
+**No admin rights?** The cask installs into `/Applications`, which a non-admin
+user can't write to — `brew` then escalates to `sudo` and fails (`… is not in
+the sudoers file`), after hanging on a password prompt. Install into your own
+`~/Applications` instead:
+
+```bash
+brew install --cask --appdir="$HOME/Applications" loro
+```
+
+**Unsigned app (Gatekeeper).** Loro is **ad-hoc signed**, not signed with an
+Apple Developer ID and not notarized (ADR-0006, future work) — there is no
+verifiable publisher identity, so macOS 15+ may refuse to open it, often with a
+misleading **"Loro is damaged and can't be opened. You should move it to the
+Trash."** The app is **not** damaged, and its default button is destructive:
+click **Cancel**, never *Move to Trash*. Then clear the quarantine attribute
+once (adjust the path if you installed into `~/Applications`):
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/Loro.app
@@ -96,7 +111,8 @@ into `~/.loro/models`. Then you are ready to transcribe.
 |---|---|
 | `Refusing to load cask aipi/loro/loro from untrusted tap` | `brew trust aipi/loro` — Homebrew 6+ requires trusting a third-party tap once per machine |
 | `invalid option: --no-quarantine` | that flag was removed in Homebrew 6.x; install normally, then run the `xattr -dr …` below if Gatekeeper complains |
-| macOS says the app is "damaged" / won't open | `xattr -dr com.apple.quarantine /Applications/Loro.app` (the app is unsigned, not damaged) |
+| `… is not in the sudoers file` (install hangs on a password prompt) | you're a non-admin user and can't write `/Applications`; reinstall with `brew install --cask --appdir="$HOME/Applications" loro` |
+| macOS says the app is "damaged" / offers **Move to Trash** | click **Cancel** (the app is ad-hoc signed, not damaged), then `xattr -dr com.apple.quarantine <path-to>/Loro.app` |
 
 ## Quick start (developing from source)
 
@@ -110,13 +126,17 @@ into `~/.loro/models`. Then you are ready to transcribe.
 
 ## Capture modes
 
-- **Live** — `whisper-stream` (VAD) streams lines as you speak.
+- **Live** — `whisper-stream` (VAD) streams lines as you speak. `SOURCE=mic`
+  (default) needs no setup; `SOURCE=system` captures the computer's output through
+  the **BlackHole** loopback driver (`./loro.sh sysaudio-setup`), which is a
+  system audio driver and therefore **requires admin rights** to install.
 - **File** — record the whole session, transcribe it at once (`whisper-cli`,
   more faithful than streaming).
 - **Meeting** — your voice + the computer's audio (Meet/Zoom both sides) via a
-  ScreenCaptureKit sidecar: one Screen Recording permission, no virtual audio
-  driver. The transcript accretes live into the meeting's notebook; **audio is
-  transient** — deleted once transcribed.
+  ScreenCaptureKit sidecar: one Screen Recording permission, **no virtual audio
+  driver and no admin** — so on a locked-down machine this is the way to capture
+  both sides. The transcript accretes live into the meeting's notebook; **audio
+  is transient** — deleted once transcribed.
 
 ## The knowledge base ("acervo")
 

@@ -156,12 +156,15 @@ cmd_live() {
   fi
   c_info "Live [$MODEL/$LANG_CODE, $THREADS_N threads] · source: $src_label — Ctrl+C to stop"
   c_info "Saving transcript to: $out"
+  # cap may be empty (mic source). ${cap[@]+…} keeps that safe under `set -u`
+  # on macOS's stock bash 3.2, where a plain "${cap[@]}" on an empty array
+  # aborts with "unbound variable".
   "$BIN_STREAM" \
     -m "$(model_path "$MODEL")" \
     -l "$LANG_CODE" \
     --step "$STEP" --length "$LENGTH" -vth "$VAD_THOLD" \
     -t "$THREADS_N" \
-    "${cap[@]}" \
+    ${cap[@]+"${cap[@]}"} \
     -f "$out"
 }
 
@@ -266,6 +269,8 @@ cmd_app_build() {
 }
 cmd_test() {
   _cargo_path
+  c_info "CLI tests (loro.sh under the system bash)"
+  bash tests/cli.sh
   c_info "Rust tests (backend)"
   ( cd desktop/src-tauri && cargo test --lib )
   c_info "JS tests (frontend)"
