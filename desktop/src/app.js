@@ -30,6 +30,7 @@ const el = {
   model: $("model"), lang: $("lang"), translate: $("translate"),
   autosave: $("autosave"), pickDir: $("pickDir"), source: $("source"), mode: $("mode"),
   liveExpand: $("liveExpand"), liveCollapse: $("liveCollapse"), uiLang: $("uiLang"),
+  modelManager: $("modelManager"),
 };
 
 // ---- i18n da interface (pt/en) ----
@@ -422,6 +423,8 @@ async function startSession() {
   } catch (e) {
     toast(t("não iniciou") + ": " + tErr(String(e)));
     clog("invoke start error: " + e);
+    // model missing on first run: open settings so the user can download it
+    if (String(e).startsWith("err.model_not_found")) openCfg();
     return;
   }
   // 2) medidor/onda (best-effort, nunca bloqueia): mic direto, ou o BlackHole no modo sistema
@@ -854,6 +857,7 @@ async function openCfg() {
   if (!settings.saveDir) {
     try { el.pickDir.textContent = await invoke("default_save_dir"); } catch (_) {}
   }
+  refreshModelManager();
 }
 function drawProjColors(cur) {
   renderSwatches($("projColors"), cur ? cur.color : "", async (hex) => {
@@ -869,6 +873,61 @@ function drawProjColors(cur) {
 }
 function closeCfg() { cfgWrap.hidden = true; }
 cfgClose.addEventListener("click", closeCfg);
+
+// ---- model manager (ADR-0006): show which models are installed and let the
+// user download a missing one on demand (first-run friendly). Text lives in
+// i18n (per-model notes keyed by id); arithmetic/ordering in modelui.js. ----
+const MU = window.LoroModelUI || {};
+const modelDownloading = new Set();
+// per-model explanation (pt msgid; EN map translates it — i18n.js gettext style)
+const MODEL_NOTES = {
+  "large-v3-turbo": "mais preciso — melhor com sotaques e ruído (download maior)",
+  "small": "mais rápido e leve — bom para notas rápidas do dia a dia",
+};
+async function refreshModelManager() {
+  if (!el.modelManager) return;
+  let list = [];
+  try { list = (await invoke("list_models")) || []; } catch (_) { return; }
+  el.modelManager.innerHTML = MU.sortModels(list).map((m) => {
+    const note = t(MODEL_NOTES[m.id] || "");
+    const size = MU.formatSize(m.sizeBytes);
+    const rec = m.default ? ` <span class="modeltag">${t("recomendado")}</span>` : "";
+    let action;
+    if (m.installed) {
+      action = `<span class="modelok" title="${t("instalado")}">✓ ${t("instalado")}</span>`;
+    } else if (modelDownloading.has(m.id)) {
+      action = `<div class="modelprog"><div class="bar" data-bar="${esc(m.id)}"></div></div>`;
+    } else {
+      action = `<button class="abtn modeldl" data-dl="${esc(m.id)}">+ ${t("baixar")} · ${size}</button>`;
+    }
+    return `<div class="modelrow" data-model="${esc(m.id)}">
+      <div class="modelinfo"><span class="mono modelname">${esc(m.label)}</span>${rec}
+      <span class="modelnote">${esc(note)}</span></div>
+      <div class="modelaction">${action}</div></div>`;
+  }).join("");
+  el.modelManager.querySelectorAll("[data-dl]").forEach((b) => {
+    b.addEventListener("click", () => downloadModel(b.getAttribute("data-dl")));
+  });
+}
+async function downloadModel(id) {
+  if (!id || modelDownloading.has(id)) return;
+  modelDownloading.add(id);
+  refreshModelManager();
+  try {
+    await invoke("download_model", { model: id });
+    toast(t("modelo baixado"));
+  } catch (e) {
+    toast(tErr(String(e)));
+  } finally {
+    modelDownloading.delete(id);
+    refreshModelManager();
+  }
+}
+listen("model-download-progress", (e) => {
+  const p = e.payload || {};
+  const bar = el.modelManager && el.modelManager.querySelector(`[data-bar="${p.model}"]`);
+  if (bar) bar.style.width = MU.progressPercent(p.downloaded, p.total) + "%";
+});
 {
   const autoCtx = $("cfgAutoContext");
   if (autoCtx) autoCtx.addEventListener("change", async () => {

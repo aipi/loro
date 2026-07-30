@@ -44,8 +44,12 @@ palette: `Cmd/Ctrl+Shift+P` → "Loro tour".
    so any agent — including a local model — can work on it; for agents that
    don't understand slash-commands, Loro sends the skill instructions as
    plain text.
-4. **Dependencies** — Loro warns when whisper (transcription) or a voice model
-   is missing, and installs them from the banner using the embedded terminal.
+4. **Transcription models** — in Settings (⚙) → *model*, each model shows as
+   **installed** or with a **+ download** button. The download runs on your
+   computer, shows progress, and is verified by SHA-256 before it takes effect.
+   `large-v3-turbo` is more accurate; `small` is faster and lighter. If you try
+   to transcribe with no model present, Loro opens Settings so you can download
+   one. (Installed via Homebrew, whisper and ffmpeg come bundled in.)
 5. **Language** — in the gear (⚙), "interface language" switches pt-BR/English.
    Everything the app **generates** (reports, meeting documents, contexts) is
    born in the active interface language.

@@ -31,6 +31,7 @@ mod acervo;
 use acervo::*;
 mod meeting;
 use meeting::*;
+mod models;
 // ADR-0011 v1 contract-lock. `pub mod` because these types/commands are the
 // locked privacy surface for the (deferred) multi-agent graph — reachable API,
 // not dead code, even though the transport is not wired yet.
@@ -162,6 +163,90 @@ fn doctor() -> Doctor {
         "diagnostics"
     );
     d
+}
+
+// The transcription models Loro uses, each flagged installed or missing, for
+// the first-run model manager (ADR-0006). Pure catalog + filesystem check.
+#[tauri::command]
+fn list_models() -> Vec<models::ModelInfo> {
+    models::catalog_status()
+}
+
+// Download a catalog model into ~/.loro/models with a verified, atomic install
+// (ADR-0006). Streams over HTTPS via system curl and emits
+// `model-download-progress { model, downloaded, total }` while it runs; the file
+// is checked against its pinned SHA-256 before it is placed, so a tampered or
+// truncated download never becomes the active model (protects the user's
+// machine; BR-1 keeps everything local — the only host contacted is the model
+// mirror). Idempotent: a model already present returns immediately.
+#[tauri::command]
+async fn download_model(app: AppHandle, model: String) -> Result<(), String> {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    let spec = models::spec(&model).ok_or("err.unknown_model")?;
+    if models::is_installed(&model) {
+        return Ok(());
+    }
+    if which("curl").is_none() {
+        return Err("err.curl_missing".into());
+    }
+
+    let total = spec.size;
+    let expected = spec.sha256;
+    let url = models::model_url(&model);
+    let tmp = models::download_tmp_path(&model);
+    let dest = models::install_dest(&model);
+
+    std::fs::create_dir_all(models_dir()).map_err(|_| "err.models_dir".to_string())?;
+    let _ = std::fs::remove_file(&tmp); // clear any stale partial
+
+    // progress poller: report the growing temp file against the known total
+    let stop = Arc::new(AtomicBool::new(false));
+    let poller = {
+        let (app, model, tmp, stop) = (app.clone(), model.clone(), tmp.clone(), stop.clone());
+        std::thread::spawn(move || {
+            while !stop.load(Ordering::Relaxed) {
+                let downloaded = std::fs::metadata(&tmp).map(|m| m.len()).unwrap_or(0);
+                let _ = app.emit(
+                    "model-download-progress",
+                    serde_json::json!({ "model": model, "downloaded": downloaded, "total": total }),
+                );
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+        })
+    };
+
+    // download in the blocking pool. `--proto =https` refuses any non-HTTPS
+    // redirect; `--fail` turns HTTP errors into a non-zero exit.
+    let dl_tmp = tmp.clone();
+    let dl = tauri::async_runtime::spawn_blocking(move || {
+        std::process::Command::new("curl")
+            .args(["-fSL", "--proto", "=https", "--tlsv1.2", "-o"])
+            .arg(&dl_tmp)
+            .arg(&url)
+            .status()
+    })
+    .await;
+
+    stop.store(true, Ordering::Relaxed);
+    let _ = poller.join();
+
+    let ok = matches!(&dl, Ok(Ok(s)) if s.success());
+    if !ok {
+        let _ = std::fs::remove_file(&tmp);
+        error!(model = %model, "model download failed");
+        return Err("err.download_failed".into());
+    }
+
+    models::verify_and_install(&tmp, &dest, expected)?;
+    let _ = app.emit(
+        "model-download-progress",
+        serde_json::json!({ "model": model, "downloaded": total, "total": total }),
+    );
+    let _ = app.emit("model-download-done", &model);
+    info!(model = %model, "model installed");
+    Ok(())
 }
 
 // builds the whisper-stream arguments (isolated so it is testable)
@@ -3343,6 +3428,8 @@ pub fn run() {
             toggle_overlay,
             client_log,
             doctor,
+            list_models,
+            download_model,
             selftest_enabled,
             pick_folder,
             default_save_dir,

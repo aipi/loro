@@ -73,4 +73,35 @@ jobs:
           gh release create "$GITHUB_REF_NAME" "$DMG" \
             --title "Loro $GITHUB_REF_NAME" \
             --generate-notes \
-            --notes "**Instalação (macOS, Apple Silicon):** baixe o \`.dmg\` e arraste o Loro para Aplicativos. O app não é assinado com Developer ID; no macOS 15+ o Gatekeeper bloqueia a abertura (podendo alegar que o app \"está danificado\" — não está). Libere com: \`xattr -d com.apple.quarantine /Applications/Loro.app\` e abra normalmente. O whisper é dependência de sistema — rode \`./loro.sh setup\` antes do primeiro uso."
+            --notes "**Instalação recomendada (macOS, Apple Silicon):** \`brew tap aipi/loro && brew install --cask loro\` — instala o app + o motor (whisper-cpp, ffmpeg). Os modelos de transcrição são baixados sob demanda no primeiro uso (Configurações → modelo), verificados por SHA-256. **Alternativa manual:** baixe o \`.dmg\` e arraste o Loro para Aplicativos; o app não é assinado com Developer ID, então no macOS 15+ pode ser preciso liberar com \`xattr -d com.apple.quarantine /Applications/Loro.app\`."
+
+      # Opção A (ADR-0006): after the release exists, render the cask from the
+      # in-repo template (single source of truth) and push it to the tap repo so
+      # `brew upgrade --cask loro` picks up this version. Requires the TAP_TOKEN
+      # secret — a fine-grained PAT with Contents:write scoped ONLY to
+      # aipi/homebrew-loro. If the secret is absent the step is skipped (the
+      # GitHub Release still publishes); the maintainer bumps the cask manually.
+      - name: Bump Homebrew cask in tap
+        env:
+          TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TAP_TOKEN:-}" ]; then
+            echo "TAP_TOKEN not set — skipping cask bump (release still published)"
+            exit 0
+          fi
+          VERSION="${GITHUB_REF_NAME#v}"
+          DMG=$(ls desktop/src-tauri/target/release/bundle/dmg/*.dmg)
+          SHA=$(shasum -a 256 "$DMG" | awk '{print $1}')
+          echo "cask bump: loro $VERSION ($SHA)"
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/aipi/homebrew-loro.git" tap
+          mkdir -p tap/Casks
+          sed -e "s/__VERSION__/${VERSION}/g" -e "s/__SHA256__/${SHA}/g" \
+            packaging/homebrew/loro.rb.tmpl > tap/Casks/loro.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet; then echo "cask already up to date"; exit 0; fi
+          git add Casks/loro.rb
+          git commit -m "loro ${VERSION}"
+          git push
