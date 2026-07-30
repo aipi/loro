@@ -449,6 +449,94 @@ fn ensure_brainstorming_subfolders(dir: &Path) {
     let _ = std::fs::create_dir_all(dir.join("anexos"));
 }
 
+// ADR-0008: every skill-generated document is a note — it lives in the meeting's
+// own notas/. Older meetings wrote analyses/answers under artefatos/<kind>/ (and
+// even bare investigacoes/perguntas/respostas/relatorios folders); move those
+// files into notas/ and drop the now-empty legacy dirs. Self-heal (like the
+// brainstorming-subfolder backfill) — no explicit "migrate" command, and
+// non-destructive (dedupes on name collision, never overwrites).
+const LEGACY_MEETING_FOLDERS: [&str; 5] = [
+    "artefatos",
+    "investigacoes",
+    "perguntas",
+    "respostas",
+    "relatorios",
+];
+fn migrate_meeting_to_notas(meeting_dir: &Path) {
+    let notas = meeting_dir.join("notas");
+    for name in LEGACY_MEETING_FOLDERS {
+        let src = meeting_dir.join(name);
+        if src.is_dir() {
+            move_files_flat(&src, &notas);
+            if !dir_has_files(&src) {
+                let _ = std::fs::remove_dir_all(&src);
+            }
+        }
+    }
+}
+
+// Move every FILE under `src` (recursively) into a FLAT `dst`, deduping names.
+fn move_files_flat(src: &Path, dst: &Path) {
+    let mut stack = vec![src.to_path_buf()];
+    let mut files: Vec<PathBuf> = Vec::new();
+    while let Some(d) = stack.pop() {
+        if let Ok(rd) = std::fs::read_dir(&d) {
+            for e in rd.flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    stack.push(p);
+                } else {
+                    files.push(p);
+                }
+            }
+        }
+    }
+    if files.is_empty() {
+        return;
+    }
+    let _ = std::fs::create_dir_all(dst);
+    for p in files {
+        if let Some(name) = p.file_name().and_then(|s| s.to_str()) {
+            let _ = std::fs::rename(&p, next_free_name(dst, name));
+        }
+    }
+}
+
+fn dir_has_files(dir: &Path) -> bool {
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        if let Ok(rd) = std::fs::read_dir(&d) {
+            for e in rd.flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    stack.push(p);
+                } else {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+// A collision-free path in `dir` for `name` (numeric suffix before the ext).
+fn next_free_name(dir: &Path, name: &str) -> PathBuf {
+    let mut target = dir.join(name);
+    if !target.exists() {
+        return target;
+    }
+    let (stem, ext) = match name.rsplit_once('.') {
+        Some((s, e)) => (s.to_string(), format!(".{e}")),
+        None => (name.to_string(), String::new()),
+    };
+    let mut n = 1;
+    while target.exists() {
+        n += 1;
+        target = dir.join(format!("{stem}-{n}{ext}"));
+    }
+    target
+}
+
 fn list_brainstormings(base: &Path) -> Vec<BrainstormingListItem> {
     let mut out: Vec<BrainstormingListItem> = std::fs::read_dir(brainstorming_dir(base))
         .map(|rd| {
@@ -518,6 +606,7 @@ fn list_meetings(base: &Path, slug: &str) -> Vec<MeetingListItem> {
             rd.flatten()
                 .filter(|e| e.path().join("manifest.json").is_file())
                 .map(|e| {
+                    migrate_meeting_to_notas(&e.path()); // ADR-0008 self-heal
                     let id = e.file_name().to_string_lossy().to_string();
                     let man: MeetingManifestLite =
                         std::fs::read_to_string(e.path().join("manifest.json"))
@@ -553,7 +642,7 @@ pub fn brain_list_meetings(slug: String) -> Result<Vec<MeetingListItem>, String>
 // `/minha-ferramenta`). This deny-list is the only thing that keeps a custom
 // tool from shadowing/deleting a built-in one; it must stay in sync with the
 // skill list materialized by ensure_acervo_structure/ensure_meeting_skills.
-pub const BUILTIN_SKILLS: [&str; 9] = [
+pub const BUILTIN_SKILLS: [&str; 10] = [
     "loro-context.md",
     "loro-analyse.md",
     "loro-question.md",
@@ -563,6 +652,7 @@ pub const BUILTIN_SKILLS: [&str; 9] = [
     "loro-tool.md",
     "loro-presentation.md",
     "loro-artifact.md",
+    "loro-slack.md",
 ];
 
 fn tools_dir(base: &Path) -> PathBuf {
@@ -713,6 +803,11 @@ pub struct RefResolution {
     rel: String,
     tipo: String,
     exists: bool,
+    // ADR-0007: an excerpt-addressable ref carries an optional `#<annot-id>`
+    // fragment. It is echoed back (never part of the on-disk path) so a
+    // habilidade alvo `acervo://<rel>#an_…` still resolves the file.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    anchor: Option<String>,
 }
 
 // Resolve a ref to an acervo-root-relative rel. `r` is EITHER an anchored
@@ -726,8 +821,14 @@ fn resolve_ref(base: &Path, source_rel: &str, r: &str) -> Result<RefResolution, 
             rel: r.to_string(),
             tipo: "link".to_string(),
             exists: true,
+            anchor: None,
         });
     }
+    // ADR-0007: split a trailing `#<annot-id>` excerpt fragment off the path.
+    let (r, anchor) = match r.split_once('#') {
+        Some((path, frag)) => (path, Some(frag.to_string())),
+        None => (r, None),
+    };
     let raw = if let Some(rest) = r.strip_prefix("acervo://") {
         rest.to_string()
     } else if r.starts_with('/') {
@@ -749,6 +850,7 @@ fn resolve_ref(base: &Path, source_rel: &str, r: &str) -> Result<RefResolution, 
         tipo: ref_tipo(&rel).to_string(),
         rel,
         exists,
+        anchor,
     })
 }
 
@@ -773,6 +875,206 @@ fn read_asset(base: &Path, rel: &str) -> Result<Asset, String> {
         mime: mime.to_string(),
         base64: base64_encode(&bytes),
     })
+}
+
+// ---- annotations: highlights & comments (ADR-0007) --------------------------
+// A highlight/comment is anchored by TEXT QUOTE (see src/annotate.js), stored
+// in a co-located sidecar `<doc>.anotacoes.json` — versioned with the content,
+// never inside the markdown (a transcript is append-only) and never in a log
+// (BR-8: the quoted excerpt is the acervo's own working material). One record
+// models both features: an empty `comentarios` list is just a highlight.
+
+#[derive(Serialize, Deserialize, Default, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Anchor {
+    quote: String,
+    #[serde(default)]
+    prefix: String,
+    #[serde(default)]
+    suffix: String,
+}
+
+#[derive(Serialize, Deserialize, Default, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Comentario {
+    #[serde(default)]
+    autor: String,
+    texto: String,
+    #[serde(default)]
+    em: String,
+}
+
+#[derive(Serialize, Deserialize, Default, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Anotacao {
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    tipo: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cor: Option<String>,
+    anchor: Anchor,
+    #[serde(default)]
+    comentarios: Vec<Comentario>,
+    #[serde(default)]
+    criado_em: String,
+    #[serde(default)]
+    atualizado_em: String,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AnnotationsFile {
+    doc: String,
+    #[serde(default)]
+    anotacoes: Vec<Anotacao>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AnnotationPatch {
+    cor: Option<String>,
+    add_comentario: Option<Comentario>,
+}
+
+// The sidecar for `<doc>.md` is `<doc>.anotacoes.json` beside it. The annotated
+// doc must already exist inside the acervo (guarded); the sidecar itself need
+// not exist yet.
+fn sidecar_path(base: &Path, doc_rel: &str) -> Result<PathBuf, String> {
+    let rel = normalize_rel(doc_rel)?;
+    if !rel.ends_with(".md") {
+        return Err("err.annot_doc_invalid".into());
+    }
+    guarded_existing(base, &rel)?;
+    let side = format!("{}.anotacoes.json", &rel[..rel.len() - 3]);
+    Ok(base.join(side))
+}
+
+// Stable id derived from the anchor content (so the same passage yields the same
+// id across sessions), with a numeric suffix on the rare collision.
+fn gen_annot_id(anchor: &Anchor, existing: &[Anotacao]) -> String {
+    let seed = format!(
+        "{}\u{0}{}\u{0}{}",
+        anchor.quote, anchor.prefix, anchor.suffix
+    );
+    let base_id = format!("an_{}", short_hash(seed.as_bytes()));
+    let mut id = base_id.clone();
+    let mut n = 1;
+    while existing.iter().any(|x| x.id == id) {
+        n += 1;
+        id = format!("{base_id}-{n}");
+    }
+    id
+}
+
+fn read_annotations(base: &Path, doc_rel: &str) -> Result<AnnotationsFile, String> {
+    let p = sidecar_path(base, doc_rel)?;
+    if !p.exists() {
+        return Ok(AnnotationsFile {
+            doc: normalize_rel(doc_rel)?,
+            anotacoes: vec![],
+        });
+    }
+    let raw = std::fs::read_to_string(&p).map_err(|e| e.to_string())?;
+    serde_json::from_str(&raw).map_err(|e| e.to_string())
+}
+
+fn write_annotations(p: &Path, file: &AnnotationsFile) -> Result<(), String> {
+    let json = serde_json::to_string_pretty(file).map_err(|e| e.to_string())?;
+    std::fs::write(p, json).map_err(|e| e.to_string())
+}
+
+fn add_annotation(
+    base: &Path,
+    doc_rel: &str,
+    mut a: Anotacao,
+    today: &str,
+) -> Result<String, String> {
+    let p = sidecar_path(base, doc_rel)?;
+    let mut file = read_annotations(base, doc_rel)?;
+    if a.anchor.quote.is_empty() {
+        return Err("err.annot_empty_quote".into());
+    }
+    if a.tipo.is_empty() {
+        a.tipo = "grifo".into();
+    }
+    a.id = gen_annot_id(&a.anchor, &file.anotacoes);
+    if a.criado_em.is_empty() {
+        a.criado_em = today.to_string();
+    }
+    a.atualizado_em = today.to_string();
+    for c in a.comentarios.iter_mut() {
+        if c.em.is_empty() {
+            c.em = today.to_string();
+        }
+    }
+    let id = a.id.clone();
+    file.doc = normalize_rel(doc_rel)?;
+    file.anotacoes.push(a);
+    write_annotations(&p, &file)?;
+    Ok(id)
+}
+
+fn update_annotation(
+    base: &Path,
+    doc_rel: &str,
+    id: &str,
+    patch: AnnotationPatch,
+    today: &str,
+) -> Result<(), String> {
+    let p = sidecar_path(base, doc_rel)?;
+    let mut file = read_annotations(base, doc_rel)?;
+    let a = file
+        .anotacoes
+        .iter_mut()
+        .find(|x| x.id == id)
+        .ok_or("err.annot_not_found")?;
+    if let Some(cor) = patch.cor {
+        a.cor = Some(cor);
+    }
+    if let Some(mut c) = patch.add_comentario {
+        if c.em.is_empty() {
+            c.em = today.to_string();
+        }
+        a.comentarios.push(c);
+    }
+    a.atualizado_em = today.to_string();
+    write_annotations(&p, &file)
+}
+
+fn delete_annotation(base: &Path, doc_rel: &str, id: &str) -> Result<(), String> {
+    let p = sidecar_path(base, doc_rel)?;
+    let mut file = read_annotations(base, doc_rel)?;
+    let before = file.anotacoes.len();
+    file.anotacoes.retain(|x| x.id != id);
+    if file.anotacoes.len() == before {
+        return Err("err.annot_not_found".into());
+    }
+    write_annotations(&p, &file)
+}
+
+#[tauri::command]
+pub fn brain_annotations_get(rel: String) -> Result<AnnotationsFile, String> {
+    read_annotations(&acervo_base()?, &rel)
+}
+
+#[tauri::command]
+pub fn brain_annotation_add(rel: String, anotacao: Anotacao) -> Result<String, String> {
+    add_annotation(&acervo_base()?, &rel, anotacao, &today_iso())
+}
+
+#[tauri::command]
+pub fn brain_annotation_update(
+    rel: String,
+    id: String,
+    patch: AnnotationPatch,
+) -> Result<(), String> {
+    update_annotation(&acervo_base()?, &rel, &id, patch, &today_iso())
+}
+
+#[tauri::command]
+pub fn brain_annotation_delete(rel: String, id: String) -> Result<(), String> {
+    delete_annotation(&acervo_base()?, &rel, &id)
 }
 
 // ---- promotion (non-destructive copy + rewrite, deny-list) ------------------
@@ -1866,6 +2168,159 @@ mod tests {
         assert!(resolve_ref(&base, "a/b.md", "../../../etc/passwd").is_err());
     }
 
+    // ADR-0008: skill-generated docs are notes. A meeting created before this
+    // change kept analyses/answers under artefatos/<kind>/ (and legacy bare
+    // folders); listing meetings self-heals them into the meeting's notas/,
+    // non-destructively (dedup on name collision) and drops the empty legacy dirs.
+    #[test]
+    fn list_meetings_migrates_legacy_artefatos_into_notas() {
+        let base = tmp("meeting-migrate");
+        let mdir = base.join("brainstorming/turbo/reunioes/2026-07-30-1000-x");
+        std::fs::create_dir_all(mdir.join("artefatos/investigacoes")).unwrap();
+        std::fs::create_dir_all(mdir.join("artefatos/respostas")).unwrap();
+        std::fs::create_dir_all(mdir.join("perguntas")).unwrap();
+        std::fs::write(
+            mdir.join("manifest.json"),
+            b"{\"titulo\":\"X\",\"status\":\"done\"}",
+        )
+        .unwrap();
+        std::fs::write(mdir.join("relatorio.md"), b"# rel").unwrap(); // a real meeting FILE — must survive
+        std::fs::write(mdir.join("artefatos/investigacoes/analise-1.md"), b"a").unwrap();
+        std::fs::write(mdir.join("artefatos/respostas/r.md"), b"b").unwrap();
+        std::fs::write(mdir.join("perguntas/q.md"), b"c").unwrap();
+        // a name collision across legacy folders must NOT overwrite
+        std::fs::write(mdir.join("artefatos/respostas/dup.md"), b"one").unwrap();
+        std::fs::write(mdir.join("perguntas/dup.md"), b"two").unwrap();
+
+        let _ = list_meetings(&base, "turbo");
+
+        let notas = mdir.join("notas");
+        assert!(notas.join("analise-1.md").is_file());
+        assert!(notas.join("r.md").is_file());
+        assert!(notas.join("q.md").is_file());
+        // both dup.md survived (one got a numeric suffix)
+        assert!(notas.join("dup.md").is_file() && notas.join("dup-2.md").is_file());
+        // legacy folders are gone; the real meeting file stayed put
+        assert!(!mdir.join("artefatos").exists());
+        assert!(!mdir.join("perguntas").exists());
+        assert!(mdir.join("relatorio.md").is_file());
+    }
+
+    // ADR-0007: an excerpt-addressable ref `acervo://<rel>#<annot-id>` resolves
+    // the FILE (the fragment never becomes part of the on-disk path) and echoes
+    // the annotation id back so a habilidade alvo keeps its anchor.
+    #[test]
+    fn resolve_ref_carries_excerpt_anchor_fragment() {
+        let base = tmp("resolve-frag");
+        std::fs::create_dir_all(base.join("contextos/x")).unwrap();
+        std::fs::write(base.join("contextos/x/context.md"), b"# c").unwrap();
+        let r = resolve_ref(
+            &base,
+            "contextos/x/context.md",
+            "acervo://contextos/x/context.md#an_ab12",
+        )
+        .unwrap();
+        assert_eq!(r.rel, "contextos/x/context.md");
+        assert!(r.exists);
+        assert_eq!(r.anchor.as_deref(), Some("an_ab12"));
+    }
+
+    // Helper: a base with one real markdown doc to annotate.
+    fn base_with_doc(tag: &str) -> (PathBuf, String) {
+        let base = tmp(tag);
+        std::fs::create_dir_all(base.join("brainstorming/t/reunioes/r1")).unwrap();
+        let rel = "brainstorming/t/reunioes/r1/reuniao.md".to_string();
+        std::fs::write(
+            base.join(&rel),
+            b"# Reuniao\n\ntivemos uma ideia importante\n",
+        )
+        .unwrap();
+        (base, rel)
+    }
+
+    #[test]
+    fn annotations_add_get_update_delete_round_trip() {
+        let (base, rel) = base_with_doc("annot-rt");
+        // empty before anything is added
+        assert!(read_annotations(&base, &rel).unwrap().anotacoes.is_empty());
+        let a = Anotacao {
+            tipo: "grifo".into(),
+            anchor: Anchor {
+                quote: "uma ideia importante".into(),
+                prefix: "tivemos ".into(),
+                suffix: "\n".into(),
+            },
+            ..Default::default()
+        };
+        let id = add_annotation(&base, &rel, a, "2026-07-30").unwrap();
+        assert!(id.starts_with("an_"));
+        // the sidecar sits beside the doc, not inside the markdown
+        let side = base.join("brainstorming/t/reunioes/r1/reuniao.anotacoes.json");
+        assert!(side.exists());
+        assert!(!std::fs::read_to_string(base.join(&rel))
+            .unwrap()
+            .contains("an_"));
+        // update: attach a comment + change color
+        update_annotation(
+            &base,
+            &rel,
+            &id,
+            AnnotationPatch {
+                cor: Some("verde".into()),
+                add_comentario: Some(Comentario {
+                    autor: "daniel".into(),
+                    texto: "preciso de ajuda com isso".into(),
+                    em: String::new(),
+                }),
+            },
+            "2026-07-31",
+        )
+        .unwrap();
+        let got = read_annotations(&base, &rel).unwrap();
+        assert_eq!(got.anotacoes.len(), 1);
+        assert_eq!(got.anotacoes[0].cor.as_deref(), Some("verde"));
+        assert_eq!(got.anotacoes[0].comentarios.len(), 1);
+        assert_eq!(got.anotacoes[0].comentarios[0].em, "2026-07-31");
+        // delete
+        delete_annotation(&base, &rel, &id).unwrap();
+        assert!(read_annotations(&base, &rel).unwrap().anotacoes.is_empty());
+        // deleting an unknown id is an error, not a silent no-op
+        assert!(delete_annotation(&base, &rel, "an_nope").is_err());
+    }
+
+    // BR-8: the quoted excerpt is working material and lives in the sidecar
+    // (the acervo's own content), never in a log/manifest — and never mutates
+    // the annotated markdown itself.
+    #[test]
+    fn annotations_keep_content_out_of_the_document() {
+        let (base, rel) = base_with_doc("annot-br8");
+        let before = std::fs::read_to_string(base.join(&rel)).unwrap();
+        let a = Anotacao {
+            anchor: Anchor {
+                quote: "ideia importante".into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        add_annotation(&base, &rel, a, "2026-07-30").unwrap();
+        assert_eq!(std::fs::read_to_string(base.join(&rel)).unwrap(), before);
+    }
+
+    #[test]
+    fn annotations_reject_bad_targets() {
+        let base = tmp("annot-guard");
+        // a non-.md target is refused
+        std::fs::create_dir_all(base.join("brainstorming/t")).unwrap();
+        std::fs::write(base.join("brainstorming/t/x.png"), b"P").unwrap();
+        assert!(read_annotations(&base, "brainstorming/t/x.png").is_err());
+        // traversal past the root is refused
+        assert!(read_annotations(&base, "../../etc/passwd.md").is_err());
+        // an empty-quote annotation is refused
+        std::fs::write(base.join("brainstorming/t/n.md"), b"# n").unwrap();
+        let a = Anotacao::default();
+        assert!(add_annotation(&base, "brainstorming/t/n.md", a, "2026-07-30").is_err());
+    }
+
     #[test]
     fn anchor_path_leaves_http_urls_untouched() {
         assert_eq!(
@@ -2019,15 +2474,12 @@ mod tests {
     #[test]
     fn rename_pessoal_file_renames_and_keeps_extension() {
         let base = tmp("ren");
-        let dir = base.join("brainstorming/vendas/r1/artefatos/investigacoes");
+        let dir = base.join("brainstorming/vendas/r1/notas");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("analise-1.md"), "corpo").unwrap();
-        let rel = "brainstorming/vendas/r1/artefatos/investigacoes/analise-1.md";
+        let rel = "brainstorming/vendas/r1/notas/analise-1.md";
         let out = rename_pessoal_file(&base, rel, "riscos do contrato").unwrap();
-        assert_eq!(
-            out,
-            "brainstorming/vendas/r1/artefatos/investigacoes/riscos do contrato.md"
-        );
+        assert_eq!(out, "brainstorming/vendas/r1/notas/riscos do contrato.md");
         assert!(dir.join("riscos do contrato.md").is_file());
         assert!(!dir.join("analise-1.md").exists());
     }
