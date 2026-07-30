@@ -183,9 +183,10 @@ pub struct BrainConfig {
     pub auto_context: bool,
 }
 
+// Config lives in the Loro data dir (~/.loro, or LORO_HOME). Reuses the shared
+// resolver so it is correct on Windows (USERPROFILE) too — see paths.rs.
 pub fn loro_config_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-    PathBuf::from(home).join(".loro/config.json")
+    crate::paths::loro_data_dir().join("config.json")
 }
 
 pub fn slugify_id(s: &str) -> String {

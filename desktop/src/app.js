@@ -7,6 +7,9 @@ const invoke = TAURI.core ? TAURI.core.invoke : async () => { throw new Error("T
 const listen = TAURI.event ? TAURI.event.listen : async () => {};
 const getWin = TAURI.window ? TAURI.window.getCurrentWindow : null;
 const { esc, mdInline, mdRender, mergeSettings } = window.LoroText;
+// plataforma reportada pelo doctor ("macos" | "windows" | "linux"); guia o setup
+// e o áudio do sistema, que mudam por SO (ADR-0012)
+let hostOs = "macos";
 // ADR-0009 — reference/front-matter helpers (pure, dependency-free, no bundler).
 const R = window.LoroRefs || {};
 // ADR-0010 — pure meeting-path helpers (id parsing, marker strip, base join).
@@ -262,7 +265,7 @@ function drawLoop() {
   tick();
 }
 
-// deviceLabel: p/ áudio do sistema, casa o dispositivo de entrada BlackHole
+// deviceLabel: p/ áudio do sistema, casa o dispositivo de loopback da plataforma
 async function startAudio(deviceLabel) {
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     clog("getUserMedia unavailable — no audio meter"); setMeter("off"); return;
@@ -313,9 +316,10 @@ function setMeter(kind) {
   if (!el.privacy) return;
   const map = {
     mic: ["● mic", t("captando microfone")],
-    system: [`● ${t("sistema")}`, t("captando áudio do computador (BlackHole)")],
+    system: [`● ${t("sistema")}`, t("captando áudio do computador")],
     meeting: [`● ${t("reunião")}`, t("captando sua voz + áudio do computador (Loro Reunião)")],
-    nosignal: [t("sem sinal"), t("não achei o dispositivo de captura — rode ./loro.sh sysaudio-setup")],
+    // o tooltip não cita comando: o caminho de configuração muda por SO (ADR-0012)
+    nosignal: [t("sem sinal"), t("não achei o dispositivo de captura — configure o áudio do sistema")],
     off: [t("gravando"), t("gravando")],
   };
   const [txt, title] = map[kind] || map.off;
@@ -379,9 +383,9 @@ async function finalizeFileTranscription() {
 }
 
 // rótulo do dispositivo p/ o medidor/onda (regex de enumerateDevices):
-// sistema => BlackHole; mic/reunião => padrão (a onda usa o microfone).
+// sistema => o loopback da plataforma; mic/reunião => padrão (a onda usa o microfone).
 function meterLabelFor(source) {
-  if (source === "system") return "blackhole";
+  if (source === "system") return LoroAudio.loopbackPattern(hostOs);
   return undefined;
 }
 
@@ -396,8 +400,8 @@ async function startSession() {
   if (settings.source === "meeting") return startMeetingSession();
   if (settings.mode === "file") return startFileSession();
   const cfg = currentCfg();
-  // fonte = áudio do sistema: resolve o dispositivo BlackHole (flag -c) a partir
-  // da lista enumerada. mic => padrão do sistema (sem -c).
+  // fonte = áudio do sistema: resolve o dispositivo de loopback (flag -c) a
+  // partir da lista enumerada. mic => padrão do sistema (sem -c).
   if (settings.source === "system") {
     let devs;
     try {
@@ -407,10 +411,10 @@ async function startSession() {
       clog("list_capture_devices error: " + e);
       return;
     }
-    const pick = LoroAudio.pickCaptureDevice(devs, settings.source);
+    const pick = LoroAudio.pickCaptureDevice(devs, settings.source, hostOs);
     if (pick.missing === "system") {
-      openBlackholeSetup();
-      clog("system source: BlackHole missing; devices=" + JSON.stringify(devs));
+      openSystemAudioSetup();
+      clog("system source: loopback missing; devices=" + JSON.stringify(devs));
       return;
     }
     cfg.capture = pick.capture;
@@ -427,7 +431,7 @@ async function startSession() {
     if (String(e).startsWith("err.model_not_found")) openCfg();
     return;
   }
-  // 2) medidor/onda (best-effort, nunca bloqueia): mic direto, ou o BlackHole no modo sistema
+  // 2) medidor/onda (best-effort, nunca bloqueia): mic direto, ou o loopback no modo sistema
   const meterLabel = meterLabelFor(settings.source);
   startAudio(meterLabel).catch((e) => clog("startAudio failed (continuing without wave): " + e));
 }
@@ -4792,16 +4796,33 @@ const MODEL_URL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggm
 async function checkSetup() {
   try {
     const d = await invoke("doctor");
+    hostOs = d.os || hostOs; // antes de qualquer early-return: guia o áudio do sistema
     const missing = [];
     if (!d.whisper_stream) missing.push(t("whisper (motor de transcrição)"));
     if (!d.models || d.models.length === 0) missing.push(t("modelo de voz"));
+    // ffmpeg entra na conta: o modo gravar-e-transcrever converte para WAV 16kHz
+    // com ele, então sem ffmpeg esse modo falha em runtime e não no setup.
+    if (!d.ffmpeg) missing.push(t("ffmpeg (conversão de áudio)"));
     const banner = $("setupBanner");
     if (!missing.length) { banner.hidden = true; return; }
     $("setupMsg").textContent = t("faltam dependências") + ": " + missing.join(" · ");
     banner.hidden = false;
-    $("setupRun").onclick = () => {
+    $("setupRun").onclick = async () => {
+      // O Windows não tem whisper-stream pré-compilado (o modo ao vivo precisa
+      // de SDL2), então um script embutido compila o motor. No macOS vem do brew.
+      if (hostOs === "windows") {
+        try {
+          const script = await invoke("whisper_setup_script");
+          termRun(`powershell -NoProfile -ExecutionPolicy Bypass -File "${script}"`);
+          toast(t("instalando no terminal — acompanhe abaixo"), 4000);
+        } catch (e) {
+          toast(t("não consegui preparar o instalador") + ": " + tErr(e), 5000);
+        }
+        return;
+      }
       const parts = [];
       if (!d.whisper_stream) parts.push("brew install whisper-cpp");
+      if (!d.ffmpeg) parts.push("brew install ffmpeg");
       if (!d.models || d.models.length === 0)
         parts.push(`mkdir -p ~/.loro/models && curl -L --progress-bar -o ~/.loro/models/ggml-large-v3-turbo.bin ${MODEL_URL}`);
       termRun(parts.join(" && "));
@@ -4810,16 +4831,27 @@ async function checkSetup() {
   } catch (_) {}
 }
 
-// fluxo guiado do áudio do sistema: instala BlackHole e abre o Áudio MIDI
-function openBlackholeSetup() {
+// fluxo guiado do áudio do sistema; os passos mudam por plataforma (ADR-0012).
+// No Windows não há pacote instalável por linha de comando: ou o driver de áudio
+// já expõe a Mixagem estéreo (basta habilitar no painel de Som), ou o usuário
+// instala o VB-Cable à mão. Por isso lá o passo 1 abre o painel.
+function openSystemAudioSetup() {
   B.acervoMenu.hidden = true;
-  B.bMenu.innerHTML =
-    `<div class="fhead">${t("áudio do sistema — configurar")}</div>
+  B.bMenu.innerHTML = hostOs === "windows"
+    ? `<div class="fhead">${t("áudio do sistema — configurar")}</div>
+     <div class="fitem2 muted fstatic">${t("1 · no painel de Som, aba Gravação, mostre os dispositivos desativados · 2 · habilite a Mixagem estéreo. Se o seu driver não tiver, instale o VB-Cable e use-o como saída padrão")}</div>
+     <div class="fitem2" data-am><span class="fn">${t("1 · abrir o painel de Som")}</span></div>
+     <div class="fitem2" data-bh><span class="fn">${t("2 · baixar o VB-Cable")}</span></div>`
+    : `<div class="fhead">${t("áudio do sistema — configurar")}</div>
      <div class="fitem2 muted fstatic">${t("1 · instale o driver BlackHole · 2 · crie um dispositivo multi-saída (saída padrão) no Áudio MIDI incluindo o BlackHole")}</div>
      <div class="fitem2" data-bh><span class="fn">${t("1 · instalar BlackHole no terminal")}</span></div>
      <div class="fitem2" data-am><span class="fn">${t("2 · abrir Áudio MIDI")}</span></div>`;
-  B.bMenu.querySelector("[data-bh]").onclick = () => { closeFloat(); termRun("brew install blackhole-2ch"); };
-  B.bMenu.querySelector("[data-am]").onclick = () => { closeFloat(); invoke("open_audio_midi").catch(() => {}); };
+  B.bMenu.querySelector("[data-bh]").onclick = () => {
+    closeFloat();
+    if (hostOs === "windows") invoke("open_vbcable_download").catch(() => {});
+    else termRun("brew install blackhole-2ch");
+  };
+  B.bMenu.querySelector("[data-am]").onclick = () => { closeFloat(); invoke("open_audio_setup").catch(() => {}); };
   const r = el.privacy.getBoundingClientRect();
   B.bMenu.style.left = Math.max(10, r.left - 200) + "px";
   B.bMenu.style.top = (r.top - 150) + "px";

@@ -21,7 +21,7 @@ use tauri::{AppHandle, Emitter, State};
 
 use crate::config::read_brain_config;
 use crate::git::sanitize_slug;
-use crate::paths::which;
+use crate::paths::{ffmpeg_not_found_err, which};
 use crate::AppState;
 
 // ---- constants --------------------------------------------------------------
@@ -1258,7 +1258,7 @@ pub fn brain_meeting_transcribe_tail(input: TranscribeTailInput) -> Result<Trans
         let _ = std::fs::remove_file(&snap);
         return Err("err.live_model_unavailable".into());
     }
-    let ffmpeg = which("ffmpeg").ok_or("err.ffmpeg_not_found")?;
+    let ffmpeg = which("ffmpeg").ok_or_else(ffmpeg_not_found_err)?;
     let cli = crate::paths::whisper_cli_bin();
     let model = crate::paths::model_path(&manifest.modelo);
     let lang = if manifest.idioma.is_empty() {
@@ -1320,7 +1320,7 @@ pub fn brain_meeting_transcribe_segment(
     std::fs::create_dir_all(&audio_dir).map_err(|e| e.to_string())?;
     let seg = audio_dir.join(".seg.webm");
     std::fs::write(&seg, &input.data).map_err(|e| e.to_string())?;
-    let ffmpeg = which("ffmpeg").ok_or("err.ffmpeg_not_found")?;
+    let ffmpeg = which("ffmpeg").ok_or_else(ffmpeg_not_found_err)?;
     let cli = crate::paths::whisper_cli_bin();
     let model = crate::paths::model_path(&manifest.modelo);
     let lang = if manifest.idioma.is_empty() {

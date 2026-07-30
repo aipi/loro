@@ -51,6 +51,22 @@ test("tErr passes through unknown codes and plain messages", () => {
   assert.equal(tErr(""), "");
 });
 
+test("ffmpeg error renders the platform install hint from the detail", () => {
+  // o backend manda o comando certo do SO no detail, então a mesma mensagem
+  // serve para macOS e Windows sem citar Homebrew no lugar errado
+  setLang("pt");
+  assert.equal(
+    tErr("err.ffmpeg_not_found:winget install Gyan.FFmpeg"),
+    "ffmpeg não encontrado. Instale (winget install Gyan.FFmpeg)."
+  );
+  setLang("en");
+  assert.equal(
+    tErr("err.ffmpeg_not_found:brew install ffmpeg"),
+    "ffmpeg not found. Install it (brew install ffmpeg)."
+  );
+  setLang("pt");
+});
+
 test("every err code has both pt and en messages", () => {
   for (const key of Object.keys(ERR_PT)) {
     assert.ok(key.startsWith("err."), `${key} is not an err code`);
