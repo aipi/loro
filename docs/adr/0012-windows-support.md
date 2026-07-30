@@ -85,6 +85,14 @@ step 2 offer VB-Cable, via a new `open_vbcable_download` command. VB-Cable is
 **not** in winget (only an unrelated `Soundux` package matches the tag), so unlike
 Homebrew this step cannot be one-click.
 
+**Bundle targets become `"all"`.** They were pinned to `["app", "dmg"]`, which are
+macOS-only, so a Windows build produced no installer at all. `"all"` means "every
+target valid for the host", so macOS still yields exactly `app` + `dmg` while
+Windows yields an MSI and an NSIS setup. Verified: both are produced, plus a
+standalone `Loro.exe`. The app is unsigned on Windows (no certificate configured),
+so SmartScreen warns on first run — the same unsigned-distribution posture ADR-0006
+records for macOS, not a new decision.
+
 **The ffmpeg hint travels as error detail.** Errors cross IPC as stable `err.*`
 codes resolved by the frontend, and `tErr` already interpolates `{detail}`. So
 the backend returns `err.ffmpeg_not_found:<install command>` and the single
