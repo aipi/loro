@@ -71,19 +71,16 @@ The cask pulls the engine (`whisper-cpp`, `ffmpeg`) automatically. The unsigned
 [GitHub Release](https://github.com/aipi/loro/releases) for a manual install.
 
 **Unsigned app (Gatekeeper).** Loro is not yet signed with an Apple Developer ID
-(ADR-0006, future work), so macOS 15+ may refuse to open it. Install without the
-quarantine attribute:
+(ADR-0006, future work), so macOS 15+ may refuse to open it — sometimes claiming
+the app is "damaged" (it is not). Clear the quarantine attribute once, after
+installing:
 
 ```bash
-brew install --cask --no-quarantine loro
+xattr -dr com.apple.quarantine /Applications/Loro.app
 ```
 
-Already installed and macOS claims the app is "damaged" (it is not)? Clear the
-attribute:
-
-```bash
-xattr -d com.apple.quarantine /Applications/Loro.app
-```
+Then open Loro normally. (Homebrew 6+ removed the old `--no-quarantine` install
+flag, so this is the reliable path.)
 
 **First launch.** Open Loro, go to **Settings (⚙) → model**, and click
 **+ download** on the model you want — `large-v3-turbo` (accurate) or `small`
