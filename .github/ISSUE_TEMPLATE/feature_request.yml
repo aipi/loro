@@ -1,0 +1,46 @@
+name: 💡 Feature request
+description: Propose a change or new capability for Loro
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Loro follows a source-of-truth-first workflow. Non-trivial changes are
+        recorded in an ADR (`docs/adr/`) and trace back to the brain domain
+        `loro`. A good proposal states the problem before the solution.
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
+        - label: I read `CLAUDE.md` and the relevant source of truth (brain domain / `docs/ARCHITECTURE.md`).
+          required: false
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What need or pain does this address? Who is affected?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What should Loro do? Keep the UI in pt-BR and its layout unchanged unless a design decision says otherwise.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: false
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact on rules & docs
+      description: Does this touch a business rule (`BR-…`), require an ADR, or change the IPC contract / architecture?
+    validations:
+      required: false
