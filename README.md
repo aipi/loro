@@ -1,4 +1,9 @@
-# Loro 🦜 — local speech capture + a per-domain knowledge base
+<div align="center">
+
+<img src="docs/media/loro-cover.png" alt="Loro — Talk. It becomes context. Local ideas capture → a knowledge studio for your team. speech → brainstormings → queue → shared, versioned contexts → produce with AI. 100% local, 0 credentials, any AI agent. macOS · Windows · Linux." width="100%">
+</div>
+
+# Loro 🦜 — Knowledge Studio
 
 Loro is a **local, privacy-first desktop app** (Tauri v2) that turns what teams
 *say and gather* — meetings, brainstorms, thinking out loud, plus notes and
@@ -46,6 +51,32 @@ Three parts work together:
 > UI is pt-BR or English — chosen when you create an acervo and switchable in
 > Settings, with generated content following that language. An in-app user
 > manual (pt/en) opens from the `?` button.
+
+## What is a Loro context?
+
+A **context** is Loro's unit of durable, shared knowledge — one `context.md`
+*source of truth* per domain, versioned in Git, that people and AI agents read
+alike. The philosophy behind it (from the product's own brain,
+`brain/contexts/loro/context.md`):
+
+- **Ideas are cheap; context is earned.** Brainstorming is constant and free;
+  a context is *production knowledge*, promoted only after debate and approval —
+  never a raw dump of everything said.
+- **Organized by archetypes, not org charts.** Product, business and
+  engineering converge on a shippable outcome; a domain is recursive
+  (subdomains are nested folders), built for groups and forming teams.
+- **One source of truth, evolved by RFC = Pull Request.** Each
+  `contextos/<domain>/` holds a single `context.md`, an append-only
+  `CHANGELOG.md`, and its own `anexos/`. Open questions live *inline* as
+  **hotspots** — the origin of the next change. Every change is a branch + PR
+  applied directly to the file; merging makes it the new truth. Git stays
+  hidden behind two buttons ("Versionar" / "Propor mudança").
+- **Self-contained & non-destructive.** Loro detects existing structure,
+  respects it, and fills only the gaps — it never overwrites your knowledge.
+- **The flow is always visible:** capture → *fila* (queue) → the loop
+  interprets and files material by domain → a person promotes proposals into
+  the source of truth. The result is a **portable context harness** any agent
+  or teammate can read — the same format Loro dogfoods to document itself.
 
 ## Requirements
 
