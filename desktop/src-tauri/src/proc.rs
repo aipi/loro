@@ -54,7 +54,7 @@ mod tests {
     fn gui_flags_are_create_no_window() {
         // 0x08000000 — the value is load-bearing: a wrong flag either shows the
         // window anyway or changes how the child is created. Measured effect on
-        // 30 console spawns: 82 console hosts without it, 20 with it (ADR-0013).
+        // 30 console spawns: 82 console hosts without it, 20 with it (ADR-0014).
         assert_eq!(gui_creation_flags(), 0x0800_0000);
     }
 

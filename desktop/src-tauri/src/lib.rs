@@ -850,6 +850,13 @@ fn start_system_capture(app: AppHandle, state: State<AppState>) -> Result<String
 // Core of the sidecar start, callable from meeting.rs (ADR-0010) as a plain
 // pub(crate) fn — the #[tauri::command] wrapper cannot be reused directly.
 pub(crate) fn system_capture_start(app: &AppHandle, state: &AppState) -> Result<String, String> {
+    // The sidecar is Swift + ScreenCaptureKit, so meeting mode exists on macOS
+    // only. Say that instead of letting the spawn fail and surfacing an internal
+    // binary name ("loro-syscap (program not found)"), which tells the user
+    // nothing about what to do next.
+    if !cfg!(target_os = "macos") {
+        return Err("err.meeting_macos_only".into());
+    }
     {
         let mut guard = state.syscap.lock().unwrap();
         if let Some(mut child) = guard.take() {
@@ -3346,7 +3353,7 @@ fn process_name_matches(comm: &str, name: &str) -> bool {
 // Unix reads it from `ps`. Windows has no `ps`, and `wmic` was removed from
 // Windows 11, so it walks the ToolHelp snapshot directly — which is also far
 // cheaper than a subprocess, and term_status is polled every 300ms while a
-// habilidade waits for its agent (ADR-0013).
+// habilidade waits for its agent (ADR-0014).
 #[cfg(not(windows))]
 fn process_table() -> Vec<(u32, u32, String)> {
     proc::command("ps")

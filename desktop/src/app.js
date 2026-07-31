@@ -452,6 +452,11 @@ async function stopSession() {
 // live panel is retired for meetings), and the transcript only shows after stop.
 async function startMeetingSession(presetTema) {
   if (state.running || meeting.active) { toast(t("já há uma gravação em andamento")); return; }
+  // Choke point for every entrance: the source selector, the palette's "nova
+  // reunião" and the brainstorming sidebar row. The palette path ignores the
+  // source selector by design, so hiding the option there is not enough. Fail
+  // here, before asking which brainstorming to record into.
+  if (hostOs !== "macos") { toast(tErr("err.meeting_macos_only"), 6000); return; }
   let temas = [];
   try { temas = (await invoke("brain_list_brainstorms")) || []; } catch (_) {}
   const choice = await pickMeeting(temas, presetTema);
@@ -982,6 +987,26 @@ el.optTop.addEventListener("change", (e) => { if (getWin) getWin().setAlwaysOnTo
 el.optOverlay.addEventListener("change", (e) => invoke("toggle_overlay", { show: e.target.checked }));
 el.optDiar.addEventListener("change", (e) => { state.recordForDiarize = e.target.checked; updatePrivacy(); });
 el.source.addEventListener("change", () => { settings.source = el.source.value; persistSettings(); updateCfgLabel(); });
+
+// A reunião depende do sidecar ScreenCaptureKit, que é de macOS (ADR-0005). Fora
+// do macOS a opção sai do seletor em vez de deixar o usuário escolher e só
+// descobrir no start, com um erro citando o nome interno do binário. Uma
+// preferência salva apontando para reunião volta para microfone.
+function applySourceAvailability() {
+  if (!el.source) return;
+  const meeting = el.source.querySelector('option[value="meeting"]');
+  if (!meeting) return;
+  const supported = hostOs === "macos";
+  meeting.hidden = !supported;
+  meeting.disabled = !supported;
+  if (!supported && settings.source === "meeting") {
+    settings.source = "mic";
+    el.source.value = "mic";
+    persistSettings();
+    updateCfgLabel();
+    clog("meeting source unavailable on " + hostOs + "; fell back to mic");
+  }
+}
 el.mode.addEventListener("change", () => { settings.mode = el.mode.value; persistSettings(); updateCfgLabel(); });
 el.model.addEventListener("change", () => { settings.model = el.model.value; persistSettings(); updateCfgLabel(); });
 el.lang.addEventListener("change", () => { settings.lang = el.lang.value; persistSettings(); updateCfgLabel(); });
@@ -4882,6 +4907,7 @@ async function checkSetup() {
   try {
     const d = await invoke("doctor");
     hostOs = d.os || hostOs; // antes de qualquer early-return: guia o áudio do sistema
+    applySourceAvailability();
     const missing = [];
     if (!d.whisper_stream) missing.push(t("whisper (motor de transcrição)"));
     if (!d.models || d.models.length === 0) missing.push(t("modelo de voz"));

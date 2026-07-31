@@ -1,6 +1,13 @@
-# ADR-0013 — Windows process tree via ToolHelp (agent readiness handshake)
+# ADR-0014 — Windows process tree via ToolHelp (agent readiness handshake)
 
 - **Status:** accepted (owner decision, 2026-07-31)
+
+> Numbering note: this was drafted as `0013` and renumbered. **"ADR-0013" is
+> already taken throughout the code** for the Brainstorming world and the
+> brainstorming → fila → contexto flow (60+ references, no file of its own), so a
+> reader following a bare "ADR-0013" comment would have landed here by mistake.
+> `0010` and `0022` are likewise referenced in code without files; `0014` is the
+> first number that is neither an existing file nor cited anywhere.
 
 ## Context
 
