@@ -95,7 +95,9 @@ quando quiser pela paleta: `Cmd/Ctrl+Shift+P` → "apresentação do Loro".
   **⧉ copiar caminho** — **relativo** (portátil, no formato usado pelas
   referências `acervo://`) ou **absoluto** (o caminho completo no disco, útil
   para abrir no Finder/terminal). Nunca sobrescreve um arquivo de mesmo nome no
-  destino.
+  destino. O **copiar caminho** está no menu ⋯ de **todo item da árvore
+  lateral** — arquivos, brainstormings, reuniões, itens da fila, contextos,
+  pastas (anexos) e habilidades, além das fontes.
 - **Arrastar e soltar:** arraste o **ícone** de um arquivo (o cursor vira uma
   mãozinha) e solte sobre o cabeçalho de uma pasta (📁 notas, 📁 anexos ou
   📁 avulso) para movê-lo — o mesmo efeito do **mover para…**, restrito ao

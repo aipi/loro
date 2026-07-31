@@ -480,6 +480,7 @@
     "movido": "moved",
     "copiar caminho relativo": "copy relative path",
     "copiar caminho absoluto": "copy absolute path",
+    "copiar caminho (relativo/absoluto)": "copy path (relative/absolute)",
     "caminho copiado": "path copied",
     "não consegui copiar": "couldn't copy",
     "nenhum destino disponível": "no destination available",
