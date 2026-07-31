@@ -1,12 +1,9 @@
 <div align="center">
 
 <img src="docs/media/loro-cover.png" alt="Loro — Talk. It becomes context. Local ideas capture → a knowledge studio for your team. speech → brainstormings → queue → shared, versioned contexts → produce with AI. 100% local, 0 credentials, any AI agent. macOS · Windows · Linux." width="100%">
-
-<h1>Loro 🦜 — Knowledge Studio</h1>
-
 </div>
 
----
+# Loro 🦜 — Knowledge Studio</h1>
 
 Loro is a **local, privacy-first desktop app** (Tauri v2) that turns what teams
 *say and gather* — meetings, brainstorms, thinking out loud, plus notes and
