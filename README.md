@@ -1,20 +1,8 @@
 <div align="center">
 
-<img src="docs/media/loro-cover.png" alt="Loro — Talk. It becomes context." width="100%">
+<img src="docs/media/loro-cover.png" alt="Loro — Talk. It becomes context. Local ideas capture → a knowledge studio for your team. speech → brainstormings → queue → shared, versioned contexts → produce with AI. 100% local, 0 credentials, any AI agent. macOS · Windows · Linux." width="100%">
 
 <h1>Loro 🦜 — Knowledge Studio</h1>
-
-<h3>Talk. It becomes context.</h3>
-
-<p><strong>Local ideas capture → a knowledge studio for your team.</strong></p>
-
-<code>speech → brainstormings → queue → shared, versioned contexts → produce with AI</code>
-
-<p>🎙️ <strong>Capture</strong> · 👥 <strong>Meeting</strong> · 📄 <strong>Context</strong> · 🔀 <strong>Versioned</strong> · ⚡ <strong>Skills</strong></p>
-
-<p>🔒 <strong>100% local</strong> · on-device &nbsp;|&nbsp; 🛡️ <strong>0 credentials</strong> · only leaves if you want &nbsp;|&nbsp; ✨ <strong>any AI agent</strong> · claude · gpt · gemini · any CLI</p>
-
-<p><em>macOS · Windows · Linux — an agent-agnostic context framework, for business teams and devs alike.</em></p>
 
 </div>
 
