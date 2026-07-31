@@ -24,17 +24,12 @@ use std::process::Command;
 #[cfg(windows)]
 pub const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-// Process creation flags for a GUI-spawned child: suppress the console on
-// Windows, nothing to do elsewhere. Separated so the choice is testable.
+// Process creation flags for a GUI-spawned child. Windows-only: elsewhere there
+// is nothing to suppress, and a cross-platform version would be dead code off
+// Windows (clippy's dead_code, denied in CI).
+#[cfg(windows)]
 pub fn gui_creation_flags() -> u32 {
-    #[cfg(windows)]
-    {
-        CREATE_NO_WINDOW
-    }
-    #[cfg(not(windows))]
-    {
-        0
-    }
+    CREATE_NO_WINDOW
 }
 
 // A Command that never flashes a console window.
@@ -54,15 +49,13 @@ pub fn command(program: impl AsRef<OsStr>) -> Command {
 mod tests {
     use super::*;
 
+    #[cfg(windows)]
     #[test]
-    fn gui_flags_suppress_the_console_only_on_windows() {
-        if cfg!(windows) {
-            // 0x08000000 — the value is load-bearing, a wrong flag either shows
-            // the window anyway or changes how the child is created
-            assert_eq!(gui_creation_flags(), 0x0800_0000);
-        } else {
-            assert_eq!(gui_creation_flags(), 0);
-        }
+    fn gui_flags_are_create_no_window() {
+        // 0x08000000 — the value is load-bearing: a wrong flag either shows the
+        // window anyway or changes how the child is created. Measured effect on
+        // 30 console spawns: 82 console hosts without it, 20 with it (ADR-0013).
+        assert_eq!(gui_creation_flags(), 0x0800_0000);
     }
 
     #[test]
