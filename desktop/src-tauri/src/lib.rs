@@ -3321,6 +3321,82 @@ fn active_agent() -> String {
         .unwrap_or_else(default_agent)
 }
 
+// Does a process-table entry name the given agent? macOS `ps -axo comm=` may
+// print a full path, while Windows reports the bare image name and always keeps
+// the `.exe`, so both sides are reduced to a lowercase, extension-free basename.
+// Windows process names are case-insensitive, so lowercasing is required there
+// and harmless elsewhere (agent binaries are lowercase by convention).
+fn process_name_matches(comm: &str, name: &str) -> bool {
+    fn base(s: &str) -> String {
+        let leaf = s
+            .rsplit(['/', '\\'])
+            .next()
+            .unwrap_or(s)
+            .to_ascii_lowercase();
+        match leaf.strip_suffix(".exe") {
+            Some(stem) => stem.to_string(),
+            None => leaf,
+        }
+    }
+    base(comm) == base(name)
+}
+
+// (pid, ppid, name) for every process on the machine.
+//
+// Unix reads it from `ps`. Windows has no `ps`, and `wmic` was removed from
+// Windows 11, so it walks the ToolHelp snapshot directly — which is also far
+// cheaper than a subprocess, and term_status is polled every 300ms while a
+// habilidade waits for its agent (ADR-0013).
+#[cfg(not(windows))]
+fn process_table() -> Vec<(u32, u32, String)> {
+    proc::command("ps")
+        .args(["-axo", "pid=,ppid=,comm="])
+        .output()
+        .ok()
+        .map(|o| parse_ps_table(&String::from_utf8_lossy(&o.stdout)))
+        .unwrap_or_default()
+}
+
+#[cfg(windows)]
+fn process_table() -> Vec<(u32, u32, String)> {
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        TH32CS_SNAPPROCESS,
+    };
+    let mut table = Vec::new();
+    // SAFETY: the snapshot handle is checked before use and closed on every exit
+    // path; PROCESSENTRY32W is zeroed with dwSize set, as the API requires.
+    unsafe {
+        let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if snap == INVALID_HANDLE_VALUE {
+            return table;
+        }
+        let mut entry: PROCESSENTRY32W = std::mem::zeroed();
+        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+        if Process32FirstW(snap, &mut entry) != 0 {
+            loop {
+                let n = entry
+                    .szExeFile
+                    .iter()
+                    .position(|&c| c == 0)
+                    .unwrap_or(entry.szExeFile.len());
+                table.push((
+                    entry.th32ProcessID,
+                    entry.th32ParentProcessID,
+                    String::from_utf16_lossy(&entry.szExeFile[..n]),
+                ));
+                if Process32NextW(snap, &mut entry) == 0 {
+                    break;
+                }
+            }
+        }
+        CloseHandle(snap);
+    }
+    table
+}
+
+#[cfg(not(windows))]
 fn parse_ps_table(out: &str) -> Vec<(u32, u32, String)> {
     out.lines()
         .filter_map(|l| {
@@ -3342,9 +3418,7 @@ fn has_descendant_process(table: &[(u32, u32, String)], root: u32, name: &str) -
         }
         for (cpid, ppid, comm) in table {
             if *ppid == pid {
-                // `ps -axo comm=` may print the full executable path on macOS
-                let base = comm.rsplit('/').next().unwrap_or(comm);
-                if base == name {
+                if process_name_matches(comm, name) {
                     return true;
                 }
                 frontier.push(*cpid);
@@ -3373,18 +3447,7 @@ fn term_status(state: State<AppState>) -> TermStatus {
     };
     let just_launched = is_within_grace(session.launched_at.elapsed());
     let agent_name = agent_process_name(&active_agent());
-    let agent_running = proc::command("ps")
-        .args(["-axo", "pid=,ppid=,comm="])
-        .output()
-        .ok()
-        .map(|o| {
-            has_descendant_process(
-                &parse_ps_table(&String::from_utf8_lossy(&o.stdout)),
-                root,
-                &agent_name,
-            )
-        })
-        .unwrap_or(false);
+    let agent_running = has_descendant_process(&process_table(), root, &agent_name);
     TermStatus {
         open: true,
         agent_running,
@@ -3626,18 +3689,61 @@ mod tests {
     // ADR-0002 §4 — the terminal/Claude readiness handshake asks the OS whether
     // a `claude` process lives under the PTY shell, instead of guessing from
     // terminal output.
+    // The tree walk is shared by every platform, so it is tested against a
+    // literal table rather than `ps` output.
     #[test]
-    fn ps_table_parses_and_finds_descendant_by_name() {
-        let table = parse_ps_table(
-            "  1     0  launchd\n 300     1  zsh\n 412   300  claude\n 500   412  node\n 600     1  zsh\n",
-        );
+    fn finds_descendant_by_name_in_the_process_tree() {
+        let t = |pid, ppid, name: &str| (pid, ppid, name.to_string());
+        let table = vec![
+            t(1, 0, "launchd"),
+            t(300, 1, "zsh"),
+            t(412, 300, "claude"),
+            t(500, 412, "node"),
+            t(600, 1, "zsh"),
+        ];
         assert!(has_descendant_process(&table, 300, "claude"));
         assert!(!has_descendant_process(&table, 600, "claude"));
         // the root itself does not count as its own descendant match
         assert!(!has_descendant_process(&table, 412, "zsh"));
         // grandchildren are found too
         assert!(has_descendant_process(&table, 300, "node"));
-        // malformed lines are skipped, not fatal
+    }
+
+    #[test]
+    fn windows_process_names_match_despite_the_exe_suffix() {
+        // ToolHelp reports "claude.exe"; the configured agent is "claude". Before
+        // this, agent detection could never succeed on Windows.
+        assert!(process_name_matches("claude.exe", "claude"));
+        assert!(process_name_matches("Claude.EXE", "claude")); // case-insensitive
+        assert!(process_name_matches("C:\\bin\\claude.exe", "claude")); // backslash path
+        assert!(process_name_matches("/usr/local/bin/claude", "claude")); // unix path
+        assert!(process_name_matches("claude", "claude"));
+        // still discriminating
+        assert!(!process_name_matches("node.exe", "claude"));
+        assert!(!process_name_matches("claudex.exe", "claude"));
+    }
+
+    // The whole point of term_status: an agent running under the PTY is found on
+    // this machine's real process table. Uses the test binary itself as the root,
+    // since cargo's runner is a live process with a known name.
+    #[test]
+    fn process_table_reads_this_machine() {
+        let table = process_table();
+        assert!(table.len() > 5, "tabela vazia: {}", table.len());
+        let me = std::process::id();
+        assert!(
+            table.iter().any(|(pid, _, _)| *pid == me),
+            "o proprio processo de teste deve aparecer na tabela"
+        );
+        // every entry carries a usable name
+        assert!(table.iter().all(|(_, _, n)| !n.is_empty()));
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn ps_table_parsing_skips_malformed_lines() {
+        let table = parse_ps_table("  1     0  launchd\n 300     1  zsh\n");
+        assert_eq!(table.len(), 2);
         assert!(parse_ps_table("garbage\n").is_empty());
     }
 

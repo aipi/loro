@@ -1027,7 +1027,7 @@ const B = {
   editWrap: $("editWrap"), editArea: $("editArea"), editTitle: $("editTitle"),
   editSave: $("editSave"), editCancel: $("editCancel"), editClose: $("editClose"),
 };
-let brainTab = false, brainPoll = null, brainDir = "", lastSt = null;
+let brainTab = false, brainPoll = null, brainDir = "", lastSt = null, brainVisHook = false;
 // ADR-0008 — the Knowledge Studio workspace. `ws` is plain and serializable;
 // live CM6 handles and last-saved buffers live in side Maps keyed by tab id.
 const HOME_REL = "__home__";          // sentinel rel for the pinned Home tab
@@ -1133,6 +1133,12 @@ function initBrain() {
   brainTab = true;
   brainRefresh();
   if (!brainPoll) brainPoll = setInterval(brainRefresh, 10000);
+  // volta a atualizar assim que a janela reaparece, para o gate de visibilidade
+  // do brainRefresh não deixar a tela velha
+  if (!brainVisHook) {
+    brainVisHook = true;
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) brainRefresh(); });
+  }
   if (!settings.welcomeSeen) setTimeout(showWelcome, 600);
 }
 if (el.liveExpand) el.liveExpand.addEventListener("click", () => setLivePanel(el.surface.hidden));
@@ -1212,6 +1218,11 @@ function groupMonths(files) {
 
 async function brainRefresh() {
   if (!brainTab) return;
+  // Nada de trabalho enquanto a janela está oculta: cada passada dispara dois
+  // processos git (estado + status por arquivo), e no Windows cada processo de
+  // console custa um console host. Ficar fazendo isso em segundo plano é gasto
+  // puro. Ao voltar para a frente, o listener abaixo atualiza na hora.
+  if (typeof document !== "undefined" && document.hidden) return;
   // lista de acervos (projetos) para o seletor
   try {
     const av = await invoke("brain_list_acervos");
