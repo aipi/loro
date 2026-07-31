@@ -20,7 +20,7 @@ pela minha avó: procuraram-na perguntando se ela queria um papagaio, porque o
 bicho estava incomodando muito — fazia barulho o tempo todo. Minha avó já tinha
 tido um papagaio antes; anos atrás, havia doado o dela justamente por isso —
 barulho demais, e sem mais condições de cuidar. Aquele papagaio se chamava
-**Lourão** na época.
+**Lorão** na época.
 
 O curioso é que, quando pegamos esse novo papagaio, ele só gritava "Adalto,
 Adalto" — e ninguém sabia quem era Adalto. O marido da mulher que o tinha ficou
@@ -41,7 +41,7 @@ quis doar, e ela aceitou.
 E então o mais curioso de tudo: um dia, um dos irmãos dela apareceu na casa, e o
 papagaio parou de dizer "Adalto" e começou a dizer "Marcelo". Aquele papagaio
 era o mesmo que minha avó tinha doado anos antes. Ele saiu da casa da minha avó
-como Lourão, passou pela casa daquelas pessoas, foi doado de novo, voltou pra
+como Lorão, passou pela casa daquelas pessoas, foi doado de novo, voltou pra
 perto da gente como Adalto — e acabou retornando à mesma origem, agora lembrando
 um outro nome.
 
@@ -63,7 +63,7 @@ through my grandmother: some people approached her asking whether she wanted a
 parrot, because the bird was bothering them terribly — it made noise all the
 time. My grandmother had owned a parrot before; years earlier she had given hers
 away for exactly that reason — too much noise, and no way to keep caring for it.
-That parrot's name, back then, was **Lourão**.
+That parrot's name, back then, was **Lorão**.
 
 The curious part is that when we took in this new parrot, all he did was screech
 "Adalto, Adalto" — and nobody knew who Adalto was. The husband of the woman who
@@ -84,7 +84,7 @@ wanted to give a parrot to, and she accepted.
 And then the most curious thing of all: one day one of her brothers showed up at
 the house, and the parrot stopped saying "Adalto" and began saying "Marcelo."
 That parrot was the same one my grandmother had given away years before. He had
-left my grandmother's house as Lourão, passed through those people's home, been
+left my grandmother's house as Lorão, passed through those people's home, been
 given away again, come back to us as Adalto — and finally returned to the same
 origin, now remembering yet another name.
 
