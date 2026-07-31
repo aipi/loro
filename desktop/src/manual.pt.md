@@ -95,7 +95,9 @@ quando quiser pela paleta: `Cmd/Ctrl+Shift+P` → "apresentação do Loro".
   **⧉ copiar caminho** — **relativo** (portátil, no formato usado pelas
   referências `acervo://`) ou **absoluto** (o caminho completo no disco, útil
   para abrir no Finder/terminal). Nunca sobrescreve um arquivo de mesmo nome no
-  destino.
+  destino. O **copiar caminho** está no menu ⋯ de **todo item da árvore
+  lateral** — arquivos, brainstormings, reuniões, itens da fila, contextos,
+  pastas (anexos) e habilidades, além das fontes.
 - **Arrastar e soltar:** arraste o **ícone** de um arquivo (o cursor vira uma
   mãozinha) e solte sobre o cabeçalho de uma pasta (📁 notas, 📁 anexos ou
   📁 avulso) para movê-lo — o mesmo efeito do **mover para…**, restrito ao
@@ -107,7 +109,9 @@ quando quiser pela paleta: `Cmd/Ctrl+Shift+P` → "apresentação do Loro".
   sempre visível logo abaixo, e **▶ executar** roda sobre o arquivo aberto),
   **pedir à IA…**, e **versionar** (quando o arquivo é de um contexto).
   Mesmo padrão em todo lugar onde essas ações existem — reunião, documento
-  comum, cabeçalho do acervo.
+  comum, cabeçalho do acervo. No **modo edição** o editor ocupa o painel
+  inteiro e o rail fica oculto; as ações continuam disponíveis no modo
+  visualizar.
 - As ações **analisar**, **perguntar…**, **ver relatório** e **enviar para a
   fila** ficam no menu **⋯** da reunião na lateral. **Perguntar** funciona já
   durante a gravação; as outras três habilitam quando a reunião termina (o

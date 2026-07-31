@@ -27,6 +27,20 @@ test("edit mode stretches .docbody so .docmain is bounded to the panel height", 
   );
 });
 
+test("edit mode hides the actions rail so it can't collapse the editor", () => {
+  // On windows ≤900px wide the `.docbody` flips to a column (style.css ~536)
+  // and stacks `.doc-rail` below the editor; the rail takes its content height
+  // and the flex:1 editor collapses to ~0px — on the default 560×520 window the
+  // document had no viewport and could not scroll. ADR-0008: in edit mode the
+  // editor owns the whole panel, so the rail is hidden.
+  const css = norm(CSS);
+  assert.match(
+    css,
+    /#wsBody\.editing \.doc-rail \{[^}]*display:\s*none/,
+    "editing .doc-rail must be display:none so the rail never steals the editor's height",
+  );
+});
+
 test("edit mode clears the 60vh min-height floor on the CM6 editor", () => {
   const css = norm(CSS);
   assert.match(

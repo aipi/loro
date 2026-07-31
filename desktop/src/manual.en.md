@@ -97,6 +97,9 @@ palette: `Cmd/Ctrl+Shift+P` → "Loro tour".
   **⧉ copy path** — **relative** (portable, the format used by `acervo://`
   references) or **absolute** (the full on-disk path, handy to open in
   Finder/terminal). A same-named file at the destination is never overwritten.
+  **Copy path** is on the ⋯ menu of **every item in the sidebar tree** — files,
+  brainstormings, meetings, queue items, contexts, folders (attachments) and
+  habilidades, plus the sources.
 - **Drag and drop:** drag a file's **icon** (the cursor turns into a grab
   hand) onto a folder header (📁 notes, 📁 attachments or 📁 misc) to move it —
   the same effect as **move to…**, confined to the brainstorming world (never
@@ -107,6 +110,8 @@ palette: `Cmd/Ctrl+Shift+P` → "Loro tour".
   it, and **▶ executar** runs it against the open file), **ask the AI…**,
   and **version** (when the file is part of a context). Same pattern
   everywhere these actions exist — meeting, regular document, acervo header.
+  In **edit mode** the editor fills the whole panel and the rail is hidden;
+  the actions stay available in view mode.
 - The **analyse**, **ask…**, **view report** and **send to queue** actions
   live in the meeting's **⋯** menu in the sidebar. **Ask…** already works
   while the meeting is still recording; the other three enable once the

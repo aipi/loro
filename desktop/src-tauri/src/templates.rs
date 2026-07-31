@@ -1270,6 +1270,10 @@ diagrama em texto, um script, uma planilha de dados, um documento).
    `brainstorming/<tema>/anexos/`. Crie a pasta se não existir.
 2. Crie o arquivo que melhor atende à descrição — sem assumir uma ferramenta
    de geração que você não tem; markdown/texto é sempre uma saída válida.
+   - **Se você for o Claude (Claude Code)** e o artefato tiver qualquer
+     superfície visual (uma página HTML, um diagrama, um dashboard, um
+     documento a ser apresentado), **carregue a skill `artifact-design`** antes
+     de desenhá-lo e siga suas diretrizes.
 3. Se o alvo for uma nota específica, acrescente ao `refs:` dela uma
    entrada `tipo: doc`, `caminho: acervo://<caminho-do-artefato-criado>`.
    Se o alvo for só um tema/contexto (sem nota específica), apenas relate
@@ -1303,6 +1307,10 @@ The FIRST token is the TARGET (a note, a topic `brainstorming/<topic>`, or a
 2. Create the file that best fits the description — never assume a
    generation tool you don't have; markdown/plain text is always a valid
    output.
+   - **If you are Claude (Claude Code)** and the artifact has any visual
+     surface (an HTML page, a diagram, a dashboard, a document meant to be
+     presented), **load the `artifact-design` skill** before designing it and
+     follow its guidance.
 3. If the target is a specific note, append to its `refs:` an entry
    `tipo: doc`, `caminho: acervo://<path-of-the-created-artifact>`. If the
    target is just a topic/context (no specific note), just report where
