@@ -1460,7 +1460,7 @@ function renderSidebar(st) {
       return `<div class="bitem grp${gOpen ? " open" : ""}" data-toggle="${gKey}">
           ${ico("folder")}<span class="bn">${esc(m)}</span><span class="pill">${fs.length}</span></div>
         <div class="bchild" ${gOpen ? "" : "hidden"}>` +
-        fs.map((f) => `<div class="bitem file ${gitClass(f.path)}" data-doc="${esc(f.path)}" title="${esc(f.name)}">${ico("file")}<span class="bn">${esc(shortName(f.name))}${bMeta(f.mtime, f.path)}</span></div>`).join("") +
+        fs.map((f) => `<div class="bitem file ${gitClass(f.path)}" data-doc="${esc(f.path)}" title="${esc(f.name)}">${ico("file")}<span class="bn">${esc(shortName(f.name))}${bMeta(f.mtime, f.path)}</span>${pathMenuBtnHtml(f.path, shortName(f.name))}</div>`).join("") +
         `</div>`;
     }).join("");
     return `<div class="bitem ctx${kOpen ? " open" : ""}" data-toggle="${kKey}">
@@ -1475,9 +1475,10 @@ function renderSidebar(st) {
 function wireSidebar() {
   B.main.querySelectorAll("[data-doc]").forEach((el2) => {
     // single-click opens an ephemeral preview tab; double-click promotes it (ADR-0008)
-    el2.onclick = (e) => { if (e.target.closest("[data-qmenu]")) return; openDoc(el2.dataset.doc, { preview: true }); };
-    el2.ondblclick = (e) => { if (e.target.closest("[data-qmenu]")) return; openDoc(el2.dataset.doc, { preview: false }); };
+    el2.onclick = (e) => { if (e.target.closest("[data-qmenu]") || e.target.closest("[data-pathmenu]")) return; openDoc(el2.dataset.doc, { preview: true }); };
+    el2.ondblclick = (e) => { if (e.target.closest("[data-qmenu]") || e.target.closest("[data-pathmenu]")) return; openDoc(el2.dataset.doc, { preview: false }); };
   });
+  wirePathMenus();
   B.main.querySelectorAll("[data-qmenu]").forEach((el2) => (el2.onclick = (e) => {
     e.stopPropagation(); openQueueMenu(el2, el2.dataset.qmenu);
   }));
@@ -1591,9 +1592,9 @@ async function loadCtxChildren(name) {
       files = files.filter((f) => !f.dir);
       if (!files.length) continue;
       html += `<div class="bitem grp open"><span class="tw">▾</span>${ico(fileIcon(en.name, true), "ac")}<span class="bn">${esc(pretty[en.name] || en.name)}</span><span class="pill">${files.length}</span></div><div class="bchild">` +
-        files.map((f) => `<div class="bitem file ${gitClass(f.path)}" data-doc="${esc(f.path)}">${ico("file")}<span class="bn">${esc(shortName(f.name))}</span></div>`).join("") + `</div>`;
+        files.map((f) => `<div class="bitem file ${gitClass(f.path)}" data-doc="${esc(f.path)}">${ico("file")}<span class="bn">${esc(shortName(f.name))}</span>${pathMenuBtnHtml(f.path, shortName(f.name))}</div>`).join("") + `</div>`;
     } else {
-      html += `<div class="bitem file ${gitClass(en.path)}" data-doc="${esc(en.path)}">${ico(fileIcon(en.name, false))}<span class="bn">${esc(pretty[en.name] || en.name)}</span></div>`;
+      html += `<div class="bitem file ${gitClass(en.path)}" data-doc="${esc(en.path)}">${ico(fileIcon(en.name, false))}<span class="bn">${esc(pretty[en.name] || en.name)}</span>${pathMenuBtnHtml(en.path, pretty[en.name] || en.name)}</div>`;
     }
   }
   // ADR-0005: um contexto também tem uma pasta `anexos/` — sempre visível, com
@@ -1602,11 +1603,11 @@ async function loadCtxChildren(name) {
   let anexos = [];
   try { anexos = ((await invoke("brain_list_dir", { rel: `contextos/${name}/anexos` })) || []).filter((f) => !f.dir); }
   catch (_) {}
-  const anexRows = anexos.map((f) => `<div class="bitem file ${gitClass(f.path)}" data-doc="${esc(f.path)}" title="${esc(f.name)}">${ico("file")}<span class="bn">${esc(shortName(f.name))}</span></div>`).join("");
+  const anexRows = anexos.map((f) => `<div class="bitem file ${gitClass(f.path)}" data-doc="${esc(f.path)}" title="${esc(f.name)}">${ico("file")}<span class="bn">${esc(shortName(f.name))}</span>${pathMenuBtnHtml(f.path, shortName(f.name))}</div>`).join("");
   const anexActions =
     `<button class="bsaddbtn" data-ctxaddnota="${esc(name)}" title="${t("Escrever uma nota nos anexos deste contexto")}">＋ ${t("nova nota")}</button>` +
     `<button class="bsaddbtn" data-ctxaddanexo="${esc(name)}" title="${t("Adicionar um arquivo do computador aos anexos deste contexto")}">＋ ${t("do computador")}</button>`;
-  html += folderGroupHtml(`ctxfolder:${name}:anexos`, t("anexos"), anexos.length, anexRows, t("nenhum anexo ainda"), anexActions);
+  html += folderGroupHtml(`ctxfolder:${name}:anexos`, t("anexos"), anexos.length, anexRows, t("nenhum anexo ainda"), anexActions, `contextos/${name}/anexos`);
   holder.innerHTML = html || `<div class="bempty">${t("vazio")}</div>`;
   wireSidebar();
   markSel();
@@ -1754,9 +1755,9 @@ async function loadTemaChildren(slug) {
     `<button class="bsaddbtn" data-addanexo="${esc(slug)}" title="${t("Adicionar um arquivo do computador aos anexos deste tema")}">＋ ${t("do computador")}</button>`;
   // counts are suppressed in the brainstorming tree (0 = no pill) — owner
   // request; the contextos tree keeps its counts (loadCtxChildren).
-  inner += folderGroupHtml(`bsfolder:${slug}:reunioes`, t("reuniões"), 0, reunioesRows, t("nenhuma reunião ainda"), reunioesActions);
-  inner += folderGroupHtml(`bsfolder:${slug}:notas`, t("notas"), 0, notasRows, t("nenhuma nota ainda"), notasActions);
-  inner += folderGroupHtml(`bsfolder:${slug}:anexos`, t("anexos"), 0, anexosRows, t("nenhum anexo ainda"), anexosActions);
+  inner += folderGroupHtml(`bsfolder:${slug}:reunioes`, t("reuniões"), 0, reunioesRows, t("nenhuma reunião ainda"), reunioesActions, `brainstorming/${slug}/reunioes`);
+  inner += folderGroupHtml(`bsfolder:${slug}:notas`, t("notas"), 0, notasRows, t("nenhuma nota ainda"), notasActions, `brainstorming/${slug}/notas`);
+  inner += folderGroupHtml(`bsfolder:${slug}:anexos`, t("anexos"), 0, anexosRows, t("nenhum anexo ainda"), anexosActions, `brainstorming/${slug}/anexos`);
   holder.innerHTML = inner;
   wirePessoal();
   // fillMeetingChild queries the live DOM — must run AFTER innerHTML is set,
@@ -1769,11 +1770,11 @@ async function loadTemaChildren(slug) {
 // wiring already used for "avulso" (wirePessoal, no new JS needed there). The
 // folder's own creation action(s) sit at the top of its body, so each button
 // lives inside the folder it acts on (ADR-0005, owner request).
-function folderGroupHtml(key, label, count, rowsHtml, emptyMsg, actionsHtml) {
+function folderGroupHtml(key, label, count, rowsHtml, emptyMsg, actionsHtml, rel) {
   const open = bOpen.has(key);
   const pill = count ? `<span class="pill">${count}</span>` : "";
   const actions = actionsHtml ? `<div class="bsadd">${actionsHtml}</div>` : "";
-  return `<div class="bitem ctx${open ? " open" : ""}" data-pestoggle="${key}">${ico("folder", "ac")}<span class="bn">${label}</span>${pill}</div>` +
+  return `<div class="bitem ctx${open ? " open" : ""}" data-pestoggle="${key}">${ico("folder", "ac")}<span class="bn">${label}</span>${pill}${rel ? pathMenuBtnHtml(rel, label) : ""}</div>` +
     `<div class="bchild" ${open ? "" : "hidden"}>${actions}${rowsHtml || `<div class="bempty sub">${emptyMsg}</div>`}</div>`;
 }
 // Busca e injeta investigações/respostas de UMA reunião no seu container
@@ -1842,6 +1843,7 @@ function wirePessoal() {
     if (bOpen.has(key)) { bOpen.delete(key); el2.classList.remove("open"); if (child) child.hidden = true; }
     else { bOpen.add(key); el2.classList.add("open"); if (child) child.hidden = false; }
   }));
+  wirePathMenus(B.navPessoal);
   B.navPessoal.querySelectorAll("[data-addtema]").forEach((el2) => (el2.onclick = promptNewTema));
   B.navPessoal.querySelectorAll("[data-addnota]").forEach((el2) => (el2.onclick = (e) => {
     e.stopPropagation(); promptNewNota(el2.dataset.addnota, el2);
@@ -2082,12 +2084,15 @@ function openToolMenu(rel, label, anchor, builtin) {
     `<div class="fitem2 strong" data-use><span class="fn">▶ ${t("usar")}</span></div>` +
     `<div class="fitem2" data-edit><span class="fn">✎ ${t("editar")}</span></div>` +
     `<div class="fitem2" data-ainote><span class="fn">✦ ${t("pedir à IA")}</span></div>` +
+    `<div class="fsep"></div>` +
+    copyPathItemsHtml() +
     (builtin
       ? `<div class="fnote mono">${t("habilidade padrão — não pode ser excluída")}</div>`
-      : `<div class="fitem2 danger" data-del><span class="fn">${t("excluir")}</span></div>`);
+      : `<div class="fsep"></div><div class="fitem2 danger" data-del><span class="fn">${t("excluir")}</span></div>`);
   B.bMenu.querySelector("[data-use]").onclick = () => { closeFloat(); promptUseTool(rel); };
   B.bMenu.querySelector("[data-edit]").onclick = () => { closeFloat(); openDoc(rel, { preview: false }); };
   B.bMenu.querySelector("[data-ainote]").onclick = () => { closeFloat(); promptToolAI(rel); };
+  wireCopyPathItems(rel);
   if (!builtin) B.bMenu.querySelector("[data-del]").onclick = () => { closeFloat(); delTool(rel); };
   placeMenu(anchor);
 }
@@ -2228,14 +2233,42 @@ const TOOL_LABELS = {
   "loro-note.md": "nota por IA",
   "loro-ask.md": "perguntar ao acervo",
   "loro-analyse.md": "analisar reunião",
-  "loro-question.md": "perguntar à reunião",
+  "loro-question.md": "perguntar sobre a reunião",
   "loro-context.md": "gerar contexto",
   "loro-tool.md": "criar habilidade",
   "loro-slack.md": "perguntar no Slack",
+  "loro-digest.md": "atualizar índice",
 };
-function habilidadeEntriesFrom(files) {
+// Relevance order for the dropdown/picker (ADR-0005, owner feedback): the most
+// context-relevant habilidades first, least last. On the meeting surface the
+// meeting skills (perguntar sobre a reunião, analisar) lead; elsewhere the
+// general order applies. Custom habilidades (not listed) sink to the end,
+// alphabetically. Filenames not listed rank last too.
+const TOOL_ORDER = {
+  doc: [
+    "loro-ask.md", "loro-note.md", "loro-presentation.md", "loro-artifact.md",
+    "loro-digest.md", "loro-sync.md", "loro-slack.md",
+    "loro-question.md", "loro-analyse.md", "loro-context.md", "loro-tool.md",
+  ],
+  meeting: [
+    "loro-question.md", "loro-analyse.md",
+    "loro-ask.md", "loro-note.md", "loro-presentation.md", "loro-artifact.md",
+    "loro-slack.md", "loro-sync.md", "loro-digest.md",
+    "loro-context.md", "loro-tool.md",
+  ],
+};
+function habilidadeRank(name, surface) {
+  const order = TOOL_ORDER[surface] || TOOL_ORDER.doc;
+  const i = order.indexOf(name);
+  return i === -1 ? order.length : i;
+}
+function habilidadeEntriesFrom(files, surface) {
   const entries = [];
-  for (const f of files) {
+  const ordered = files.slice().sort((a, b) => {
+    const d = habilidadeRank(a.name, surface) - habilidadeRank(b.name, surface);
+    return d !== 0 ? d : shortName(a.name).localeCompare(shortName(b.name));
+  });
+  for (const f of ordered) {
     if (f.name === "loro-sync.md") {
       for (const fonte of ["drive", "slack", "jira", "confluence"]) {
         entries.push({ kind: "sync", fonte, label: `${t("sincronizar")}: ${fonte}`, title: f.desc });
@@ -2249,13 +2282,13 @@ function habilidadeEntriesFrom(files) {
 }
 // Curated: excludes the 5 workflow-specific built-ins (already have dedicated
 // UI) — used by the ⋯ menu picker, which coexists with that dedicated UI.
-function pickableHabilidadeEntries() {
-  return habilidadeEntriesFrom(lastToolFiles.filter((f) => !TOOL_PICKER_EXCLUDE.has(f.name)));
+function pickableHabilidadeEntries(surface) {
+  return habilidadeEntriesFrom(lastToolFiles.filter((f) => !TOOL_PICKER_EXCLUDE.has(f.name)), surface);
 }
 // Unrestricted: every habilidade, no exclusion — used where there is no
 // separate dedicated UI to coexist with (the meeting rail, ADR-0005).
-function allHabilidadeEntries() {
-  return habilidadeEntriesFrom(lastToolFiles);
+function allHabilidadeEntries(surface) {
+  return habilidadeEntriesFrom(lastToolFiles, surface);
 }
 function runHabilidadeEntry(entry, alvoRel) {
   if (entry.kind === "sync") promptSyncTool(entry.fonte, alvoRel);
@@ -2274,10 +2307,10 @@ function habilidadeCardHtml(p) {
     `<button class="railbtn cta" id="${p}RunBtn">▶ ${t("executar")}</button>` +
     `</div>`;
 }
-function wireHabilidadeCard(p, alvoRel) {
+function wireHabilidadeCard(p, alvoRel, surface) {
   const sel = $(p + "Select"), desc = $(p + "Desc"), btn = $(p + "RunBtn");
   if (!sel) return;
-  const entries = allHabilidadeEntries();
+  const entries = allHabilidadeEntries(surface);
   sel.innerHTML = entries.length
     ? entries.map((e, i) => `<option value="${i}">${esc(e.label)}</option>`).join("")
     : `<option value="">${t("nenhuma habilidade disponível")}</option>`;
@@ -2293,9 +2326,9 @@ function wireHabilidadeCard(p, alvoRel) {
 // `all` lifts the workflow-builtin exclusion — used where no dedicated UI
 // coexists (the Visão Geral hero button); alvoRel may be null there (each
 // habilidade then asks for/omits its own target).
-function openHabilidadeMenu(alvoRel, anchor, all) {
+function openHabilidadeMenu(alvoRel, anchor, all, surface) {
   B.acervoMenu.hidden = true;
-  const entries = all ? allHabilidadeEntries() : pickableHabilidadeEntries();
+  const entries = all ? allHabilidadeEntries(surface) : pickableHabilidadeEntries(surface);
   const rows = entries.map((e, i) =>
     `<div class="fitem2" data-entry="${i}" title="${esc(e.title)}"><span class="fn">${esc(e.label)}</span></div>`).join("");
   B.bMenu.innerHTML = `<div class="fhead">${t("executar habilidade")}</div>` +
@@ -2382,12 +2415,16 @@ function openBsMenu(slug, anchor) {
     `<div class="fsep"></div>` +
     `<div class="fitem2" data-ren><span class="fn">${t("renomear")}</span></div>` +
     `<div class="fitem2" data-toqueue><span class="fn">${t("gerar relatório de tudo → fila")}</span></div>` +
+    `<div class="fsep"></div>` +
+    copyPathItemsHtml() +
+    `<div class="fsep"></div>` +
     `<div class="fitem2 danger" data-del><span class="fn">${t("apagar brainstorming")}</span></div>`;
   B.bMenu.querySelector("[data-ainote]").onclick = () => { closeFloat(); promptNoteAI(`brainstorming/${slug}/notas`, false); };
   B.bMenu.querySelector("[data-digest]").onclick = () => { closeFloat(); runBrainstormDigest(slug); };
   B.bMenu.querySelector("[data-tools]").onclick = () => openHabilidadeMenu(`brainstorming/${slug}`, anchor);
   B.bMenu.querySelector("[data-ren]").onclick = () => { closeFloat(); promptRenameBs(slug); };
   B.bMenu.querySelector("[data-toqueue]").onclick = () => { closeFloat(); sendBrainstormToQueue(slug, []); };
+  wireCopyPathItems(`brainstorming/${slug}`);
   B.bMenu.querySelector("[data-del]").onclick = () => { closeFloat(); delPessoal("brainstorming/" + slug, "tema"); };
   const r = anchor.getBoundingClientRect();
   B.bMenu.style.left = Math.max(10, r.left - 120) + "px";
@@ -2445,7 +2482,9 @@ function openMeetingMenu(rel, id, title, status, anchor) {
     `<div class="fitem2" data-tools><span class="fn">${ico("skill")} ${t("executar habilidade…")}</span></div>` +
     `<div class="fsep"></div>` +
     `<div class="fitem2" data-ren><span class="fn">✎ ${t("renomear")}</span></div>` +
+    copyPathItemsHtml() +
     `<div class="fitem2 danger" data-del><span class="fn">${t("apagar reunião")}</span></div>`;
+  wireCopyPathItems(rel);
   if (ready) {
     B.bMenu.querySelector("[data-analyse]").onclick = () => { closeFloat(); openDoc(`${rel}/reuniao.md`, { preview: false }); runMeetingSkill("analyse", id, null, rel); };
     B.bMenu.querySelector("[data-report]").onclick = () => { closeFloat(); buildAndOpenReport(id); };
@@ -2473,15 +2512,13 @@ function openArtefatoMenu(rel, label, anchor) {
     `<div class="fsep"></div>` +
     `<div class="fitem2" data-ren><span class="fn">✎ ${t("renomear")}</span></div>` +
     `<div class="fitem2" data-mv><span class="fn">⇄ ${t("mover para…")}</span></div>` +
-    `<div class="fitem2" data-cprel><span class="fn">⧉ ${t("copiar caminho relativo")}</span></div>` +
-    `<div class="fitem2" data-cpabs><span class="fn">⧉ ${t("copiar caminho absoluto")}</span></div>` +
+    copyPathItemsHtml() +
     `<div class="fsep"></div>` +
     `<div class="fitem2 danger" data-del><span class="fn">${t("apagar")}</span></div>`;
   B.bMenu.querySelector("[data-ainote]").onclick = () => { closeFloat(); promptNoteAI(rel, true); };
   B.bMenu.querySelector("[data-ren]").onclick = () => { closeFloat(); promptRenameArtefato(rel); };
   B.bMenu.querySelector("[data-mv]").onclick = () => { closeFloat(); promptMoveFile(rel); };
-  B.bMenu.querySelector("[data-cprel]").onclick = () => { closeFloat(); copyFilePath(rel, false); };
-  B.bMenu.querySelector("[data-cpabs]").onclick = () => { closeFloat(); copyFilePath(rel, true); };
+  wireCopyPathItems(rel);
   B.bMenu.querySelector("[data-del]").onclick = () => { closeFloat(); delPessoal(rel); };
   placeMenu(anchor);
 }
@@ -2514,6 +2551,39 @@ async function copyToClipboard(text) {
     ta.remove();
     return ok;
   } catch (_) { return false; }
+}
+
+// ADR-0009 (extended, issue #18): the copy-path rows shared by every ⋯ menu in
+// the sidebar tree — relative path (portable, mirrors acervo://) and absolute
+// on-disk path. `copyPathItemsHtml` returns the two rows; `wireCopyPathItems`
+// binds them after the menu is placed (no-op if the rows are absent).
+function copyPathItemsHtml() {
+  return `<div class="fitem2" data-cprel><span class="fn">⧉ ${t("copiar caminho relativo")}</span></div>` +
+    `<div class="fitem2" data-cpabs><span class="fn">⧉ ${t("copiar caminho absoluto")}</span></div>`;
+}
+function wireCopyPathItems(rel) {
+  const r = B.bMenu.querySelector("[data-cprel]"); if (r) r.onclick = () => { closeFloat(); copyFilePath(rel, false); };
+  const a = B.bMenu.querySelector("[data-cpabs]"); if (a) a.onclick = () => { closeFloat(); copyFilePath(rel, true); };
+}
+// A ⋯ menu with ONLY the copy-path actions — for tree rows that otherwise have
+// no menu (fontes, context children, folder headers). Every node in the tree
+// can copy its path (issue #18).
+function openPathMenu(rel, label, anchor) {
+  B.acervoMenu.hidden = true;
+  B.bMenu.innerHTML = `<div class="fhead">${esc(label)}</div>` + copyPathItemsHtml();
+  wireCopyPathItems(rel);
+  placeMenu(anchor);
+}
+// The copy-only ⋯ button markup for a tree row/folder header that has no richer
+// menu (issue #18); `wirePathMenus` binds every such button under `root`.
+function pathMenuBtnHtml(rel, label) {
+  return `<button class="rowmenu" data-pathmenu="${esc(rel)}" data-pathlabel="${esc(label || rel)}" title="${t("copiar caminho (relativo/absoluto)")}">⋯</button>`;
+}
+function wirePathMenus(root) {
+  (root || B.main).querySelectorAll("[data-pathmenu]").forEach((el2) => (el2.onclick = (e) => {
+    e.stopPropagation();
+    openPathMenu(el2.dataset.pathmenu, el2.dataset.pathlabel || el2.dataset.pathmenu, el2);
+  }));
 }
 
 // "mover para…": pick a destination folder within the brainstorming world
@@ -3322,7 +3392,7 @@ document.addEventListener("mousedown", (e) => { if (!_annotPop || _annotPop.hidd
 B.wsBody.addEventListener("scroll", hideAnnotPop, { passive: true });
 
 function wireMeetingSurface(id) {
-  wireHabilidadeCard("mtgSkill", () => currentMeetingDir(id));
+  wireHabilidadeCard("mtgSkill", () => currentMeetingDir(id), "meeting");
 }
 
 // Resolve the acervo-relative meeting dir for a skill run: the active living/
@@ -3602,7 +3672,7 @@ function renderDocRail(tab, isGuide) {
       `<button class="railbtn" id="railVersionarBtn">⎇ ${t("versionar")}</button>` +
       `<p class="rail-desc">${t("commita as mudanças deste contexto numa branch rfc/… local.")}</p>` +
     `</div>` : "");
-  if (skillable) wireHabilidadeCard("railSkill", tab.rel);
+  if (skillable) wireHabilidadeCard("railSkill", tab.rel, "doc");
   if (aiable) $("railAskAiBtn").onclick = () => promptNoteAI(tab.rel, true);
   if (versionable) $("railVersionarBtn").onclick = promptVersionar;
 }
@@ -4456,9 +4526,11 @@ function openQueueMenu(anchorEl, name) {
   B.acervoMenu.hidden = true;
   B.bMenu.innerHTML =
     `<div class="fhead">${esc(name)}</div>
-     <div class="fitem2" data-a="mv"><span class="fn">⇢ ${t("mover para…")}</span></div>
-     <div class="fitem2 ditem" data-a="del"><span class="fn">${t("apagar…")}</span></div>`;
+     <div class="fitem2" data-a="mv"><span class="fn">⇢ ${t("mover para…")}</span></div>` +
+    copyPathItemsHtml() +
+    `<div class="fitem2 ditem" data-a="del"><span class="fn">${t("apagar…")}</span></div>`;
   B.bMenu.querySelector('[data-a="mv"]').onclick = () => openMoveMenu(anchorEl, name);
+  wireCopyPathItems(`inbox/${name}`);
   B.bMenu.querySelector('[data-a="del"]').onclick = () => openConfirmDelete(anchorEl, name);
   placeMenu(anchorEl);
 }
@@ -4493,11 +4565,13 @@ function openCtxMenu(anchor, name, isFolder) {
      <div class="fitem2 strong" data-a="ask"><span class="fn">? ${t("perguntar…")}</span></div>
      <div class="fsep"></div>
      <div class="fitem2" data-a="ren"><span class="fn">✎ ${t("renomear")}</span></div>
-     <div class="fitem2" data-a="mv"><span class="fn">⇢ ${t("mover para…")}</span></div>
-     <div class="fitem2 ditem" data-a="del"><span class="fn">${t("deletar…")}</span></div>`;
+     <div class="fitem2" data-a="mv"><span class="fn">⇢ ${t("mover para…")}</span></div>` +
+    copyPathItemsHtml() +
+    `<div class="fitem2 ditem" data-a="del"><span class="fn">${t("deletar…")}</span></div>`;
   B.bMenu.querySelector('[data-a="ask"]').onclick = () => { closeFloat(); askAcervo(name); };
   B.bMenu.querySelector('[data-a="ren"]').onclick = () => openRenameCtx(anchor, name);
   B.bMenu.querySelector('[data-a="mv"]').onclick = () => openMoveCtxMenu(anchor, name, isFolder);
+  wireCopyPathItems(`contextos/${name}`);
   B.bMenu.querySelector('[data-a="del"]').onclick = () => openConfirmDeleteCtx(anchor, name, isFolder);
   placeMenu(anchor);
 }
