@@ -40,8 +40,22 @@ test("every ⋯ menu builder offers the copy-path rows", () => {
 
 test("menuless file/folder rows carry a copy-path ⋯ button", () => {
   const btns = APP.match(/pathMenuBtnHtml\(/g) || [];
-  // fontes files + 3 context-child rows + the anexos folder header = ≥5 uses
-  // (the definition itself is `function pathMenuBtnHtml(`, excluded by the `(`)
+  // fontes files + 3 context-child rows + the folderGroupHtml header = ≥5 uses
   assert.ok(btns.length >= 5, `expected ≥5 pathMenuBtnHtml() uses, got ${btns.length}`);
   assert.ok(APP.includes("wirePathMenus("), "wirePathMenus must be called to bind the buttons");
+});
+
+test("brainstorming folders (reuniões/notas/anexos) copy their path", () => {
+  // each tema folder passes its real acervo path as folderGroupHtml's `rel`,
+  // so the copy-path ⋯ shows on the folder header (not only inside it).
+  for (const rel of [
+    "`brainstorming/${slug}/reunioes`",
+    "`brainstorming/${slug}/notas`",
+    "`brainstorming/${slug}/anexos`",
+  ]) {
+    assert.ok(APP.includes(rel), `folder header must copy ${rel}`);
+  }
+  // navPessoal binds its own copy-path buttons (it wires via wirePessoal, not
+  // the global wireSidebar pass).
+  assert.ok(APP.includes("wirePathMenus(B.navPessoal)"), "wirePessoal must bind navPessoal copy-path buttons");
 });
