@@ -3,7 +3,7 @@
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
@@ -19,7 +19,10 @@ use tracing::{error, info};
 
 mod paths;
 use paths::*;
+// every subprocess goes through proc::command so no console window flashes on
+// Windows — see proc.rs
 mod config;
+mod proc;
 use config::*;
 mod templates;
 use templates::*;
@@ -221,7 +224,7 @@ async fn download_model(app: AppHandle, model: String) -> Result<(), String> {
     // redirect; `--fail` turns HTTP errors into a non-zero exit.
     let dl_tmp = tmp.clone();
     let dl = tauri::async_runtime::spawn_blocking(move || {
-        std::process::Command::new("curl")
+        proc::command("curl")
             .args(["-fSL", "--proto", "=https", "--tlsv1.2", "-o"])
             .arg(&dl_tmp)
             .arg(&url)
@@ -345,7 +348,7 @@ fn capture_devices() -> Result<Vec<CaptureDevice>, String> {
     } else {
         model_path("large-v3-turbo")
     };
-    let mut child = Command::new(&bin)
+    let mut child = proc::command(&bin)
         .args(["-m", &model.to_string_lossy(), "-c", "999"]) // invalid -c: lists devices and exits
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -452,7 +455,7 @@ fn start(app: AppHandle, state: State<AppState>, cfg: StartCfg) -> Result<(), St
         &threads,
         cfg.capture,
     );
-    let mut command = Command::new(&bin);
+    let mut command = proc::command(&bin);
     command
         .args(&args)
         .stdin(Stdio::null())
@@ -592,7 +595,7 @@ fn run_file_transcription(
     threads: &str,
     app: &AppHandle,
 ) -> Result<(), String> {
-    let out = Command::new(ffmpeg)
+    let out = proc::command(ffmpeg)
         .arg("-y")
         .args(["-loglevel", "error"])
         .arg("-i")
@@ -627,7 +630,7 @@ fn transcribe_wav(
         threads,
         &wav.to_string_lossy(),
     );
-    let mut child = Command::new(cli)
+    let mut child = proc::command(cli)
         .args(&args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -748,7 +751,7 @@ pub(crate) fn transcribe_wav_window(
     to_ms: Option<u64>,
 ) -> Result<Vec<String>, String> {
     let dst = src.with_file_name(format!(".window-{from_ms}.wav"));
-    let carve = Command::new(ffmpeg)
+    let carve = proc::command(ffmpeg)
         .args(window_ffmpeg_args(src, &dst, from_ms, to_ms))
         .output()
         .map_err(|e| e.to_string())?;
@@ -763,7 +766,7 @@ pub(crate) fn transcribe_wav_window(
         threads,
         &dst.to_string_lossy(),
     );
-    let out = Command::new(cli)
+    let out = proc::command(cli)
         .args(&args)
         .stdin(Stdio::null())
         .output()
@@ -787,7 +790,7 @@ pub(crate) fn mix_to_wav(
     sys: Option<&Path>,
     wav: &Path,
 ) -> Result<(), String> {
-    let mut cmd = Command::new(ffmpeg);
+    let mut cmd = proc::command(ffmpeg);
     cmd.arg("-y").args(["-loglevel", "error"]);
     match (mic, sys) {
         (Some(m), Some(s)) => {
@@ -859,7 +862,7 @@ pub(crate) fn system_capture_start(app: &AppHandle, state: &AppState) -> Result<
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let out = dir.join(format!("loro-sys-{}.wav", epoch_millis()));
 
-    let mut child = Command::new(&bin)
+    let mut child = proc::command(&bin)
         .arg(&out)
         .stdin(Stdio::piped()) // closing this stdin later signals a clean stop
         .stdout(Stdio::null())
@@ -1622,7 +1625,7 @@ fn audio_setup_cmd() -> (&'static str, Vec<&'static str>) {
 #[tauri::command]
 fn open_audio_setup() -> Result<(), String> {
     let (bin, args) = audio_setup_cmd();
-    Command::new(bin)
+    proc::command(bin)
         .args(args)
         .spawn()
         .map(|_| ())
@@ -1639,7 +1642,7 @@ fn open_vbcable_download() -> Result<(), String> {
     } else {
         ("open", vec![URL])
     };
-    Command::new(bin)
+    proc::command(bin)
         .args(args)
         .spawn()
         .map(|_| ())
@@ -2056,7 +2059,7 @@ struct MigrationReport {
 // Rename preserving git history when possible; falls back to a plain move.
 fn migrate_rename(base: &Path, rel_from: &str, rel_to: &str) -> Result<(), String> {
     if base.join(".git").is_dir() && git_available() {
-        let out = Command::new("git")
+        let out = proc::command("git")
             .args(["mv", rel_from, rel_to])
             .current_dir(base)
             .output()
@@ -3061,7 +3064,7 @@ fn save_recording(data: Vec<u8>, filename: String) -> Result<String, String> {
 async fn diarize(audio_path: String) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
         let script = project_dir().join("loro.sh");
-        let output = Command::new("bash")
+        let output = proc::command("bash")
             .arg(&script)
             .arg("diarize")
             .arg(&audio_path)
@@ -3370,7 +3373,7 @@ fn term_status(state: State<AppState>) -> TermStatus {
     };
     let just_launched = is_within_grace(session.launched_at.elapsed());
     let agent_name = agent_process_name(&active_agent());
-    let agent_running = Command::new("ps")
+    let agent_running = proc::command("ps")
         .args(["-axo", "pid=,ppid=,comm="])
         .output()
         .ok()
