@@ -1922,7 +1922,7 @@ pub fn brain_read_asset(rel: String) -> Result<Asset, String> {
 pub fn brain_open_external(rel: String) -> Result<(), String> {
     let base = acervo_base()?;
     let p = guarded_existing(&base, &rel)?;
-    std::process::Command::new("open")
+    crate::proc::command("open")
         .arg(&p)
         .spawn()
         .map(|_| ())
@@ -1942,7 +1942,7 @@ pub fn brain_open_link(url: String) -> Result<(), String> {
     if !is_openable_link(&url) {
         return Err("err.unsupported_link_scheme".into());
     }
-    std::process::Command::new("open")
+    crate::proc::command("open")
         .arg(&url)
         .spawn()
         .map(|_| ())
