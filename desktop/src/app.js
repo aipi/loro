@@ -452,6 +452,11 @@ async function stopSession() {
 // live panel is retired for meetings), and the transcript only shows after stop.
 async function startMeetingSession(presetTema) {
   if (state.running || meeting.active) { toast(t("já há uma gravação em andamento")); return; }
+  // Choke point for every entrance: the source selector, the palette's "nova
+  // reunião" and the brainstorming sidebar row. The palette path ignores the
+  // source selector by design, so hiding the option there is not enough. Fail
+  // here, before asking which brainstorming to record into.
+  if (hostOs !== "macos") { toast(tErr("err.meeting_macos_only"), 6000); return; }
   let temas = [];
   try { temas = (await invoke("brain_list_brainstorms")) || []; } catch (_) {}
   const choice = await pickMeeting(temas, presetTema);
@@ -982,6 +987,26 @@ el.optTop.addEventListener("change", (e) => { if (getWin) getWin().setAlwaysOnTo
 el.optOverlay.addEventListener("change", (e) => invoke("toggle_overlay", { show: e.target.checked }));
 el.optDiar.addEventListener("change", (e) => { state.recordForDiarize = e.target.checked; updatePrivacy(); });
 el.source.addEventListener("change", () => { settings.source = el.source.value; persistSettings(); updateCfgLabel(); });
+
+// A reunião depende do sidecar ScreenCaptureKit, que é de macOS (ADR-0005). Fora
+// do macOS a opção sai do seletor em vez de deixar o usuário escolher e só
+// descobrir no start, com um erro citando o nome interno do binário. Uma
+// preferência salva apontando para reunião volta para microfone.
+function applySourceAvailability() {
+  if (!el.source) return;
+  const meeting = el.source.querySelector('option[value="meeting"]');
+  if (!meeting) return;
+  const supported = hostOs === "macos";
+  meeting.hidden = !supported;
+  meeting.disabled = !supported;
+  if (!supported && settings.source === "meeting") {
+    settings.source = "mic";
+    el.source.value = "mic";
+    persistSettings();
+    updateCfgLabel();
+    clog("meeting source unavailable on " + hostOs + "; fell back to mic");
+  }
+}
 el.mode.addEventListener("change", () => { settings.mode = el.mode.value; persistSettings(); updateCfgLabel(); });
 el.model.addEventListener("change", () => { settings.model = el.model.value; persistSettings(); updateCfgLabel(); });
 el.lang.addEventListener("change", () => { settings.lang = el.lang.value; persistSettings(); updateCfgLabel(); });
@@ -1027,7 +1052,7 @@ const B = {
   editWrap: $("editWrap"), editArea: $("editArea"), editTitle: $("editTitle"),
   editSave: $("editSave"), editCancel: $("editCancel"), editClose: $("editClose"),
 };
-let brainTab = false, brainPoll = null, brainDir = "", lastSt = null;
+let brainTab = false, brainPoll = null, brainDir = "", lastSt = null, brainVisHook = false;
 // ADR-0008 — the Knowledge Studio workspace. `ws` is plain and serializable;
 // live CM6 handles and last-saved buffers live in side Maps keyed by tab id.
 const HOME_REL = "__home__";          // sentinel rel for the pinned Home tab
@@ -1133,6 +1158,12 @@ function initBrain() {
   brainTab = true;
   brainRefresh();
   if (!brainPoll) brainPoll = setInterval(brainRefresh, 10000);
+  // volta a atualizar assim que a janela reaparece, para o gate de visibilidade
+  // do brainRefresh não deixar a tela velha
+  if (!brainVisHook) {
+    brainVisHook = true;
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) brainRefresh(); });
+  }
   if (!settings.welcomeSeen) setTimeout(showWelcome, 600);
 }
 if (el.liveExpand) el.liveExpand.addEventListener("click", () => setLivePanel(el.surface.hidden));
@@ -1212,6 +1243,11 @@ function groupMonths(files) {
 
 async function brainRefresh() {
   if (!brainTab) return;
+  // Nada de trabalho enquanto a janela está oculta: cada passada dispara dois
+  // processos git (estado + status por arquivo), e no Windows cada processo de
+  // console custa um console host. Ficar fazendo isso em segundo plano é gasto
+  // puro. Ao voltar para a frente, o listener abaixo atualiza na hora.
+  if (typeof document !== "undefined" && document.hidden) return;
   // lista de acervos (projetos) para o seletor
   try {
     const av = await invoke("brain_list_acervos");
@@ -4871,6 +4907,7 @@ async function checkSetup() {
   try {
     const d = await invoke("doctor");
     hostOs = d.os || hostOs; // antes de qualquer early-return: guia o áudio do sistema
+    applySourceAvailability();
     const missing = [];
     if (!d.whisper_stream) missing.push(t("whisper (motor de transcrição)"));
     if (!d.models || d.models.length === 0) missing.push(t("modelo de voz"));

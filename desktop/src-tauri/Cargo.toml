@@ -22,3 +22,12 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
 portable-pty = "0.9.0"
+
+# Windows has no `ps`, and `wmic` was removed from Windows 11, so the terminal's
+# process tree is read straight from the ToolHelp snapshot API (ADR-0013). Already
+# in the tree as a transitive Tauri dependency, so this adds no build cost.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.60", features = [
+  "Win32_Foundation",
+  "Win32_System_Diagnostics_ToolHelp",
+] }

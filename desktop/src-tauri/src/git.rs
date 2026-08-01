@@ -2,14 +2,14 @@
 // from PATH); nothing is vendored. This module owns the git/GitHub concern so
 // lib.rs keeps only Tauri wiring — see the "git" split target in CLAUDE.md.
 //
-// Invocation policy (security): always `Command::new("git"|"gh").args([...])`
+// Invocation policy (security): always `crate::proc::command("git"|"gh").args([...])`
 // with fixed tokens — never `sh -c`, never interpolate user input into a shell
 // string. Values coming from the user are passed as isolated positional args.
 // Logs never carry tokens/PII (BR: structured logs, no secrets).
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Output;
 
 use crate::config::read_brain_config;
 use crate::paths::which;
@@ -26,7 +26,7 @@ pub fn gh_available() -> bool {
 // Run gh in the acervo, with prompts and update-notifier disabled so output is
 // deterministic and never blocks. Fixed args only (no shell, no interpolation).
 fn gh(base: &Path, args: &[&str]) -> Result<Output, String> {
-    Command::new("gh")
+    crate::proc::command("gh")
         .args(args)
         .current_dir(base)
         .env("GH_PROMPT_DISABLED", "1")
@@ -36,7 +36,7 @@ fn gh(base: &Path, args: &[&str]) -> Result<Output, String> {
 }
 
 fn tool_version(bin: &str) -> Option<(u32, u32, u32)> {
-    let out = Command::new(bin).arg("--version").output().ok()?;
+    let out = crate::proc::command(bin).arg("--version").output().ok()?;
     if !out.status.success() {
         return None;
     }
@@ -78,7 +78,7 @@ pub fn version_str(v: Option<(u32, u32, u32)>) -> String {
 
 // gh is authenticated when `gh auth status` exits 0. We never read the token.
 pub fn gh_authed() -> bool {
-    Command::new("gh")
+    crate::proc::command("gh")
         .args(["auth", "status"])
         .env("GH_PROMPT_DISABLED", "1")
         .output()
@@ -88,7 +88,7 @@ pub fn gh_authed() -> bool {
 
 // The public GitHub login (not a secret) — used to target notifications at "me".
 pub fn gh_account() -> Option<String> {
-    let out = Command::new("gh")
+    let out = crate::proc::command("gh")
         .args(["api", "user", "-q", ".login"])
         .env("GH_PROMPT_DISABLED", "1")
         .output()
@@ -103,7 +103,7 @@ pub fn gh_account() -> Option<String> {
 // Git protocol reported by gh (ssh | https) — reveals whether SSH or a PAT/HTTPS
 // credential is wired. Parsed from `gh auth status`; never captures the token.
 pub fn gh_protocol() -> Option<String> {
-    let out = Command::new("gh")
+    let out = crate::proc::command("gh")
         .args(["auth", "status"])
         .env("GH_PROMPT_DISABLED", "1")
         .output()
@@ -132,7 +132,7 @@ pub fn parse_auth_protocol(s: &str) -> Option<String> {
 // (user.name, user.email) as resolved by git (global + local); None when unset.
 pub fn git_identity(base: &Path) -> (Option<String>, Option<String>) {
     let read = |key: &str| -> Option<String> {
-        let out = Command::new("git")
+        let out = crate::proc::command("git")
             .args(["config", key])
             .current_dir(base)
             .output()
@@ -154,7 +154,7 @@ pub fn set_identity(base: &Path, name: &str, email: &str) -> Result<(), String> 
     }
     git_init_repo(base)?;
     for (key, val) in [("user.name", name.trim()), ("user.email", email.trim())] {
-        let out = Command::new("git")
+        let out = crate::proc::command("git")
             .args(["config", key, val])
             .current_dir(base)
             .output()
@@ -167,7 +167,7 @@ pub fn set_identity(base: &Path, name: &str, email: &str) -> Result<(), String> 
 }
 
 pub fn git_remote_url(base: &Path) -> Option<String> {
-    let out = Command::new("git")
+    let out = crate::proc::command("git")
         .args(["remote", "get-url", "origin"])
         .current_dir(base)
         .output()
@@ -211,7 +211,7 @@ pub fn default_branch(base: &Path) -> String {
 // so the studio stays responsive offline. gh remains only on the propose path.
 
 fn ref_exists(base: &Path, r: &str) -> bool {
-    Command::new("git")
+    crate::proc::command("git")
         .args(["rev-parse", "--verify", "--quiet", r])
         .current_dir(base)
         .output()
@@ -220,7 +220,7 @@ fn ref_exists(base: &Path, r: &str) -> bool {
 }
 
 fn ref_sha(base: &Path, r: &str) -> Option<String> {
-    let out = Command::new("git")
+    let out = crate::proc::command("git")
         .args(["rev-parse", "--verify", "--quiet", r])
         .current_dir(base)
         .output()
@@ -234,7 +234,7 @@ fn ref_sha(base: &Path, r: &str) -> Option<String> {
 // Default branch resolved locally (no network, no gh): origin/HEAD when the
 // clone recorded it, else the conventional local head, else "main".
 pub fn local_default_branch(base: &Path) -> String {
-    if let Ok(out) = Command::new("git")
+    if let Ok(out) = crate::proc::command("git")
         .args(["symbolic-ref", "refs/remotes/origin/HEAD"])
         .current_dir(base)
         .output()
@@ -257,7 +257,7 @@ pub fn local_default_branch(base: &Path) -> String {
 }
 
 pub fn is_dirty(base: &Path) -> bool {
-    Command::new("git")
+    crate::proc::command("git")
         .args(["status", "--porcelain"])
         .current_dir(base)
         .output()
@@ -267,7 +267,7 @@ pub fn is_dirty(base: &Path) -> bool {
 
 // Local branches, most recently committed first.
 pub fn list_branches(base: &Path) -> Result<Vec<String>, String> {
-    let out = Command::new("git")
+    let out = crate::proc::command("git")
         .args([
             "for-each-ref",
             "refs/heads",
@@ -294,7 +294,7 @@ pub fn switch_branch(base: &Path, branch: &str) -> Result<(), String> {
     if !ref_exists(base, &format!("refs/heads/{branch}")) {
         return Err("err.branch_not_found".into());
     }
-    let out = Command::new("git")
+    let out = crate::proc::command("git")
         .args(["checkout", branch])
         .current_dir(base)
         .output()
@@ -325,7 +325,7 @@ pub fn sync_default_branch(base: &Path) -> SyncOutcome {
     }
     let default = local_default_branch(base);
     // low-speed limits keep a flaky network from hanging the UI
-    let fetch = Command::new("git")
+    let fetch = crate::proc::command("git")
         .args([
             "-c",
             "http.lowSpeedLimit=1",
@@ -347,7 +347,7 @@ pub fn sync_default_branch(base: &Path) -> SyncOutcome {
             return SyncOutcome::SkippedDirty;
         }
         let before = ref_sha(base, &local_ref);
-        let merge = Command::new("git")
+        let merge = crate::proc::command("git")
             .args(["merge", "--ff-only", &format!("origin/{default}")])
             .current_dir(base)
             .output();
@@ -364,7 +364,7 @@ pub fn sync_default_branch(base: &Path) -> SyncOutcome {
     } else {
         // not on the default branch: fetch refspec updates it fast-forward-only
         let before = ref_sha(base, &local_ref);
-        let out = Command::new("git")
+        let out = crate::proc::command("git")
             .args(["fetch", "origin", &format!("{default}:{default}")])
             .current_dir(base)
             .output();
@@ -421,7 +421,10 @@ pub fn git_log(base: &Path, rel: Option<&str>, limit: usize) -> Vec<Commit> {
         args.push("--".to_string());
         args.push(r.to_string());
     }
-    let out = Command::new("git").args(&args).current_dir(base).output();
+    let out = crate::proc::command("git")
+        .args(&args)
+        .current_dir(base)
+        .output();
     match out {
         Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
             .lines()
@@ -528,7 +531,7 @@ pub fn sanitize_slug(s: &str) -> Result<String, String> {
 }
 
 pub fn current_branch(base: &Path) -> Option<String> {
-    let out = Command::new("git")
+    let out = crate::proc::command("git")
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
         .current_dir(base)
         .output()
@@ -548,7 +551,7 @@ pub fn create_branch(base: &Path, slug: &str) -> Result<String, String> {
     // branch off the locally-resolved default (no network); the propose path
     // still asks gh for the authoritative default branch
     let start = local_default_branch(base);
-    let has_start = Command::new("git")
+    let has_start = crate::proc::command("git")
         .args([
             "rev-parse",
             "--verify",
@@ -563,7 +566,7 @@ pub fn create_branch(base: &Path, slug: &str) -> Result<String, String> {
     if has_start {
         args.push(&start);
     }
-    let create = Command::new("git")
+    let create = crate::proc::command("git")
         .args(&args)
         .current_dir(base)
         .output()
@@ -572,7 +575,7 @@ pub fn create_branch(base: &Path, slug: &str) -> Result<String, String> {
         return Ok(branch);
     }
     // branch already exists → switch to it (append more commits to the same RFC)
-    let switch = Command::new("git")
+    let switch = crate::proc::command("git")
         .args(["checkout", &branch])
         .current_dir(base)
         .output()
@@ -585,7 +588,7 @@ pub fn create_branch(base: &Path, slug: &str) -> Result<String, String> {
 }
 
 pub fn push_branch(base: &Path, branch: &str) -> Result<(), String> {
-    let out = Command::new("git")
+    let out = crate::proc::command("git")
         .args(["push", "-u", "origin", branch])
         .current_dir(base)
         .output()
@@ -694,7 +697,7 @@ pub fn git_init_repo(base: &Path) -> Result<(), String> {
     if base.join(".git").is_dir() {
         return Ok(());
     }
-    let out = Command::new("git")
+    let out = crate::proc::command("git")
         .arg("init")
         .current_dir(base)
         .output()
@@ -725,7 +728,7 @@ pub fn brain_git_state() -> GitState {
     let pending = if available && repo {
         base.as_ref()
             .and_then(|b| {
-                Command::new("git")
+                crate::proc::command("git")
                     .args(["status", "--porcelain"])
                     .current_dir(b)
                     .output()
@@ -767,7 +770,7 @@ pub fn brain_git_files() -> GitFiles {
     let mut files = HashMap::new();
     if repo && git_available() {
         if let Some(b) = base {
-            if let Ok(o) = Command::new("git")
+            if let Ok(o) = crate::proc::command("git")
                 .args(["status", "--porcelain", "-uall"])
                 .current_dir(&b)
                 .output()
@@ -811,7 +814,7 @@ pub fn stage_and_commit(base: &Path, message: String) -> Result<String, String> 
     // queue/sources never enter default versioning: guarantee the ignore rules
     // and untrack anything previously indexed (files stay on disk)
     ensure_gitignore(base)?;
-    let _ = Command::new("git")
+    let _ = crate::proc::command("git")
         .args([
             "rm",
             "-r",
@@ -828,7 +831,7 @@ pub fn stage_and_commit(base: &Path, message: String) -> Result<String, String> 
         ])
         .current_dir(base)
         .output();
-    let add = Command::new("git")
+    let add = crate::proc::command("git")
         .args(["add", "-A"])
         .current_dir(base)
         .output()
@@ -846,7 +849,7 @@ pub fn stage_and_commit(base: &Path, message: String) -> Result<String, String> 
     };
     // -c avoids failing when the machine has no global git identity, and
     // disables gpg signing (users with commit.gpgsign=true would otherwise fail)
-    let out = Command::new("git")
+    let out = crate::proc::command("git")
         .args([
             "-c",
             "user.name=Loro",
@@ -876,7 +879,7 @@ pub fn stage_and_commit(base: &Path, message: String) -> Result<String, String> 
 // the staged set (`git diff --cached --name-only`) and unstages the matches with
 // isolated positional args (no shell).
 fn unstage_versioning_denied(base: &Path) {
-    let Ok(out) = Command::new("git")
+    let Ok(out) = crate::proc::command("git")
         .args(["diff", "--cached", "--name-only"])
         .current_dir(base)
         .output()
@@ -885,7 +888,7 @@ fn unstage_versioning_denied(base: &Path) {
     };
     for rel in String::from_utf8_lossy(&out.stdout).lines() {
         if is_versioning_denied(rel) {
-            let _ = Command::new("git")
+            let _ = crate::proc::command("git")
                 .args(["reset", "-q", "--", rel])
                 .current_dir(base)
                 .output();
@@ -1034,7 +1037,7 @@ mod tests {
 
         stage_and_commit(&root, "base".into()).unwrap();
 
-        let tracked = Command::new("git")
+        let tracked = crate::proc::command("git")
             .args(["ls-files"])
             .current_dir(&root)
             .output()
@@ -1068,7 +1071,7 @@ mod tests {
     // ---- branch-first flow (ADR-0002 §2) fixtures --------------------------
 
     fn run_git(dir: &Path, args: &[&str]) -> Output {
-        Command::new("git")
+        crate::proc::command("git")
             .args(args)
             .current_dir(dir)
             .output()
@@ -1328,7 +1331,7 @@ mod tests {
         );
 
         // the main branch still exists (all work branches off it)
-        let kept = Command::new("git")
+        let kept = crate::proc::command("git")
             .args(["rev-parse", "--verify", &orig])
             .current_dir(&root)
             .output()

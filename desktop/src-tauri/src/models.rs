@@ -117,7 +117,7 @@ fn parse_sha256(out: &str) -> Option<String> {
 // Returns the lowercase hex digest.
 pub fn sha256_of(path: &Path) -> Result<String, String> {
     let run = |prog: &str, args: &[&str]| -> Option<String> {
-        let out = std::process::Command::new(prog).args(args).output().ok()?;
+        let out = crate::proc::command(prog).args(args).output().ok()?;
         if !out.status.success() {
             return None;
         }

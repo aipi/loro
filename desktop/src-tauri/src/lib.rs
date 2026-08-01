@@ -3,7 +3,7 @@
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
@@ -19,7 +19,10 @@ use tracing::{error, info};
 
 mod paths;
 use paths::*;
+// every subprocess goes through proc::command so no console window flashes on
+// Windows — see proc.rs
 mod config;
+mod proc;
 use config::*;
 mod templates;
 use templates::*;
@@ -221,7 +224,7 @@ async fn download_model(app: AppHandle, model: String) -> Result<(), String> {
     // redirect; `--fail` turns HTTP errors into a non-zero exit.
     let dl_tmp = tmp.clone();
     let dl = tauri::async_runtime::spawn_blocking(move || {
-        std::process::Command::new("curl")
+        proc::command("curl")
             .args(["-fSL", "--proto", "=https", "--tlsv1.2", "-o"])
             .arg(&dl_tmp)
             .arg(&url)
@@ -345,7 +348,7 @@ fn capture_devices() -> Result<Vec<CaptureDevice>, String> {
     } else {
         model_path("large-v3-turbo")
     };
-    let mut child = Command::new(&bin)
+    let mut child = proc::command(&bin)
         .args(["-m", &model.to_string_lossy(), "-c", "999"]) // invalid -c: lists devices and exits
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -452,7 +455,7 @@ fn start(app: AppHandle, state: State<AppState>, cfg: StartCfg) -> Result<(), St
         &threads,
         cfg.capture,
     );
-    let mut command = Command::new(&bin);
+    let mut command = proc::command(&bin);
     command
         .args(&args)
         .stdin(Stdio::null())
@@ -592,7 +595,7 @@ fn run_file_transcription(
     threads: &str,
     app: &AppHandle,
 ) -> Result<(), String> {
-    let out = Command::new(ffmpeg)
+    let out = proc::command(ffmpeg)
         .arg("-y")
         .args(["-loglevel", "error"])
         .arg("-i")
@@ -627,7 +630,7 @@ fn transcribe_wav(
         threads,
         &wav.to_string_lossy(),
     );
-    let mut child = Command::new(cli)
+    let mut child = proc::command(cli)
         .args(&args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -748,7 +751,7 @@ pub(crate) fn transcribe_wav_window(
     to_ms: Option<u64>,
 ) -> Result<Vec<String>, String> {
     let dst = src.with_file_name(format!(".window-{from_ms}.wav"));
-    let carve = Command::new(ffmpeg)
+    let carve = proc::command(ffmpeg)
         .args(window_ffmpeg_args(src, &dst, from_ms, to_ms))
         .output()
         .map_err(|e| e.to_string())?;
@@ -763,7 +766,7 @@ pub(crate) fn transcribe_wav_window(
         threads,
         &dst.to_string_lossy(),
     );
-    let out = Command::new(cli)
+    let out = proc::command(cli)
         .args(&args)
         .stdin(Stdio::null())
         .output()
@@ -787,7 +790,7 @@ pub(crate) fn mix_to_wav(
     sys: Option<&Path>,
     wav: &Path,
 ) -> Result<(), String> {
-    let mut cmd = Command::new(ffmpeg);
+    let mut cmd = proc::command(ffmpeg);
     cmd.arg("-y").args(["-loglevel", "error"]);
     match (mic, sys) {
         (Some(m), Some(s)) => {
@@ -847,6 +850,13 @@ fn start_system_capture(app: AppHandle, state: State<AppState>) -> Result<String
 // Core of the sidecar start, callable from meeting.rs (ADR-0010) as a plain
 // pub(crate) fn — the #[tauri::command] wrapper cannot be reused directly.
 pub(crate) fn system_capture_start(app: &AppHandle, state: &AppState) -> Result<String, String> {
+    // The sidecar is Swift + ScreenCaptureKit, so meeting mode exists on macOS
+    // only. Say that instead of letting the spawn fail and surfacing an internal
+    // binary name ("loro-syscap (program not found)"), which tells the user
+    // nothing about what to do next.
+    if !cfg!(target_os = "macos") {
+        return Err("err.meeting_macos_only".into());
+    }
     {
         let mut guard = state.syscap.lock().unwrap();
         if let Some(mut child) = guard.take() {
@@ -859,7 +869,7 @@ pub(crate) fn system_capture_start(app: &AppHandle, state: &AppState) -> Result<
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let out = dir.join(format!("loro-sys-{}.wav", epoch_millis()));
 
-    let mut child = Command::new(&bin)
+    let mut child = proc::command(&bin)
         .arg(&out)
         .stdin(Stdio::piped()) // closing this stdin later signals a clean stop
         .stdout(Stdio::null())
@@ -1622,7 +1632,7 @@ fn audio_setup_cmd() -> (&'static str, Vec<&'static str>) {
 #[tauri::command]
 fn open_audio_setup() -> Result<(), String> {
     let (bin, args) = audio_setup_cmd();
-    Command::new(bin)
+    proc::command(bin)
         .args(args)
         .spawn()
         .map(|_| ())
@@ -1639,7 +1649,7 @@ fn open_vbcable_download() -> Result<(), String> {
     } else {
         ("open", vec![URL])
     };
-    Command::new(bin)
+    proc::command(bin)
         .args(args)
         .spawn()
         .map(|_| ())
@@ -2056,7 +2066,7 @@ struct MigrationReport {
 // Rename preserving git history when possible; falls back to a plain move.
 fn migrate_rename(base: &Path, rel_from: &str, rel_to: &str) -> Result<(), String> {
     if base.join(".git").is_dir() && git_available() {
-        let out = Command::new("git")
+        let out = proc::command("git")
             .args(["mv", rel_from, rel_to])
             .current_dir(base)
             .output()
@@ -3061,7 +3071,7 @@ fn save_recording(data: Vec<u8>, filename: String) -> Result<String, String> {
 async fn diarize(audio_path: String) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
         let script = project_dir().join("loro.sh");
-        let output = Command::new("bash")
+        let output = proc::command("bash")
             .arg(&script)
             .arg("diarize")
             .arg(&audio_path)
@@ -3318,6 +3328,82 @@ fn active_agent() -> String {
         .unwrap_or_else(default_agent)
 }
 
+// Does a process-table entry name the given agent? macOS `ps -axo comm=` may
+// print a full path, while Windows reports the bare image name and always keeps
+// the `.exe`, so both sides are reduced to a lowercase, extension-free basename.
+// Windows process names are case-insensitive, so lowercasing is required there
+// and harmless elsewhere (agent binaries are lowercase by convention).
+fn process_name_matches(comm: &str, name: &str) -> bool {
+    fn base(s: &str) -> String {
+        let leaf = s
+            .rsplit(['/', '\\'])
+            .next()
+            .unwrap_or(s)
+            .to_ascii_lowercase();
+        match leaf.strip_suffix(".exe") {
+            Some(stem) => stem.to_string(),
+            None => leaf,
+        }
+    }
+    base(comm) == base(name)
+}
+
+// (pid, ppid, name) for every process on the machine.
+//
+// Unix reads it from `ps`. Windows has no `ps`, and `wmic` was removed from
+// Windows 11, so it walks the ToolHelp snapshot directly — which is also far
+// cheaper than a subprocess, and term_status is polled every 300ms while a
+// habilidade waits for its agent (ADR-0014).
+#[cfg(not(windows))]
+fn process_table() -> Vec<(u32, u32, String)> {
+    proc::command("ps")
+        .args(["-axo", "pid=,ppid=,comm="])
+        .output()
+        .ok()
+        .map(|o| parse_ps_table(&String::from_utf8_lossy(&o.stdout)))
+        .unwrap_or_default()
+}
+
+#[cfg(windows)]
+fn process_table() -> Vec<(u32, u32, String)> {
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        TH32CS_SNAPPROCESS,
+    };
+    let mut table = Vec::new();
+    // SAFETY: the snapshot handle is checked before use and closed on every exit
+    // path; PROCESSENTRY32W is zeroed with dwSize set, as the API requires.
+    unsafe {
+        let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if snap == INVALID_HANDLE_VALUE {
+            return table;
+        }
+        let mut entry: PROCESSENTRY32W = std::mem::zeroed();
+        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+        if Process32FirstW(snap, &mut entry) != 0 {
+            loop {
+                let n = entry
+                    .szExeFile
+                    .iter()
+                    .position(|&c| c == 0)
+                    .unwrap_or(entry.szExeFile.len());
+                table.push((
+                    entry.th32ProcessID,
+                    entry.th32ParentProcessID,
+                    String::from_utf16_lossy(&entry.szExeFile[..n]),
+                ));
+                if Process32NextW(snap, &mut entry) == 0 {
+                    break;
+                }
+            }
+        }
+        CloseHandle(snap);
+    }
+    table
+}
+
+#[cfg(not(windows))]
 fn parse_ps_table(out: &str) -> Vec<(u32, u32, String)> {
     out.lines()
         .filter_map(|l| {
@@ -3339,9 +3425,7 @@ fn has_descendant_process(table: &[(u32, u32, String)], root: u32, name: &str) -
         }
         for (cpid, ppid, comm) in table {
             if *ppid == pid {
-                // `ps -axo comm=` may print the full executable path on macOS
-                let base = comm.rsplit('/').next().unwrap_or(comm);
-                if base == name {
+                if process_name_matches(comm, name) {
                     return true;
                 }
                 frontier.push(*cpid);
@@ -3370,18 +3454,7 @@ fn term_status(state: State<AppState>) -> TermStatus {
     };
     let just_launched = is_within_grace(session.launched_at.elapsed());
     let agent_name = agent_process_name(&active_agent());
-    let agent_running = Command::new("ps")
-        .args(["-axo", "pid=,ppid=,comm="])
-        .output()
-        .ok()
-        .map(|o| {
-            has_descendant_process(
-                &parse_ps_table(&String::from_utf8_lossy(&o.stdout)),
-                root,
-                &agent_name,
-            )
-        })
-        .unwrap_or(false);
+    let agent_running = has_descendant_process(&process_table(), root, &agent_name);
     TermStatus {
         open: true,
         agent_running,
@@ -3623,18 +3696,61 @@ mod tests {
     // ADR-0002 §4 — the terminal/Claude readiness handshake asks the OS whether
     // a `claude` process lives under the PTY shell, instead of guessing from
     // terminal output.
+    // The tree walk is shared by every platform, so it is tested against a
+    // literal table rather than `ps` output.
     #[test]
-    fn ps_table_parses_and_finds_descendant_by_name() {
-        let table = parse_ps_table(
-            "  1     0  launchd\n 300     1  zsh\n 412   300  claude\n 500   412  node\n 600     1  zsh\n",
-        );
+    fn finds_descendant_by_name_in_the_process_tree() {
+        let t = |pid, ppid, name: &str| (pid, ppid, name.to_string());
+        let table = vec![
+            t(1, 0, "launchd"),
+            t(300, 1, "zsh"),
+            t(412, 300, "claude"),
+            t(500, 412, "node"),
+            t(600, 1, "zsh"),
+        ];
         assert!(has_descendant_process(&table, 300, "claude"));
         assert!(!has_descendant_process(&table, 600, "claude"));
         // the root itself does not count as its own descendant match
         assert!(!has_descendant_process(&table, 412, "zsh"));
         // grandchildren are found too
         assert!(has_descendant_process(&table, 300, "node"));
-        // malformed lines are skipped, not fatal
+    }
+
+    #[test]
+    fn windows_process_names_match_despite_the_exe_suffix() {
+        // ToolHelp reports "claude.exe"; the configured agent is "claude". Before
+        // this, agent detection could never succeed on Windows.
+        assert!(process_name_matches("claude.exe", "claude"));
+        assert!(process_name_matches("Claude.EXE", "claude")); // case-insensitive
+        assert!(process_name_matches("C:\\bin\\claude.exe", "claude")); // backslash path
+        assert!(process_name_matches("/usr/local/bin/claude", "claude")); // unix path
+        assert!(process_name_matches("claude", "claude"));
+        // still discriminating
+        assert!(!process_name_matches("node.exe", "claude"));
+        assert!(!process_name_matches("claudex.exe", "claude"));
+    }
+
+    // The whole point of term_status: an agent running under the PTY is found on
+    // this machine's real process table. Uses the test binary itself as the root,
+    // since cargo's runner is a live process with a known name.
+    #[test]
+    fn process_table_reads_this_machine() {
+        let table = process_table();
+        assert!(table.len() > 5, "tabela vazia: {}", table.len());
+        let me = std::process::id();
+        assert!(
+            table.iter().any(|(pid, _, _)| *pid == me),
+            "o proprio processo de teste deve aparecer na tabela"
+        );
+        // every entry carries a usable name
+        assert!(table.iter().all(|(_, _, n)| !n.is_empty()));
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn ps_table_parsing_skips_malformed_lines() {
+        let table = parse_ps_table("  1     0  launchd\n 300     1  zsh\n");
+        assert_eq!(table.len(), 2);
         assert!(parse_ps_table("garbage\n").is_empty());
     }
 

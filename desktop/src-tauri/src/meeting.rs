@@ -1815,7 +1815,7 @@ mod tests {
         std::fs::write(base.join("contextos-README.md"), "x").unwrap();
         stage_and_commit(&base, "base".into()).unwrap();
 
-        let tracked = std::process::Command::new("git")
+        let tracked = crate::proc::command("git")
             .args(["ls-files"])
             .current_dir(&base)
             .output()
