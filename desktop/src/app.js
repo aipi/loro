@@ -2450,7 +2450,7 @@ function openBsMenu(slug, anchor) {
     `<div class="fitem2" data-tools><span class="fn">${ico("skill")} ${t("executar habilidade…")}</span></div>` +
     `<div class="fsep"></div>` +
     `<div class="fitem2" data-ren><span class="fn">${t("renomear")}</span></div>` +
-    `<div class="fitem2" data-toqueue><span class="fn">${t("gerar relatório de tudo → fila")}</span></div>` +
+    `<div class="fitem2" data-toqueue><span class="fn">${t("enviar tudo → fila")}</span></div>` +
     `<div class="fsep"></div>` +
     copyPathItemsHtml() +
     `<div class="fsep"></div>` +
@@ -2459,7 +2459,7 @@ function openBsMenu(slug, anchor) {
   B.bMenu.querySelector("[data-digest]").onclick = () => { closeFloat(); runBrainstormDigest(slug); };
   B.bMenu.querySelector("[data-tools]").onclick = () => openHabilidadeMenu(`brainstorming/${slug}`, anchor);
   B.bMenu.querySelector("[data-ren]").onclick = () => { closeFloat(); promptRenameBs(slug); };
-  B.bMenu.querySelector("[data-toqueue]").onclick = () => { closeFloat(); sendBrainstormToQueue(slug, []); };
+  B.bMenu.querySelector("[data-toqueue]").onclick = () => { closeFloat(); sendBrainstormAllToQueue(slug); };
   wireCopyPathItems(`brainstorming/${slug}`);
   B.bMenu.querySelector("[data-del]").onclick = () => { closeFloat(); delPessoal("brainstorming/" + slug, "tema"); };
   const r = anchor.getBoundingClientRect();
@@ -2526,9 +2526,8 @@ function openMeetingMenu(rel, id, title, status, anchor) {
     B.bMenu.querySelector("[data-report]").onclick = () => { closeFloat(); buildAndOpenReport(id); };
     B.bMenu.querySelector("[data-queue]").onclick = () => {
       closeFloat();
-      const m = /^brainstorming\/([^/]+)\//.exec(rel);
-      if (!m) { toast(t("abra a reunião para enviar")); return; }
-      sendBrainstormToQueue(m[1], [{ kind: "reuniao", rel }]);
+      // ADR-0014: the meeting is queued as its relatorio.md (never the transcript).
+      sendFilesToQueue([LoroBrainstorm.queueRelForSelection("reuniao", rel)]);
     };
   }
   B.bMenu.querySelector("[data-question]").onclick = () => { closeFloat(); askMeetingQuestion(id, rel); };
@@ -2721,32 +2720,41 @@ function promptRenameMeeting(id, current) {
   const inp = $("mtgRenInput"); if (inp) { inp.focus(); inp.select(); }
 }
 
-// Build ONE consolidated report from the given selection (empty = all parts) and
-// send it to the fila. The report is opened as a tab first (it must be visible).
-async function sendBrainstormToQueue(slug, selection) {
+// ADR-0014: send the given files to the fila, ONE queue item per file (no
+// consolidated report). `rels` are acervo-relative file paths already resolved by
+// the caller (meeting -> its relatorio.md, everything else -> the file itself).
+async function sendFilesToQueue(rels) {
+  const list = (rels || []).filter(Boolean);
+  if (!list.length) return;
   try {
-    const out = await invoke("brain_brainstorm_build_report", { slug, selection });
-    if (out && out.rel) {
-      openDoc(out.rel, { preview: false });                 // the report is visible
-      await invoke("brain_send_report_to_queue", { reportRel: out.rel, destContext: null });
-      pessoalSig = ""; refreshPessoal(); sideSig = ""; brainRefresh();
-      toast(t("relatório na fila de geração de contexto"));
-    }
-  } catch (e) { toast(t("não enviei") + ": " + tErr(String(e))); clog("build_report/send error: " + e); }
+    const names = await invoke("brain_send_files_to_queue", { rels: list, destContext: null });
+    pessoalSig = ""; refreshPessoal(); sideSig = ""; brainRefresh();
+    const n = (names && names.length) || list.length;
+    toast(n > 1 ? `${n} ${t("arquivos na fila de geração de contexto")}` : t("arquivo na fila de geração de contexto"));
+  } catch (e) { toast(t("não enviei") + ": " + tErr(String(e))); clog("send_to_queue error: " + e); }
 }
 
-// The selected parts across the tree -> their SelItem list (kind read from the
-// checkbox dataset). Sends them as ONE consolidated report to the fila.
+// Send EVERY queueable file of a brainstorming (the ⋯ "enviar tudo → fila").
+async function sendBrainstormAllToQueue(slug) {
+  try {
+    const names = await invoke("brain_send_brainstorm_to_queue", { slug, destContext: null });
+    pessoalSig = ""; refreshPessoal(); sideSig = ""; brainRefresh();
+    const n = (names && names.length) || 0;
+    toast(n > 1 ? `${n} ${t("arquivos na fila de geração de contexto")}` : t("arquivo na fila de geração de contexto"));
+  } catch (e) { toast(t("não enviei") + ": " + tErr(String(e))); clog("send_all_to_queue error: " + e); }
+}
+
+// The selected parts across the tree -> the ACTUAL files to queue (each its own
+// item). A meeting resolves to its relatorio.md; notes/analyses/anexos go as-is.
 async function sendSelectionToQueue() {
-  const sel = [];
+  const rels = [];
   B.navPessoal.querySelectorAll("[data-bssel]").forEach((chk) => {
-    if (bsSelection.has(chk.dataset.bssel)) sel.push({ kind: chk.dataset.bskind, rel: chk.dataset.bssel });
+    if (bsSelection.has(chk.dataset.bssel)) {
+      rels.push(LoroBrainstorm.queueRelForSelection(chk.dataset.bskind, chk.dataset.bssel));
+    }
   });
-  if (!sel.length) return;
-  // all selected parts belong to the open brainstorming; derive its slug
-  const m = /^brainstorming\/([^/]+)\//.exec(sel[0].rel);
-  if (!m) { toast(t("seleção inválida")); return; }
-  await sendBrainstormToQueue(m[1], sel);
+  if (!rels.filter(Boolean).length) return;
+  await sendFilesToQueue(rels);
   bsSelection = new Set(); renderSelectionBar();
 }
 
@@ -2767,7 +2775,7 @@ function renderSelectionBar() {
   bar.innerHTML =
     `<div class="bsselrow"><span class="mono">${n} ${t(n > 1 ? "selecionados" : "selecionado")}</span>` +
     `<button class="link mono muted" id="bsSelClear">${t("limpar")}</button></div>` +
-    `<button class="railbtn cta" id="bsSelSend" title="${t("Gera um relatório consolidado das partes escolhidas e o envia para a fila de geração de contexto")}">${t("enviar para a fila")} →</button>`;
+    `<button class="railbtn cta" id="bsSelSend" title="${t("Envia cada arquivo escolhido para a fila de geração de contexto (um item por arquivo)")}">${t("enviar para a fila")} →</button>`;
   $("bsSelSend").onclick = sendSelectionToQueue;
   $("bsSelClear").onclick = () => { bsSelection = new Set(); wirePessoal(); renderSelectionBar(); };
 }
@@ -4775,7 +4783,7 @@ function promptNewContext() {
 
 // ============================ terminal embutido (PTY) ============================
 // xterm.js (vendorizado) na frente + portable-pty no backend — a pilha do VSCode.
-let term = null, fit = null, termReady = false;
+let term = null, fit = null, termReady = false, termSize = { cols: 0, rows: 0 };
 function setTermPanel(open) {
   $("termPanel").hidden = !open;
   if (open) { if (!term) initTerm(); requestAnimationFrame(fitTerm); if (term) term.focus(); }
@@ -4784,7 +4792,14 @@ function fitTerm() {
   if (!fit || $("termPanel").hidden) return;
   try {
     fit.fit();
-    invoke("term_resize", { cols: term.cols, rows: term.rows }).catch(() => {});
+    // Only notify the PTY when the grid actually changed. A redundant resize
+    // spams SIGWINCH at the agent's TUI, forcing a redraw that can overprint
+    // the previous frame ("text over text"); the ResizeObserver + window resize
+    // + rAF paths would otherwise fire it on every unrelated tick.
+    if (term.cols !== termSize.cols || term.rows !== termSize.rows) {
+      termSize = { cols: term.cols, rows: term.rows };
+      invoke("term_resize", { cols: term.cols, rows: term.rows }).catch(() => {});
+    }
   } catch (_) {}
 }
 function initTerm() {
@@ -4813,6 +4828,7 @@ function initTerm() {
 async function restartTerm() {
   try { await invoke("term_close"); } catch (_) {}
   if (term) { term.dispose(); term = null; fit = null; termReady = false; }
+  termSize = { cols: 0, rows: 0 };
   initTerm();
 }
 listen("term-output", (e) => { if (term) term.write(e.payload); });

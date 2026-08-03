@@ -27,7 +27,7 @@ test("stages(lang) localizes the flow copy; default stays pt-BR", () => {
   assert.deepStrictEqual(en.map((s) => s.label), ["Brainstorming", "Queue", "Context"]);
   for (const s of en) assert.ok(s.label && s.hint, "en stage needs label + hint");
   assert.strictEqual(en[0].hint, "build the idea: meetings and notes");
-  assert.strictEqual(en[1].hint, "elect parts → a report enters the context generation queue");
+  assert.strictEqual(en[1].hint, "choose files → each one enters the context generation queue");
   assert.strictEqual(en[2].hint, "generate the versioned context from the queue (/loro-context)");
 });
 
@@ -95,14 +95,27 @@ test("selection model toggles rels and maps to backend SelItems in parts order",
   ]);
 });
 
-test("reportInboxName steers a report to a context via the <ctx>-- prefix", () => {
-  const rel = "brainstorming/frota/anexos/2026-07-28-0900-relatorio.md";
-  assert.strictEqual(B.reportInboxName(rel, "frota"), "frota--2026-07-28-0900-relatorio.md");
-  // hierarchical context collapses '/' to '-' so the queue name stays flat
-  assert.strictEqual(B.reportInboxName(rel, "engenharia/frontend"), "engenharia-frontend--2026-07-28-0900-relatorio.md");
-  // no context -> the bare filename
-  assert.strictEqual(B.reportInboxName(rel, ""), "2026-07-28-0900-relatorio.md");
-  assert.strictEqual(B.reportInboxName(rel, null), "2026-07-28-0900-relatorio.md");
+test("queueRelForSelection resolves a meeting to its relatorio.md, files to themselves", () => {
+  // ADR-0014 / BR-8: a meeting is queued as its report, never the raw transcript
+  assert.strictEqual(
+    B.queueRelForSelection("reuniao", "brainstorming/frota/reunioes/m1"),
+    "brainstorming/frota/reunioes/m1/relatorio.md"
+  );
+  // a trailing slash on the meeting dir must not double up
+  assert.strictEqual(
+    B.queueRelForSelection("reuniao", "brainstorming/frota/reunioes/m1/"),
+    "brainstorming/frota/reunioes/m1/relatorio.md"
+  );
+  // notes / analyses / attachments are already files — sent as themselves
+  assert.strictEqual(
+    B.queueRelForSelection("nota", "brainstorming/frota/notas/n1.md"),
+    "brainstorming/frota/notas/n1.md"
+  );
+  assert.strictEqual(
+    B.queueRelForSelection("anexo", "brainstorming/frota/anexos/a1.md"),
+    "brainstorming/frota/anexos/a1.md"
+  );
+  assert.strictEqual(B.queueRelForSelection("reuniao", ""), null);
 });
 
 test("brainContextCmd is the renamed loop skill (hyphen, not dot)", () => {

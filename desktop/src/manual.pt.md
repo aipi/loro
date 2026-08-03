@@ -7,9 +7,10 @@ ou texto sai da sua máquina sem uma ação explícita sua._
 ## O fluxo em uma frase
 
 **Brainstorming → Fila → Contexto**: você acumula material bruto (reuniões,
-notas) num brainstorming; seleciona o que importa e envia um relatório para a
-fila; o botão "gerar contexto" pede ao Claude do terminal que destile a fila em
-`contextos/` — a fonte oficial da verdade, versionada em git.
+notas, anexos) num brainstorming; seleciona **os arquivos** que importam e cada
+um entra na fila como ele mesmo (um item por arquivo — não há mais relatório
+consolidado); o botão "gerar contexto" pede ao Claude do terminal que destile a
+fila em `contextos/` — a fonte oficial da verdade, versionada em git.
 
 ## Primeiros passos
 
@@ -115,7 +116,8 @@ quando quiser pela paleta: `Cmd/Ctrl+Shift+P` → "apresentação do Loro".
 - As ações **analisar**, **perguntar…**, **ver relatório** e **enviar para a
   fila** ficam no menu **⋯** da reunião na lateral. **Perguntar** funciona já
   durante a gravação; as outras três habilitam quando a reunião termina (o
-  relatório é preenchido pelo analisar).
+  relatório é preenchido pelo analisar). **Enviar para a fila** manda o
+  **relatório** da reunião (a transcrição bruta nunca vai para a fila).
 - A aba `reuniao.md` da reunião mostra, em vez de botões fixos, um único
   **dropdown de habilidades** ("o que fazer com esta reunião") — escolha
   qualquer habilidade (incluindo analisar/perguntar) e rode sobre a reunião
@@ -223,8 +225,11 @@ de versionar/propor mudança normalmente).
 
 ## Fila → gerar contexto
 
-- Selecione as partes de um brainstorming e **envie o relatório para a fila**
-  (ou solte arquivos `.md`/`.txt` direto na fila).
+- Marque os **arquivos** de um brainstorming (reunião → seu relatório, notas,
+  análises, anexos) e **envie para a fila** — cada arquivo vira um item próprio
+  na fila (multi-seleção envia todos). No ⋯ do brainstorming, **"enviar tudo →
+  fila"** manda todos os arquivos de uma vez. (Você também pode soltar arquivos
+  `.md`/`.txt` direto na fila.) A transcrição bruta da reunião nunca vai (BR-8).
 - **▶ gerar contexto** roda `/loro-context` no Claude do terminal, que
   estrutura o material em `contextos/<c>/context.md` (+ CHANGELOG).
 - Cada `context.md` abre com um **Sumário** (1 linha por seção + IDs `D-…`/`H-…`),
@@ -272,7 +277,7 @@ primeiro e declaram quando consultam algo externo.
 acervo e cria novos.
 
 **Por que o botão "gerar contexto" está desabilitado?** A fila está vazia.
-Envie um relatório de brainstorming ou solte arquivos na fila primeiro.
+Envie arquivos de um brainstorming (ou solte arquivos na fila) primeiro.
 
 **O Claude não abre no terminal.** Confira se o CLI está instalado (`claude`
 no PATH) e se há um acervo configurado. O app avisa quando não consegue abrir.

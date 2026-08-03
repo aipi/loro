@@ -22,8 +22,8 @@ Three parts work together:
 2. **A Knowledge Studio** — a VS Code-like workspace where material flows
    through one explicit path: **Brainstorming → Fila → Contexto**. In a
    *brainstorming* you gather **reuniões**, **notas** and **anexos** (files you
-   drop in, or pull from Drive/Slack/Jira/Confluence); you elect parts into
-   **one consolidated report** that enters the *fila*; "gerar contexto" runs an
+   drop in, or pull from Drive/Slack/Jira/Confluence); you select the **files**
+   that matter and each one enters the *fila* as its own item; "gerar contexto" runs an
    agent loop that distills the queue into versioned *contextos* — one
    `context.md` source of truth per domain, evolved by RFC = branch + Pull
    Request, with Git hidden behind two buttons ("Versionar" / "Propor

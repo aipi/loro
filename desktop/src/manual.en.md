@@ -6,10 +6,11 @@ text leaves your machine without an explicit action from you._
 
 ## The flow in one sentence
 
-**Brainstorming → Queue → Context**: you gather raw material (meetings, notes)
-in a brainstorming; you select what matters and send a report to the queue;
-"generate context" asks the terminal Claude to distill the queue into
-`contextos/` — the official source of truth, versioned in git.
+**Brainstorming → Queue → Context**: you gather raw material (meetings, notes,
+attachments) in a brainstorming; you select the **files** that matter and each
+one enters the queue as itself (one item per file — there is no consolidated
+report anymore); "generate context" asks the terminal Claude to distill the
+queue into `contextos/` — the official source of truth, versioned in git.
 
 ## First steps
 
@@ -115,7 +116,8 @@ palette: `Cmd/Ctrl+Shift+P` → "Loro tour".
 - The **analyse**, **ask…**, **view report** and **send to queue** actions
   live in the meeting's **⋯** menu in the sidebar. **Ask…** already works
   while the meeting is still recording; the other three enable once the
-  meeting ends (analyse fills the report).
+  meeting ends (analyse fills the report). **Send to queue** sends the
+  meeting's **report** (the raw transcript never enters the queue).
 - The meeting's `reuniao.md` tab shows, instead of fixed buttons, a single
   **habilidade dropdown** ("o que fazer com esta reunião") — pick any
   habilidade (including analyse/ask) and run it against the open meeting.
@@ -219,8 +221,11 @@ normally).
 
 ## Queue → generate context
 
-- Select the parts of a brainstorming and **send the report to the queue** (or
-  drop `.md`/`.txt` files straight into it).
+- Check the **files** of a brainstorming (a meeting → its report, notes,
+  analyses, attachments) and **send to queue** — each file becomes its own queue
+  item (multi-select sends them all). The brainstorming's ⋯ menu has **"send
+  everything → queue"** to send them all at once. (You can also drop `.md`/`.txt`
+  files straight into the queue.) The raw meeting transcript never goes (BR-8).
 - **▶ generate context** runs `/loro-context` in the terminal Claude, which
   structures the material into `contextos/<c>/context.md` (+ CHANGELOG).
 - Each `context.md` opens with a **Summary** (1 line per section + `D-…`/`H-…`
@@ -269,8 +274,8 @@ and state when they consult anything external.
 **Can I have several projects?** Yes — the ◆ selector at the top of the
 sidebar switches between acervos and creates new ones.
 
-**Why is "generate context" disabled?** The queue is empty. Send a
-brainstorming report or drop files into the queue first.
+**Why is "generate context" disabled?** The queue is empty. Send files from a
+brainstorming (or drop files into the queue) first.
 
 **Claude does not open in the terminal.** Check that the CLI is installed
 (`claude` on PATH) and that an acervo is configured. The app tells you when it

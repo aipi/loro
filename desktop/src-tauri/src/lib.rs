@@ -102,6 +102,58 @@ struct TermSession {
     launched_at: std::time::Instant,
 }
 
+// Streaming UTF-8 decoder for PTY output. A single `read()` off the master can
+// slice the middle of a multi-byte codepoint — the agent's TUI is full of
+// emoji and box-drawing glyphs, and a redraw frame routinely exceeds the 4096-
+// byte read buffer. Decoding each chunk independently with `from_utf8_lossy`
+// turns the split halves into U+FFFD replacement chars, whose display width
+// (1 col) diverges from the original (often 2). The TUI then erases the wrong
+// number of wrapped lines on its next redraw and overprints — "text over text".
+// Holding the incomplete trailing bytes until their continuation arrives keeps
+// the emitted stream byte-faithful.
+#[derive(Default)]
+struct Utf8Stream {
+    pending: Vec<u8>,
+}
+
+impl Utf8Stream {
+    // Feed raw bytes; return the text that is now fully decodable, keeping any
+    // incomplete trailing multi-byte sequence for the next call.
+    fn push(&mut self, bytes: &[u8]) -> String {
+        self.pending.extend_from_slice(bytes);
+        let mut out = String::new();
+        loop {
+            match std::str::from_utf8(&self.pending) {
+                Ok(s) => {
+                    out.push_str(s);
+                    self.pending.clear();
+                    break;
+                }
+                Err(e) => {
+                    let valid = e.valid_up_to();
+                    if valid > 0 {
+                        // valid_up_to() guarantees this prefix is well-formed.
+                        out.push_str(std::str::from_utf8(&self.pending[..valid]).unwrap());
+                    }
+                    match e.error_len() {
+                        // Genuinely invalid bytes: emit one replacement, skip them.
+                        Some(bad) => {
+                            out.push('\u{FFFD}');
+                            self.pending.drain(..valid + bad);
+                        }
+                        // Incomplete tail: keep it until the continuation arrives.
+                        None => {
+                            self.pending.drain(..valid);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+}
+
 // ---- structured logging (tracing) -----------------------------------------
 // App logs go to ~/.loro/logs/loro.log (English, no PII/secrets). Raw engine
 // stderr goes to ~/.loro/logs/engine.log (see `start`). Level via LORO_LOG.
@@ -2539,53 +2591,98 @@ fn brain_write_inbox(name: String, content: String) -> Result<(), String> {
     std::fs::write(dir.join(&name), content).map_err(|e| e.to_string())
 }
 
-// ADR-0013: the fila (inbox/) is THE path brainstorming -> contexto. Copy an
-// existing report (or any acervo text file) into the queue, steered to a target
-// context via the `<contexto>--<nome>` prefix the /loro-context loop reads. The
-// report stays in the brainstorming; only a copy enters the queue. Path-guarded to
-// the acervo root; contexts with '/' collapse to '-' so the queue name stays flat.
+// ADR-0014: the fila (inbox/) is THE path brainstorming -> contexto. Each selected
+// brainstorming file is copied into the queue AS ITSELF — one queue item per file,
+// no consolidated report (supersedes ADR-0013). The /loro-context loop then distils
+// each entry into a versioned context. The raw meeting transcript, audit and audio
+// NEVER enter the queue (BR-8; `crate::acervo::is_queueable`).
+
+// Validate + resolve ONE brainstorming file into (abs source, queue name): scope
+// (brainstorming/ only), path-guard (canonicalize under base), text-only + the BR-8
+// transcript/audio/audit guard, and a collision-free flattened queue name (steered
+// to a context via the `<contexto>--<nome>` prefix the /loro-context loop reads).
+fn resolve_queue_entry(
+    base: &Path,
+    rel: &str,
+    ctx: Option<&str>,
+) -> Result<(PathBuf, String), String> {
+    let r = rel.replace('\\', "/");
+    if r.contains("..") {
+        return Err("err.invalid_path".into());
+    }
+    if !r.starts_with("brainstorming/") {
+        return Err("err.queue_brainstorming_only".into());
+    }
+    if !crate::acervo::is_queueable(&r) {
+        return Err("err.transcript_not_queueable".into());
+    }
+    let src = base
+        .join(&r)
+        .canonicalize()
+        .map_err(|_| "err.report_not_found".to_string())?;
+    if !src.starts_with(base) || !src.is_file() {
+        return Err("err.report_outside_acervo".into());
+    }
+    let name = import_name(ctx, &crate::acervo::queue_name_for(&r));
+    if !valid_inbox_name(&name) {
+        return Err("err.invalid_queue_name".into());
+    }
+    Ok((src, name))
+}
+
+// Send N selected brainstorming files to the fila, one queue item each. Validates
+// ALL entries before writing ANY (a bad rel fails the batch, no partial queue).
 #[tauri::command]
-fn brain_send_report_to_queue(
-    report_rel: String,
+fn brain_send_files_to_queue(
+    rels: Vec<String>,
     dest_context: Option<String>,
-) -> Result<String, String> {
-    let rel = report_rel.replace('\\', "/");
-    if !(rel.ends_with(".md") || rel.ends_with(".txt")) {
-        return Err("err.queue_text_only".into());
+) -> Result<Vec<String>, String> {
+    if rels.is_empty() {
+        return Err("err.queue_empty_selection".into());
     }
     if let Some(c) = dest_context.as_deref() {
         if !c.is_empty() && !valid_context(c) {
             return Err(format!("err.invalid_context:{c}"));
         }
     }
-    let cfg = read_brain_config().ok_or("err.acervo_not_configured")?;
-    let base = PathBuf::from(&cfg.brain_dir)
-        .canonicalize()
-        .map_err(|e| e.to_string())?;
-    let src = base
-        .join(&rel)
-        .canonicalize()
-        .map_err(|_| "err.report_not_found".to_string())?;
-    if !src.starts_with(&base) || !src.is_file() {
-        return Err("err.report_outside_acervo".into());
-    }
-    let content = std::fs::read_to_string(&src).map_err(|e| e.to_string())?;
-    let basename = src
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("relatorio.md");
     let ctx = dest_context
         .as_deref()
         .filter(|c| !c.is_empty())
         .map(|c| c.replace('/', "-"));
-    let name = import_name(ctx.as_deref(), basename);
-    if !valid_inbox_name(&name) {
-        return Err("err.invalid_queue_name".into());
+    let cfg = read_brain_config().ok_or("err.acervo_not_configured")?;
+    let base = PathBuf::from(&cfg.brain_dir)
+        .canonicalize()
+        .map_err(|e| e.to_string())?;
+    let mut entries = Vec::with_capacity(rels.len());
+    for rel in &rels {
+        entries.push(resolve_queue_entry(&base, rel, ctx.as_deref())?);
     }
     let inbox = base.join("inbox");
     std::fs::create_dir_all(&inbox).map_err(|e| e.to_string())?;
-    std::fs::write(inbox.join(&name), content).map_err(|e| e.to_string())?;
-    Ok(name)
+    let mut names = Vec::with_capacity(entries.len());
+    for (src, name) in &entries {
+        let content = std::fs::read_to_string(src).map_err(|e| e.to_string())?;
+        std::fs::write(inbox.join(name), content).map_err(|e| e.to_string())?;
+        names.push(name.clone());
+    }
+    Ok(names)
+}
+
+// "enviar tudo → fila": every queueable file of the brainstorming, each its own item.
+#[tauri::command]
+fn brain_send_brainstorm_to_queue(
+    slug: String,
+    dest_context: Option<String>,
+) -> Result<Vec<String>, String> {
+    let cfg = read_brain_config().ok_or("err.acervo_not_configured")?;
+    let base = PathBuf::from(&cfg.brain_dir)
+        .canonicalize()
+        .map_err(|e| e.to_string())?;
+    let rels = crate::acervo::queueable_files(&base, &slug);
+    if rels.is_empty() {
+        return Err("err.queue_empty_selection".into());
+    }
+    brain_send_files_to_queue(rels, dest_context)
 }
 
 #[derive(serde::Serialize)]
@@ -3225,6 +3322,7 @@ fn term_open(app: AppHandle, state: State<AppState>, cols: u16, rows: u16) -> Re
     let apph = app.clone();
     std::thread::spawn(move || {
         let mut buf = [0u8; 4096];
+        let mut dec = Utf8Stream::default();
         loop {
             match reader.read(&mut buf) {
                 Ok(0) | Err(_) => {
@@ -3232,10 +3330,10 @@ fn term_open(app: AppHandle, state: State<AppState>, cols: u16, rows: u16) -> Re
                     break;
                 }
                 Ok(n) => {
-                    let _ = apph.emit(
-                        "term-output",
-                        String::from_utf8_lossy(&buf[..n]).to_string(),
-                    );
+                    let s = dec.push(&buf[..n]);
+                    if !s.is_empty() {
+                        let _ = apph.emit("term-output", s);
+                    }
                 }
             }
         }
@@ -3623,8 +3721,8 @@ pub fn run() {
             brain_new_note_in,
             brain_delete_inbox,
             brain_write_inbox,
-            brain_send_report_to_queue,
-            brain_brainstorm_build_report,
+            brain_send_files_to_queue,
+            brain_send_brainstorm_to_queue,
             brain_write,
             brain_list_dir,
             brain_list_all,
@@ -3893,6 +3991,43 @@ mod tests {
 
         std::env::remove_var("LORO_HOME");
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn utf8_stream_reassembles_codepoint_split_across_reads() {
+        // The parrot emoji is 4 bytes (F0 9F A6 9C). A PTY read that ends after
+        // the first two must not surface replacement chars — the completing
+        // bytes arrive on the next read and the codepoint is emitted whole.
+        let mut d = super::Utf8Stream::default();
+        let b = "🦜".as_bytes();
+        assert_eq!(d.push(&b[..2]), "");
+        assert_eq!(d.push(&b[2..]), "🦜");
+    }
+
+    #[test]
+    fn utf8_stream_passes_ascii_and_ansi_through() {
+        let mut d = super::Utf8Stream::default();
+        assert_eq!(d.push(b"\x1b[2Khello"), "\x1b[2Khello");
+    }
+
+    #[test]
+    fn utf8_stream_handles_three_way_split() {
+        // 'a' + emoji(4) + 'b', sliced mid-emoji on both sides.
+        let mut d = super::Utf8Stream::default();
+        let b = "a🦜b".as_bytes();
+        let mut out = String::new();
+        out.push_str(&d.push(&b[..3])); // 'a' + first 2 emoji bytes
+        out.push_str(&d.push(&b[3..5])); // next 2 emoji bytes -> completes it
+        out.push_str(&d.push(&b[5..])); // 'b'
+        assert_eq!(out, "a🦜b");
+    }
+
+    #[test]
+    fn utf8_stream_recovers_from_invalid_byte() {
+        // A genuinely invalid byte becomes one replacement char and never stalls
+        // the surrounding text.
+        let mut d = super::Utf8Stream::default();
+        assert_eq!(d.push(&[b'x', 0xFF, b'y']), "x\u{FFFD}y");
     }
 
     #[test]
