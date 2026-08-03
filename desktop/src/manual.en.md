@@ -54,6 +54,8 @@ palette: `Cmd/Ctrl+Shift+P` → "Loro tour".
 5. **Language** — in the gear (⚙), "interface language" switches pt-BR/English.
    Everything the app **generates** (reports, meeting documents, contexts) is
    born in the active interface language.
+6. **Version** — the footer of Settings (⚙) shows the installed version
+   (e.g. `v0.8.0`), so you can tell at a glance whether an update landed.
 
 ## Record and transcribe
 

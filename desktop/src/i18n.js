@@ -691,6 +691,7 @@
     "verde": "green",
     "verificar": "check",
     "Verificar o ambiente (git, gh, autenticação, repositório)": "Check the environment (git, gh, authentication, repository)",
+    "versão": "version",
     "versionado": "versioned",
     "versionado em": "versioned in",
     "versionar": "version",

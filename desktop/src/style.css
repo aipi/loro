@@ -372,6 +372,7 @@ body {
 .sheet .field select { flex: 1; max-width: none; border: none; background: none; }
 .sheet .opt { padding: 8px 2px; }
 .sheet .hint { margin: 2px 2px 0; }
+.cfgver { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--line); text-align: center; }
 .sheet .dirbtn { flex: 1; max-width: none; border: none; padding: 0; }
 .dirinfo {
   flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;

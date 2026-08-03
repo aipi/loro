@@ -106,6 +106,7 @@ OS/serde errors may still pass through and are shown untranslated.
 | `brain_list_templates` | `lang?` | `[{id,name,description,contexts,builtin,dir?}]` | usage templates for the wizard (ADR-0003): builtins + `~/.loro/templates`, localized |
 | `brain_duplicate_template` | `id` | dir path | copy a template into `~/.loro/templates` as an editable custom template |
 | `ui_get_lang` / `ui_set_lang` | — / `lang ("pt"\|"en")` | lang | user-level UI language (ADR-0001 §10, ADR-0002 §1: generated content follows it); set relabels the tray live |
+| `app_version` | — | version | the app version (`CARGO_PKG_VERSION`), shown in Settings so an update is visible at a glance |
 | `brain_status` | — | status | contexts, inbox, processed, activity |
 | `brain_read` | `rel` | content | read a file inside the acervo (path-traversal guarded) |
 | `brain_import` | `context?` | count | copy files into the inbox (prefix `<ctx>--`) |
