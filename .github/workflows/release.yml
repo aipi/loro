@@ -1,7 +1,11 @@
 # Loro — Release
 #
-# Pushing a tag `v*` (e.g. v0.1.0) on main builds the macOS app bundle and
-# publishes a GitHub Release with the .dmg attached.
+# Two ways in, one builder (ADR-0015):
+#   1. Merge a `release/*` PR into main — the release PR only bumps the version
+#      (open it with `make release VERSION=x.y.z`). Merging it ships automatically.
+#   2. Push a tag `v*` on main — the manual escape hatch.
+# Either way this job builds the macOS .dmg and publishes a GitHub Release; the
+# tag is `v<version>` and is created by `gh release create` when it doesn't exist.
 #
 # The bundle is NOT signed with an Apple Developer ID (owner decision,
 # 2026-07-28). On macOS 15+ Gatekeeper blocks unsigned quarantined apps
@@ -9,24 +13,38 @@
 # longer bypasses it; the only reliable path is removing the quarantine
 # attribute. The release notes carry that instruction.
 #
-# Gates (loro-release-checklist §1): tests, clippy and fmt must pass, and the
-# tag must match the version in tauri.conf.json — no drift between git and app.
+# Gates (loro-release-checklist §1): tests, clippy and fmt must pass, and on the
+# tag path the tag must match tauri.conf.json — no drift between git and app.
 name: Release
 
 on:
   push:
     tags:
       - "v*"
+  pull_request:
+    types: [closed]
+    branches: [main]
 
 permissions:
   contents: write
 
 jobs:
   release:
+    # Tag pushes always build. A PR build runs ONLY when a `release/*` branch was
+    # actually merged (not merely closed) — so ordinary PRs never ship.
+    if: >-
+      github.event_name == 'push' ||
+      (github.event.pull_request.merged == true &&
+       startsWith(github.event.pull_request.head.ref, 'release/'))
     runs-on: macos-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # On the PR path, build the merge commit that landed on main (it carries
+          # the version bump); on the tag path, the tagged commit.
+          ref: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
+          fetch-depth: 0
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -38,14 +56,28 @@ jobs:
         with:
           node-version: 20
 
-      - name: Check tag matches app version
+      - name: Resolve version and tag
+        id: ver
         run: |
-          APP_VERSION=$(python3 -c "import json; print(json.load(open('desktop/src-tauri/tauri.conf.json'))['version'])")
-          TAG="${GITHUB_REF_NAME#v}"
-          if [ "$APP_VERSION" != "$TAG" ]; then
-            echo "::error::tag v$TAG does not match tauri.conf.json version $APP_VERSION"
+          VERSION=$(python3 -c "import json; print(json.load(open('desktop/src-tauri/tauri.conf.json'))['version'])")
+          # On the tag path, enforce that the tag matches the app version — no
+          # drift between git and the bundle (loro-release-checklist §1).
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            TAG_VERSION="${GITHUB_REF_NAME#v}"
+            if [ "$VERSION" != "$TAG_VERSION" ]; then
+              echo "::error::tag v$TAG_VERSION does not match tauri.conf.json version $VERSION"
+              exit 1
+            fi
+          fi
+          # Refuse to re-release an existing version (a stale release PR, a rerun).
+          if gh release view "v$VERSION" >/dev/null 2>&1; then
+            echo "::error::release v$VERSION already exists — bump the version"
             exit 1
           fi
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ github.token }}
 
       - name: Compile syscap (macOS system-audio capturer)
         run: make syscap
@@ -70,8 +102,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           DMG=$(ls desktop/src-tauri/target/release/bundle/dmg/*.dmg)
-          gh release create "$GITHUB_REF_NAME" "$DMG" \
-            --title "Loro $GITHUB_REF_NAME" \
+          gh release create "${{ steps.ver.outputs.tag }}" "$DMG" \
+            --target "${{ github.event.pull_request.merge_commit_sha || github.sha }}" \
+            --title "Loro ${{ steps.ver.outputs.tag }}" \
             --generate-notes \
             --notes "**Instalação recomendada (macOS, Apple Silicon):** \`brew tap aipi/loro && brew install --cask loro\` — instala o app + o motor (whisper-cpp, ffmpeg). Os modelos de transcrição são baixados sob demanda no primeiro uso (Configurações → modelo), verificados por SHA-256. **Alternativa manual:** baixe o \`.dmg\` e arraste o Loro para Aplicativos; o app não é assinado com Developer ID, então no macOS 15+ pode ser preciso liberar com \`xattr -d com.apple.quarantine /Applications/Loro.app\`."
 
@@ -90,7 +123,7 @@ jobs:
             echo "TAP_TOKEN not set — skipping cask bump (release still published)"
             exit 0
           fi
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${{ steps.ver.outputs.version }}"
           DMG=$(ls desktop/src-tauri/target/release/bundle/dmg/*.dmg)
           SHA=$(shasum -a 256 "$DMG" | awk '{print $1}')
           echo "cask bump: loro $VERSION ($SHA)"
