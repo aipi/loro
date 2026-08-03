@@ -13,7 +13,7 @@ export PATH := $(HOME)/.cargo/bin:$(PATH)
 # Vanilla JS frontend files that must at least parse (node --check).
 JS_SRC := desktop/src/app.js desktop/src/overlay.js desktop/src/text.js desktop/src/audio.js
 
-.PHONY: help test test-rust test-js test-cli lint fmt build app test-docker syscap vendor-cm6 require-rust
+.PHONY: help test test-rust test-js test-cli lint fmt build app test-docker syscap vendor-cm6 require-rust release
 
 help: ## Show this help menu
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -67,3 +67,7 @@ test-docker: ## Run the test suite inside Docker (reproducible/headless)
 
 vendor-cm6: ## Rebuild the vendored CodeMirror 6 IIFE (dev-only, ADR-0008; never shipped)
 	cd tools/vendor-cm6 && npm ci && node build.mjs
+
+release: ## Open a release PR that bumps the version (usage: make release VERSION=x.y.z)
+	@test -n "$(VERSION)" || { echo "usage: make release VERSION=x.y.z"; exit 1; }
+	./scripts/prepare-release.sh $(VERSION)
