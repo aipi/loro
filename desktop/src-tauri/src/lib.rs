@@ -1382,6 +1382,14 @@ fn ui_get_lang() -> String {
     ui_lang()
 }
 
+// The app version (compile-time, from Cargo.toml — kept in sync with
+// tauri.conf.json by the release bump). Surfaced in Settings so the user can tell
+// at a glance whether an update landed.
+#[tauri::command]
+fn app_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
 #[tauri::command]
 fn ui_set_lang(lang: String, state: State<AppState>) -> Result<String, String> {
     let lang = normalize_lang(&lang);
@@ -3675,6 +3683,7 @@ pub fn run() {
             auto_save,
             list_capture_devices,
             ui_get_lang,
+            app_version,
             ui_set_lang,
             brain_get_config,
             brain_setup,
@@ -3917,6 +3926,20 @@ mod tests {
     fn stream_args_system_audio_uses_c() {
         let a = stream_args("/m.bin", "pt", false, "8", Some(2));
         assert!(a.windows(2).any(|w| w[0] == "-c" && w[1] == "2"));
+    }
+
+    // Settings surfaces the version so the user can tell an update landed: the
+    // command must return the crate version (a non-empty semver-shaped string).
+    #[test]
+    fn app_version_is_the_crate_semver() {
+        let v = app_version();
+        assert_eq!(v, env!("CARGO_PKG_VERSION"));
+        assert!(!v.is_empty());
+        assert_eq!(
+            v.split('.').count(),
+            3,
+            "expected MAJOR.MINOR.PATCH, got {v}"
+        );
     }
 
     #[test]
