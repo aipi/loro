@@ -37,6 +37,20 @@ unchanged unless a design decision says otherwise.
 - [ ] Security posture upheld (ADR-0001 §3): local-only, no PII/secrets in logs.
 - [ ] `make test` and `make lint` green; app verified (`LORO_SELFTEST=1`).
 
+## Releasing (ADR-0015)
+
+Releases are driven by a **release PR** — you never edit the version files or push
+a tag by hand:
+
+```
+make release VERSION=0.8.1   # opens a "release: v0.8.1" PR (bumps the 3 version files)
+```
+
+Review the PR (CI runs on it), then **merge it**. Merging a `release/*` branch
+triggers `release.yml`, which runs the test gate, builds the macOS `.dmg`,
+publishes the GitHub Release `v0.8.1`, and bumps the Homebrew cask. Pushing a
+`v*` tag on `main` still works as a manual escape hatch.
+
 ## Commands
 
 ```
@@ -46,4 +60,5 @@ make fmt         # cargo fmt
 make build       # tauri build
 make app         # tauri dev
 make test-docker # reproducible headless test run
+make release VERSION=x.y.z  # open a release PR (merge to ship)
 ```
