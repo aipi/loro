@@ -866,6 +866,8 @@ async function openCfg() {
   if (!settings.saveDir) {
     try { el.pickDir.textContent = await invoke("default_save_dir"); } catch (_) {}
   }
+  // versão do app (para saber num relance se atualizou)
+  try { const v = $("cfgVersion"); if (v) v.textContent = "v" + await invoke("app_version"); } catch (_) {}
   refreshModelManager();
 }
 function drawProjColors(cur) {
