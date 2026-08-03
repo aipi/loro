@@ -52,6 +52,8 @@ quando quiser pela paleta: `Cmd/Ctrl+Shift+P` → "apresentação do Loro".
 5. **Idioma** — na engrenagem (⚙), "idioma da interface" alterna pt-BR/inglês.
    Tudo que o app **gera** (relatórios, documentos de reunião, contextos)
    nasce no idioma ativo da interface.
+6. **Versão** — o rodapé das Configurações (⚙) mostra a versão instalada
+   (ex.: `v0.8.0`), para você conferir num relance se a atualização pegou.
 
 ## Gravar e transcrever
 
