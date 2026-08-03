@@ -9,7 +9,7 @@
   root.LoroBrainstorm = api;
 })(typeof window !== "undefined" ? window : globalThis, function () {
   // The sequential flow the UI must make legible. The user always moves left to
-  // right: build ideas in a brainstorming, elect parts into the context queue,
+  // right: build ideas in a brainstorming, elect files into the context queue,
   // then generate the versioned context.
   // Stage copy per language. Keys are stable identifiers (never translated);
   // labels/hints are UI copy — pure modules cannot reach the window-level i18n
@@ -17,12 +17,12 @@
   const STAGES_BY_LANG = {
     pt: [
       { key: "brainstorming", label: "Brainstorming", hint: "construa a ideia: reuniões e notas" },
-      { key: "fila", label: "Fila", hint: "eleja partes → um relatório entra na fila de geração de contexto" },
+      { key: "fila", label: "Fila", hint: "escolha arquivos → cada um entra na fila de geração de contexto" },
       { key: "contexto", label: "Contexto", hint: "gere o contexto versionado a partir da fila (/loro-context)" },
     ],
     en: [
       { key: "brainstorming", label: "Brainstorming", hint: "build the idea: meetings and notes" },
-      { key: "fila", label: "Queue", hint: "elect parts → a report enters the context generation queue" },
+      { key: "fila", label: "Queue", hint: "choose files → each one enters the context generation queue" },
       { key: "contexto", label: "Context", hint: "generate the versioned context from the queue (/loro-context)" },
     ],
   };
@@ -96,13 +96,15 @@
       .map(function (p) { return { kind: p.kind, rel: p.rel }; });
   }
 
-  // The queue (inbox) filename for a report sent to the fila, steered to a
-  // context via the `<contexto>--<nome>` prefix (contexts with '/' collapse to
-  // '-' so the queue name stays flat). Mirrors the Rust import_name contract.
-  function reportInboxName(reportRel, destContext) {
-    const base = String(reportRel == null ? "" : reportRel).split("/").pop() || "relatorio.md";
-    const c = String(destContext == null ? "" : destContext).trim().replace(/\//g, "-");
-    return c ? c + "--" + base : base;
+  // Resolve one selected part into the ACTUAL file that goes to the fila (ADR-0014,
+  // one queue item per file — no consolidated report). A meeting is represented by
+  // its own relatorio.md (never reuniao.md — the transcript stays out, BR-8); every
+  // other kind (nota, anexo, análise) is already a file, so it goes as itself.
+  // `rel` for a meeting is its directory; for a file it is the file path. Pure.
+  function queueRelForSelection(kind, rel) {
+    const r = String(rel == null ? "" : rel).replace(/\/+$/, "");
+    if (!r) return null;
+    return kind === "reuniao" ? r + "/relatorio.md" : r;
   }
 
   // Build the "/loro-context" invocation the "gerar contexto" button injects
@@ -183,7 +185,7 @@
     STAGES, stages,
     groupByCategory, filterAndCapTemas,
     emptySelection, toggleSelection, selectedItems,
-    reportInboxName, brainContextCmd, brainAskCmd, noteCmd, syncCmd, toolCmd, newToolCmd,
+    queueRelForSelection, brainContextCmd, brainAskCmd, noteCmd, syncCmd, toolCmd, newToolCmd,
     digestNotice,
   };
 });

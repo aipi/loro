@@ -27,12 +27,15 @@ processes captured transcripts into a knowledge base on disk.
    transcripts (inbox) ---> Claude loop (/loro-context) ---> knowledge base
 ```
 
-**Knowledge flow (ADR-0001 §7):** the studio makes one sequential path explicit —
-**Brainstorming → Fila → Contexto**. A *brainstorming* (`brainstorming/<slug>/`, the
-renamed non-versioned world) gathers meetings/investigations/questions/notes; the
-user elects parts into ONE consolidated report that enters the **fila** (the
-`inbox/` queue); **"gerar contexto"** runs `/loro-context` (the renamed loop skill)
-which distills the fila into versioned `contextos/`.
+**Knowledge flow (ADR-0001 §7; ADR-0014):** the studio makes one sequential path
+explicit — **Brainstorming → Fila → Contexto**. A *brainstorming*
+(`brainstorming/<slug>/`, the renamed non-versioned world) gathers
+meetings/notes/attachments; the user **selects the real files** to send and each
+one enters the **fila** (the `inbox/` queue) AS ITSELF — one queue item per file,
+no consolidated report (ADR-0014 supersedes the ADR-0013 merged relatorio). A
+meeting is queued as its `relatorio.md`; the raw transcript (`reuniao.md`), audit
+and audio never enter the fila (BR-8). **"gerar contexto"** runs `/loro-context`
+(the renamed loop skill) which distills the fila into versioned `contextos/`.
 
 Config, models and logs live under `~/.loro/`. The knowledge base ("brain") is a
 separate, user-chosen folder and is **not** part of the codebase.
@@ -130,8 +133,8 @@ Brainstorming world + the fila → contexto flow (ADR-0001 §7):
 | `brain_rename_pessoal` | `rel, name` | new rel | rename a note/analysis file in place (world-confined, keeps extension, never overwrites — ADR-0003 §5) |
 | `brain_move_pessoal` | `rel, destDir` | new rel | move a file into another folder of the same non-versioned world (brainstorming/pessoal); never overwrites — ADR-0009 |
 | `brain_abs_path` | `rel` | abs path | resolve an acervo-relative path to its absolute on-disk path (guarded to the acervo root); backs "copy absolute path" — ADR-0009 |
-| `brain_brainstorm_build_report` | `slug, selection[]` | `{rel}` | build ONE consolidated report (empty selection = all parts) |
-| `brain_send_report_to_queue` | `reportRel, destContext?` | name | copy a report into the fila (`inbox/`) steered by `<ctx>--` |
+| `brain_send_files_to_queue` | `rels[], destContext?` | `name[]` | send the selected brainstorming files to the fila (`inbox/`), one item per file, steered by `<ctx>--`; validates all before writing any; rejects transcript/audio/audit (BR-8) |
+| `brain_send_brainstorm_to_queue` | `slug, destContext?` | `name[]` | "enviar tudo → fila": send every queueable file of the brainstorming, each its own item |
 
 Knowledge versioning & collaboration (ADR-0001 §5) — all opt-in, no credentials stored:
 

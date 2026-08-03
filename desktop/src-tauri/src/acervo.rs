@@ -1305,33 +1305,77 @@ fn content_of(p: &Path) -> Result<String, String> {
     std::fs::read_to_string(p).map_err(|e| e.to_string())
 }
 
-// ---- consolidated brainstorming report (ADR-0013) ---------------------------
+// ---- brainstorming → fila (ADR-0014) ----------------------------------------
 //
-// The user selects parts of a brainstorming (some meetings / investigations /
-// questions / notes) and the app builds ONE consolidated report merging ALL of
-// them together — NEVER the raw transcript or audio. That single report is what
-// gets sent to the fila (inbox/). It references the source meetings via acervo://.
+// The user selects REAL files of a brainstorming (a meeting's report, a note, an
+// analysis, an attachment) and each one is sent to the fila (inbox/) AS ITSELF —
+// one queue item per file, no consolidated report (supersedes ADR-0013's single
+// merged relatorio). The raw meeting transcript (`reuniao.md`), the content-bearing
+// audit and any audio NEVER enter the queue (BR-8) — see `is_queueable`.
 
-// Now as `AAAA-MM-DD-HHMM` (UTC), for the report filename. Dependency-free.
-fn now_stamp() -> String {
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let (y, m, d) = civil_from_days((secs / 86_400) as i64);
-    let tod = secs % 86_400;
-    format!(
-        "{y:04}-{m:02}-{d:02}-{:02}{:02}",
-        tod / 3600,
-        (tod % 3600) / 60
-    )
+// A brainstorming file may enter the fila only when it is text (`.md`/`.txt`) and
+// is not the living notebook `reuniao.md` (which carries the transcript, BR-8).
+// Audio and `auditoria.jsonl` are non-text, so the text-only gate already excludes
+// them. Pure; expects an acervo-relative, forward-slash path.
+pub(crate) fn is_queueable(rel: &str) -> bool {
+    let r = rel.replace('\\', "/");
+    if !(r.ends_with(".md") || r.ends_with(".txt")) {
+        return false;
+    }
+    let leaf = r.rsplit('/').next().unwrap_or(&r);
+    leaf != "reuniao.md" && leaf != "auditoria.jsonl"
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SelItem {
-    kind: String, // reuniao | investigacao | pergunta | nota
-    rel: String,  // acervo-relative source (meeting dir/file, or a note file)
+// The inbox filename for a queued brainstorming file: the brainstorming-relative
+// path flattened (`/` -> `-`) so files sharing a basename never collide, e.g.
+// `brainstorming/frota/reunioes/r1/relatorio.md` -> `frota-reunioes-r1-relatorio.md`.
+// Pure.
+pub(crate) fn queue_name_for(rel: &str) -> String {
+    rel.replace('\\', "/")
+        .trim_start_matches("brainstorming/")
+        .replace('/', "-")
+}
+
+// Every queueable file of a brainstorming (for "enviar tudo → fila"): each
+// meeting's `relatorio.md` and its analyses (`reunioes/<id>/notas/*`), plus the
+// brainstorming's own `notas/` and `anexos/`. `reuniao.md`/audio/audit are excluded
+// by `is_queueable`; legacy consolidated reports (`*-relatorio.md`) are skipped.
+pub(crate) fn queueable_files(base: &Path, slug: &str) -> Vec<String> {
+    let root = brainstorming_dir(base).join(slug);
+    let mut out = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(root.join("reunioes")) {
+        for e in rd.flatten().filter(|e| e.path().is_dir()) {
+            let id = e.file_name().to_string_lossy().to_string();
+            let rep = format!("brainstorming/{slug}/reunioes/{id}/relatorio.md");
+            if base.join(&rep).is_file() {
+                out.push(rep);
+            }
+            if let Ok(nd) = std::fs::read_dir(e.path().join("notas")) {
+                for f in nd.flatten().filter(|f| f.path().is_file()) {
+                    let n = f.file_name().to_string_lossy().to_string();
+                    let rel = format!("brainstorming/{slug}/reunioes/{id}/notas/{n}");
+                    if !n.starts_with('.') && is_queueable(&rel) {
+                        out.push(rel);
+                    }
+                }
+            }
+        }
+    }
+    for sub in ["notas", "anexos"] {
+        if let Ok(rd) = std::fs::read_dir(root.join(sub)) {
+            for e in rd.flatten().filter(|e| e.path().is_file()) {
+                let n = e.file_name().to_string_lossy().to_string();
+                if n.starts_with('.') || n.ends_with("-relatorio.md") {
+                    continue;
+                }
+                let rel = format!("brainstorming/{slug}/{sub}/{n}");
+                if is_queueable(&rel) {
+                    out.push(rel);
+                }
+            }
+        }
+    }
+    out
 }
 
 // Minimal read of a meeting manifest (titulo only) — no marker/transcript field
@@ -1343,311 +1387,6 @@ struct MeetingManifestLite {
     titulo: String,
     #[serde(default)]
     status: String,
-}
-
-// A gathered part ready for the pure assembler.
-struct ReportPart {
-    title: String,
-    rel: String, // acervo:// anchor to the source
-    resumo: String,
-    decisoes: String,
-    duvidas: String,
-    investigacoes: String,
-    notas: String,
-    dados: String,
-}
-
-// Prose under a `## <heading>` up to the next `## `, trimmed. The DEFERRED_PROSE
-// placeholder ("resumo automático — em breve") is treated as empty (no real prose
-// yet). Returns "" when the section is absent/empty. Pure.
-// Source parts may be pt- or en-headed (ADR-0002 §1 allows mixed-language
-// acervos), so extraction tries every known name for a section.
-fn extract_section_any(md: &str, headings: &[&str]) -> String {
-    for h in headings {
-        let s = extract_section(md, h);
-        if !s.is_empty() {
-            return s;
-        }
-    }
-    String::new()
-}
-
-fn extract_section(md: &str, heading: &str) -> String {
-    let mut lines = md.lines();
-    let want = format!("## {heading}");
-    let mut found = false;
-    let mut body = String::new();
-    for line in lines.by_ref() {
-        if !found {
-            if line.trim() == want {
-                found = true;
-            }
-            continue;
-        }
-        if line.starts_with("## ") {
-            break;
-        }
-        body.push_str(line);
-        body.push('\n');
-    }
-    let cleaned: String = body
-        .lines()
-        .filter(|l| !l.contains("resumo automático") && !l.contains("automatic summary"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    cleaned.trim().to_string()
-}
-
-// Gather one selected part into a ReportPart. Meetings read their manifest
-// (titulo + markers) and relatorio.md sections; standalone items read their body.
-fn gather_part(base: &Path, item: &SelItem) -> Result<ReportPart, String> {
-    let rel = normalize_rel(&item.rel)?;
-    if item.kind == "reuniao" {
-        // rel may point at the meeting dir or a file inside it — resolve to the dir
-        let abs = base.join(&rel);
-        let dir = if abs.is_dir() {
-            abs
-        } else {
-            abs.parent().map(|p| p.to_path_buf()).unwrap_or(abs)
-        };
-        if !dir.starts_with(base) || !dir.join("manifest.json").is_file() {
-            return Err("err.meeting_not_found".into());
-        }
-        let dir_rel = dir
-            .strip_prefix(base)
-            .map(|p| p.to_string_lossy().replace('\\', "/"))
-            .unwrap_or(rel);
-        let man: MeetingManifestLite = std::fs::read_to_string(dir.join("manifest.json"))
-            .ok()
-            .and_then(|t| serde_json::from_str(&t).ok())
-            .unwrap_or_default();
-        let relatorio = std::fs::read_to_string(dir.join("relatorio.md")).unwrap_or_default();
-        let title = if man.titulo.is_empty() {
-            dir.file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or("reunião")
-                .to_string()
-        } else {
-            man.titulo
-        };
-        Ok(ReportPart {
-            title,
-            rel: dir_rel,
-            resumo: extract_section_any(&relatorio, &["Resumo", "Summary"]),
-            decisoes: extract_section_any(&relatorio, &["Decisões", "Decisions"]),
-            duvidas: extract_section_any(
-                &relatorio,
-                &["Dúvidas & Respostas", "Questions & Answers"],
-            ),
-            investigacoes: extract_section_any(&relatorio, &["Investigações", "Investigations"]),
-            notas: String::new(),
-            dados: extract_section_any(&relatorio, &["Dados & Gráficos", "Data & Charts"]),
-        })
-    } else {
-        let abs = guarded_existing(base, &rel)?;
-        if !abs.is_file() {
-            return Err("err.item_not_found".into());
-        }
-        let content = content_of(&abs)?;
-        let (_, body) = split_front_matter(&content);
-        let title = notebook_title(&rel, &body);
-        let corpo = body.trim().to_string();
-        // route the body into the section matching the item kind
-        let (duvidas, investigacoes, notas) = match item.kind.as_str() {
-            "pergunta" => (corpo.clone(), String::new(), String::new()),
-            "investigacao" => (String::new(), corpo.clone(), String::new()),
-            _ => (String::new(), String::new(), corpo.clone()), // nota
-        };
-        Ok(ReportPart {
-            title,
-            rel,
-            resumo: String::new(),
-            decisoes: String::new(),
-            duvidas,
-            investigacoes,
-            notas,
-            dados: String::new(),
-        })
-    }
-}
-
-// Emit one `## <title>` section with a `### <part title>` block per part that has
-// prose for `sel`. Empty across all parts -> a single "_(sem registros)_".
-fn push_report_section(
-    out: &mut String,
-    title: &str,
-    empty_note: &str,
-    parts: &[ReportPart],
-    sel: impl Fn(&ReportPart) -> &str,
-) {
-    out.push_str(&format!("## {title}\n\n"));
-    let mut any = false;
-    for p in parts {
-        let s = sel(p).trim();
-        if !s.is_empty() {
-            out.push_str(&format!("### {}\n\n{}\n\n", p.title, s));
-            any = true;
-        }
-    }
-    if !any {
-        out.push_str(empty_note);
-        out.push_str("\n\n");
-    }
-}
-
-// Assemble ONE consolidated report merging all parts. Pure/IO-free. NEVER contains
-// a `## Transcrição` section nor any audio reference (ADR-0013 / BR-8).
-// The report is born in the active UI language (ADR-0002 §1); anything but
-// "en" falls back to pt, the original.
-fn assemble_brainstorm_report(slug: &str, today: &str, parts: &[ReportPart], lang: &str) -> String {
-    let en = lang == "en";
-    let empty_note = if en {
-        "_(no entries)_"
-    } else {
-        "_(sem registros)_"
-    };
-    let mut out = String::new();
-    out.push_str(&format!(
-        "# {} — {slug}\n\n",
-        if en { "Report" } else { "Relatório" }
-    ));
-    out.push_str(if en {
-        "_Consolidated report (ADR-0013) — summary, decisions, questions, investigations and data from the selected parts. No transcript, no audio. This is what goes to the context-generation queue._\n\n"
-    } else {
-        "_Relatório consolidado (ADR-0013) — resumo, decisões, dúvidas, investigações e dados das partes selecionadas. Sem transcrição nem áudio. É isto que segue para a fila de geração de contexto._\n\n"
-    });
-    out.push_str(&format!("- Brainstorming: {slug}\n"));
-    out.push_str(&format!(
-        "- {}: {today}\n",
-        if en { "Date" } else { "Data" }
-    ));
-    out.push_str(&format!(
-        "- {}: {}\n\n",
-        if en { "Parts" } else { "Partes" },
-        parts.len()
-    ));
-
-    // Origin — links back to the source parts (references, not the transcript)
-    out.push_str(if en { "## Origin\n\n" } else { "## Origem\n\n" });
-    if parts.is_empty() {
-        out.push_str(if en {
-            "_(no parts selected)_\n\n"
-        } else {
-            "_(nenhuma parte selecionada)_\n\n"
-        });
-    } else {
-        for p in parts {
-            out.push_str(&format!("- [{}](acervo://{})\n", p.title, p.rel));
-        }
-        out.push('\n');
-    }
-
-    let s = |pt: &'static str, en_h: &'static str| if en { en_h } else { pt };
-    push_report_section(&mut out, s("Resumo", "Summary"), empty_note, parts, |p| {
-        &p.resumo
-    });
-    push_report_section(
-        &mut out,
-        s("Decisões", "Decisions"),
-        empty_note,
-        parts,
-        |p| &p.decisoes,
-    );
-    push_report_section(
-        &mut out,
-        s("Dúvidas & Respostas", "Questions & Answers"),
-        empty_note,
-        parts,
-        |p| &p.duvidas,
-    );
-    push_report_section(
-        &mut out,
-        s("Investigações", "Investigations"),
-        empty_note,
-        parts,
-        |p| &p.investigacoes,
-    );
-    push_report_section(&mut out, s("Notas", "Notes"), empty_note, parts, |p| {
-        &p.notas
-    });
-    push_report_section(&mut out, s("Dados", "Data"), empty_note, parts, |p| {
-        &p.dados
-    });
-    // owner decision (2026-07-28): no "## Estatísticas" counter block — the
-    // counts carried no meaning for the reader and were dropped everywhere.
-    out
-}
-
-// If the selection is empty, gather ALL parts of the brainstorming: every meeting
-// under reunioes/ plus every file under notas/ and anexos/.
-fn all_parts_of(base: &Path, slug: &str) -> Vec<SelItem> {
-    let root = brainstorming_dir(base).join(slug);
-    let mut items = Vec::new();
-    if let Ok(rd) = std::fs::read_dir(root.join("reunioes")) {
-        for e in rd.flatten().filter(|e| e.path().is_dir()) {
-            let id = e.file_name().to_string_lossy().to_string();
-            items.push(SelItem {
-                kind: "reuniao".into(),
-                rel: format!("brainstorming/{slug}/reunioes/{id}"),
-            });
-        }
-    }
-    for (sub, kind) in [("notas", "nota"), ("anexos", "anexo")] {
-        if let Ok(rd) = std::fs::read_dir(root.join(sub)) {
-            for e in rd.flatten().filter(|e| e.path().is_file()) {
-                let n = e.file_name().to_string_lossy().to_string();
-                if n.starts_with('.') {
-                    continue;
-                }
-                // the generated report itself lands in anexos/ — never re-ingest it
-                if n.ends_with("-relatorio.md") {
-                    continue;
-                }
-                items.push(SelItem {
-                    kind: kind.into(),
-                    rel: format!("brainstorming/{slug}/{sub}/{n}"),
-                });
-            }
-        }
-    }
-    items
-}
-
-// Testable core: gather + assemble + write the report under anexos/. Returns
-// the acervo-relative rel of the written report.
-fn build_brainstorm_report(
-    base: &Path,
-    slug: &str,
-    selection: &[SelItem],
-    today: &str,
-    stamp: &str,
-    lang: &str,
-) -> Result<String, String> {
-    if !valid_context(slug) {
-        return Err("err.invalid_brainstorm".into());
-    }
-    let root = brainstorming_dir(base).join(slug);
-    if !root.is_dir() {
-        return Err("err.brainstorm_not_found".into());
-    }
-    // empty selection == all parts of the brainstorming
-    let owned_all;
-    let items: &[SelItem] = if selection.is_empty() {
-        owned_all = all_parts_of(base, slug);
-        &owned_all
-    } else {
-        selection
-    };
-    let mut parts = Vec::new();
-    for it in items {
-        parts.push(gather_part(base, it)?);
-    }
-    let report = assemble_brainstorm_report(slug, today, &parts, lang);
-    let dir = root.join("anexos");
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let fname = format!("{stamp}-relatorio.md");
-    std::fs::write(dir.join(&fname), report).map_err(|e| e.to_string())?;
-    Ok(format!("brainstorming/{slug}/anexos/{fname}"))
 }
 
 // ---- Tauri commands (thin wrappers) -----------------------------------------
@@ -1983,36 +1722,8 @@ pub fn brain_add_ref(
     Ok(id)
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BuildReportOut {
-    rel: String,
-}
-
-// ADR-0013: build ONE consolidated report from the selected brainstorming parts
-// (empty selection == all parts). The report is written under the brainstorming's
-// anexos/ (visible/openable) and is what the user then sends to the fila.
-#[tauri::command]
-pub fn brain_brainstorm_build_report(
-    app: AppHandle,
-    slug: String,
-    selection: Vec<SelItem>,
-) -> Result<BuildReportOut, String> {
-    let base = acervo_base()?;
-    let rel = build_brainstorm_report(
-        &base,
-        &slug,
-        &selection,
-        &today_iso(),
-        &now_stamp(),
-        &crate::config::ui_lang(),
-    )?;
-    emit_brainstorming_changed(&app, serde_json::json!({ "slug": slug, "rel": rel }));
-    Ok(BuildReportOut { rel })
-}
-
 // ADR-0013: `brain_promote` (direct personal->context copy) is NO LONGER on the
-// primary path — the fila (brain_send_report_to_queue -> /loro-context) is THE
+// primary path — the fila (brain_send_files_to_queue -> /loro-context) is THE
 // route brainstorming -> contexto, and the UI no longer calls this. Kept + tested
 // as an internal capability; do not surface it as a competing user action.
 #[tauri::command]
@@ -2667,190 +2378,72 @@ mod tests {
         assert!(json.contains("\"custos\""));
     }
 
-    // ADR-0013: build a fixture brainstorming with 2 meetings (each with a
-    // relatorio.md + manifest markers) + one investigacao/pergunta/nota, then build
-    // the consolidated report and assert it merges ALL parts and never carries
-    // transcript/audio.
-    fn seed_report_fixture(base: &Path, slug: &str) {
-        let root = base.join("brainstorming").join(slug);
-        for m in ["2026-07-27-1000-planejamento", "2026-07-27-1400-custos"] {
-            let d = root.join("reunioes").join(m);
-            std::fs::create_dir_all(&d).unwrap();
-            std::fs::write(
-                d.join("manifest.json"),
-                format!(
-                    r#"{{"titulo":"{m}","marcadores":[{{"tipo":"decisao"}},{{"tipo":"duvida"}},{{"tipo":"investigacao"}}]}}"#
-                ),
-            )
-            .unwrap();
-            std::fs::write(
-                d.join("relatorio.md"),
-                format!("# {m}\n\n## Resumo\n\nResumo de {m}.\n\n## Decisões\n\nDecidimos X em {m}.\n\n## Transcrição\n\n[00:00] fala secreta\n"),
-            )
-            .unwrap();
-            // an audio file on disk must never surface in the consolidated report
-            std::fs::create_dir_all(d.join("audio")).unwrap();
-            std::fs::write(d.join("audio/system.wav"), b"RIFF").unwrap();
-        }
-        std::fs::create_dir_all(root.join("notas")).unwrap();
-        std::fs::write(
-            root.join("notas/n1.md"),
-            "# Nota rápida\n\nLembrar do fornecedor.\n",
-        )
-        .unwrap();
+    // ADR-0014 / BR-8: the raw meeting transcript never enters the fila; the
+    // meeting is represented by its relatorio.md, notes/analyses go as themselves.
+    #[test]
+    fn is_queueable_blocks_transcript_audio_audit_only() {
+        assert!(is_queueable("brainstorming/f/reunioes/r1/relatorio.md"));
+        assert!(is_queueable("brainstorming/f/reunioes/r1/notas/analise.md"));
+        assert!(is_queueable("brainstorming/f/notas/ideia.md"));
+        assert!(is_queueable("brainstorming/f/anexos/ata.txt"));
+        // transcript / audit / audio / non-text never go
+        assert!(!is_queueable("brainstorming/f/reunioes/r1/reuniao.md"));
+        assert!(!is_queueable("brainstorming/f/reunioes/r1/auditoria.jsonl"));
+        assert!(!is_queueable(
+            "brainstorming/f/reunioes/r1/audio/system.wav"
+        ));
+        assert!(!is_queueable("brainstorming/f/anexos/deck.pdf"));
     }
 
+    // Names must be unique across the brainstorming so two files with the same
+    // basename (two meetings' relatorio.md) never overwrite each other in inbox/.
     #[test]
-    fn assemble_brainstorm_report_merges_all_parts_and_aggregates_stats() {
-        let base = tmp("report");
-        seed_report_fixture(&base, "frota-2026");
-        let rel = build_brainstorm_report(
-            &base,
-            "frota-2026",
-            &[],
-            "2026-07-28",
-            "2026-07-28-0900",
-            "pt",
-        )
-        .unwrap();
+    fn queue_name_for_flattens_path_and_is_collision_free() {
         assert_eq!(
-            rel,
-            "brainstorming/frota-2026/anexos/2026-07-28-0900-relatorio.md"
+            queue_name_for("brainstorming/frota/reunioes/r1/relatorio.md"),
+            "frota-reunioes-r1-relatorio.md"
         );
-        let r = std::fs::read_to_string(base.join(&rel)).unwrap();
-
-        // all expected sections present — and NO counter block (owner decision
-        // 2026-07-28: "Estatísticas" was dropped everywhere)
-        for h in [
-            "## Origem",
-            "## Resumo",
-            "## Decisões",
-            "## Dúvidas & Respostas",
-            "## Investigações",
-            "## Notas",
-            "## Dados",
-        ] {
-            assert!(r.contains(h), "missing {h}");
-        }
-        assert!(!r.contains("## Estatísticas"));
-        // merges BOTH meetings' prose + the standalone items
-        assert!(r.contains("Resumo de 2026-07-27-1000-planejamento"));
-        assert!(r.contains("Resumo de 2026-07-27-1400-custos"));
-        // nota body lands under its own "## Notas" section, not in Resumo
-        let notas_sec = r.split("## Notas").nth(1).unwrap_or("");
-        assert!(notas_sec.contains("Lembrar do fornecedor"));
-        // references the source meetings, never the transcript/audio (BR-8)
-        assert!(r.contains("acervo://brainstorming/frota-2026/reunioes/"));
-        assert!(!r.contains("## Transcrição"));
-        assert!(!r.contains("fala secreta"));
-        assert!(!r.contains(".wav") && !r.contains("[áudio]"));
-        // no aggregated marker counters either
-        assert!(!r.contains("- Decisões: ") && !r.contains("- Dúvidas: "));
+        assert_ne!(
+            queue_name_for("brainstorming/frota/reunioes/r1/relatorio.md"),
+            queue_name_for("brainstorming/frota/reunioes/r2/relatorio.md")
+        );
+        assert_eq!(
+            queue_name_for("brainstorming/frota/notas/ideia.md"),
+            "frota-notas-ideia.md"
+        );
     }
 
-    // ADR-0002 §1 — generated content is born in the active UI language.
+    // "enviar tudo → fila": enumerate every real file (meeting reports + their
+    // analyses + notas/anexos), excluding transcript/audio and legacy consolidated
+    // reports — never fusing anything into one report (ADR-0014).
     #[test]
-    fn brainstorm_report_is_english_when_lang_is_en() {
-        let base = tmp("report-en");
-        seed_report_fixture(&base, "frota-2026");
-        let rel = build_brainstorm_report(
-            &base,
-            "frota-2026",
-            &[],
-            "2026-07-28",
-            "2026-07-28-0900",
-            "en",
-        )
-        .unwrap();
-        let r = std::fs::read_to_string(base.join(&rel)).unwrap();
-        for h in [
-            "## Origin",
-            "## Summary",
-            "## Decisions",
-            "## Questions & Answers",
-            "## Investigations",
-            "## Notes",
-            "## Data",
-        ] {
-            assert!(r.contains(h), "missing {h}");
-        }
-        assert!(!r.contains("## Resumo"));
-        // pt-authored source meetings still feed an en report (tolerant extraction)
-        assert!(r.contains("Resumo de 2026-07-27-1000-planejamento"));
-    }
+    fn queueable_files_lists_real_files_excluding_transcript_and_legacy_report() {
+        let base = tmp("queueable");
+        let root = base.join("brainstorming/frota-2026");
+        let d = root.join("reunioes/2026-07-27-1000-plano");
+        std::fs::create_dir_all(d.join("notas")).unwrap();
+        std::fs::write(d.join("reuniao.md"), "# transcrição\n\n[00:00] fala\n").unwrap();
+        std::fs::write(d.join("relatorio.md"), "# Relatório\n\n## Resumo\n\nok\n").unwrap();
+        std::fs::write(d.join("notas/analise.md"), "# Análise\n\npontos\n").unwrap();
+        std::fs::create_dir_all(root.join("notas")).unwrap();
+        std::fs::write(root.join("notas/ideia.md"), "# Ideia\n\nx\n").unwrap();
+        std::fs::create_dir_all(root.join("anexos")).unwrap();
+        std::fs::write(root.join("anexos/ata.md"), "# Ata\n\ny\n").unwrap();
+        // a legacy consolidated report must NOT be re-ingested
+        std::fs::write(root.join("anexos/2026-07-27-0900-relatorio.md"), "# old\n").unwrap();
 
-    #[test]
-    fn extract_section_any_reads_pt_or_en_headings() {
-        let en = "## Summary\n\nAll good.\n\n## Decisions\n\nShip it.\n";
-        assert_eq!(extract_section_any(en, &["Resumo", "Summary"]), "All good.");
-        let pt = "## Resumo\n\nTudo bem.\n";
-        assert_eq!(extract_section_any(pt, &["Resumo", "Summary"]), "Tudo bem.");
-        assert_eq!(extract_section_any(pt, &["Decisões", "Decisions"]), "");
-    }
-
-    #[test]
-    fn build_report_subset_selection_only_includes_chosen_parts() {
-        let base = tmp("report-sub");
-        seed_report_fixture(&base, "frota-2026");
-        let sel = vec![SelItem {
-            kind: "nota".into(),
-            rel: "brainstorming/frota-2026/notas/n1.md".into(),
-        }];
-        let rel = build_brainstorm_report(
-            &base,
-            "frota-2026",
-            &sel,
-            "2026-07-28",
-            "2026-07-28-1000",
-            "pt",
-        )
-        .unwrap();
-        let r = std::fs::read_to_string(base.join(&rel)).unwrap();
-        assert!(r.contains("Lembrar do fornecedor"));
-        // a meeting NOT selected must not leak in
-        assert!(!r.contains("Resumo de 2026-07-27-1000-planejamento"));
-        assert!(r.contains("- Partes: 1"));
-    }
-
-    // ADR-0005: anexos/ is a new brainstorming subfolder (presentations live
-    // there too — no separate apresentacoes/ folder) — all_parts_of must
-    // enumerate it (empty selection = "everything") and gather_part's
-    // unknown-kind fallback routes it into "## Notas", with no further code
-    // needed (confirmed by this test, not just by reading).
-    #[test]
-    fn all_parts_of_includes_anexos() {
-        let base = tmp("report-anexos");
-        create_brainstorming(&base, "Frota 2026", None, "2026-07-28").unwrap();
-        std::fs::write(
-            base.join("brainstorming/frota-2026/anexos/ata-drive.md"),
-            "---\nloro: 1\nfonte: drive\n---\n\n# Ata da reunião externa\n\nPontos discutidos no Drive.\n",
-        )
-        .unwrap();
-        std::fs::write(
-            base.join("brainstorming/frota-2026/anexos/deck-v1.md"),
-            "---\nloro: 1\n---\n\n# Deck v1\n\n## Slide 1\n\nProposta inicial.\n",
-        )
-        .unwrap();
-        let rel = build_brainstorm_report(
-            &base,
-            "frota-2026",
-            &[],
-            "2026-07-28",
-            "2026-07-28-1100",
-            "pt",
-        )
-        .unwrap();
-        let r = std::fs::read_to_string(base.join(&rel)).unwrap();
-        assert!(r.contains("Pontos discutidos no Drive."));
-        assert!(r.contains("Proposta inicial."));
-    }
-
-    #[test]
-    fn extract_section_ignores_placeholder_and_stops_at_next_heading() {
-        let md = "## Resumo\n\n_(resumo automático — rode “analisar” para preencher)_\n\n## Decisões\n\nDecidiu-se X.\n";
-        assert_eq!(extract_section(md, "Resumo"), "");
-        assert_eq!(extract_section(md, "Decisões"), "Decidiu-se X.");
-        assert_eq!(extract_section(md, "Ausente"), "");
+        let mut got = queueable_files(&base, "frota-2026");
+        got.sort();
+        assert_eq!(
+            got,
+            vec![
+                "brainstorming/frota-2026/anexos/ata.md".to_string(),
+                "brainstorming/frota-2026/notas/ideia.md".to_string(),
+                "brainstorming/frota-2026/reunioes/2026-07-27-1000-plano/notas/analise.md"
+                    .to_string(),
+                "brainstorming/frota-2026/reunioes/2026-07-27-1000-plano/relatorio.md".to_string(),
+            ]
+        );
     }
 
     #[test]
