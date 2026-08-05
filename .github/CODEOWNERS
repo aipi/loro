@@ -1,0 +1,4 @@
+# Only the repository owner owns the code: their review is required and is the
+# only one that satisfies the review gate (ADR-0015 governance; require code
+# owner reviews is enabled on main). Contributors open PRs from forks freely.
+* @aipi
