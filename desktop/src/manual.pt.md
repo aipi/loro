@@ -115,6 +115,15 @@ quando quiser pela paleta: `Cmd/Ctrl+Shift+P` → "apresentação do Loro".
   comum, cabeçalho do acervo. No **modo edição** o editor ocupa o painel
   inteiro e o rail fica oculto; as ações continuam disponíveis no modo
   visualizar.
+- **Barra de formatação no modo edição:** acima do editor há botões para
+  **negrito** (⌘B), *itálico* (⌘I), riscado, títulos (H1/H2/H3), lista,
+  checklist, lista numerada, citação, código, link (⌘K), tabela, bloco de
+  código e linha separadora. Eles escrevem a marcação markdown no ponto do
+  cursor (ou envolvem o texto selecionado) e desfazem quando você clica de
+  novo sobre um trecho já formatado — o arquivo continua sendo markdown
+  legível, então o histórico no git mostra apenas o que você mudou de fato.
+  A mesma barra aparece no editor de pendentes da fila e das instruções do
+  loop, onde **⌘S** salva.
 - As ações **analisar**, **perguntar…**, **ver relatório** e **enviar para a
   fila** ficam no menu **⋯** da reunião na lateral. **Perguntar** funciona já
   durante a gravação; as outras três habilitam quando a reunião termina (o

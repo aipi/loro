@@ -506,6 +506,31 @@ body {
 .edithost { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--panel); }
 .edithost .cm-editor { height: 100%; min-height: 60vh; }
 
+/* ADR-0016: barra de formatação markdown. `flex-wrap: wrap` é requisito, não
+   estilo: na janela padrão (560×520) os quinze controles não caberiam em uma
+   linha e estourariam a largura do painel no WKWebView. */
+.mdbar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 2px;
+  padding: 4px 6px; margin-bottom: 6px;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--panel);
+}
+.mdbar .mdsep { width: 1px; height: 14px; background: var(--line); margin: 0 5px; }
+.mdbar button {
+  min-width: 26px; height: 24px; padding: 0 6px;
+  font-family: var(--mono); font-size: 11px; line-height: 1;
+  color: var(--muted); background: transparent;
+  border: 1px solid transparent; border-radius: 6px; cursor: pointer;
+}
+.mdbar button:hover { color: var(--ink); border-color: var(--line); }
+.mdbar button[data-md="bold"] { font-weight: 700; }
+.mdbar button[data-md="italic"] { font-style: italic; }
+.mdbar button[data-md="strike"] { text-decoration: line-through; }
+/* no modo editar a barra é altura fixa; só o editor abaixo dela cresce/rola */
+#wsBody.editing .mdbar { flex: none; margin: 0 clamp(16px, 3vw, 28px) 6px; }
+/* o modal tem altura própria: o CM6 rola dentro dela em vez de esticar o sheet */
+#editModalHost { height: 320px; margin-top: 2px; }
+#editModalHost .cm-editor { min-height: 0; }
+
 /* ADR-0008: no modo editar o CM6 ocupa o painel inteiro (não um card contido).
    #wsBody deixa de rolar/pad e o #bDocWrap vira coluna flex que enche a altura;
    o editor rola internamente (cm-scroller). */
@@ -841,12 +866,6 @@ body {
 
 /* ---- editor (edit unprocessed / guide prompt) ---- */
 .sheet.editor { width: min(640px, calc(100vw - 32px)); display: flex; flex-direction: column; }
-.editarea {
-  width: 100%; min-height: 320px; resize: vertical; margin-top: 10px;
-  font-family: var(--mono); font-size: 12.5px; line-height: 1.6;
-  color: var(--ink); background: var(--panel);
-  border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px;
-}
 .editbar { display: flex; align-items: center; gap: 14px; margin-top: 12px; }
 
 /* ---- toast ---- */
