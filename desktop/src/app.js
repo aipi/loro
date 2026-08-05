@@ -1044,6 +1044,7 @@ const B = {
   home: $("bHome"), docWrap: $("bDocWrap"), doc: $("brainDoc"),
   crumb: $("bCrumb"), badge: $("bBadge"), modes: $("bModes"),
   viewBtn: $("bViewBtn"), editBtn2: $("bEditBtn"), editHost: $("bEditHost"),
+  editBar: $("bEditBar"),
   gitBadge: $("bGit"),
   wsTabs: $("wsTabs"), wsBody: $("wsBody"),
   cmdk: $("cmdk"), cmdkInput: $("cmdkInput"), cmdkList: $("cmdkList"),
@@ -1051,7 +1052,8 @@ const B = {
   findPrev: $("bFindPrev"), findNext: $("bFindNext"), findClose: $("bFindClose"),
   stInbox: $("stInbox"), stDone: $("stDone"), stCtx: $("stCtx"), stSrc: $("stSrc"),
   activity: $("brainActivity"),
-  editWrap: $("editWrap"), editArea: $("editArea"), editTitle: $("editTitle"),
+  editWrap: $("editWrap"), editTitle: $("editTitle"),
+  editModalBar: $("editModalBar"), editModalHost: $("editModalHost"),
   editSave: $("editSave"), editCancel: $("editCancel"), editClose: $("editClose"),
 };
 let brainTab = false, brainPoll = null, brainDir = "", lastSt = null, brainVisHook = false;
@@ -1172,23 +1174,39 @@ if (el.liveExpand) el.liveExpand.addEventListener("click", () => setLivePanel(el
 el.liveCollapse.addEventListener("click", () => setLivePanel(false));
 
 // ---- editor reutilizável (pendentes da fila / instruções do loop) ----
-let editOnSave = null;
+// ADR-0016: o modal usa o mesmo CM6 (e a mesma barra) da aba do Studio. O handle
+// é criado a cada abertura e destruído no fechamento — o modal não guarda buffer.
+let editOnSave = null, editCm = null;
 function openEditor(title, content, onSave) {
   B.editTitle.textContent = title;
-  B.editArea.value = content || "";
   editOnSave = onSave;
   B.editWrap.hidden = false;
-  B.editArea.focus();
+  if (editCm) { try { editCm.destroy(); } catch (_) {} editCm = null; }
+  editCm = window.LoroCM6.create({
+    parent: B.editModalHost,
+    doc: content || "",
+    theme: cmTheme(),
+    onSave: () => saveEditor(),
+  });
+  wireMdKeys(editCm);
+  wireMdBar(B.editModalBar, () => editCm);
+  requestAnimationFrame(() => editCm && editCm.focus());
 }
-function closeEditor() { B.editWrap.hidden = true; editOnSave = null; }
+function closeEditor() {
+  B.editWrap.hidden = true;
+  editOnSave = null;
+  if (editCm) { try { editCm.destroy(); } catch (_) {} editCm = null; }
+}
 B.editClose.addEventListener("click", closeEditor);
 B.editCancel.addEventListener("click", closeEditor);
 B.editWrap.addEventListener("click", (e) => { if (e.target === B.editWrap) closeEditor(); });
-B.editSave.addEventListener("click", async () => {
+async function saveEditor() {
   if (!editOnSave) return closeEditor();
-  try { await editOnSave(B.editArea.value); closeEditor(); sideSig = ""; brainRefresh(); }
+  const value = editCm ? editCm.getValue() : "";
+  try { await editOnSave(value); closeEditor(); sideSig = ""; brainRefresh(); }
   catch (e) { toast(tErr(String(e))); clog("editor save error: " + e); }
-});
+}
+B.editSave.addEventListener("click", saveEditor);
 $("guideBtn").addEventListener("click", () => openGuideDoc());
 // ADR-0005 (owner request): the hero's "perguntar ao acervo" button became the
 // generic "executar habilidade" picker — perguntar ao acervo is one entry in
@@ -2952,6 +2970,61 @@ async function readDoc(rel) {
   }
 }
 
+// ---- barra de formatação markdown (ADR-0016) --------------------------------
+// Markdown-aware, não WYSIWYG: o botão aplica ao buffer CM6 a edição mínima que
+// LoroMdEdit devolve, então o arquivo em disco continua sendo markdown escrito
+// por humano — diff de git limpo e âncoras de anotação (ADR-0007) intactas.
+const MD = window.LoroMdEdit;
+
+function applyMdAction(h, action) {
+  if (!h) return;
+  const sel = h.view.state.selection.main;
+  const edit = MD.apply(h.getValue(), sel.anchor, sel.head, action);
+  if (!edit) return;
+  h.view.dispatch({ changes: edit.changes, selection: edit.selection, scrollIntoView: true });
+  h.focus();
+}
+
+// Uma barra, duas superfícies (aba do Studio e editor modal): `getHandle`
+// resolve o CM6 ativo naquela superfície no momento do clique.
+function wireMdBar(bar, getHandle) {
+  if (!bar || bar.dataset.wired) return;
+  bar.dataset.wired = "1";
+  let group = null;
+  MD.ACTIONS.forEach((a) => {
+    if (group !== null && a.group !== group) {
+      const sep = document.createElement("span");
+      sep.className = "mdsep";
+      bar.appendChild(sep);
+    }
+    group = a.group;
+    const b = document.createElement("button");
+    b.type = "button";
+    b.dataset.md = a.action;
+    b.textContent = a.label;
+    b.title = t(a.title);
+    // deixa o tooltip sob o applyI18n: uma troca de idioma o retraduz sozinha
+    b.dataset.i18nAttrs = "title";
+    b.dataset.i18nSrcTitle = a.title;
+    // o mousedown roubaria o foco (e a seleção) do editor antes do clique
+    b.addEventListener("mousedown", (e) => e.preventDefault());
+    b.addEventListener("click", () => applyMdAction(getHandle(), a.action));
+    bar.appendChild(b);
+  });
+}
+
+// ⌘B/⌘I/⌘K na captura: no WKWebView o atalho nativo aplicaria negrito/itálico
+// como HTML dentro do contenteditable do CM6, sujando o buffer.
+function wireMdKeys(h) {
+  h.view.dom.addEventListener("keydown", (e) => {
+    if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
+    const action = MD.KEYS["Mod-" + e.key.toLowerCase()];
+    if (!action) return;
+    e.preventDefault();
+    applyMdAction(h, action);
+  }, true);
+}
+
 // ---- editor fiel (CodeMirror 6, ADR-0008): um handle por aba em cmById ----
 // dirty is the unsaved-buffer dot: cleared by save, set on divergence from disk.
 function onEditorChange(id, value) {
@@ -3004,10 +3077,13 @@ async function mountEditor(tab, stale) {
       onChange: (v) => onEditorChange(tab.id, v),
       onSave: (v) => saveTab(tab.id, v),
     });
+    wireMdKeys(h);
     cmById.set(tab.id, h);
   }
   B.doc.hidden = true;
   B.editHost.hidden = false;
+  wireMdBar(B.editBar, () => cmById.get(activeTab() ? activeTab().id : null));
+  B.editBar.hidden = false;
   B.wsBody.classList.add("editing"); // ADR-0008: editor ocupa o painel inteiro
   // show only the active tab's editor within the shared host
   cmById.forEach((hh, id) => { hh.view.dom.style.display = id === tab.id ? "" : "none"; });
@@ -3027,6 +3103,7 @@ async function renderView(tab, stale) {
     ? t("_Sem instruções ainda. Escreva orientações que o loop seguirá antes de processar a fila._")
     : "";
   B.editHost.hidden = true;
+  B.editBar.hidden = true;
   B.doc.hidden = false;
   B.wsBody.classList.remove("editing");
   // ADR-0009: strip the leading YAML front-matter and surface it as a collapsible
@@ -3110,6 +3187,7 @@ function renderRefsPanel(fm) {
 async function renderMeetingLiving(tab, stale) {
   const id = LM.livingId(tab.rel);
   B.editHost.hidden = true;
+  B.editBar.hidden = true;
   B.doc.hidden = false;
   B.wsBody.classList.remove("editing");
   fmById.set(tab.id, null);

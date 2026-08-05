@@ -707,6 +707,22 @@
     "mais preciso — melhor com sotaques e ruído (download maior)": "more accurate — better with accents and noise (larger download)",
     "mais rápido e leve — bom para notas rápidas do dia a dia": "faster and lighter — good for quick day-to-day notes",
     "a transcrição roda 100% no seu computador — os modelos ficam em ~/.loro/models e são baixados sob demanda, verificados por SHA-256": "transcription runs 100% on your computer — models live in ~/.loro/models and are downloaded on demand, verified by SHA-256",
+    // ADR-0016: tooltips da barra de formatação markdown
+    "negrito (⌘B)": "bold (⌘B)",
+    "itálico (⌘I)": "italic (⌘I)",
+    "riscado": "strikethrough",
+    "título 1": "heading 1",
+    "título 2": "heading 2",
+    "título 3": "heading 3",
+    "lista": "bulleted list",
+    "checklist": "checklist",
+    "lista numerada": "numbered list",
+    "citação": "quote",
+    "código": "code",
+    "link (⌘K)": "link (⌘K)",
+    "inserir tabela": "insert table",
+    "bloco de código": "code block",
+    "linha separadora": "horizontal rule",
   };
 
   let lang = "pt";

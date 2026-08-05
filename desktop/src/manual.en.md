@@ -115,6 +115,14 @@ palette: `Cmd/Ctrl+Shift+P` → "Loro tour".
   everywhere these actions exist — meeting, regular document, acervo header.
   In **edit mode** the editor fills the whole panel and the rail is hidden;
   the actions stay available in view mode.
+- **Formatting bar in edit mode:** above the editor there are buttons for
+  **bold** (⌘B), *italic* (⌘I), strikethrough, headings (H1/H2/H3), bulleted
+  list, checklist, numbered list, quote, code, link (⌘K), table, code block
+  and horizontal rule. They write the markdown syntax at the cursor (or wrap
+  the selection) and undo it when you click again on text that is already
+  formatted — the file stays readable markdown, so the git history shows only
+  what you actually changed. The same bar appears in the editor for queue
+  drafts and loop instructions, where **⌘S** saves.
 - The **analyse**, **ask…**, **view report** and **send to queue** actions
   live in the meeting's **⋯** menu in the sidebar. **Ask…** already works
   while the meeting is still recording; the other three enable once the

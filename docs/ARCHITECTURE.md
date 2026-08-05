@@ -286,3 +286,4 @@ All technical decisions are consolidated in the single **`docs/adr/0001-baseline
 | Terminal launch/status | `active_agent()` used for auto-launch (not hardcoded); `justLaunched` grace window avoids retyping into a live session | ADR-0005 |
 | Distribution | Homebrew Cask (`brew install --cask loro`) with `whisper-cpp`+`ffmpeg` as formula deps; tap `aipi/homebrew-loro` bumped by release CI | ADR-0006 |
 | First-run models | not bundled; downloaded on demand over HTTPS, verified by pinned SHA-256, atomic install into `~/.loro/models` | ADR-0006 |
+| Edit-mode formatting | markdown-aware bar (not WYSIWYG): pure `LoroMdEdit.apply(doc, anchor, head, action)` → CM6 `{changes, selection}`; `⌘B`/`⌘I`/`⌘K` captured off the editor DOM; same bar + CM6 in the Studio tab and the modal editor | ADR-0016 |

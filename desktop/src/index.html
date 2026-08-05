@@ -225,6 +225,9 @@
               <div class="docbody">
                 <div class="docmain">
                   <div id="brainDoc" class="doc reader"></div>
+                  <!-- barra de formatação markdown (ADR-0016); os botões são
+                       renderizados de LoroMdEdit.ACTIONS -->
+                  <div id="bEditBar" class="mdbar" hidden></div>
                   <!-- editor fiel CodeMirror 6 (ADR-0008); um handle por aba, montado aqui -->
                   <div id="bEditHost" class="edithost" hidden></div>
                 </div>
@@ -250,7 +253,10 @@
               <span id="editTitle" class="mono sheet-title" data-i18n>editar</span>
               <button id="editClose" class="glyph" aria-label="Fechar" data-i18n-attrs="aria-label">×</button>
             </div>
-            <textarea id="editArea" class="editarea" spellcheck="false"></textarea>
+            <!-- ADR-0016: o modal usa o mesmo CM6 e a mesma barra da aba do
+                 Studio (era um textarea cru) -->
+            <div id="editModalBar" class="mdbar"></div>
+            <div id="editModalHost" class="edithost"></div>
             <div class="editbar">
               <button id="editSave" class="primary" data-i18n>salvar</button>
               <button id="editCancel" class="link mono muted" data-i18n>cancelar</button>
@@ -418,6 +424,7 @@
     <script src="vendor/addon-fit.js"></script>
     <script src="vendor/cm6.js"></script>
     <script src="text.js"></script>
+    <script src="mdedit.js"></script>
     <script src="i18n.js"></script>
     <script src="workspace.js"></script>
     <script src="fuzzy.js"></script>
