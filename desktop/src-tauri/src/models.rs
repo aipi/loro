@@ -232,7 +232,10 @@ mod tests {
         let p = d.join("ggml-tiny-fixture.bin");
         std::fs::write(&p, vec![0u8; 64]).unwrap();
         assert!(is_complete(&p, 64));
-        assert!(!is_complete(&p, 65), "a longer file is not the model either");
+        assert!(
+            !is_complete(&p, 65),
+            "a longer file is not the model either"
+        );
     }
 
     #[test]
