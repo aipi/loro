@@ -100,7 +100,7 @@ OS/serde errors may still pass through and are shown untranslated.
 | `save_transcript` | `content` | path or `null` | native save dialog + write |
 | `auto_save` | `content, dir, filename` | path | silent save to the configured folder |
 | `list_capture_devices` | — | `[{index,name}]` | enumerate capture devices (for `-c`) |
-| `list_models` | — | `[{id,label,sizeBytes,installed,default}]` | the transcription models Loro uses, each flagged installed or missing, for the first-run model manager (ADR-0006) |
+| `list_models` | — | `[{id,label,sizeBytes,installed,default}]` | the transcription models Loro uses, each flagged installed or missing, for the first-run model manager (ADR-0006). `installed` means the file is *whole* — its size matches the pinned `spec.size`, so a truncated download reads as missing |
 | `download_model` | `model` | `()` / err | download a catalog model into `~/.loro/models` over HTTPS (system `curl`), verify its pinned SHA-256, install atomically; emits `model-download-progress` (ADR-0006). Idempotent |
 | `brain_get_config` / `brain_setup` / `brain_add_context` / `brain_remove_context` | … | config | acervo config lifecycle; `brain_setup` takes `template?` (usage preset id, ADR-0003) and `agent?` (per-acervo AI CLI command, default `claude`) |
 | `brain_list_templates` | `lang?` | `[{id,name,description,contexts,builtin,dir?}]` | usage templates for the wizard (ADR-0003): builtins + `~/.loro/templates`, localized |
@@ -253,7 +253,10 @@ model presence and permissions. Logging rules: ADR-0001 §3 (BR-8).
 - No secrets requested or persisted (BR-9); no personal paths in code.
 - Model downloads are HTTPS-only and verified against a pinned SHA-256 before
   install (ADR-0006), so a compromised mirror or MITM cannot substitute the
-  model file; the only host contacted is the model mirror.
+  model file; the only host contacted is the model mirror. Both the app and
+  `loro.sh` stream into a temp file and move it into place only once verified,
+  and a model is only *used* when its size matches the pinned one — a partial
+  download can never become the active model.
 - Remote collaboration is opt-in and credential-free: `git`/`gh` run with fixed
   argument tokens (never a shell), branch slugs are sanitized to `[a-z0-9-]`, and
   the environment doctor reads only booleans/versions/public login — tokens are
@@ -285,5 +288,5 @@ All technical decisions are consolidated in the single **`docs/adr/0001-baseline
 | `autoContext` | per-acervo `.loro/settings.json` gate on the loop creating a brand-new context; toggle in wizard + Settings | ADR-0005 |
 | Terminal launch/status | `active_agent()` used for auto-launch (not hardcoded); `justLaunched` grace window avoids retyping into a live session | ADR-0005 |
 | Distribution | Homebrew Cask (`brew install --cask loro`) with `whisper-cpp`+`ffmpeg` as formula deps; tap `aipi/homebrew-loro` bumped by release CI | ADR-0006 |
-| First-run models | not bundled; downloaded on demand over HTTPS, verified by pinned SHA-256, atomic install into `~/.loro/models` | ADR-0006 |
+| First-run models | not bundled; downloaded on demand over HTTPS, verified by pinned SHA-256, atomic install into `~/.loro/models`; a model is only used when whole | ADR-0006 |
 | Edit-mode formatting | markdown-aware bar (not WYSIWYG): pure `LoroMdEdit.apply(doc, anchor, head, action)` → CM6 `{changes, selection}`; `⌘B`/`⌘I`/`⌘K` captured off the editor DOM; same bar + CM6 in the Studio tab and the modal editor | ADR-0016 |
