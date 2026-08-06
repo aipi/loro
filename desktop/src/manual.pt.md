@@ -71,6 +71,12 @@ quando quiser pela paleta: `Cmd/Ctrl+Shift+P` → "apresentação do Loro".
   final, com mais fidelidade).
 - O áudio é **transitório**: usado para transcrever e descartado. O indicador
   de privacidade na barra mostra o estado ("sem gravar" / "grava áudio").
+- **Nada aparece enquanto você fala?** A transcrição ao vivo sai por trecho: o
+  whisper só fecha um trecho quando detecta uma **pausa** na fala. Em ambiente
+  com som contínuo (música, uma reunião no viva-voz, ar-condicionado) essa
+  pausa nunca é detectada e nada é transcrito — sem erro nenhum. Aumente
+  **sensibilidade da fala** em Configurações (⚙) → *captura*. O padrão é 0.85;
+  suba em direção a 1.00 se nada aparecer, desça se o Loro transcrever ruído.
 
 ## Brainstorming (o mundo não versionado)
 

@@ -90,7 +90,7 @@ OS/serde errors may still pass through and are shown untranslated.
 
 | Command | Args | Returns | Purpose |
 |---|---|---|---|
-| `start` | `cfg {model, lang, translate, threads, capture?}` | `()` / err | spawn the streaming engine (live mode) |
+| `start` | `cfg {model, lang, translate, threads, capture?, vadThold?}` | `()` / err | spawn the streaming engine (live mode). `vadThold` is whisper-stream's `-vth` (speech-detection sensitivity, Settings → capture); omitted or out of range it is clamped to `[0.3, 1.0]` with a `0.85` default — `0.6` (whisper.cpp's own) never fires in a room with continuous sound, so the app recorded without transcribing |
 | `stop` | — | `()` | terminate the engine process (live mode) |
 | `transcribe_file` | `path, cfg {model, lang, translate, threads}` | `()` / err | file mode: converts `path` to 16kHz mono WAV (ffmpeg) and transcribes it whole with `whisper-cli` (no VAD); runs off the main thread, streams results via `transcript-line`/`transcribe-state`/`transcribe-error` |
 | `start_system_capture` | — | wavPath / err | meeting mode (ADR-0001 §2): spawn the ScreenCaptureKit sidecar recording system audio to a WAV; errors fast on a denied Screen Recording permission |

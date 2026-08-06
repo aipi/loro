@@ -661,7 +661,10 @@
     "sem histórico": "no history",
     "sem sinal": "no signal",
     "sem transcrição — não houve fala capturada nesta reunião.": "no transcript — no speech was captured in this meeting.",
+    "se nada for transcrito, aumente — a fala só é detectada por pausas, e som de fundo contínuo exige um valor maior":
+      "if nothing gets transcribed, raise it — speech is detected by pauses, and continuous background sound needs a higher value",
     "sempre no topo": "always on top",
+    "sensibilidade da fala": "speech sensitivity",
     "será apagado": "will be deleted",
     "será preparado (staged) em referencias/ e mesclado no context.md:": "will be staged in referencias/ and merged into context.md:",
     "Seu Nome\nseu@email": "Your Name\nyour@email",

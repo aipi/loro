@@ -380,6 +380,10 @@
           <label class="opt"><input type="checkbox" id="translate" /> <span data-i18n>traduzir para inglês</span></label>
 
           <h3 class="sect mono" data-i18n>captura</h3>
+          <label class="field"><span class="mono" data-i18n>sensibilidade da fala</span>
+            <input type="range" id="vadThold" min="0.3" max="1" step="0.05" />
+          </label>
+          <p class="hint"><span class="mono" id="vadTholdVal">0.85</span> · <span data-i18n>se nada for transcrito, aumente — a fala só é detectada por pausas, e som de fundo contínuo exige um valor maior</span></p>
           <label class="opt"><input type="checkbox" id="optScroll" checked /> <span data-i18n>auto-scroll</span></label>
           <label class="opt"><input type="checkbox" id="optTop" /> <span data-i18n>sempre no topo</span></label>
           <label class="opt"><input type="checkbox" id="optOverlay" /> <span data-i18n>modo legenda flutuante</span></label>

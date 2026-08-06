@@ -1,7 +1,7 @@
 // Testes da seleção de dispositivo de captura (node --test). Sem dependências.
 const test = require("node:test");
 const assert = require("node:assert");
-const { pickCaptureDevice, loopbackPattern } = require("../src/audio.js");
+const { pickCaptureDevice, loopbackPattern, clampVadThold, VAD_MIN, VAD_MAX, VAD_DEFAULT } = require("../src/audio.js");
 
 const DEVS = [
   { index: 0, name: "Microfone (MacBook Pro)" },
@@ -69,4 +69,32 @@ test("loopbackPattern é um regex válido em toda plataforma conhecida", () => {
   for (const os of ["macos", "windows", "linux", undefined]) {
     assert.doesNotThrow(() => new RegExp(loopbackPattern(os), "i"));
   }
+});
+
+// Sensibilidade do VAD. A regressão: o -vth ficava fixo em 0.6 (padrão do
+// whisper.cpp), que exige uma queda acentuada de energia. Com som de fundo
+// contínuo o gatilho nunca disparava e o app gravava sem transcrever nada.
+test("o padrão do VAD é mais permissivo que o 0.6 que causava silêncio", () => {
+  assert.strictEqual(clampVadThold(undefined), VAD_DEFAULT);
+  assert.ok(VAD_DEFAULT > 0.6, `padrão ${VAD_DEFAULT} deve superar 0.6`);
+});
+
+test("um valor configurado dentro da faixa passa intacto", () => {
+  for (const v of [0.3, 0.5, 0.85, 1]) assert.strictEqual(clampVadThold(v), v);
+});
+
+test("valor fora da faixa é preso, nunca chega ao whisper como está", () => {
+  assert.strictEqual(clampVadThold(-1), VAD_MIN);
+  assert.strictEqual(clampVadThold(12), VAD_MAX);
+  assert.strictEqual(clampVadThold(0), VAD_MIN);
+});
+
+test("valor não-numérico cai no padrão", () => {
+  for (const v of [null, undefined, "", "abc", NaN, {}]) {
+    assert.strictEqual(clampVadThold(v), VAD_DEFAULT, `entrada ${String(v)}`);
+  }
+});
+
+test("string numérica do slider é aceita", () => {
+  assert.strictEqual(clampVadThold("0.75"), 0.75);
 });

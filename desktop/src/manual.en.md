@@ -73,6 +73,12 @@ palette: `Cmd/Ctrl+Shift+P` → "Loro tour".
   the end, with better fidelity).
 - Audio is **transient**: used to transcribe, then discarded. The privacy
   indicator in the bar shows the state ("not recording" / "records audio").
+- **Nothing showing up while you speak?** Live transcription comes out in
+  chunks: whisper closes a chunk only when it detects a **pause** in speech. In
+  a room with continuous sound (music, a meeting on speaker, air conditioning)
+  that pause is never detected and nothing is transcribed — with no error at
+  all. Raise **speech sensitivity** in Settings (⚙) → *capture*. The default is
+  0.85; go towards 1.00 if nothing appears, lower it if Loro transcribes noise.
 
 ## Brainstorming (the non-versioned world)
 

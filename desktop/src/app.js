@@ -34,6 +34,7 @@ const el = {
   autosave: $("autosave"), pickDir: $("pickDir"), source: $("source"), mode: $("mode"),
   liveExpand: $("liveExpand"), liveCollapse: $("liveCollapse"), uiLang: $("uiLang"),
   modelManager: $("modelManager"),
+  vadThold: $("vadThold"), vadTholdVal: $("vadTholdVal"),
 };
 
 // ---- i18n da interface (pt/en) ----
@@ -108,6 +109,11 @@ const DEFAULTS = {
   autoscroll: true, autosave: false, saveDir: "", source: "mic", mode: "live", uiLang: "pt", termSide: false,
   sideW: 0, // sidebar width in px; 0 = the default CSS clamp (ADR-0002 §6)
   welcomeSeen: false, // first-launch feature tour (reopen via palette)
+  // whisper-stream transcribes when speech PAUSES: the last second's energy has
+  // to fall below vadThold × the preceding average. whisper.cpp's 0.6 was
+  // hardcoded here and never fired in rooms with continuous sound — recording
+  // ran forever and produced nothing. The right value depends on the room.
+  vadThold: LoroAudio.VAD_DEFAULT,
 };
 let settings = { ...DEFAULTS };
 function loadSettings() {
@@ -129,9 +135,25 @@ function applySettings() {
   el.pickDir.textContent = settings.saveDir || "…";
   el.pickDir.title = settings.saveDir || t("Escolher pasta de armazenamento");
   if (el.uiLang) el.uiLang.value = settings.uiLang;
+  applyVadThold();
   applySideWidth();
   applyI18n();
 }
+
+// The slider and its readout; a stored value out of range (hand-edited
+// localStorage, or an older build) falls back rather than reaching whisper.
+function applyVadThold() {
+  const v = clampVad(settings.vadThold);
+  settings.vadThold = v;
+  if (el.vadThold) {
+    // bounds from the module, so the markup cannot drift from clampVadThold
+    el.vadThold.min = String(LoroAudio.VAD_MIN);
+    el.vadThold.max = String(LoroAudio.VAD_MAX);
+    el.vadThold.value = String(v);
+  }
+  if (el.vadTholdVal) el.vadTholdVal.textContent = v.toFixed(2);
+}
+const clampVad = (v) => LoroAudio.clampVadThold(v);
 
 // ADR-0002 §6 — sidebar width: 0 keeps the CSS clamp default; any px value is
 // user-chosen (drag grip), clamped to [180, 45vw]. Wide sidebars reveal the
@@ -391,7 +413,10 @@ function meterLabelFor(source) {
 
 // ---- start / stop ----
 function currentCfg() {
-  return { model: el.model.value, lang: el.lang.value, translate: el.translate.checked, threads: 8 };
+  return {
+    model: el.model.value, lang: el.lang.value, translate: el.translate.checked, threads: 8,
+    vadThold: clampVad(settings.vadThold),
+  };
 }
 async function startSession() {
   if (state.running) return;
@@ -1014,6 +1039,11 @@ el.mode.addEventListener("change", () => { settings.mode = el.mode.value; persis
 el.model.addEventListener("change", () => { settings.model = el.model.value; persistSettings(); updateCfgLabel(); });
 el.lang.addEventListener("change", () => { settings.lang = el.lang.value; persistSettings(); updateCfgLabel(); });
 el.translate.addEventListener("change", () => { settings.translate = el.translate.checked; persistSettings(); });
+if (el.vadThold) el.vadThold.addEventListener("input", () => {
+  settings.vadThold = clampVad(el.vadThold.value);
+  if (el.vadTholdVal) el.vadTholdVal.textContent = settings.vadThold.toFixed(2);
+  persistSettings();
+});
 el.autosave.addEventListener("change", async (e) => {
   settings.autosave = e.target.checked; persistSettings(); updatePrivacy();
   if (settings.autosave && !settings.saveDir) {

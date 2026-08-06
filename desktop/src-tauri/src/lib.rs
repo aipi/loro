@@ -331,7 +331,15 @@ fn stream_args(
     translate: bool,
     threads: &str,
     capture: Option<i32>,
+    vad_thold: Option<f32>,
 ) -> Vec<String> {
+    // Clamped, not trusted: a stray 12, -1 or 0 would silently disable
+    // transcription in the same undiagnosable way the hardcoded 0.6 did. NaN
+    // has no meaningful clamp, so it falls back to the default.
+    let vth = match vad_thold {
+        Some(v) if v.is_finite() => v.clamp(VAD_MIN, VAD_MAX),
+        _ => DEFAULT_VAD_THOLD,
+    };
     let mut a = vec![
         "-m".into(),
         model_path.into(),
@@ -342,7 +350,7 @@ fn stream_args(
         "--length".into(),
         "5000".into(),
         "-vth".into(),
-        "0.6".into(),
+        format!("{vth}"),
         "-t".into(),
         threads.into(),
     ];
@@ -397,7 +405,30 @@ pub(crate) struct StartCfg {
     threads: Option<u32>,
     #[serde(default)]
     capture: Option<i32>, // device index (system audio); None = mic
+    // JS sends camelCase (CLAUDE.md §6); the struct has no rename_all, so this
+    // one multi-word field says so itself.
+    #[serde(default, rename = "vadThold")]
+    vad_thold: Option<f32>, // speech-detection sensitivity; None = DEFAULT_VAD_THOLD
 }
+
+// whisper-stream's VAD decides to transcribe when the last second's energy
+// drops below `vth ×` the average of the preceding two — it waits for a PAUSE.
+// whisper.cpp's own default (0.6) demands a steep drop, so in a room with any
+// continuous sound the trigger never fires and the app records forever without
+// emitting a line: no error, nothing in the log. Measured on one such machine
+// (~30 s of speech each, chars transcribed): 0.6 → 0, 0.8 → 102, 0.85 → 815,
+// 0.95 → 2056.
+//
+// 0.85 is the default because the failure modes are not symmetric: too low is
+// silence the user cannot diagnose, too high is noise they can see and turn
+// down. The right value is a property of the room, which is why this is a
+// setting (`loro.sh` has always had it as VAD_THOLD; only the app hardcoded it).
+pub(crate) const DEFAULT_VAD_THOLD: f32 = 0.85;
+// Mirrors LoroAudio.VAD_MIN/VAD_MAX (audio.js), which bounds the slider. The
+// backend clamps too rather than trusting the caller: 0.0 is inside whisper's
+// nominal 0..1 but means "never fire", i.e. the very silence this fixes.
+pub(crate) const VAD_MIN: f32 = 0.3;
+pub(crate) const VAD_MAX: f32 = 1.0;
 
 #[derive(serde::Serialize)]
 struct CaptureDevice {
@@ -522,6 +553,7 @@ fn start(app: AppHandle, state: State<AppState>, cfg: StartCfg) -> Result<(), St
         cfg.translate,
         &threads,
         cfg.capture,
+        cfg.vad_thold,
     );
     let mut command = proc::command(&bin);
     command
@@ -3911,7 +3943,7 @@ mod tests {
 
     #[test]
     fn stream_args_includes_translation_when_enabled() {
-        let a = stream_args("/m.bin", "pt", true, "8", None);
+        let a = stream_args("/m.bin", "pt", true, "8", None, None);
         assert!(a.contains(&"-tr".to_string()));
         assert!(a.windows(2).any(|w| w[0] == "-l" && w[1] == "pt"));
         assert!(a.windows(2).any(|w| w[0] == "-m" && w[1] == "/m.bin"));
@@ -3919,21 +3951,71 @@ mod tests {
 
     #[test]
     fn stream_args_has_no_translation_by_default() {
-        let a = stream_args("/m.bin", "pt", false, "4", None);
+        let a = stream_args("/m.bin", "pt", false, "4", None, None);
         assert!(!a.contains(&"-tr".to_string()));
         assert!(a.windows(2).any(|w| w[0] == "-t" && w[1] == "4"));
     }
 
     #[test]
     fn stream_args_default_mic_has_no_c_flag() {
-        let a = stream_args("/m.bin", "pt", false, "8", None);
+        let a = stream_args("/m.bin", "pt", false, "8", None, None);
         assert!(!a.contains(&"-c".to_string()));
     }
 
     #[test]
     fn stream_args_system_audio_uses_c() {
-        let a = stream_args("/m.bin", "pt", false, "8", Some(2));
+        let a = stream_args("/m.bin", "pt", false, "8", Some(2), None);
         assert!(a.windows(2).any(|w| w[0] == "-c" && w[1] == "2"));
+    }
+
+    // The bug this replaces: -vth was pinned to whisper.cpp's 0.6, which needs a
+    // steep energy drop to fire. With any continuous room sound the VAD never
+    // triggered and the app transcribed nothing, silently.
+    fn vth_of(a: &[String]) -> String {
+        a.windows(2)
+            .find(|w| w[0] == "-vth")
+            .map(|w| w[1].clone())
+            .expect("-vth is always passed")
+    }
+
+    #[test]
+    fn stream_args_defaults_the_vad_threshold_above_whisper_default() {
+        let a = stream_args("/m.bin", "pt", false, "8", None, None);
+        assert_eq!(vth_of(&a), DEFAULT_VAD_THOLD.to_string());
+        assert_ne!(vth_of(&a), "0.6", "0.6 is the value that produced silence");
+    }
+
+    #[test]
+    fn stream_args_honors_a_configured_vad_threshold() {
+        let a = stream_args("/m.bin", "pt", false, "8", None, Some(0.35));
+        assert_eq!(vth_of(&a), "0.35");
+    }
+
+    #[test]
+    fn stream_args_passes_the_range_bounds_through() {
+        for v in [VAD_MIN, VAD_MAX] {
+            let a = stream_args("/m.bin", "pt", false, "8", None, Some(v));
+            assert_eq!(vth_of(&a), v.to_string());
+        }
+    }
+
+    // Out of range is clamped, not forwarded. 0.0 matters most: it sits inside
+    // whisper's nominal 0..1 yet means "never fire" — the same silent failure
+    // the hardcoded 0.6 caused, arriving through the new setting.
+    #[test]
+    fn stream_args_clamps_an_out_of_range_vad_threshold() {
+        for (bad, want) in [(-1.0f32, VAD_MIN), (0.0, VAD_MIN), (12.0, VAD_MAX)] {
+            let a = stream_args("/m.bin", "pt", false, "8", None, Some(bad));
+            assert_eq!(vth_of(&a), want.to_string(), "{bad} should clamp");
+        }
+    }
+
+    // NaN has no meaningful clamp (f32::clamp panics on a NaN bound and returns
+    // NaN for a NaN value), so it takes the default instead.
+    #[test]
+    fn stream_args_falls_back_when_the_vad_threshold_is_not_a_number() {
+        let a = stream_args("/m.bin", "pt", false, "8", None, Some(f32::NAN));
+        assert_eq!(vth_of(&a), DEFAULT_VAD_THOLD.to_string());
     }
 
     // Settings surfaces the version so the user can tell an update landed: the

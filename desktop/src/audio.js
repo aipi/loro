@@ -40,5 +40,26 @@
     return { capture: undefined };
   }
 
-  return { pickCaptureDevice, loopbackPattern };
+  // Sensibilidade da detecção de fala (-vth do whisper-stream). O whisper
+  // transcreve quando a fala PAUSA: a energia do último segundo tem de cair
+  // abaixo de vth × a média dos anteriores. O 0.6 do whisper.cpp ficava fixo no
+  // código e nunca disparava em sala com som contínuo — a gravação rodava sem
+  // emitir nada, sem erro. O valor certo depende da sala, por isso é ajustável;
+  // o padrão é alto porque falhar para cima gera ruído visível, e falhar para
+  // baixo gera silêncio que o usuário não tem como diagnosticar.
+  const VAD_MIN = 0.3, VAD_MAX = 1, VAD_DEFAULT = 0.85;
+
+  // Função pura: prende o valor na faixa e cai no padrão se não for número.
+  // Um valor fora da faixa desligaria a transcrição tão silenciosamente quanto
+  // o 0.6 fixo, então ele nunca chega ao whisper.
+  function clampVadThold(v) {
+    // ausente é ausente: Number(null) e Number("") são 0, e cair no piso da
+    // faixa por omissão daria o valor MENOS sensível — de volta ao silêncio.
+    if (v === null || v === undefined || v === "") return VAD_DEFAULT;
+    const n = Number(v);
+    if (!Number.isFinite(n)) return VAD_DEFAULT;
+    return Math.min(VAD_MAX, Math.max(VAD_MIN, n));
+  }
+
+  return { pickCaptureDevice, loopbackPattern, clampVadThold, VAD_MIN, VAD_MAX, VAD_DEFAULT };
 });
