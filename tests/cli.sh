@@ -152,5 +152,44 @@ for m in small large-v3-turbo; do
   esac
 done
 
+# --- the version must be the same in every file that carries it --------------
+#
+# tauri.conf.json is canonical (release.yml reads it), but four other files
+# repeat the number. package.json and package-lock.json were left out of
+# prepare-release.sh and drifted to 0.7.0 while the app shipped 0.9.1 — nothing
+# broke, which is exactly why nobody noticed. Asserting it here means the next
+# release PR goes red instead of drifting.
+versions="$(
+  python3 - "$ROOT" <<'PY'
+import json, re, sys
+root = sys.argv[1]
+def j(path, *keys):
+    d = json.load(open(f"{root}/{path}"))
+    for k in keys:
+        d = d[k]
+    return path, d
+out = [
+    j("desktop/src-tauri/tauri.conf.json", "version"),
+    j("desktop/package.json", "version"),
+    j("desktop/package-lock.json", "version"),
+    j("desktop/package-lock.json", "packages", "", "version"),
+]
+toml = open(f"{root}/desktop/src-tauri/Cargo.toml").read()
+out.append(("desktop/src-tauri/Cargo.toml", re.search(r'(?m)^version = "([^"]+)"', toml).group(1)))
+lock = open(f"{root}/desktop/src-tauri/Cargo.lock").read()
+m = re.search(r'\[\[package\]\]\nname = "desktop"\nversion = "([^"]+)"', lock)
+out.append(("desktop/src-tauri/Cargo.lock", m.group(1)))
+for path, v in out:
+    print(f"{v}\t{path}")
+PY
+)"
+distinct="$(printf '%s\n' "$versions" | cut -f1 | sort -u | wc -l | tr -d ' ')"
+if [ "$distinct" = "1" ]; then
+  ok "every version file agrees ($(printf '%s\n' "$versions" | head -1 | cut -f1))"
+else
+  bad "version files disagree:"
+  printf '%s\n' "$versions" | sed 's/^/         /' >&2
+fi
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
