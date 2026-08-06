@@ -60,7 +60,25 @@ PY
 # Cargo.lock — keep the `desktop` package entry in sync.
 cargo update -p desktop --manifest-path desktop/src-tauri/Cargo.toml --quiet
 
-git add desktop/src-tauri/tauri.conf.json desktop/src-tauri/Cargo.toml desktop/src-tauri/Cargo.lock
+# package.json + package-lock.json — the frontend's copy of the same version.
+# These were left out of the bump and drifted to 0.7.0 while the app shipped
+# 0.9.1. Nothing reads them at build time (release.yml takes the version from
+# tauri.conf.json), but a version file that lies is a trap for the next reader.
+# `tests/cli.sh` asserts all five agree, so this cannot silently drift again.
+python3 - "$VERSION" <<'PY'
+import json, sys
+V = sys.argv[1]
+p = "desktop/package.json"
+d = json.load(open(p)); d["version"] = V
+open(p, "w").write(json.dumps(d, indent=2, ensure_ascii=False) + "\n")
+p = "desktop/package-lock.json"
+d = json.load(open(p)); d["version"] = V
+d["packages"][""]["version"] = V
+open(p, "w").write(json.dumps(d, indent=2, ensure_ascii=False) + "\n")
+PY
+
+git add desktop/src-tauri/tauri.conf.json desktop/src-tauri/Cargo.toml desktop/src-tauri/Cargo.lock \
+        desktop/package.json desktop/package-lock.json
 git commit -q -m "chore(release): bump version to ${VERSION}"
 git push -q -u origin "$BRANCH"
 

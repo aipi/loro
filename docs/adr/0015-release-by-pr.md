@@ -13,8 +13,8 @@
 ### §1 A release is a PR whose merge ships
 
 `make release VERSION=x.y.z` (→ `scripts/prepare-release.sh`) opens the release:
-it branches `release/vX.Y.Z` off the latest `origin/main`, bumps the three
-version files in lockstep, commits `chore(release): bump version to X.Y.Z`, and
+it branches `release/vX.Y.Z` off the latest `origin/main`, bumps every version
+file in lockstep, commits `chore(release): bump version to X.Y.Z`, and
 opens a PR titled `release: vX.Y.Z`. The human reviews it (CI runs on the PR like
 any other) and merges it. Nothing else is done by hand.
 
