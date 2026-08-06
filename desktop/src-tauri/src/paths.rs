@@ -120,8 +120,15 @@ pub fn whisper_cli_bin() -> PathBuf {
     resolve_engine("WHISPER_CLI_BIN", "whisper-cli")
 }
 
+// Split out so a caller that resolves against a directory other than
+// `models_dir()` — models::is_installed_in, and its tests — cannot drift from
+// the naming used here.
+pub fn model_file_name(model: &str) -> String {
+    format!("ggml-{model}.bin")
+}
+
 pub fn model_path(model: &str) -> PathBuf {
-    models_dir().join(format!("ggml-{model}.bin"))
+    models_dir().join(model_file_name(model))
 }
 
 // System-audio capturer (ScreenCaptureKit sidecar, macOS — see ADR-0005). Unlike

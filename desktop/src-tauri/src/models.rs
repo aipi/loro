@@ -11,7 +11,7 @@
 // download never lands in the models dir. No new crate is added: integrity uses
 // the system `shasum`/`sha256sum`, matching the engine-is-a-system-tool stance.
 
-use crate::paths::{model_path, models_dir};
+use crate::paths::{model_file_name, model_path, models_dir};
 use std::path::Path;
 
 // A model Loro can use. Extensible: add a row to CATALOG for a new model.
@@ -57,8 +57,31 @@ pub fn spec(id: &str) -> Option<&'static ModelSpec> {
     CATALOG.iter().find(|m| m.id == id)
 }
 
+// A model counts as installed only when the whole file is there. Mere existence
+// is not enough: a download interrupted straight into the final path leaves a
+// truncated .bin that the app then loads as if it were the model, and whisper
+// aborts *after* the recording has started with "not all tensors loaded from
+// model file" — the user sees capture running and no transcript. Size is the
+// cheap half of the ADR-0006 integrity promise: one metadata() call, versus
+// rehashing 1.6 GB on every model-list refresh.
+fn is_complete(path: &Path, expected_size: u64) -> bool {
+    std::fs::metadata(path)
+        .map(|m| m.len() == expected_size)
+        .unwrap_or(false)
+}
+
+// A model outside the catalog has no pinned size to check against, so existence
+// is all we can assert — loro.sh's MODEL env accepts any ggml id.
+fn is_installed_in(dir: &Path, id: &str) -> bool {
+    let p = dir.join(model_file_name(id));
+    match spec(id) {
+        Some(s) => is_complete(&p, s.size),
+        None => p.is_file(),
+    }
+}
+
 pub fn is_installed(id: &str) -> bool {
-    model_path(id).is_file()
+    is_installed_in(&models_dir(), id)
 }
 
 // The catalog with per-model installed state, for the model manager UI.
@@ -185,6 +208,58 @@ mod tests {
             assert!(
                 m.sha256.chars().all(|c| c.is_ascii_hexdigit()),
                 "{} sha hex",
+                m.id
+            );
+        }
+    }
+
+    // The regression this guards: a `loro.sh setup` cut short by Ctrl-C left a
+    // 41 MB ggml-large-v3-turbo.bin (of 1.6 GB) at the final path; the app listed
+    // it as installed and every recording died inside whisper.
+    #[test]
+    fn a_truncated_model_file_does_not_count_as_installed() {
+        let d = scratch();
+        let size = spec("small").unwrap().size;
+        std::fs::write(d.join("ggml-small.bin"), vec![0u8; 1024]).unwrap();
+        assert!(!is_complete(&d.join("ggml-small.bin"), size));
+        assert!(!is_installed_in(&d, "small"));
+    }
+
+    #[test]
+    fn a_whole_model_file_counts_as_installed() {
+        let d = scratch();
+        // a one-row catalog stand-in: write exactly the pinned size
+        let p = d.join("ggml-tiny-fixture.bin");
+        std::fs::write(&p, vec![0u8; 64]).unwrap();
+        assert!(is_complete(&p, 64));
+        assert!(!is_complete(&p, 65), "a longer file is not the model either");
+    }
+
+    #[test]
+    fn a_missing_model_file_is_not_installed() {
+        let d = scratch();
+        assert!(!is_complete(&d.join("ggml-small.bin"), 1));
+        assert!(!is_installed_in(&d, "small"));
+    }
+
+    #[test]
+    fn a_model_outside_the_catalog_falls_back_to_existence() {
+        let d = scratch();
+        assert!(!is_installed_in(&d, "medium"));
+        std::fs::write(d.join("ggml-medium.bin"), b"x").unwrap();
+        assert!(is_installed_in(&d, "medium"));
+    }
+
+    // DRY guard: loro.sh cannot read the Rust catalog, so it repeats the pinned
+    // digests. This fails the build if the two ever drift apart.
+    #[test]
+    fn loro_sh_pins_every_catalog_sha256() {
+        let sh = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../loro.sh");
+        let src = std::fs::read_to_string(&sh).expect("loro.sh is readable from the crate");
+        for m in CATALOG {
+            assert!(
+                src.contains(m.sha256),
+                "loro.sh must pin the SHA-256 of {} (models.rs CATALOG)",
                 m.id
             );
         }
