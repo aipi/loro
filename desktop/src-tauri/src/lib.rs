@@ -304,6 +304,25 @@ async fn download_model(app: AppHandle, model: String) -> Result<(), String> {
     Ok(())
 }
 
+// The model file a transcription run will load, refusing anything that is not
+// the whole model. Existence alone was the old check, and a truncated download
+// passed it: whisper then aborted with "not all tensors loaded from model file"
+// *after* capture had started, so the user saw the meter running and no
+// transcript, with the real cause only in engine.log. Both errors are
+// actionable in the UI — settings opens on either so the model can be fetched.
+fn resolve_model(id: &str) -> Result<PathBuf, String> {
+    let model = model_path(id);
+    if !model.exists() {
+        error!(model = %model.display(), "model not found");
+        return Err(format!("err.model_not_found:{}", model.display()));
+    }
+    if !models::is_installed(id) {
+        error!(model = %id, "model file incomplete");
+        return Err(format!("err.model_incomplete:{id}"));
+    }
+    Ok(model)
+}
+
 // builds the whisper-stream arguments (isolated so it is testable)
 // capture: capture-device index (-c); None = default device (mic)
 fn stream_args(
@@ -393,10 +412,11 @@ fn capture_devices() -> Result<Vec<CaptureDevice>, String> {
     if !bin.exists() {
         return Err(format!("err.whisper_stream_not_found:{}", bin.display()));
     }
-    // any model just so the binary starts; killed as soon as the list is read
-    let model = model_path("small");
-    let model = if model.exists() {
-        model
+    // any model just so the binary starts; killed as soon as the list is read.
+    // It must be a *complete* one — whisper aborts on a truncated file before
+    // it ever prints the device list.
+    let model = if models::is_installed("small") {
+        model_path("small")
     } else {
         model_path("large-v3-turbo")
     };
@@ -493,11 +513,7 @@ fn start(app: AppHandle, state: State<AppState>, cfg: StartCfg) -> Result<(), St
                 .into(),
         );
     }
-    let model = model_path(&cfg.model);
-    if !model.exists() {
-        error!(model = %model.display(), "model not found");
-        return Err(format!("err.model_not_found:{}", model.display()));
-    }
+    let model = resolve_model(&cfg.model)?;
     let threads = cfg.threads.unwrap_or(8).to_string();
 
     let args = stream_args(
@@ -594,11 +610,7 @@ async fn transcribe_file(app: AppHandle, path: String, cfg: StartCfg) -> Result<
                 .into(),
         );
     }
-    let model = model_path(&cfg.model);
-    if !model.exists() {
-        error!(model = %model.display(), "model not found");
-        return Err(format!("err.model_not_found:{}", model.display()));
-    }
+    let model = resolve_model(&cfg.model)?;
     let Some(ffmpeg) = which("ffmpeg") else {
         return Err(ffmpeg_not_found_err());
     };
@@ -1012,11 +1024,7 @@ async fn transcribe_meeting(
                 .into(),
         );
     }
-    let model = model_path(&cfg.model);
-    if !model.exists() {
-        error!(model = %model.display(), "model not found");
-        return Err(format!("err.model_not_found:{}", model.display()));
-    }
+    let model = resolve_model(&cfg.model)?;
     let Some(ffmpeg) = which("ffmpeg") else {
         return Err(ffmpeg_not_found_err());
     };

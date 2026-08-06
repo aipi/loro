@@ -69,5 +69,88 @@ case "$recorded" in
   *)       bad "engine not invoked as expected: '$recorded'" ;;
 esac
 
+# --- download_model: a bad download must never reach the final path ----------
+#
+# Regression. `curl -o "$dest"` wrote straight to the model path, so a
+# Ctrl-C or a dropped connection left a truncated ggml-*.bin that the app read
+# as an installed model; whisper then aborted inside every recording with "not
+# all tensors loaded from model file".
+#
+# Stub curl (first on PATH) so these run offline and we control the failure.
+mkdir -p "$work/bin"
+cat >"$work/bin/curl" <<'STUB'
+#!/bin/sh
+out=""
+while [ $# -gt 0 ]; do
+  case "$1" in -o) shift; out="$1" ;; esac
+  shift
+done
+case "$CURL_MODE" in
+  truncated) printf 'partial-body' >"$out"; exit 1 ;;  # connection dropped mid-stream
+  garbage)   printf 'not-a-model'  >"$out"; exit 0 ;;  # completes, wrong bytes
+  *)         printf 'model-bytes'  >"$out"; exit 0 ;;
+esac
+STUB
+chmod +x "$work/bin/curl"
+
+dlmodels="$work/dlmodels"; mkdir -p "$dlmodels"
+# $0 must be loro.sh itself: sourcing runs its dispatch, whose no-arg branch
+# greps $0 for the help header — and under `set -e` a failing grep aborts.
+run_download() {  # $1 = CURL_MODE, $2 = model id -> sets rc, out
+  out="$(CURL_MODE="$1" PATH="$work/bin:$PATH" LORO_MODELS_DIR="$dlmodels" \
+    "$SYS_BASH" -c '. "$1" >/dev/null 2>&1; download_model "$2"' \
+    "$ROOT/loro.sh" "$ROOT/loro.sh" "$2" 2>&1)"
+  rc=$?
+}
+
+run_download truncated small
+[ "$rc" -ne 0 ] \
+  && ok "interrupted download exits non-zero" \
+  || bad "interrupted download reported success: $out"
+[ ! -e "$dlmodels/ggml-small.bin" ] \
+  && ok "interrupted download leaves no file at the model path" \
+  || bad "interrupted download left a truncated model behind"
+[ ! -e "$dlmodels/ggml-small.bin.part" ] \
+  && ok "interrupted download cleans up its .part file" \
+  || bad "interrupted download left $dlmodels/ggml-small.bin.part behind"
+
+run_download garbage small
+[ "$rc" -ne 0 ] \
+  && ok "checksum mismatch exits non-zero" \
+  || bad "checksum mismatch reported success: $out"
+[ ! -e "$dlmodels/ggml-small.bin" ] \
+  && ok "checksum mismatch installs nothing" \
+  || bad "a model that failed SHA-256 was installed anyway"
+case "$out" in
+  *"SHA-256"*) ok  "checksum mismatch says so" ;;
+  *)           bad "checksum mismatch message unclear: $out" ;;
+esac
+
+# A model the catalog does not pin still installs — the CLI has always taken any
+# ggml id — but it must say the integrity check was skipped.
+run_download ok medium
+[ "$rc" -eq 0 ] && [ -f "$dlmodels/ggml-medium.bin" ] \
+  && ok "an unpinned model still installs" \
+  || bad "unpinned model install failed (rc=$rc): $out"
+[ ! -e "$dlmodels/ggml-medium.bin.part" ] \
+  && ok "a successful install moves the .part into place" \
+  || bad "the .part file survived a successful install"
+case "$out" in
+  *"without integrity verification"*) ok  "unpinned model warns about the skipped check" ;;
+  *)                                  bad "unpinned model installed silently: $out" ;;
+esac
+
+# The digests the app pins must be reachable from the CLI (the Rust test
+# `loro_sh_pins_every_catalog_sha256` guards the other direction).
+for m in small large-v3-turbo; do
+  d="$("$SYS_BASH" -c '. "$1" >/dev/null 2>&1; model_sha256 "$2"' \
+    "$ROOT/loro.sh" "$ROOT/loro.sh" "$m" 2>/dev/null)"
+  case "$d" in
+    [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*)
+      [ "${#d}" -eq 64 ] && ok "$m has a pinned sha256" || bad "$m digest is ${#d} chars, want 64" ;;
+    *) bad "$m has no pinned sha256 in loro.sh" ;;
+  esac
+done
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

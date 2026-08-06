@@ -51,6 +51,9 @@ palette: `Cmd/Ctrl+Shift+P` → "Loro tour".
    `large-v3-turbo` is more accurate; `small` is faster and lighter. If you try
    to transcribe with no model present, Loro opens Settings so you can download
    one. (Installed via Homebrew, whisper and ffmpeg come bundled in.)
+   An interrupted download never becomes a model: a file is only used once it is
+   whole and verified. If an older model was left half-downloaded, it shows as
+   *not installed* again — just download it once more.
 5. **Language** — in the gear (⚙), "interface language" switches pt-BR/English.
    Everything the app **generates** (reports, meeting documents, contexts) is
    born in the active interface language.

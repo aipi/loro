@@ -49,6 +49,9 @@ quando quiser pela paleta: `Cmd/Ctrl+Shift+P` → "apresentação do Loro".
    `large-v3-turbo` é mais preciso; `small` é mais rápido e leve. Se você tentar
    transcrever sem um modelo, o Loro abre as Configurações para você baixar.
    (Instalado pelo Homebrew, o whisper e o ffmpeg já vêm juntos.)
+   Um download interrompido não vira modelo: o arquivo só entra em uso inteiro e
+   verificado. Se um modelo antigo tiver ficado pela metade, ele volta a aparecer
+   como *não instalado* — basta baixar de novo.
 5. **Idioma** — na engrenagem (⚙), "idioma da interface" alterna pt-BR/inglês.
    Tudo que o app **gera** (relatórios, documentos de reunião, contextos)
    nasce no idioma ativo da interface.

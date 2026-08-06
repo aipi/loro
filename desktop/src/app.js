@@ -427,8 +427,9 @@ async function startSession() {
   } catch (e) {
     toast(t("não iniciou") + ": " + tErr(String(e)));
     clog("invoke start error: " + e);
-    // model missing on first run: open settings so the user can download it
-    if (String(e).startsWith("err.model_not_found")) openCfg();
+    // model missing on first run, or left incomplete by an interrupted
+    // download: open settings so the user can (re)download it
+    if (String(e).startsWith("err.model_not_found") || String(e).startsWith("err.model_incomplete")) openCfg();
     return;
   }
   // 2) medidor/onda (best-effort, nunca bloqueia): mic direto, ou o loopback no modo sistema
