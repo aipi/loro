@@ -226,3 +226,18 @@ test("reopenClosed still returns a plain ws", () => {
   assert.strictEqual(ws2.tabs.length, 1);
   assert.strictEqual(ws2.tabs[0].preview, false);
 });
+
+// Chrome do dock do terminal (ADR-0008), não um reducer de `ws`: o glifo de
+// recolher tem de apontar para onde o painel some. Embaixo ele desce (⌄); na
+// lateral ele sai pela direita, e o ⌄ fixo ficava contra-intuitivo — uma seta
+// para baixo num painel que se fecha para o lado.
+test("o glifo de recolher segue a orientação do dock", () => {
+  assert.strictEqual(W.termCollapseGlyph(false), "⌄");
+  assert.strictEqual(W.termCollapseGlyph(true), "›");
+});
+
+test("termCollapseGlyph trata valores soltos como 'embaixo'", () => {
+  assert.strictEqual(W.termCollapseGlyph(undefined), "⌄");
+  assert.strictEqual(W.termCollapseGlyph(null), "⌄");
+  assert.strictEqual(W.termCollapseGlyph(1), "›");
+});

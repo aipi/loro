@@ -160,7 +160,16 @@
     return null;
   }
 
+  // Chrome do dock do terminal, não um reducer de `ws`: o glifo de recolher
+  // aponta para onde o painel vai sumir. Embaixo ele desce (⌄); na lateral ele
+  // sai pela direita (›). Estava fixo em ⌄, então na lateral a seta apontava
+  // para baixo num painel que se fecha para o lado.
+  function termCollapseGlyph(side) {
+    return side ? "›" : "⌄";
+  }
+
   return {
+    termCollapseGlyph,
     empty,
     openTab,
     closeTab,
