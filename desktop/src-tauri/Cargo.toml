@@ -1,6 +1,6 @@
 [package]
 name = "desktop"
-version = "0.9.2"
+version = "0.9.3"
 description = "Loro — local live speech-to-text and knowledge base"
 authors = ["Loro"]
 edition = "2021"
