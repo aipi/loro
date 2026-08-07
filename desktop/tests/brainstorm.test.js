@@ -197,3 +197,109 @@ test("digestNotice nudges to generate/update the indice.md digest (ADR-0011)", (
   // a non-numeric stamp degrades to "gerar" (treat as never digested)
   assert.deepStrictEqual(digestNotice(2, "abc"), { kind: "gerar", n: 2 });
 });
+
+// ---- assinatura da árvore lateral -----------------------------------------
+// Regressão relatada: ao terminar uma análise o relatório não aparecia na
+// lateral, e arquivo novo em notas/anexos também não. A assinatura só olhava o
+// TOPO (lista de brainstormings + avulsos); uma análise cai em
+// <reunião>/notas/ e não muda nada disso — a contagem de reuniões é a mesma e
+// `atualizado_em` é uma DATA vinda do manifest.
+//
+// `listDir(rel) -> [nomes]` e `listMeetings(slug) -> [{id, rel, ...}]` são
+// injetados, então o teste roda sem Tauri e sem DOM.
+function fakeWorld(fs, meetings) {
+  return {
+    listDir: async (rel) => (fs[rel] || []).slice(),
+    listMeetings: async (slug) => (meetings[slug] || []).slice(),
+  };
+}
+const TEMAS = [{ slug: "tech", nome: "Tech", reunioes: 1, atualizado_em: "2026-08-07" }];
+const MTG = { tech: [{ id: "m1", rel: "brainstorming/tech/reunioes/m1", titulo: "", status: "" }] };
+const FS_BASE = {
+  "brainstorming/tech/notas": ["ideia.md"],
+  "brainstorming/tech/anexos": [],
+  "brainstorming/tech/reunioes/m1/notas": [],
+};
+const OPEN_ALL = new Set(["pes:tema:tech", "mtg:m1"]);
+
+test("a análise que o agente escreve muda a assinatura", async () => {
+  const fs = JSON.parse(JSON.stringify(FS_BASE));
+  const w = fakeWorld(fs, MTG);
+  const before = await B.pessoalSig(TEMAS, [], OPEN_ALL, w);
+  fs["brainstorming/tech/reunioes/m1/notas"].push("analise-2026-08-07.md");
+  const after = await B.pessoalSig(TEMAS, [], OPEN_ALL, w);
+  assert.notStrictEqual(after, before, "o relatório novo tem de disparar re-render");
+});
+
+test("arquivo novo em notas/ e em anexos/ muda a assinatura", async () => {
+  for (const pasta of ["notas", "anexos"]) {
+    const fs = JSON.parse(JSON.stringify(FS_BASE));
+    const w = fakeWorld(fs, MTG);
+    const before = await B.pessoalSig(TEMAS, [], OPEN_ALL, w);
+    fs[`brainstorming/tech/${pasta}`].push("novo.md");
+    assert.notStrictEqual(await B.pessoalSig(TEMAS, [], OPEN_ALL, w), before, pasta);
+  }
+});
+
+// O outro lado da moeda: sem mudança a assinatura tem de ser IDÊNTICA, senão o
+// poll reconstrói a árvore a cada 5s e come o clique do usuário — que era o
+// segundo sintoma do relato.
+test("sem novidade a assinatura é estável (não reconstrói o DOM)", async () => {
+  const w = fakeWorld(JSON.parse(JSON.stringify(FS_BASE)), MTG);
+  const a = await B.pessoalSig(TEMAS, [], OPEN_ALL, w);
+  const b = await B.pessoalSig(TEMAS, [], OPEN_ALL, w);
+  assert.strictEqual(a, b);
+});
+
+test("só lê o que está aberto — nó fechado não custa e não dispara", async () => {
+  const fs = JSON.parse(JSON.stringify(FS_BASE));
+  const lidos = [];
+  const w = {
+    listDir: async (rel) => { lidos.push(rel); return (fs[rel] || []).slice(); },
+    listMeetings: async (slug) => (MTG[slug] || []).slice(),
+  };
+  const fechado = new Set();
+  const before = await B.pessoalSig(TEMAS, [], fechado, w);
+  assert.deepStrictEqual(lidos, [], "com nada expandido não há leitura extra");
+  fs["brainstorming/tech/reunioes/m1/notas"].push("analise.md");
+  assert.strictEqual(await B.pessoalSig(TEMAS, [], fechado, w), before,
+    "arquivo dentro de nó fechado não precisa re-renderizar");
+});
+
+test("reunião fechada não é lida, mas a lista de reuniões conta", async () => {
+  const fs = JSON.parse(JSON.stringify(FS_BASE));
+  const w = fakeWorld(fs, MTG);
+  const soTema = new Set(["pes:tema:tech"]);
+  const before = await B.pessoalSig(TEMAS, [], soTema, w);
+  fs["brainstorming/tech/reunioes/m1/notas"].push("analise.md");
+  assert.strictEqual(await B.pessoalSig(TEMAS, [], soTema, w), before);
+  // uma reunião NOVA muda, mesmo com todas fechadas
+  const mtg2 = { tech: MTG.tech.concat([{ id: "m2", rel: "b/m2", titulo: "", status: "" }]) };
+  assert.notStrictEqual(await B.pessoalSig(TEMAS, [], soTema, fakeWorld(fs, mtg2)), before);
+});
+
+test("renomear uma reunião muda a assinatura", async () => {
+  const w = fakeWorld(JSON.parse(JSON.stringify(FS_BASE)), MTG);
+  const before = await B.pessoalSig(TEMAS, [], OPEN_ALL, w);
+  const renomeada = { tech: [{ id: "m1", rel: "brainstorming/tech/reunioes/m1", titulo: "Semanal", status: "" }] };
+  const w2 = fakeWorld(JSON.parse(JSON.stringify(FS_BASE)), renomeada);
+  assert.notStrictEqual(await B.pessoalSig(TEMAS, [], OPEN_ALL, w2), before);
+});
+
+test("avulso e a lista de temas continuam contando", async () => {
+  const w = fakeWorld(JSON.parse(JSON.stringify(FS_BASE)), MTG);
+  const before = await B.pessoalSig(TEMAS, ["a.md"], OPEN_ALL, w);
+  assert.notStrictEqual(await B.pessoalSig(TEMAS, ["a.md", "b.md"], OPEN_ALL, w), before);
+  const outros = TEMAS.concat([{ slug: "x", nome: "X", reunioes: 0, atualizado_em: "2026-08-07" }]);
+  assert.notStrictEqual(await B.pessoalSig(outros, ["a.md"], OPEN_ALL, w), before);
+});
+
+test("uma listagem que falha não quebra a assinatura", async () => {
+  const w = {
+    listDir: async () => { throw new Error("sem permissão"); },
+    listMeetings: async () => { throw new Error("off"); },
+  };
+  const sig = await B.pessoalSig(TEMAS, [], OPEN_ALL, w);
+  assert.strictEqual(typeof sig, "string");
+  assert.strictEqual(await B.pessoalSig(TEMAS, [], OPEN_ALL, w), sig, "estável mesmo falhando");
+});

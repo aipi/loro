@@ -1703,39 +1703,13 @@ let pessoalSig = "";
 const PESSOAL_FILTER_THRESHOLD = 8;
 let pessoalRawTemas = [], pessoalRawAvulso = [];
 let pessoalFilterQuery = "", pessoalShowAll = false;
-// nomes dos arquivos (não-pastas) de um diretório do acervo; [] se não der
-async function fileNamesIn(rel) {
-  try { return ((await invoke("brain_list_dir", { rel })) || []).filter((f) => !f.dir).map((f) => f.name); }
-  catch (_) { return []; }
-}
-
-// A assinatura tem de cobrir os FILHOS EXPANDIDOS, não só o topo. Uma análise
-// que o agente escreve cai em <reunião>/notas/ e não mexe em nada do topo: a
-// contagem de reuniões é a mesma e `atualizado_em` é uma DATA vinda do manifest.
-// Com a assinatura rasa, o único jeito de ver o arquivo novo era alguém zerar
-// pessoalSig — e zerar significa reconstruir o DOM inteiro, o que engolia os
-// cliques do usuário. Aqui o custo é o mesmo já pago por loadTemaChildren a
-// cada re-render forçado; a diferença é que agora ele DECIDE em vez de
-// reconstruir às cegas. Só lê o que está aberto na tela.
-async function pessoalDeepSig(temas, avulso) {
-  const parts = [temas, avulso.map((f) => f.name)];
-  for (const t of temas) {
-    if (!bOpen.has("pes:tema:" + t.slug)) continue;
-    let meetings = [];
-    try { meetings = (await invoke("brain_list_meetings", { slug: t.slug })) || []; } catch (_) {}
-    parts.push([
-      t.slug,
-      await fileNamesIn(`brainstorming/${t.slug}/notas`),
-      await fileNamesIn(`brainstorming/${t.slug}/anexos`),
-      meetings.map((m) => [m.id, m.titulo || "", m.status || ""]),
-    ]);
-    for (const m of meetings) {
-      if (!bOpen.has("mtg:" + m.id)) continue;
-      parts.push([m.id, await fileNamesIn(`${m.rel}/notas`)]);
-    }
-  }
-  return JSON.stringify(parts);
-}
+// As duas listagens que a assinatura da lateral consome. LoroBrainstorm.pessoalSig
+// é pura e as recebe injetadas, para ser testável sem Tauri e sem DOM.
+const pessoalWorld = {
+  listDir: async (rel) =>
+    ((await invoke("brain_list_dir", { rel })) || []).filter((f) => !f.dir).map((f) => f.name),
+  listMeetings: async (slug) => (await invoke("brain_list_meetings", { slug })) || [],
+};
 
 async function refreshPessoal() {
   if (!brainTab) return;
@@ -1743,7 +1717,7 @@ async function refreshPessoal() {
   try { temas = (await invoke("brain_list_brainstorms")) || []; } catch (_) {}
   try { avulso = ((await invoke("brain_list_dir", { rel: "brainstorming/avulso" })) || []).filter((f) => !f.dir); }
   catch (_) {}
-  const sig = await pessoalDeepSig(temas, avulso);
+  const sig = await LoroBrainstorm.pessoalSig(temas, avulso.map((f) => f.name), bOpen, pessoalWorld);
   if (sig === pessoalSig) return;
   pessoalSig = sig;
   pessoalRawTemas = temas; pessoalRawAvulso = avulso;
@@ -1903,6 +1877,13 @@ async function fillMeetingChild(meetingId, meetingRel) {
   catch (_) {}
   for (const a of arts) inner += bsPartRow("nota", a.path, a.path, shortName(a.name), a.name, true);
   child.innerHTML = inner || `<div class="bempty sub">${t("nada por aqui ainda")}</div>`;
+  // Quem injeta, liga. As linhas daqui são as análises/relatórios da reunião, e
+  // cada uma traz o seu ⋯ (data-artmenu) e o clique de abrir — que só existem
+  // depois de wirePessoal(). Um dos dois chamadores ligava ANTES de injetar, e
+  // o ⋯ do nível mais fundo nascia inerte. Ligar aqui dentro torna a ordem do
+  // chamador irrelevante: não dá mais para injetar linha sem handler.
+  // wirePessoal é idempotente (atribui .onclick, não empilha listener).
+  wirePessoal();
 }
 // Selection of brainstorming parts to send to the fila (ADR-0013). A plain Set of
 // acervo-relative rels; the parts' kinds are read back from the checkbox dataset.
@@ -5002,7 +4983,7 @@ function termRun(cmd) {
 // ---- post-action auto-refresh (owner feedback 2026-07-28) ------------------
 // Skills run asynchronously in the terminal agent, so a poll is how the sidebar
 // learns that the analysis/report landed. O poll NÃO zera mais as assinaturas:
-// `pessoalDeepSig` já enxerga os filhos expandidos, então um tick sem novidade
+// `LoroBrainstorm.pessoalSig` já enxerga os filhos expandidos, então um tick sem novidade
 // termina sem tocar no DOM. Zerar era o que quebrava o uso — a árvore era
 // reconstruída a cada 5s e o clique do usuário caía num nó que acabara de ser
 // substituído, além de a barra viver "em atualização" sem nunca assentar.
