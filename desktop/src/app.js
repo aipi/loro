@@ -1703,13 +1703,47 @@ let pessoalSig = "";
 const PESSOAL_FILTER_THRESHOLD = 8;
 let pessoalRawTemas = [], pessoalRawAvulso = [];
 let pessoalFilterQuery = "", pessoalShowAll = false;
+// nomes dos arquivos (não-pastas) de um diretório do acervo; [] se não der
+async function fileNamesIn(rel) {
+  try { return ((await invoke("brain_list_dir", { rel })) || []).filter((f) => !f.dir).map((f) => f.name); }
+  catch (_) { return []; }
+}
+
+// A assinatura tem de cobrir os FILHOS EXPANDIDOS, não só o topo. Uma análise
+// que o agente escreve cai em <reunião>/notas/ e não mexe em nada do topo: a
+// contagem de reuniões é a mesma e `atualizado_em` é uma DATA vinda do manifest.
+// Com a assinatura rasa, o único jeito de ver o arquivo novo era alguém zerar
+// pessoalSig — e zerar significa reconstruir o DOM inteiro, o que engolia os
+// cliques do usuário. Aqui o custo é o mesmo já pago por loadTemaChildren a
+// cada re-render forçado; a diferença é que agora ele DECIDE em vez de
+// reconstruir às cegas. Só lê o que está aberto na tela.
+async function pessoalDeepSig(temas, avulso) {
+  const parts = [temas, avulso.map((f) => f.name)];
+  for (const t of temas) {
+    if (!bOpen.has("pes:tema:" + t.slug)) continue;
+    let meetings = [];
+    try { meetings = (await invoke("brain_list_meetings", { slug: t.slug })) || []; } catch (_) {}
+    parts.push([
+      t.slug,
+      await fileNamesIn(`brainstorming/${t.slug}/notas`),
+      await fileNamesIn(`brainstorming/${t.slug}/anexos`),
+      meetings.map((m) => [m.id, m.titulo || "", m.status || ""]),
+    ]);
+    for (const m of meetings) {
+      if (!bOpen.has("mtg:" + m.id)) continue;
+      parts.push([m.id, await fileNamesIn(`${m.rel}/notas`)]);
+    }
+  }
+  return JSON.stringify(parts);
+}
+
 async function refreshPessoal() {
   if (!brainTab) return;
   let temas = [], avulso = [];
   try { temas = (await invoke("brain_list_brainstorms")) || []; } catch (_) {}
   try { avulso = ((await invoke("brain_list_dir", { rel: "brainstorming/avulso" })) || []).filter((f) => !f.dir); }
   catch (_) {}
-  const sig = JSON.stringify([temas, avulso.map((f) => f.name)]);
+  const sig = await pessoalDeepSig(temas, avulso);
   if (sig === pessoalSig) return;
   pessoalSig = sig;
   pessoalRawTemas = temas; pessoalRawAvulso = avulso;
@@ -1834,10 +1868,14 @@ async function loadTemaChildren(slug) {
   inner += folderGroupHtml(`bsfolder:${slug}:notas`, t("notas"), 0, notasRows, t("nenhuma nota ainda"), notasActions, `brainstorming/${slug}/notas`);
   inner += folderGroupHtml(`bsfolder:${slug}:anexos`, t("anexos"), 0, anexosRows, t("nenhum anexo ainda"), anexosActions, `brainstorming/${slug}/anexos`);
   holder.innerHTML = inner;
-  wirePessoal();
   // fillMeetingChild queries the live DOM — must run AFTER innerHTML is set,
   // not while `inner` is still a string (the container doesn't exist yet).
+  // E wirePessoal() só DEPOIS dele: as linhas que ele injeta (as análises e
+  // relatórios em <reunião>/notas/) precisam ganhar o onclick também. Com o
+  // wire antes, toda análise dentro de uma reunião expandida ficava inerte —
+  // clicar não abria nada. O handler do data-mtgtoggle já fazia nesta ordem.
   for (const [id, rel] of pendingMeetingFills) await fillMeetingChild(id, rel);
+  wirePessoal();
   markSel();
 }
 // A collapsible folder group in the sidebar (reuniões/notas/anexos) — a real
@@ -4962,14 +5000,19 @@ function termRun(cmd) {
 }
 
 // ---- post-action auto-refresh (owner feedback 2026-07-28) ------------------
-// Skills run asynchronously in the terminal agent, and the sidebar's signature
-// only tracks the brainstorming LIST — artifacts the agent writes (analyses,
-// answers, report sections) never change it. After any injected action, force
-// a refresh burst: every 5s for 2 minutes, sig cleared so expanded children
-// (meetings + artefatos) reload. Skipped while the user types in a sidebar
-// inline input, so a re-render never eats a half-written note title.
+// Skills run asynchronously in the terminal agent, so a poll is how the sidebar
+// learns that the analysis/report landed. O poll NÃO zera mais as assinaturas:
+// `pessoalDeepSig` já enxerga os filhos expandidos, então um tick sem novidade
+// termina sem tocar no DOM. Zerar era o que quebrava o uso — a árvore era
+// reconstruída a cada 5s e o clique do usuário caía num nó que acabara de ser
+// substituído, além de a barra viver "em atualização" sem nunca assentar.
+//
+// A janela é longa porque uma análise passa fácil de dois minutos, e o tick
+// ocioso agora é barato (lê só o que está aberto e compara). Pulado enquanto o
+// usuário digita num input da lateral, para um re-render nunca comer um título
+// de nota pela metade.
 let actionRefreshTimer = null, actionRefreshUntil = 0;
-function scheduleActionRefresh(ms = 120000) {
+function scheduleActionRefresh(ms = 600000) {
   actionRefreshUntil = Date.now() + ms;
   if (actionRefreshTimer) return;
   actionRefreshTimer = setInterval(() => {
@@ -4979,8 +5022,14 @@ function scheduleActionRefresh(ms = 120000) {
     const focused = document.activeElement;
     if (focused && focused.closest && focused.closest(".bside") &&
         (focused.tagName === "INPUT" || focused.tagName === "TEXTAREA")) return;
-    pessoalSig = ""; refreshPessoal();
-    sideSig = ""; brainRefresh();
+    // brainRefresh() já chama refreshPessoal() no fim — e este agora se auto-
+    // limita pela assinatura profunda, então um tick sem novidade não toca a
+    // árvore do brainstorming. A de CONTEXTOS continua sendo forçada: a sig
+    // dela também é rasa (inbox + contextos + contagens) e ainda não enxerga
+    // anexos de contexto, então zerar é o que a mantém viva. Mesmo defeito,
+    // fora do que foi relatado — corrigir lá pede o mesmo tratamento.
+    sideSig = "";
+    brainRefresh();
   }, 5000);
 }
 
