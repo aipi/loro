@@ -166,7 +166,24 @@
       .trim();
   }
 
+  // O que fazer com o buffer da transcrição AVULSA quando uma sessão termina.
+  // Uma reunião tem a própria superfície (a aba reuniao.md, ADR-0010): o rodapé
+  // avulso não participa dela, nem para salvar nem para aparecer. Decisão pura
+  // porque os dois pontos de término (onStopped e o fim de transcribe-state)
+  // precisam responder igual — era a divergência entre eles que deixava o
+  // rodapé subir por cima de uma reunião.
+  //   "none"     → não mexe no rodapé
+  //   "autosave" → salva sozinho na pasta configurada
+  //   "offer"    → mostra a barra salvar/descartar e abre o painel
+  function looseEndAction(o) {
+    const d = o || {};
+    if (d.meetingActive) return "none";
+    if (!(Number(d.lineCount) > 0)) return "none";
+    return d.autosave ? "autosave" : "offer";
+  }
+
   return {
+    looseEndAction,
     livingId, reportId, isLiving, isReport, meetingDir,
     sanitizeSkillArg, meetingSkillCmd,
     stripMarker, acervoJoin, aiStatusLine, MARKER,

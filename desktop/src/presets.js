@@ -14,12 +14,16 @@
     return (contexts || []).join(", ");
   }
 
-  // Process name of an agent command: basename of the first token.
-  // Mirrors the backend's agent_process_name (lib.rs).
+  // Process name of an agent command: basename of the first token, normalized
+  // for comparison the same way the backend's process_name_matches does it —
+  // lowercase, no `.exe`, either separator. The agent field is free text stored
+  // verbatim, so an acervo saved as "Claude" used to miss the `=== "claude"`
+  // check below and every habilidade reached Claude as the fallback prompt
+  // instead of its slash-command.
   function agentName(agent) {
     const first = String(agent || "").trim().split(/\s+/)[0] || "claude";
-    const parts = first.split("/");
-    return parts[parts.length - 1] || "claude";
+    const leaf = first.split(/[/\\]/).pop() || "claude";
+    return leaf.toLowerCase().replace(/\.exe$/, "") || "claude";
   }
 
   // Slash-commands are a Claude convention. For any other agent the same skill
