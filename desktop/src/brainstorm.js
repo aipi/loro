@@ -181,7 +181,44 @@
     return delta > 0 ? { kind: "novos", n: delta } : null;
   }
 
+  // ---- assinatura da árvore lateral ---------------------------------------
+  // A lateral só re-renderiza quando esta string muda. Ela PRECISA cobrir os
+  // filhos EXPANDIDOS, não só o topo: uma análise que o agente escreve cai em
+  // <reunião>/notas/ e não mexe em nada do nível de cima — a contagem de
+  // reuniões é a mesma e `atualizado_em` é uma data vinda do manifest. Com a
+  // assinatura rasa o relatório nunca aparecia, e a única saída era zerar a
+  // assinatura de fora — o que reconstruía a árvore inteira a cada 5s e comia
+  // os cliques do usuário.
+  //
+  // Lê SÓ o que está aberto: nó fechado não custa I/O e não dispara render.
+  // `world` injeta as duas listagens (listDir(rel) -> [nomes],
+  // listMeetings(slug) -> [{id, rel, titulo, status}]), então isto é pura e
+  // testável sem Tauri e sem DOM. Uma listagem que falhe vira [] — a
+  // assinatura degrada para "sem novidade" em vez de piscar a árvore.
+  async function pessoalSig(temas, avulsoNames, open, world) {
+    const isOpen = (k) => (open && typeof open.has === "function" ? open.has(k) : false);
+    const dir = async (rel) => { try { return (await world.listDir(rel)) || []; } catch (_) { return []; } };
+    const parts = [temas || [], avulsoNames || []];
+    for (const t of temas || []) {
+      if (!isOpen("pes:tema:" + t.slug)) continue;
+      let meetings = [];
+      try { meetings = (await world.listMeetings(t.slug)) || []; } catch (_) { meetings = []; }
+      parts.push([
+        t.slug,
+        await dir("brainstorming/" + t.slug + "/notas"),
+        await dir("brainstorming/" + t.slug + "/anexos"),
+        meetings.map((m) => [m.id, m.titulo || "", m.status || ""]),
+      ]);
+      for (const m of meetings) {
+        if (!isOpen("mtg:" + m.id)) continue;
+        parts.push([m.id, await dir(m.rel + "/notas")]);
+      }
+    }
+    return JSON.stringify(parts);
+  }
+
   return {
+    pessoalSig,
     STAGES, stages,
     groupByCategory, filterAndCapTemas,
     emptySelection, toggleSelection, selectedItems,
