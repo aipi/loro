@@ -4920,7 +4920,12 @@ $("termClear").addEventListener("click", restartTerm);
 window.addEventListener("resize", fitTerm);
 // orientação: embaixo (padrão) ou lateral direita — escolha do usuário, persistida
 function applyTermLayout() {
-  $("mainRow").classList.toggle("side", !!settings.termSide);
+  const side = !!settings.termSide;
+  $("mainRow").classList.toggle("side", side);
+  // o glifo aponta para onde o painel some (⌄ embaixo, › na lateral); o title
+  // do #termSide fica com o i18n estático, que já o gerencia por data-i18n-attrs
+  const col = $("termCollapse");
+  if (col) col.textContent = LoroWorkspace.termCollapseGlyph(side);
   requestAnimationFrame(fitTerm);
 }
 $("termSide").addEventListener("click", () => {
