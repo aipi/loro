@@ -186,3 +186,28 @@ test("meetingTitleFromManifest also rejects the English stale defaults (manifest
   // the pt defaults keep being rejected too
   assert.strictEqual(LM.meetingTitleFromManifest({ titulo: "nova reunião" }, "id-x"), "id-x");
 });
+
+// O que acontece com o buffer avulso quando uma sessão termina. Bug relatado:
+// ao encerrar uma gravação feita NUM BRAINSTORMING, o painel da transcrição
+// avulsa subia por cima. A superfície da reunião é a aba reuniao.md — o rodapé
+// avulso não tem nada a fazer ali (o onStarted já respeitava isso; o onStopped
+// não respeitava).
+test("reunião nunca aciona o rodapé avulso, mesmo com sobras no buffer", () => {
+  assert.strictEqual(LM.looseEndAction({ meetingActive: true, lineCount: 12, autosave: false }), "none");
+  assert.strictEqual(LM.looseEndAction({ meetingActive: true, lineCount: 12, autosave: true }), "none");
+});
+
+test("sem linhas não há o que salvar", () => {
+  assert.strictEqual(LM.looseEndAction({ meetingActive: false, lineCount: 0, autosave: false }), "none");
+  assert.strictEqual(LM.looseEndAction({ meetingActive: false, lineCount: 0, autosave: true }), "none");
+});
+
+test("transcrição avulsa com linhas: salva sozinha ou oferece a barra", () => {
+  assert.strictEqual(LM.looseEndAction({ meetingActive: false, lineCount: 3, autosave: true }), "autosave");
+  assert.strictEqual(LM.looseEndAction({ meetingActive: false, lineCount: 3, autosave: false }), "offer");
+});
+
+test("looseEndAction tolera entrada faltando", () => {
+  assert.strictEqual(LM.looseEndAction(), "none");
+  assert.strictEqual(LM.looseEndAction({}), "none");
+});
