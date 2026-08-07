@@ -789,9 +789,23 @@ function onStopped() {
   el.timer.textContent = "00:00";
   stopAudio();
   updatePrivacy();
-  if (!state.lines.length) return;
-  if (settings.autosave) autoSaveNow();
-  else { el.savebar.hidden = false; setLivePanel(true); }
+  endLooseBuffer();
+}
+
+// Fecha o buffer avulso conforme LM.looseEndAction. Antes isto estava duplicado
+// aqui e no fim de transcribe-state, e só o onStarted checava meeting.active —
+// então encerrar uma REUNIÃO fazia o rodapé avulso subir por cima da aba dela.
+function endLooseBuffer(doneToast) {
+  const action = LM.looseEndAction({
+    meetingActive: meeting.active,
+    lineCount: state.lines.length,
+    autosave: settings.autosave,
+  });
+  if (action === "autosave") return autoSaveNow();
+  if (action !== "offer") return;
+  el.savebar.hidden = false;
+  setLivePanel(true);
+  if (doneToast) toast(doneToast);
 }
 
 // auto-save silencioso na pasta configurada
@@ -843,7 +857,11 @@ async function save() {
     if (path) { toast(t("salvo")); el.savebar.hidden = true; clearDoc(); }
   } catch (e) { toast(t("falha ao salvar")); clog("save error: " + e); }
 }
-function discard() { el.savebar.hidden = true; }
+// Descartar joga fora de verdade. Antes só escondia a barra: as linhas ficavam
+// no buffer, a gravação seguinte era APENDADA ao texto descartado, e qualquer
+// sessão posterior — inclusive uma reunião — reabria o rodapé avulso com aquela
+// sobra, para sempre (o buffer só era limpo ao salvar).
+function discard() { clearDoc(); }
 // limpa buffer de transcrição E o timer (sessão salva começa do zero)
 function clearDoc() { state.lines = []; render(); el.savebar.hidden = true; el.timer.textContent = "00:00"; }
 
@@ -5125,9 +5143,8 @@ listen("transcribe-state", (e) => {
     return;
   }
   updatePrivacy();
-  if (!state.lines.length) { toast(t("transcrição vazia")); return; }
-  if (settings.autosave) autoSaveNow();
-  else { el.savebar.hidden = false; setLivePanel(true); toast(t("transcrição concluída")); }
+  if (!meeting.active && !state.lines.length) { toast(t("transcrição vazia")); return; }
+  endLooseBuffer(t("transcrição concluída"));
 });
 listen("transcribe-error", (e) => {
   toast(t("transcrição falhou") + ": " + tErr(String(e.payload)));
