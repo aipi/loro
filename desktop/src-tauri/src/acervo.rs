@@ -2521,4 +2521,131 @@ mod tests {
         assert!(stamped.contains("para: frota"));
         assert!(base.join("contextos/frota/CHANGELOG.md").is_file());
     }
+
+    // ---- #44: mover uma reunião com toda a sua análise ----------------------
+    // Uma reunião é a PASTA `reunioes/<id>/`; `move_pessoal_file` exige um
+    // arquivo e não serve. A move é um rename do diretório inteiro — é isso que
+    // faz a análise, o áudio e a auditoria viajarem juntos sem que ninguém
+    // reenumere o conteúdo (hotspot #46: nada aqui reimplementa `is_queueable`).
+
+    // Monta uma reunião completa em `brainstorming/<slug>/reunioes/<id>/`.
+    fn meeting_fixture(base: &Path, slug: &str, id: &str) -> PathBuf {
+        let dir = base.join(format!("brainstorming/{slug}/reunioes/{id}"));
+        std::fs::create_dir_all(dir.join("notas")).unwrap();
+        std::fs::create_dir_all(dir.join("audio")).unwrap();
+        std::fs::write(
+            dir.join("reuniao.md"),
+            format!("---\nloro: 1\nid: {id}\ntema: {slug}\ncriado_em: 2026-08-08\n---\n\n# Reunião\n\ncorpo da transcrição\n"),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("manifest.json"),
+            format!("{{\n  \"id\": \"{id}\",\n  \"tema\": \"{slug}\",\n  \"status\": \"done\"\n}}\n"),
+        )
+        .unwrap();
+        std::fs::write(dir.join("notas/analise-2026-08-08.md"), "a análise").unwrap();
+        std::fs::write(dir.join("auditoria.jsonl"), "{}\n").unwrap();
+        std::fs::write(dir.join("audio/mic.webm"), b"\x00\x01").unwrap();
+        dir
+    }
+
+    // AC-1 · T-1
+    #[test]
+    fn move_meeting_dir_moves_the_whole_folder() {
+        let base = tmp("mvmtg");
+        let src = meeting_fixture(&base, "origem", "2026-08-08-1200-reuniao");
+        std::fs::create_dir_all(base.join("brainstorming/destino/reunioes")).unwrap();
+
+        let out = move_meeting_dir(
+            &base,
+            "brainstorming/origem/reunioes/2026-08-08-1200-reuniao",
+            "destino",
+        )
+        .unwrap();
+
+        assert_eq!(out, "brainstorming/destino/reunioes/2026-08-08-1200-reuniao");
+        let dst = base.join(&out);
+        for f in [
+            "reuniao.md",
+            "manifest.json",
+            "notas/analise-2026-08-08.md",
+            "auditoria.jsonl",
+            "audio/mic.webm",
+        ] {
+            assert!(dst.join(f).exists(), "{f} devia ter viajado junto");
+        }
+        assert!(!src.exists(), "nada pode sobrar na origem");
+    }
+
+    // AC-2 · T-4 — o `tema` é reescrito nos DOIS lugares e a transcrição não é tocada
+    #[test]
+    fn move_meeting_dir_retemas_manifest_and_front_matter() {
+        let base = tmp("mvmtg-tema");
+        let src = meeting_fixture(&base, "origem", "m1");
+        let corpo_antes = std::fs::read_to_string(src.join("reuniao.md")).unwrap();
+        std::fs::create_dir_all(base.join("brainstorming/destino/reunioes")).unwrap();
+
+        let out = move_meeting_dir(&base, "brainstorming/origem/reunioes/m1", "destino").unwrap();
+        let dst = base.join(&out);
+
+        let manifest = std::fs::read_to_string(dst.join("manifest.json")).unwrap();
+        assert!(manifest.contains("\"tema\": \"destino\""), "manifest: {manifest}");
+        let living = std::fs::read_to_string(dst.join("reuniao.md")).unwrap();
+        assert!(living.contains("tema: destino"), "front matter: {living}");
+        assert!(!living.contains("tema: origem"));
+        // o corpo (do fim do front matter em diante) é idêntico
+        let corpo = |s: &str| s.split("---").nth(2).unwrap_or("").to_string();
+        assert_eq!(corpo(&living), corpo(&corpo_antes));
+    }
+
+    // AC-3 · T-2 — colisão nunca sobrescreve (precedente da ADR-0009)
+    #[test]
+    fn move_meeting_dir_refuses_a_collision_and_leaves_the_source_intact() {
+        let base = tmp("mvmtg-col");
+        let src = meeting_fixture(&base, "origem", "m1");
+        meeting_fixture(&base, "destino", "m1");
+
+        assert_eq!(
+            move_meeting_dir(&base, "brainstorming/origem/reunioes/m1", "destino").unwrap_err(),
+            "err.file_exists_in_target"
+        );
+        assert!(src.join("reuniao.md").is_file(), "a origem fica intacta");
+        let manifest = std::fs::read_to_string(src.join("manifest.json")).unwrap();
+        assert!(manifest.contains("\"tema\": \"origem\""), "e sem retema");
+    }
+
+    // AC-4 · T-3
+    #[test]
+    fn move_meeting_dir_refuses_escapes_and_non_meetings() {
+        let base = tmp("mvmtg-esc");
+        meeting_fixture(&base, "origem", "m1");
+        std::fs::create_dir_all(base.join("contextos/c")).unwrap();
+        std::fs::create_dir_all(base.join("brainstorming/origem/notas")).unwrap();
+        std::fs::write(base.join("brainstorming/origem/notas/a.md"), "x").unwrap();
+
+        // origem versionada
+        assert!(move_meeting_dir(&base, "contextos/c", "origem").is_err());
+        // travessia
+        assert!(move_meeting_dir(&base, "brainstorming/origem/reunioes/../../..", "destino").is_err());
+        // um ARQUIVO não é uma reunião
+        assert!(move_meeting_dir(&base, "brainstorming/origem/notas/a.md", "destino").is_err());
+        // destino inexistente
+        assert!(move_meeting_dir(&base, "brainstorming/origem/reunioes/m1", "nao-existe").is_err());
+    }
+
+    // T-5 — a reunião movida é listada no destino e some da origem
+    #[test]
+    fn moved_meeting_is_listed_at_the_destination_only() {
+        let base = tmp("mvmtg-list");
+        meeting_fixture(&base, "origem", "m1");
+        std::fs::create_dir_all(base.join("brainstorming/destino/reunioes")).unwrap();
+
+        move_meeting_dir(&base, "brainstorming/origem/reunioes/m1", "destino").unwrap();
+
+        assert!(list_meetings(&base, "origem").is_empty());
+        let no_destino = list_meetings(&base, "destino");
+        assert_eq!(no_destino.len(), 1);
+        assert_eq!(no_destino[0].id, "m1");
+    }
+
 }
