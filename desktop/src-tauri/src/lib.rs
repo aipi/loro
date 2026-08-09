@@ -3778,7 +3778,7 @@ pub fn run() {
             brain_meeting_set_consent,
             brain_meeting_manifest,
             brain_meeting_rename,
-            brain_meeting_build_notebook,
+            brain_meeting_finish,
             brain_meeting_delete_audio,
             brain_meeting_purge_audio,
             brain_meeting_transcribe_segment,

@@ -476,6 +476,24 @@ fn migrate_meeting_to_notas(meeting_dir: &Path) {
     }
 }
 
+// ADR-0018 · AC-8: a meeting no longer has a `relatorio.md` — the analysis in
+// `notas/` IS its output. A file left behind by an older version is DELETED on
+// the first listing, not migrated.
+//
+// This is a deliberate DEROGATION from the domain's non-destructive premise and
+// from ADR-0008 §2's self-heal, signed by the owner (2026-08-07): the report was
+// app-authored placeholder prose, so keeping a copy would only preserve text that
+// never said anything. The blast radius is exactly one path — a `notas/relatorio.md`
+// is the USER's file and is never touched.
+fn drop_legacy_report(meeting_dir: &Path) {
+    let report = meeting_dir.join("relatorio.md");
+    if report.is_file() {
+        if let Err(e) = std::fs::remove_file(&report) {
+            tracing::error!(error = %e, "legacy meeting report not removed");
+        }
+    }
+}
+
 // Move every FILE under `src` (recursively) into a FLAT `dst`, deduping names.
 fn move_files_flat(src: &Path, dst: &Path) {
     let mut stack = vec![src.to_path_buf()];
@@ -608,6 +626,7 @@ fn list_meetings(base: &Path, slug: &str) -> Vec<MeetingListItem> {
                 .filter(|e| e.path().join("manifest.json").is_file())
                 .map(|e| {
                     migrate_meeting_to_notas(&e.path()); // ADR-0008 self-heal
+                    drop_legacy_report(&e.path()); // ADR-0018 §AC-8
                     let id = e.file_name().to_string_lossy().to_string();
                     let man: MeetingManifestLite =
                         std::fs::read_to_string(e.path().join("manifest.json"))
@@ -1337,20 +1356,20 @@ pub(crate) fn queue_name_for(rel: &str) -> String {
         .replace('/', "-")
 }
 
-// Every queueable file of a brainstorming (for "enviar tudo → fila"): each
-// meeting's `relatorio.md` and its analyses (`reunioes/<id>/notas/*`), plus the
-// brainstorming's own `notas/` and `anexos/`. `reuniao.md`/audio/audit are excluded
-// by `is_queueable`; legacy consolidated reports (`*-relatorio.md`) are skipped.
+// Every queueable file of a brainstorming (for "enviar tudo → fila"): a meeting's
+// analyses (`reunioes/<id>/notas/*`), plus the brainstorming's own `notas/` and
+// `anexos/`. `reuniao.md`/audio/audit are excluded by `is_queueable`; legacy
+// consolidated reports (`*-relatorio.md`) are skipped.
+//
+// ADR-0018: a meeting resolves to its `notas/*` and nothing else — the analysis
+// IS the meeting's output, so a meeting nobody analysed contributes zero items
+// rather than an empty placeholder.
 pub(crate) fn queueable_files(base: &Path, slug: &str) -> Vec<String> {
     let root = brainstorming_dir(base).join(slug);
     let mut out = Vec::new();
     if let Ok(rd) = std::fs::read_dir(root.join("reunioes")) {
         for e in rd.flatten().filter(|e| e.path().is_dir()) {
             let id = e.file_name().to_string_lossy().to_string();
-            let rep = format!("brainstorming/{slug}/reunioes/{id}/relatorio.md");
-            if base.join(&rep).is_file() {
-                out.push(rep);
-            }
             if let Ok(nd) = std::fs::read_dir(e.path().join("notas")) {
                 for f in nd.flatten().filter(|f| f.path().is_file()) {
                     let n = f.file_name().to_string_lossy().to_string();
@@ -2237,7 +2256,6 @@ mod tests {
             b"{\"titulo\":\"X\",\"status\":\"done\"}",
         )
         .unwrap();
-        std::fs::write(mdir.join("relatorio.md"), b"# rel").unwrap(); // a real meeting FILE — must survive
         std::fs::write(mdir.join("artefatos/investigacoes/analise-1.md"), b"a").unwrap();
         std::fs::write(mdir.join("artefatos/respostas/r.md"), b"b").unwrap();
         std::fs::write(mdir.join("perguntas/q.md"), b"c").unwrap();
@@ -2253,10 +2271,62 @@ mod tests {
         assert!(notas.join("q.md").is_file());
         // both dup.md survived (one got a numeric suffix)
         assert!(notas.join("dup.md").is_file() && notas.join("dup-2.md").is_file());
-        // legacy folders are gone; the real meeting file stayed put
+        // legacy folders are gone
         assert!(!mdir.join("artefatos").exists());
         assert!(!mdir.join("perguntas").exists());
-        assert!(mdir.join("relatorio.md").is_file());
+    }
+
+    // T-8 · AC-8 (ADR-0018) — a legacy `relatorio.md` is DELETED on the first
+    // listing. This is a deliberate derogation from the non-destructive premise
+    // and from ADR-0008 §2's self-heal (owner, 2026-08-07), so the test pins its
+    // exact blast radius: that one file, and nothing else.
+    #[test]
+    fn list_meetings_deletes_the_legacy_report_and_nothing_else() {
+        let base = tmp("meeting-drop-report");
+        let mdir = base.join("brainstorming/turbo/reunioes/2026-07-30-1000-x");
+        std::fs::create_dir_all(mdir.join("notas")).unwrap();
+        std::fs::create_dir_all(mdir.join("audio")).unwrap();
+        std::fs::write(
+            mdir.join("manifest.json"),
+            b"{\"titulo\":\"X\",\"status\":\"done\"}",
+        )
+        .unwrap();
+        std::fs::write(mdir.join("relatorio.md"), b"# rel").unwrap();
+        std::fs::write(mdir.join("reuniao.md"), b"# transcricao").unwrap();
+        std::fs::write(mdir.join("marcadores.jsonl"), b"{}\n").unwrap();
+        std::fs::write(mdir.join("auditoria.jsonl"), b"{}\n").unwrap();
+        std::fs::write(mdir.join("audio/mic.webm"), b"\x00").unwrap();
+        std::fs::write(mdir.join("notas/analise.md"), b"# analise").unwrap();
+        // a note that HAPPENS to be named relatorio.md is the user's, not the
+        // app's — it lives in notas/ and must survive
+        std::fs::write(mdir.join("notas/relatorio.md"), b"# minha nota").unwrap();
+
+        let _ = list_meetings(&base, "turbo");
+
+        assert!(!mdir.join("relatorio.md").exists(), "the report is gone");
+        for survivor in [
+            "reuniao.md",
+            "manifest.json",
+            "marcadores.jsonl",
+            "auditoria.jsonl",
+            "audio/mic.webm",
+            "notas/analise.md",
+            "notas/relatorio.md",
+        ] {
+            assert!(
+                mdir.join(survivor).is_file(),
+                "{survivor} must survive the deletion"
+            );
+        }
+
+        // idempotent: a second listing has nothing left to do and touches nothing
+        let antes = std::fs::read_to_string(mdir.join("notas/relatorio.md")).unwrap();
+        let _ = list_meetings(&base, "turbo");
+        assert_eq!(
+            std::fs::read_to_string(mdir.join("notas/relatorio.md")).unwrap(),
+            antes
+        );
+        assert!(mdir.join("reuniao.md").is_file());
     }
 
     // ADR-0007: an excerpt-addressable ref `acervo://<rel>#<annot-id>` resolves
@@ -2688,16 +2758,18 @@ mod tests {
         );
     }
 
-    // "enviar tudo → fila": enumerate every real file (meeting reports + their
-    // analyses + notas/anexos), excluding transcript/audio and legacy consolidated
-    // reports — never fusing anything into one report (ADR-0014).
+    // T-6 · AC-6 (ADR-0018) — "enviar tudo → fila" enumerates every real file. A
+    // meeting now contributes its `notas/*` and NOTHING else: no report (it no
+    // longer exists) and never the transcript. Legacy consolidated reports in
+    // anexos/ are still skipped (ADR-0014).
     #[test]
-    fn queueable_files_lists_real_files_excluding_transcript_and_legacy_report() {
+    fn queueable_files_resolves_a_meeting_to_its_notas_only() {
         let base = tmp("queueable");
         let root = base.join("brainstorming/frota-2026");
         let d = root.join("reunioes/2026-07-27-1000-plano");
         std::fs::create_dir_all(d.join("notas")).unwrap();
         std::fs::write(d.join("reuniao.md"), "# transcrição\n\n[00:00] fala\n").unwrap();
+        // a report left behind by an old version is not a queue representative
         std::fs::write(d.join("relatorio.md"), "# Relatório\n\n## Resumo\n\nok\n").unwrap();
         std::fs::write(d.join("notas/analise.md"), "# Análise\n\npontos\n").unwrap();
         std::fs::create_dir_all(root.join("notas")).unwrap();
@@ -2716,9 +2788,21 @@ mod tests {
                 "brainstorming/frota-2026/notas/ideia.md".to_string(),
                 "brainstorming/frota-2026/reunioes/2026-07-27-1000-plano/notas/analise.md"
                     .to_string(),
-                "brainstorming/frota-2026/reunioes/2026-07-27-1000-plano/relatorio.md".to_string(),
             ]
         );
+    }
+
+    // T-6 · AC-7 — a meeting nobody analysed has nothing to send. Zero items is
+    // the honest answer; the UI turns it into a stated reason, not a failure.
+    #[test]
+    fn queueable_files_gives_an_unanalysed_meeting_zero_items() {
+        let base = tmp("queueable-vazia");
+        let d = base.join("brainstorming/frota/reunioes/2026-07-27-1000-plano");
+        std::fs::create_dir_all(d.join("notas")).unwrap();
+        std::fs::write(d.join("reuniao.md"), "# transcrição\n").unwrap();
+        std::fs::write(d.join("auditoria.jsonl"), "{}\n").unwrap();
+
+        assert!(queueable_files(&base, "frota").is_empty());
     }
 
     #[test]
