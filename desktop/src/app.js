@@ -1986,7 +1986,13 @@ function pestoggleDestDir(key) {
 // only the icon starts a move. Property assignment keeps this idempotent across
 // the repeated wirePessoal() calls on persistent nodes.
 function wirePessoalDnd() {
-  B.navPessoal.querySelectorAll(".bitem.file[data-artmenu]").forEach((row) => {
+  // #47 — `data-artmenu` sits on the ⋯ BUTTON, never on the row, so the old
+  // `.bitem.file[data-artmenu]` matched nothing and file drag never activated —
+  // silently, since a zero-length forEach raises no error. Start from the button
+  // and walk up, the same shape the meeting handle below uses.
+  B.navPessoal.querySelectorAll("[data-artmenu]").forEach((btn) => {
+    const row = btn.closest(".bitem.file");
+    if (!row) return;
     row.draggable = false;
     const handle = row.querySelector(".nico");
     if (!handle) return;
