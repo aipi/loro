@@ -2007,6 +2007,8 @@ function wirePessoalDnd() {
   B.navPessoal.querySelectorAll("[data-mtgmenu]").forEach((btn) => {
     const row = btn.closest(".bitem");
     if (!row) return;
+    // gravando não arrasta: o backend recusa, e prometer o drop seria mentira
+    if (btn.dataset.mtgstatus !== "done") return;
     row.draggable = false;
     const handle = row.querySelector(".nico");
     if (!handle) return;

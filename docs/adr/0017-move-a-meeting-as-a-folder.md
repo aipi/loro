@@ -77,14 +77,21 @@ target is valid — are pure functions in `meeting.js` (`meetingMoveTargets`,
 
 ### §5 A move is refused while the meeting is still recording
 
-`retema_meeting` lives in `meeting`, holds the meeting lock and writes through the
-atomic `manifest_write`, because a move racing an in-flight `brain_meeting_append`
-would lose a transcript chunk or a manifest key. Rewriting the manifest from
-`acervo` — as the first revision did — bypassed both.
+The **rename and the metadata rewrite happen under the meeting's own lock**, taken
+in `move_meeting_dir` before the rename. Locking only the rewrite — as an earlier
+revision did — left the original race open: `brain_meeting_append` resolves the
+meeting directory *before* it locks, so a rename slipping in between made its write
+land on a path that no longer exists and the transcript chunk was lost. The lock is
+not reentrant, so `retema_meeting_locked` documents that the caller already holds it.
 
-The UI closes the same hole from the other side: **mover para…** is gated on the
-meeting being finished, alongside *analisar* and *enviar para a fila*. A meeting
-that is still recording has nothing to gain from moving and everything to lose.
+The **backend refuses a meeting that is not `done`** (`err.meeting_not_finished`),
+and the UI gates both doors — the `⋯` entry and the drag handle. The backend check
+is the one that matters: drag-and-drop is a second door into the same command, and
+an invariant enforced only in a menu is not enforced.
+
+The retema itself is **best-effort after the rename**: the move already happened and
+must not be reported as a failure, so a broken manifest is logged and the command
+still returns the new rel.
 
 ### §6 Inbound references are retargeted, not left to rot
 
@@ -96,6 +103,15 @@ on whole path **segments**, so `.../m1` never rewrites `.../m10`.
 
 This follows the precedent the promote flow already set: it rewrites or drops a
 dangling link rather than shipping one.
+
+Two bounds on the walk, both learned from review:
+
+- **`contextos/` is excluded.** It is the versioned tree, whose edits go through a
+  branch (ADR-0002), and `move_pessoal_file` already refuses it on both ends.
+  Rewriting a context's `CHANGELOG.md` in place would falsify history.
+- **Symlinks are not followed and depth is bounded.** A cycle would recurse until
+  the stack overflows, which aborts the process — and this runs *after* the rename,
+  so the app would die with the meeting already moved.
 
 ## Consequences
 

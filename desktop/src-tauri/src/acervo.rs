@@ -10,6 +10,7 @@
 // canonicalize + starts_with(base) guard the other brain_* commands use.
 
 use std::path::{Path, PathBuf};
+use tracing::{error, info};
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
@@ -1489,11 +1490,6 @@ pub fn brain_rename_pessoal(app: AppHandle, rel: String, name: String) -> Result
     Ok(new_rel)
 }
 
-// Move a brainstorming FILE into another folder of the SAME non-versioned world
-// (brainstorming/ or pessoal/). The filename is preserved; a name clash in the
-// destination is refused (never overwrites). Confinement mirrors
-// `rename_pessoal_file` — the versioned contextos/ tree is off-limits on both
-// ends. Returns the new acervo-relative path. Pure core, testable without Tauri.
 // #44 — a moved meeting leaves inbound references pointing nowhere: `refs:`
 // entries in other documents and `acervo://` anchors (ADR-0007) still name the old
 // path, and `resolve_ref` starts reporting `exists: false`. Rewrite the prefix
@@ -1513,7 +1509,9 @@ pub(crate) fn retarget_refs_in_content(content: &str, old_rel: &str, new_rel: &s
         s.is_empty()
             || s.starts_with('/')
             || s.starts_with('#')
-            || s.starts_with(|c: char| c.is_whitespace() || c == ')' || c == '"' || c == '\'')
+            || s.starts_with(|c: char| {
+                c.is_whitespace() || matches!(c, ')' | '"' | '\'' | '`' | '}' | ',' | ']' | ';')
+            })
     };
     let swap = |hay: &str, needle_prefix: &str| -> Option<String> {
         let needle = format!("{needle_prefix}{old}");
@@ -1555,25 +1553,42 @@ pub(crate) fn retarget_refs_in_content(content: &str, old_rel: &str, new_rel: &s
         .join("\n")
 }
 
-// Walk the non-versioned worlds and retarget every inbound reference to a moved
-// meeting. Best-effort per file: an unreadable document does not undo the move.
-// Returns how many files were rewritten, so the caller can report it.
+// Walk the NON-VERSIONED worlds and retarget every inbound reference to a moved
+// meeting. `contextos/` is deliberately excluded: it is the versioned tree, whose
+// edits go through a branch (ADR-0002), and `move_pessoal_file` already refuses it
+// on both ends. Rewriting a context's CHANGELOG in place would falsify history.
+//
+// The walk does not follow symlinks and is depth-bounded: a cycle would otherwise
+// recurse until the stack overflows, which aborts the process — and this runs
+// AFTER the rename, so the app would die with the meeting already moved.
+// Best-effort per file: an unreadable document never undoes a completed move.
 fn retarget_refs_after_move(base: &Path, old_rel: &str, new_rel: &str) -> usize {
-    fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
-        if let Ok(rd) = std::fs::read_dir(dir) {
-            for e in rd.flatten() {
-                let p = e.path();
-                if p.is_dir() {
-                    walk(&p, out);
-                } else if p.extension().and_then(|s| s.to_str()) == Some("md") {
-                    out.push(p);
-                }
+    const MAX_DEPTH: usize = 12;
+    fn walk(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
+        if depth > MAX_DEPTH {
+            return;
+        }
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for e in rd.flatten() {
+            let p = e.path();
+            let Ok(meta) = std::fs::symlink_metadata(&p) else {
+                continue;
+            };
+            if meta.file_type().is_symlink() {
+                continue;
+            }
+            if meta.is_dir() {
+                walk(&p, depth + 1, out);
+            } else if p.extension().and_then(|s| s.to_str()) == Some("md") {
+                out.push(p);
             }
         }
     }
     let mut files = Vec::new();
-    for world in ["brainstorming", "pessoal", "contextos"] {
-        walk(&base.join(world), &mut files);
+    for world in ["brainstorming", "pessoal"] {
+        walk(&base.join(world), 0, &mut files);
     }
     let mut n = 0;
     for f in files {
@@ -1652,15 +1667,32 @@ pub(crate) fn move_meeting_dir(base: &Path, rel: &str, dest_slug: &str) -> Resul
         return Err("err.file_exists_in_target".into());
     }
 
+    // A meeting still recording must not move: `brain_meeting_append` would write
+    // into a path that no longer exists. Refused in the backend, not only in the
+    // menu, because drag-and-drop is a second door into the same command.
+    if crate::meeting::status_of(&src)? != "done" {
+        return Err("err.meeting_not_finished".into());
+    }
+
+    // The rename AND the metadata rewrite happen under the meeting's own lock.
+    // Locking only the rewrite left the race open: append resolves the directory
+    // before it locks, so a rename slipping in between loses the chunk.
+    let lock = crate::meeting::lock_for(&id);
+    let _guard = lock.lock().map_err(|_| "err.lock_poisoned".to_string())?;
     std::fs::rename(&src, &dest).map_err(|e| e.to_string())?;
-    // DEC-1 (owner, 2026-08-08). Owned by `meeting`, which holds the manifest lock
-    // and writes it atomically — rewriting it from here would race an in-flight
-    // append and lose a transcript chunk. Runs after the rename so a failure never
-    // leaves the source half-edited.
-    crate::meeting::retema_meeting(&dest, dest_slug)?;
+
+    let old_rel = normalize_rel(&rel)?;
     let new_rel = normalize_rel(&format!("{dest_dir_rel}/{id}"))?;
-    // inbound refs/anchors would otherwise point at a path that no longer exists
-    retarget_refs_after_move(base, &rel, &new_rel);
+    // DEC-1 (owner, 2026-08-08). Best-effort AFTER the rename: the move already
+    // happened and must not be reported as a failure, so a broken manifest is
+    // logged and the command still succeeds with the new rel.
+    if let Err(e) = crate::meeting::retema_meeting_locked(&dest, dest_slug) {
+        error!(meeting = %id, error = %e, "meeting moved but its tema was not rewritten");
+    }
+    let touched = retarget_refs_after_move(base, &old_rel, &new_rel);
+    if touched > 0 {
+        info!(meeting = %id, files = touched, "retargeted inbound references");
+    }
     Ok(new_rel)
 }
 
@@ -1718,7 +1750,7 @@ pub fn brain_move_pessoal(app: AppHandle, rel: String, dest_dir: String) -> Resu
     Ok(new_rel)
 }
 
-// #44 — move a reunião inteira para o `reunioes/` de outro brainstorming.
+// #44 — move a whole meeting into another brainstorming's `reunioes/`.
 #[tauri::command]
 pub fn brain_move_meeting(
     app: AppHandle,
@@ -2708,13 +2740,13 @@ mod tests {
         assert!(base.join("contextos/frota/CHANGELOG.md").is_file());
     }
 
-    // ---- #44: mover uma reunião com toda a sua análise ----------------------
-    // Uma reunião é a PASTA `reunioes/<id>/`; `move_pessoal_file` exige um
-    // arquivo e não serve. A move é um rename do diretório inteiro — é isso que
-    // faz a análise, o áudio e a auditoria viajarem juntos sem que ninguém
-    // reenumere o conteúdo (hotspot #46: nada aqui reimplementa `is_queueable`).
+    // ---- #44: move a meeting with its whole analysis ------------------------
+    // A meeting is the FOLDER `reunioes/<id>/`; `move_pessoal_file` demands a file
+    // and cannot serve. The move renames the whole directory — that is what makes
+    // the analysis, the audio and the audit travel together without anything
+    // re-enumerating them (hotspot #46: nothing here re-implements `is_queueable`).
 
-    // Monta uma reunião completa em `brainstorming/<slug>/reunioes/<id>/`.
+    // A complete meeting fixture under `brainstorming/<slug>/reunioes/<id>/`.
     fn meeting_fixture(base: &Path, slug: &str, id: &str) -> PathBuf {
         let dir = base.join(format!("brainstorming/{slug}/reunioes/{id}"));
         std::fs::create_dir_all(dir.join("notas")).unwrap();
@@ -2763,12 +2795,12 @@ mod tests {
             "auditoria.jsonl",
             "audio/mic.webm",
         ] {
-            assert!(dst.join(f).exists(), "{f} devia ter viajado junto");
+            assert!(dst.join(f).exists(), "{f} should have travelled along");
         }
-        assert!(!src.exists(), "nada pode sobrar na origem");
+        assert!(!src.exists(), "nothing may be left at the source");
     }
 
-    // AC-2 · T-4 — o `tema` é reescrito nos DOIS lugares e a transcrição não é tocada
+    // AC-2 · T-4 — `tema` is rewritten in BOTH places and the transcript is untouched
     #[test]
     fn move_meeting_dir_retemas_manifest_and_front_matter() {
         let base = tmp("mvmtg-tema");
@@ -2787,8 +2819,8 @@ mod tests {
         let living = std::fs::read_to_string(dst.join("reuniao.md")).unwrap();
         assert!(living.contains("tema: destino"), "front matter: {living}");
         assert!(!living.contains("tema: origem"));
-        // AC-2: o corpo é idêntico DE VERDADE — a asserção anterior parava na
-        // primeira régua markdown do próprio corpo e ficava vazia dali em diante.
+        // AC-2: the body is REALLY identical — the earlier assertion stopped at the
+        // body's first markdown rule and was empty from there on.
         let corpo = |s: &str| {
             let r = s.strip_prefix("---\n").unwrap();
             let end = r.find("\n---").unwrap();
@@ -2797,7 +2829,7 @@ mod tests {
         assert_eq!(corpo(&living), corpo(&corpo_antes));
     }
 
-    // AC-3 · T-2 — colisão nunca sobrescreve (precedente da ADR-0009)
+    // AC-3 · T-2 — a collision never overwrites (ADR-0009 precedent)
     #[test]
     fn move_meeting_dir_refuses_a_collision_and_leaves_the_source_intact() {
         let base = tmp("mvmtg-col");
@@ -2808,9 +2840,9 @@ mod tests {
             move_meeting_dir(&base, "brainstorming/origem/reunioes/m1", "destino").unwrap_err(),
             "err.file_exists_in_target"
         );
-        assert!(src.join("reuniao.md").is_file(), "a origem fica intacta");
+        assert!(src.join("reuniao.md").is_file(), "the source stays intact");
         let manifest = std::fs::read_to_string(src.join("manifest.json")).unwrap();
-        assert!(manifest.contains("\"tema\": \"origem\""), "e sem retema");
+        assert!(manifest.contains("\"tema\": \"origem\""), "and un-retemaed");
     }
 
     // AC-4 · T-3
@@ -2822,19 +2854,31 @@ mod tests {
         std::fs::create_dir_all(base.join("brainstorming/origem/notas")).unwrap();
         std::fs::write(base.join("brainstorming/origem/notas/a.md"), "x").unwrap();
 
-        // origem versionada
-        assert!(move_meeting_dir(&base, "contextos/c", "origem").is_err());
-        // travessia
-        assert!(
-            move_meeting_dir(&base, "brainstorming/origem/reunioes/../../..", "destino").is_err()
+        // AC-4 names the codes — assert them, not just `is_err`
+        assert_eq!(
+            move_meeting_dir(&base, "contextos/c", "origem").unwrap_err(),
+            "err.outside_brainstorm"
         );
-        // um ARQUIVO não é uma reunião
-        assert!(move_meeting_dir(&base, "brainstorming/origem/notas/a.md", "destino").is_err());
-        // destino inexistente
-        assert!(move_meeting_dir(&base, "brainstorming/origem/reunioes/m1", "nao-existe").is_err());
+        assert_eq!(
+            move_meeting_dir(&base, "brainstorming/origem/reunioes/../../..", "destino")
+                .unwrap_err(),
+            "err.invalid_path"
+        );
+        assert_eq!(
+            move_meeting_dir(&base, "brainstorming/origem/notas/a.md", "destino").unwrap_err(),
+            "err.not_found"
+        );
+        assert_eq!(
+            move_meeting_dir(&base, "brainstorming/origem/reunioes/m1", "nao-existe").unwrap_err(),
+            "err.not_found"
+        );
+        assert_eq!(
+            move_meeting_dir(&base, "brainstorming/origem/reunioes/m1", "a/b").unwrap_err(),
+            "err.invalid_path"
+        );
     }
 
-    // T-5 — a reunião movida é listada no destino e some da origem
+    // T-5 — the moved meeting is listed at the destination and gone from the source
     #[test]
     fn moved_meeting_is_listed_at_the_destination_only() {
         let base = tmp("mvmtg-list");
@@ -2849,10 +2893,10 @@ mod tests {
         assert_eq!(no_destino[0].id, "m1");
     }
 
-    // T-6 · BR-8 — a move NÃO enumera o conteúdo da reunião: ela é um rename de
-    // diretório, então a transcrição e o áudio chegam ao destino sem passar por
-    // `is_queueable`. A BR-8 segue valendo só na fila, e este teste trava que
-    // nada aqui a reimplementa (hotspot #46).
+    // T-6 · BR-8 — the move does NOT enumerate the meeting: it is a directory
+    // rename, so the transcript and the audio reach the destination without
+    // passing `is_queueable`. BR-8 stays the fila's business alone, and this test
+    // pins that nothing here re-implements it (hotspot #46).
     #[test]
     fn br8_move_does_not_reimplement_the_queue_gate() {
         let base = tmp("mvmtg-br8");
@@ -2862,24 +2906,24 @@ mod tests {
         let out = move_meeting_dir(&base, "brainstorming/origem/reunioes/m1", "destino").unwrap();
         let dst = base.join(&out);
 
-        // o que a fila BARRA viajou junto na move — prova de que a move não filtra
+        // what the fila BARS travelled along — proof the move does not filter
         assert!(dst.join("reuniao.md").is_file());
         assert!(dst.join("audio/mic.webm").is_file());
         assert!(dst.join("auditoria.jsonl").is_file());
         assert!(
             !is_queueable("reuniao.md"),
-            "a BR-8 continua barrando na fila"
+            "BR-8 still bars it from the fila"
         );
         assert!(!is_queueable("auditoria.jsonl"));
-        // e o que a fila ACEITA continua aceito, no destino
+        // and what the fila ACCEPTS is still accepted, at the destination
         assert!(is_queueable("notas/analise-2026-08-08.md"));
     }
 
-    // BR-1 — a inferência e o material da reunião vivem no mundo NÃO versionado.
-    // `move_meeting_dir` é um caminho novo para relocar transcrição e áudio, então
-    // ele precisa do mesmo invariante que
-    // `meeting_stays_under_brainstorming_and_is_never_versioned` guarda: um symlink
-    // sob a árvore do brainstorming não pode servir de ponte para `contextos/`.
+    // BR-1 — inference and meeting material live in the NON-versioned world.
+    // `move_meeting_dir` is a new path for relocating a transcript and its audio,
+    // so it needs the invariant
+    // `meeting_stays_under_brainstorming_and_is_never_versioned` guards: a symlink
+    // under the brainstorming tree must not bridge into `contextos/`.
     #[test]
     #[cfg(unix)]
     fn br1_move_never_leaks_a_meeting_into_the_versioned_tree() {
@@ -2901,16 +2945,17 @@ mod tests {
         assert!(
             base.join("brainstorming/origem/reunioes/m1/reuniao.md")
                 .is_file(),
-            "a reunião fica onde estava"
+            "the meeting stays where it was"
         );
         assert!(
             !base.join("contextos/c/m1").exists(),
-            "e NADA da reunião chega à árvore versionada"
+            "and NOTHING of it reaches the versioned tree"
         );
     }
 
-    // D8 — um brainstorming sem `reunioes/` é destino válido: a pasta é criada
-    // sob demanda, como o create_meeting faz, em vez de falhar depois de oferecida.
+    // A brainstorming with no `reunioes/` is still a valid destination: the folder
+    // is created on demand, as `create_meeting` does, instead of being offered and
+    // then failing.
     #[test]
     fn move_meeting_dir_creates_the_destination_reunioes_folder() {
         let base = tmp("mvmtg-mk");
@@ -2922,7 +2967,7 @@ mod tests {
         assert!(base.join(&out).join("manifest.json").is_file());
     }
 
-    // D4 — referências de entrada não ficam penduradas.
+    // Inbound references must not be left dangling.
     #[test]
     fn retarget_refs_rewrites_paths_and_anchors_on_segment_boundaries() {
         let old = "brainstorming/a/reunioes/m1";
@@ -2938,11 +2983,11 @@ mod tests {
         assert!(out.contains(&format!("acervo://{new}/reuniao.md#h1")));
         assert!(
             out.contains("reunioes/m10/notas/y.md"),
-            "m10 não é m1: só segmento inteiro casa"
+            "m10 is not m1: only a whole segment matches"
         );
         assert!(
             out.contains("brainstorming/a/notas/z.md"),
-            "outro caminho fica"
+            "an unrelated path stays"
         );
     }
 
