@@ -2669,8 +2669,24 @@ fn brain_send_files_to_queue(
     let base = PathBuf::from(&cfg.brain_dir)
         .canonicalize()
         .map_err(|e| e.to_string())?;
-    let mut entries = Vec::with_capacity(rels.len());
+    // ADR-0018: a selected MEETING is a directory, and what represents it in the
+    // fila is decided by its one owner (`acervo::meeting_queueables`) — never by
+    // a second walk here (hotspot #46). A meeting nobody analysed expands to
+    // nothing and says so instead of queueing an empty item.
+    let mut expanded = Vec::with_capacity(rels.len());
     for rel in &rels {
+        if base.join(rel.replace('\\', "/")).is_dir() {
+            let files = crate::acervo::meeting_queueables(&base, rel);
+            if files.is_empty() {
+                return Err("err.meeting_not_analysed".into());
+            }
+            expanded.extend(files);
+        } else {
+            expanded.push(rel.clone());
+        }
+    }
+    let mut entries = Vec::with_capacity(expanded.len());
+    for rel in &expanded {
         entries.push(resolve_queue_entry(&base, rel, ctx.as_deref())?);
     }
     let inbox = base.join("inbox");

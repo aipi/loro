@@ -95,16 +95,18 @@ test("selection model toggles rels and maps to backend SelItems in parts order",
   ]);
 });
 
-test("queueRelForSelection resolves a meeting to its relatorio.md, files to themselves", () => {
-  // ADR-0014 / BR-8: a meeting is queued as its report, never the raw transcript
+// T-7 (ADR-0018): a meeting stays a DIRECTORY here. Which files represent it is
+// the backend's single owner (acervo::meeting_queueables) — the JS side never
+// rebuilds the BR-8 gate (hotspot #46), and never names relatorio.md again.
+test("queueRelForSelection keeps a meeting as its directory, files as themselves", () => {
   assert.strictEqual(
     B.queueRelForSelection("reuniao", "brainstorming/frota/reunioes/m1"),
-    "brainstorming/frota/reunioes/m1/relatorio.md"
+    "brainstorming/frota/reunioes/m1"
   );
-  // a trailing slash on the meeting dir must not double up
+  // a trailing slash on the meeting dir must not survive
   assert.strictEqual(
     B.queueRelForSelection("reuniao", "brainstorming/frota/reunioes/m1/"),
-    "brainstorming/frota/reunioes/m1/relatorio.md"
+    "brainstorming/frota/reunioes/m1"
   );
   // notes / analyses / attachments are already files — sent as themselves
   assert.strictEqual(

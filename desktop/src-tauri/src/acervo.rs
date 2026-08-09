@@ -616,6 +616,37 @@ pub struct MeetingListItem {
     rel: String,
     titulo: String,
     status: String,
+    // ADR-0018 · AC-7: how many of the meeting's `notas/` can enter the fila. The
+    // analysis IS the meeting's output, so zero means there is nothing to send —
+    // the `⋯` entry says that instead of queueing an empty meeting.
+    notas: usize,
+}
+
+// ADR-0018 — the ONE owner of "which files represent a meeting in the fila".
+// The analysis IS the meeting's output, so that is its `notas/*` and nothing
+// else: never the transcript, never the audit, never audio.
+//
+// Hotspot #46: every path that queues a meeting resolves through HERE. A second
+// `read_dir` of the meeting folder somewhere else would rebuild the BR-8 gate,
+// and that is exactly how a transcript reaches `inbox/`. `rel` is the meeting's
+// acervo-relative directory.
+pub(crate) fn meeting_queueables(base: &Path, rel: &str) -> Vec<String> {
+    let rel = rel.replace('\\', "/");
+    let rel = rel.trim_end_matches('/');
+    let mut out: Vec<String> = std::fs::read_dir(base.join(rel).join("notas"))
+        .map(|rd| {
+            rd.flatten()
+                .filter(|f| f.path().is_file())
+                .filter_map(|f| {
+                    let n = f.file_name().to_string_lossy().to_string();
+                    let r = format!("{rel}/notas/{n}");
+                    (!n.starts_with('.') && is_queueable(&r)).then_some(r)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    out.sort();
+    out
 }
 
 fn list_meetings(base: &Path, slug: &str) -> Vec<MeetingListItem> {
@@ -633,8 +664,10 @@ fn list_meetings(base: &Path, slug: &str) -> Vec<MeetingListItem> {
                             .ok()
                             .and_then(|t| serde_json::from_str(&t).ok())
                             .unwrap_or_default();
+                    let rel = format!("brainstorming/{slug}/reunioes/{id}");
                     MeetingListItem {
-                        rel: format!("brainstorming/{slug}/reunioes/{id}"),
+                        notas: meeting_queueables(base, &rel).len(),
+                        rel,
                         titulo: man.titulo,
                         status: man.status,
                         id,
@@ -1370,15 +1403,10 @@ pub(crate) fn queueable_files(base: &Path, slug: &str) -> Vec<String> {
     if let Ok(rd) = std::fs::read_dir(root.join("reunioes")) {
         for e in rd.flatten().filter(|e| e.path().is_dir()) {
             let id = e.file_name().to_string_lossy().to_string();
-            if let Ok(nd) = std::fs::read_dir(e.path().join("notas")) {
-                for f in nd.flatten().filter(|f| f.path().is_file()) {
-                    let n = f.file_name().to_string_lossy().to_string();
-                    let rel = format!("brainstorming/{slug}/reunioes/{id}/notas/{n}");
-                    if !n.starts_with('.') && is_queueable(&rel) {
-                        out.push(rel);
-                    }
-                }
-            }
+            out.extend(meeting_queueables(
+                base,
+                &format!("brainstorming/{slug}/reunioes/{id}"),
+            ));
         }
     }
     for sub in ["notas", "anexos"] {
@@ -2318,6 +2346,14 @@ mod tests {
                 "{survivor} must survive the deletion"
             );
         }
+
+        // AC-7 — the listing reports how much of the meeting the fila would take
+        let itens = list_meetings(&base, "turbo");
+        assert_eq!(itens.len(), 1);
+        assert_eq!(
+            itens[0].notas, 2,
+            "analise.md + notas/relatorio.md are both queueable"
+        );
 
         // idempotent: a second listing has nothing left to do and touches nothing
         let antes = std::fs::read_to_string(mdir.join("notas/relatorio.md")).unwrap();

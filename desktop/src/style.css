@@ -876,6 +876,14 @@ body {
   padding: 8px 14px; border-radius: 999px; z-index: 30; max-width: 84%;
   text-align: center;
 }
+/* ADR-0018: o toast do fim de reunião carrega a oferta de analisar — uma ação
+   em um clique, dispensável. Herda o toast: nada permanente entra no layout. */
+.toastbtn {
+  margin-left: 10px; padding: 2px 10px; border-radius: 999px;
+  border: 1px solid var(--paper); background: transparent; color: var(--paper);
+  font-family: inherit; font-size: inherit; letter-spacing: inherit; cursor: pointer;
+}
+.toastbtn:hover { background: var(--paper); color: var(--ink); }
 
 /* linha de pendente: só o nome navega; botões à direita */
 .row.nohover:hover { color: inherit; }
