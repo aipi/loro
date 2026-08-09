@@ -2642,7 +2642,9 @@ mod tests {
         .unwrap();
         std::fs::write(
             dir.join("manifest.json"),
-            format!("{{\n  \"id\": \"{id}\",\n  \"tema\": \"{slug}\",\n  \"status\": \"done\"\n}}\n"),
+            format!(
+                "{{\n  \"id\": \"{id}\",\n  \"tema\": \"{slug}\",\n  \"status\": \"done\"\n}}\n"
+            ),
         )
         .unwrap();
         std::fs::write(dir.join("notas/analise-2026-08-08.md"), "a análise").unwrap();
@@ -2665,7 +2667,10 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(out, "brainstorming/destino/reunioes/2026-08-08-1200-reuniao");
+        assert_eq!(
+            out,
+            "brainstorming/destino/reunioes/2026-08-08-1200-reuniao"
+        );
         let dst = base.join(&out);
         for f in [
             "reuniao.md",
@@ -2691,7 +2696,10 @@ mod tests {
         let dst = base.join(&out);
 
         let manifest = std::fs::read_to_string(dst.join("manifest.json")).unwrap();
-        assert!(manifest.contains("\"tema\": \"destino\""), "manifest: {manifest}");
+        assert!(
+            manifest.contains("\"tema\": \"destino\""),
+            "manifest: {manifest}"
+        );
         let living = std::fs::read_to_string(dst.join("reuniao.md")).unwrap();
         assert!(living.contains("tema: destino"), "front matter: {living}");
         assert!(!living.contains("tema: origem"));
@@ -2728,7 +2736,9 @@ mod tests {
         // origem versionada
         assert!(move_meeting_dir(&base, "contextos/c", "origem").is_err());
         // travessia
-        assert!(move_meeting_dir(&base, "brainstorming/origem/reunioes/../../..", "destino").is_err());
+        assert!(
+            move_meeting_dir(&base, "brainstorming/origem/reunioes/../../..", "destino").is_err()
+        );
         // um ARQUIVO não é uma reunião
         assert!(move_meeting_dir(&base, "brainstorming/origem/notas/a.md", "destino").is_err());
         // destino inexistente
@@ -2750,4 +2760,29 @@ mod tests {
         assert_eq!(no_destino[0].id, "m1");
     }
 
+    // T-6 · BR-8 — a move NÃO enumera o conteúdo da reunião: ela é um rename de
+    // diretório, então a transcrição e o áudio chegam ao destino sem passar por
+    // `is_queueable`. A BR-8 segue valendo só na fila, e este teste trava que
+    // nada aqui a reimplementa (hotspot #46).
+    #[test]
+    fn br8_move_does_not_reimplement_the_queue_gate() {
+        let base = tmp("mvmtg-br8");
+        meeting_fixture(&base, "origem", "m1");
+        std::fs::create_dir_all(base.join("brainstorming/destino/reunioes")).unwrap();
+
+        let out = move_meeting_dir(&base, "brainstorming/origem/reunioes/m1", "destino").unwrap();
+        let dst = base.join(&out);
+
+        // o que a fila BARRA viajou junto na move — prova de que a move não filtra
+        assert!(dst.join("reuniao.md").is_file());
+        assert!(dst.join("audio/mic.webm").is_file());
+        assert!(dst.join("auditoria.jsonl").is_file());
+        assert!(
+            !is_queueable("reuniao.md"),
+            "a BR-8 continua barrando na fila"
+        );
+        assert!(!is_queueable("auditoria.jsonl"));
+        // e o que a fila ACEITA continua aceito, no destino
+        assert!(is_queueable("notas/analise-2026-08-08.md"));
+    }
 }
