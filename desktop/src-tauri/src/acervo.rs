@@ -1494,6 +1494,95 @@ pub fn brain_rename_pessoal(app: AppHandle, rel: String, name: String) -> Result
 // destination is refused (never overwrites). Confinement mirrors
 // `rename_pessoal_file` — the versioned contextos/ tree is off-limits on both
 // ends. Returns the new acervo-relative path. Pure core, testable without Tauri.
+// #44 — mover uma reunião INTEIRA para o `reunioes/` de outro brainstorming.
+//
+// `move_pessoal_file` exige `src.is_file()` e não serve: uma reunião é a pasta
+// `reunioes/<id>/` (ADR-0008/0010). Mover é um rename do DIRETÓRIO, e é por isso
+// que a análise, o áudio, a transcrição e a auditoria viajam juntos sem que
+// ninguém reenumere o conteúdo — nada aqui reimplementa o portão da BR-8
+// (`is_queueable`), que segue valendo só na fila (hotspot #46).
+//
+// O destino é sempre `brainstorming/<slug>/reunioes/`: o `list_meetings` varre
+// exatamente esse caminho, então qualquer outro lugar faria a reunião sumir da UI.
+// Colisão de `<id>` recusa em vez de sobrescrever, como a ADR-0009 decidiu para
+// arquivos.
+pub(crate) fn move_meeting_dir(base: &Path, rel: &str, dest_slug: &str) -> Result<String, String> {
+    let rel = rel.replace('\\', "/");
+    if rel.contains("..") || dest_slug.contains("..") || dest_slug.contains('/') {
+        return Err("err.invalid_path".into());
+    }
+    if !rel.starts_with("brainstorming/") && !rel.starts_with("pessoal/") {
+        return Err("err.outside_brainstorm".into());
+    }
+
+    let src = guarded_existing(base, &rel)?;
+    // uma reunião é uma pasta COM manifesto — a mesma marca que o list_meetings usa
+    if !src.is_dir() || !src.join("manifest.json").is_file() {
+        return Err("err.not_found".into());
+    }
+
+    let id = src
+        .file_name()
+        .and_then(|s| s.to_str())
+        .ok_or("err.invalid_path")?
+        .to_string();
+    let dest_dir_rel = format!("brainstorming/{dest_slug}/reunioes");
+    let dest_dir = guarded_existing(base, &dest_dir_rel)?;
+    if !dest_dir.is_dir() {
+        return Err("err.not_found".into());
+    }
+    let dest = dest_dir.join(&id);
+    if dest.exists() {
+        return Err("err.file_exists_in_target".into());
+    }
+
+    std::fs::rename(&src, &dest).map_err(|e| e.to_string())?;
+    // DEC-1 (dono, 2026-08-08): o `tema` é reescrito nos dois lugares que o
+    // guardam. Só depois do rename, para que uma falha aqui não deixe a origem
+    // meio-editada.
+    retema_meeting(&dest, dest_slug);
+    normalize_rel(&format!("{dest_dir_rel}/{id}"))
+}
+
+// Reescreve o brainstorming de origem gravado dentro da reunião: `tema` no
+// `manifest.json` e a linha `tema:` do front matter do `reuniao.md`. Best-effort
+// por arquivo — a move já aconteceu, e um manifesto ilegível não deve desfazê-la.
+// O CORPO do `reuniao.md` (a transcrição) nunca é tocado: só a linha `tema:`
+// dentro do primeiro bloco de front matter.
+fn retema_meeting(dir: &Path, slug: &str) {
+    let manifest = dir.join("manifest.json");
+    if let Ok(txt) = std::fs::read_to_string(&manifest) {
+        if let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&txt) {
+            if let Some(obj) = v.as_object_mut() {
+                obj.insert("tema".into(), serde_json::Value::String(slug.into()));
+                if let Ok(out) = serde_json::to_string_pretty(&v) {
+                    let _ = std::fs::write(&manifest, out + "\n");
+                }
+            }
+        }
+    }
+    let living = dir.join("reuniao.md");
+    if let Ok(txt) = std::fs::read_to_string(&living) {
+        if let Some(rest) = txt.strip_prefix("---\n") {
+            if let Some(end) = rest.find("\n---") {
+                let (fm, body) = rest.split_at(end);
+                let fm: String = fm
+                    .lines()
+                    .map(|l| {
+                        if l.starts_with("tema:") {
+                            format!("tema: {slug}")
+                        } else {
+                            l.to_string()
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let _ = std::fs::write(&living, format!("---\n{fm}{body}"));
+            }
+        }
+    }
+}
+
 pub(crate) fn move_pessoal_file(base: &Path, rel: &str, dest_dir: &str) -> Result<String, String> {
     let rel = rel.replace('\\', "/");
     let dest_dir = dest_dir
@@ -1541,6 +1630,19 @@ pub(crate) fn move_pessoal_file(base: &Path, rel: &str, dest_dir: &str) -> Resul
 pub fn brain_move_pessoal(app: AppHandle, rel: String, dest_dir: String) -> Result<String, String> {
     let base = acervo_base()?;
     let new_rel = move_pessoal_file(&base, &rel, &dest_dir)?;
+    emit_brainstorming_changed(&app, serde_json::json!({ "rel": new_rel }));
+    Ok(new_rel)
+}
+
+// #44 — move a reunião inteira para o `reunioes/` de outro brainstorming.
+#[tauri::command]
+pub fn brain_move_meeting(
+    app: AppHandle,
+    rel: String,
+    dest_slug: String,
+) -> Result<String, String> {
+    let base = acervo_base()?;
+    let new_rel = move_meeting_dir(&base, &rel, &dest_slug)?;
     emit_brainstorming_changed(&app, serde_json::json!({ "rel": new_rel }));
     Ok(new_rel)
 }
