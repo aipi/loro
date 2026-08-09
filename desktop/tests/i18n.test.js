@@ -73,3 +73,19 @@ test("every err code has both pt and en messages", () => {
     assert.ok(EN[key], `missing EN message for ${key}`);
   }
 });
+
+// T-9 (#44) — todo msgid de UI tem par em inglês. O teste acima cobre só os
+// códigos `err.*`; um msgid novo sem par passava despercebido.
+test("every UI msgid has an English pair", () => {
+  const faltando = Object.keys(EN).filter((k) => {
+    const v = EN[k];
+    return typeof v !== "string" || v.trim() === "";
+  });
+  assert.deepStrictEqual(faltando, [], "msgids sem tradução: " + faltando.join(", "));
+});
+
+test("os msgids da move de reunião existem e têm par", () => {
+  for (const k of ["Mover reunião", "movida", "mover para…", "destino", "mover"]) {
+    assert.ok(EN[k] && EN[k].trim(), `sem par em inglês: ${k}`);
+  }
+});

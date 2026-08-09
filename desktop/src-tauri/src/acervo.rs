@@ -1494,29 +1494,135 @@ pub fn brain_rename_pessoal(app: AppHandle, rel: String, name: String) -> Result
 // destination is refused (never overwrites). Confinement mirrors
 // `rename_pessoal_file` — the versioned contextos/ tree is off-limits on both
 // ends. Returns the new acervo-relative path. Pure core, testable without Tauri.
-// #44 — mover uma reunião INTEIRA para o `reunioes/` de outro brainstorming.
+// #44 — a moved meeting leaves inbound references pointing nowhere: `refs:`
+// entries in other documents and `acervo://` anchors (ADR-0007) still name the old
+// path, and `resolve_ref` starts reporting `exists: false`. Rewrite the prefix
+// instead of leaving silent rot — the promote flow already rewrites or drops
+// dangling links rather than shipping them.
 //
-// `move_pessoal_file` exige `src.is_file()` e não serve: uma reunião é a pasta
-// `reunioes/<id>/` (ADR-0008/0010). Mover é um rename do DIRETÓRIO, e é por isso
-// que a análise, o áudio, a transcrição e a auditoria viajam juntos sem que
-// ninguém reenumere o conteúdo — nada aqui reimplementa o portão da BR-8
-// (`is_queueable`), que segue valendo só na fila (hotspot #46).
+// Pure so the substitution is unit-covered. Only whole path SEGMENTS match, so
+// `.../reunioes/m1` never rewrites `.../reunioes/m10`.
+pub(crate) fn retarget_refs_in_content(content: &str, old_rel: &str, new_rel: &str) -> String {
+    let old = old_rel.trim_end_matches('/');
+    let new = new_rel.trim_end_matches('/');
+    if old.is_empty() || old == new {
+        return content.to_string();
+    }
+    // Only a whole SEGMENT match counts, so `.../m1` never rewrites `.../m10`.
+    let ends_segment = |s: &str| {
+        s.is_empty()
+            || s.starts_with('/')
+            || s.starts_with('#')
+            || s.starts_with(|c: char| c.is_whitespace() || c == ')' || c == '"' || c == '\'')
+    };
+    let swap = |hay: &str, needle_prefix: &str| -> Option<String> {
+        let needle = format!("{needle_prefix}{old}");
+        let mut out = String::with_capacity(hay.len());
+        let mut rest = hay;
+        let mut hit = false;
+        while let Some(at) = rest.find(&needle) {
+            let after = &rest[at + needle.len()..];
+            out.push_str(&rest[..at]);
+            if ends_segment(after) {
+                out.push_str(&format!("{needle_prefix}{new}"));
+                hit = true;
+            } else {
+                out.push_str(&needle);
+            }
+            rest = after;
+        }
+        out.push_str(rest);
+        if hit {
+            Some(out)
+        } else {
+            None
+        }
+    };
+    content
+        .split('\n')
+        .map(|line| {
+            let mut out = line.to_string();
+            // `caminho: <rel>` (a ref entry, usually a `- ` list item) and any
+            // `acervo://<rel>` anchor in prose (ADR-0007).
+            for prefix in ["caminho: ", "acervo://"] {
+                if let Some(next) = swap(&out, prefix) {
+                    out = next;
+                }
+            }
+            out
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+// Walk the non-versioned worlds and retarget every inbound reference to a moved
+// meeting. Best-effort per file: an unreadable document does not undo the move.
+// Returns how many files were rewritten, so the caller can report it.
+fn retarget_refs_after_move(base: &Path, old_rel: &str, new_rel: &str) -> usize {
+    fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
+        if let Ok(rd) = std::fs::read_dir(dir) {
+            for e in rd.flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    walk(&p, out);
+                } else if p.extension().and_then(|s| s.to_str()) == Some("md") {
+                    out.push(p);
+                }
+            }
+        }
+    }
+    let mut files = Vec::new();
+    for world in ["brainstorming", "pessoal", "contextos"] {
+        walk(&base.join(world), &mut files);
+    }
+    let mut n = 0;
+    for f in files {
+        if let Ok(txt) = std::fs::read_to_string(&f) {
+            let out = retarget_refs_in_content(&txt, old_rel, new_rel);
+            if out != txt && std::fs::write(&f, out).is_ok() {
+                n += 1;
+            }
+        }
+    }
+    n
+}
+
+// #44 — move a WHOLE meeting into another brainstorming's `reunioes/`.
 //
-// O destino é sempre `brainstorming/<slug>/reunioes/`: o `list_meetings` varre
-// exatamente esse caminho, então qualquer outro lugar faria a reunião sumir da UI.
-// Colisão de `<id>` recusa em vez de sobrescrever, como a ADR-0009 decidiu para
-// arquivos.
+// `move_pessoal_file` demands `src.is_file()` and cannot serve: a meeting is the
+// directory `reunioes/<id>/` (ADR-0008/0010). Moving is a rename of the DIRECTORY,
+// which is why the analysis, the audio, the transcript and the audit travel
+// together without anything re-enumerating the folder — nothing here rebuilds the
+// BR-8 gate (`is_queueable`), which stays the fila's business alone (hotspot #46).
+//
+// The destination is always `brainstorming/<slug>/reunioes/`: `list_meetings`
+// scans exactly that path, so anywhere else the meeting would vanish from the UI.
+// An `<id>` collision refuses instead of overwriting, as ADR-0009 decided for files.
 pub(crate) fn move_meeting_dir(base: &Path, rel: &str, dest_slug: &str) -> Result<String, String> {
     let rel = rel.replace('\\', "/");
     if rel.contains("..") || dest_slug.contains("..") || dest_slug.contains('/') {
         return Err("err.invalid_path".into());
     }
-    if !rel.starts_with("brainstorming/") && !rel.starts_with("pessoal/") {
-        return Err("err.outside_brainstorm".into());
-    }
+    let world_of = |p: &str| -> Option<&'static str> {
+        if p == "brainstorming" || p.starts_with("brainstorming/") {
+            Some("brainstorming")
+        } else if p == "pessoal" || p.starts_with("pessoal/") {
+            Some("pessoal")
+        } else {
+            None
+        }
+    };
+    let src_world = world_of(&rel).ok_or("err.outside_brainstorm")?;
 
     let src = guarded_existing(base, &rel)?;
-    // uma reunião é uma pasta COM manifesto — a mesma marca que o list_meetings usa
+    // Re-check confinement AFTER canonicalize: a symlink under the brainstorming
+    // tree would otherwise carry the transcript and the audio into the versioned
+    // world, which BR-1 and `meeting_stays_under_brainstorming_and_is_never_versioned`
+    // exist to prevent. The string prefix alone is not a guard.
+    if !src.starts_with(base.join(src_world)) {
+        return Err("err.outside_brainstorm".into());
+    }
+    // a meeting is a FOLDER carrying a manifest — the same mark `list_meetings` uses
     if !src.is_dir() || !src.join("manifest.json").is_file() {
         return Err("err.not_found".into());
     }
@@ -1527,9 +1633,19 @@ pub(crate) fn move_meeting_dir(base: &Path, rel: &str, dest_slug: &str) -> Resul
         .ok_or("err.invalid_path")?
         .to_string();
     let dest_dir_rel = format!("brainstorming/{dest_slug}/reunioes");
-    let dest_dir = guarded_existing(base, &dest_dir_rel)?;
-    if !dest_dir.is_dir() {
+    // An older brainstorming may have no `reunioes/` yet; create it on demand
+    // rather than offering a destination that fails (create_meeting does the same).
+    let brainstorm = guarded_existing(base, &format!("brainstorming/{dest_slug}"))?;
+    if !brainstorm.starts_with(base.join("brainstorming")) {
+        return Err("err.outside_brainstorm".into());
+    }
+    if !brainstorm.is_dir() {
         return Err("err.not_found".into());
+    }
+    std::fs::create_dir_all(brainstorm.join("reunioes")).map_err(|e| e.to_string())?;
+    let dest_dir = guarded_existing(base, &dest_dir_rel)?;
+    if !dest_dir.starts_with(base.join("brainstorming")) {
+        return Err("err.outside_brainstorm".into());
     }
     let dest = dest_dir.join(&id);
     if dest.exists() {
@@ -1537,52 +1653,20 @@ pub(crate) fn move_meeting_dir(base: &Path, rel: &str, dest_slug: &str) -> Resul
     }
 
     std::fs::rename(&src, &dest).map_err(|e| e.to_string())?;
-    // DEC-1 (dono, 2026-08-08): o `tema` é reescrito nos dois lugares que o
-    // guardam. Só depois do rename, para que uma falha aqui não deixe a origem
-    // meio-editada.
-    retema_meeting(&dest, dest_slug);
-    normalize_rel(&format!("{dest_dir_rel}/{id}"))
+    // DEC-1 (owner, 2026-08-08). Owned by `meeting`, which holds the manifest lock
+    // and writes it atomically — rewriting it from here would race an in-flight
+    // append and lose a transcript chunk. Runs after the rename so a failure never
+    // leaves the source half-edited.
+    crate::meeting::retema_meeting(&dest, dest_slug)?;
+    let new_rel = normalize_rel(&format!("{dest_dir_rel}/{id}"))?;
+    // inbound refs/anchors would otherwise point at a path that no longer exists
+    retarget_refs_after_move(base, &rel, &new_rel);
+    Ok(new_rel)
 }
 
-// Reescreve o brainstorming de origem gravado dentro da reunião: `tema` no
-// `manifest.json` e a linha `tema:` do front matter do `reuniao.md`. Best-effort
-// por arquivo — a move já aconteceu, e um manifesto ilegível não deve desfazê-la.
-// O CORPO do `reuniao.md` (a transcrição) nunca é tocado: só a linha `tema:`
-// dentro do primeiro bloco de front matter.
-fn retema_meeting(dir: &Path, slug: &str) {
-    let manifest = dir.join("manifest.json");
-    if let Ok(txt) = std::fs::read_to_string(&manifest) {
-        if let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&txt) {
-            if let Some(obj) = v.as_object_mut() {
-                obj.insert("tema".into(), serde_json::Value::String(slug.into()));
-                if let Ok(out) = serde_json::to_string_pretty(&v) {
-                    let _ = std::fs::write(&manifest, out + "\n");
-                }
-            }
-        }
-    }
-    let living = dir.join("reuniao.md");
-    if let Ok(txt) = std::fs::read_to_string(&living) {
-        if let Some(rest) = txt.strip_prefix("---\n") {
-            if let Some(end) = rest.find("\n---") {
-                let (fm, body) = rest.split_at(end);
-                let fm: String = fm
-                    .lines()
-                    .map(|l| {
-                        if l.starts_with("tema:") {
-                            format!("tema: {slug}")
-                        } else {
-                            l.to_string()
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                let _ = std::fs::write(&living, format!("---\n{fm}{body}"));
-            }
-        }
-    }
-}
-
+// Move a brainstorming FILE into another folder of the same non-versioned world.
+// The filename is preserved; a name already taken at the destination refuses
+// instead of overwriting. Mirrors `rename_pessoal_file`'s confinement (ADR-0009).
 pub(crate) fn move_pessoal_file(base: &Path, rel: &str, dest_dir: &str) -> Result<String, String> {
     let rel = rel.replace('\\', "/");
     let dest_dir = dest_dir
@@ -2703,8 +2787,13 @@ mod tests {
         let living = std::fs::read_to_string(dst.join("reuniao.md")).unwrap();
         assert!(living.contains("tema: destino"), "front matter: {living}");
         assert!(!living.contains("tema: origem"));
-        // o corpo (do fim do front matter em diante) é idêntico
-        let corpo = |s: &str| s.split("---").nth(2).unwrap_or("").to_string();
+        // AC-2: o corpo é idêntico DE VERDADE — a asserção anterior parava na
+        // primeira régua markdown do próprio corpo e ficava vazia dali em diante.
+        let corpo = |s: &str| {
+            let r = s.strip_prefix("---\n").unwrap();
+            let end = r.find("\n---").unwrap();
+            r[end..].to_string()
+        };
         assert_eq!(corpo(&living), corpo(&corpo_antes));
     }
 
@@ -2784,5 +2873,89 @@ mod tests {
         assert!(!is_queueable("auditoria.jsonl"));
         // e o que a fila ACEITA continua aceito, no destino
         assert!(is_queueable("notas/analise-2026-08-08.md"));
+    }
+
+    // BR-1 — a inferência e o material da reunião vivem no mundo NÃO versionado.
+    // `move_meeting_dir` é um caminho novo para relocar transcrição e áudio, então
+    // ele precisa do mesmo invariante que
+    // `meeting_stays_under_brainstorming_and_is_never_versioned` guarda: um symlink
+    // sob a árvore do brainstorming não pode servir de ponte para `contextos/`.
+    #[test]
+    #[cfg(unix)]
+    fn br1_move_never_leaks_a_meeting_into_the_versioned_tree() {
+        let base = tmp("mvmtg-br1");
+        meeting_fixture(&base, "origem", "m1");
+        std::fs::create_dir_all(base.join("contextos/c")).unwrap();
+        std::fs::create_dir_all(base.join("brainstorming/ponte")).unwrap();
+        // brainstorming/ponte/reunioes -> contextos/c
+        std::os::unix::fs::symlink(
+            base.join("contextos/c"),
+            base.join("brainstorming/ponte/reunioes"),
+        )
+        .unwrap();
+
+        assert_eq!(
+            move_meeting_dir(&base, "brainstorming/origem/reunioes/m1", "ponte").unwrap_err(),
+            "err.outside_brainstorm"
+        );
+        assert!(
+            base.join("brainstorming/origem/reunioes/m1/reuniao.md")
+                .is_file(),
+            "a reunião fica onde estava"
+        );
+        assert!(
+            !base.join("contextos/c/m1").exists(),
+            "e NADA da reunião chega à árvore versionada"
+        );
+    }
+
+    // D8 — um brainstorming sem `reunioes/` é destino válido: a pasta é criada
+    // sob demanda, como o create_meeting faz, em vez de falhar depois de oferecida.
+    #[test]
+    fn move_meeting_dir_creates_the_destination_reunioes_folder() {
+        let base = tmp("mvmtg-mk");
+        meeting_fixture(&base, "origem", "m1");
+        std::fs::create_dir_all(base.join("brainstorming/novo")).unwrap();
+
+        let out = move_meeting_dir(&base, "brainstorming/origem/reunioes/m1", "novo").unwrap();
+        assert_eq!(out, "brainstorming/novo/reunioes/m1");
+        assert!(base.join(&out).join("manifest.json").is_file());
+    }
+
+    // D4 — referências de entrada não ficam penduradas.
+    #[test]
+    fn retarget_refs_rewrites_paths_and_anchors_on_segment_boundaries() {
+        let old = "brainstorming/a/reunioes/m1";
+        let new = "brainstorming/b/reunioes/m1";
+        let doc = concat!(
+            "  - caminho: brainstorming/a/reunioes/m1/notas/x.md\n",
+            "veja [isto](acervo://brainstorming/a/reunioes/m1/reuniao.md#h1)\n",
+            "  - caminho: brainstorming/a/reunioes/m10/notas/y.md\n",
+            "  - caminho: brainstorming/a/notas/z.md\n",
+        );
+        let out = retarget_refs_in_content(doc, old, new);
+        assert!(out.contains(&format!("caminho: {new}/notas/x.md")));
+        assert!(out.contains(&format!("acervo://{new}/reuniao.md#h1")));
+        assert!(
+            out.contains("reunioes/m10/notas/y.md"),
+            "m10 não é m1: só segmento inteiro casa"
+        );
+        assert!(
+            out.contains("brainstorming/a/notas/z.md"),
+            "outro caminho fica"
+        );
+    }
+
+    #[test]
+    fn retarget_refs_is_a_noop_when_nothing_points_at_the_meeting() {
+        let doc = "  - caminho: brainstorming/x/notas/a.md\n";
+        assert_eq!(
+            retarget_refs_in_content(
+                doc,
+                "brainstorming/a/reunioes/m1",
+                "brainstorming/b/reunioes/m1"
+            ),
+            doc
+        );
     }
 }

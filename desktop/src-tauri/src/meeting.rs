@@ -284,6 +284,69 @@ pub struct Manifest {
 
 // Read the meeting manifest. Absent/corrupt is an error (never a silent default)
 // so a caller never edits a phantom manifest.
+// #44 — a moved meeting must stop naming the brainstorming it came from. It
+// records that in two places: `manifest.json` -> `tema`, and `reuniao.md`'s front
+// matter -> `tema:`.
+//
+// This lives here, not in `acervo`, because this module owns the manifest format
+// and its write discipline: the meeting lock plus the atomic `manifest_write`.
+// Rewriting it from outside would bypass both, and a move racing an in-flight
+// `brain_meeting_append` would lose a transcript chunk or a manifest key.
+//
+// Only the `tema` key and the `tema:` line change; the transcript body is never
+// touched. Returns an error instead of failing silently — the caller has already
+// moved the directory and needs to know the metadata did not follow.
+pub(crate) fn retema_meeting(dir: &Path, new_tema: &str) -> Result<(), String> {
+    let id = dir
+        .file_name()
+        .and_then(|s| s.to_str())
+        .ok_or("err.invalid_path")?
+        .to_string();
+    let lock = meeting_lock(&id);
+    let _guard = lock.lock().unwrap();
+
+    let mut manifest = manifest_read(dir)?;
+    manifest.tema = new_tema.to_string();
+    manifest_write(dir, &manifest)?;
+
+    let living = dir.join("reuniao.md");
+    if let Ok(txt) = std::fs::read_to_string(&living) {
+        let out = retema_front_matter(&txt, new_tema);
+        if out != txt {
+            std::fs::write(&living, out).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+// Rewrite (or insert) the `tema:` line inside the FIRST front-matter block.
+// Pure so the edge cases are unit-covered: a file with no front matter is
+// returned untouched, a block without a `tema:` line gets one, and line endings
+// are preserved because only the matched line is replaced — the rest of the
+// string is never re-joined.
+pub(crate) fn retema_front_matter(content: &str, new_tema: &str) -> String {
+    let Some(rest) = content.strip_prefix("---\n") else {
+        return content.to_string();
+    };
+    let Some(end) = rest.find("\n---") else {
+        return content.to_string();
+    };
+    let (fm, tail) = rest.split_at(end);
+    let mut lines: Vec<String> = fm.split('\n').map(|l| l.to_string()).collect();
+    match lines
+        .iter()
+        .position(|l| l.trim_start().starts_with("tema:"))
+    {
+        Some(i) => {
+            // keep a trailing \r so a CRLF file is not silently rewritten to LF
+            let cr = if lines[i].ends_with('\r') { "\r" } else { "" };
+            lines[i] = format!("tema: {new_tema}{cr}");
+        }
+        None => lines.push(format!("tema: {new_tema}")),
+    }
+    format!("---\n{}{}", lines.join("\n"), tail)
+}
+
 fn manifest_read(dir: &Path) -> Result<Manifest, String> {
     let txt = std::fs::read_to_string(dir.join("manifest.json"))
         .map_err(|_| "err.manifest_not_found".to_string())?;
@@ -1830,5 +1893,68 @@ mod tests {
             "the transcript is never versioned"
         );
         assert!(!files.contains(".wav"), "audio is never versioned");
+    }
+
+    // #44 — bordas do front matter na reescrita do tema (D9 da revisão).
+    #[test]
+    fn retema_front_matter_rewrites_inserts_and_preserves_line_endings() {
+        // caso normal
+        let doc = "---\nloro: 1\ntema: origem\nid: m1\n---\n\ncorpo\n";
+        let out = super::retema_front_matter(doc, "destino");
+        assert!(out.contains("tema: destino"));
+        assert!(!out.contains("tema: origem"));
+        assert!(out.ends_with("\n---\n\ncorpo\n"), "corpo intacto: {out}");
+
+        // sem linha `tema:` — o AC-2 exige o campo presente, então é inserido
+        let sem = "---\nloro: 1\nid: m1\n---\n\ncorpo\n";
+        assert!(super::retema_front_matter(sem, "destino").contains("tema: destino"));
+
+        // CRLF: o \r da linha reescrita é preservado
+        let crlf = "---\nloro: 1\r\ntema: origem\r\n---\n\ncorpo\n";
+        let out = super::retema_front_matter(crlf, "destino");
+        assert!(
+            out.contains("tema: destino\r\n"),
+            "CRLF preservado: {out:?}"
+        );
+
+        // sem front matter — devolve idêntico, nunca corrompe
+        let nada = "# só um título\n\ncorpo\n";
+        assert_eq!(super::retema_front_matter(nada, "destino"), nada);
+    }
+
+    // D10 — o manifesto é reescrito pelo tipo, então a ordem dos campos e as
+    // chaves que a move não conhece sobrevivem.
+    #[test]
+    fn retema_meeting_preserves_the_manifest_shape() {
+        let dir = std::env::temp_dir().join(format!("loro-retema-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let m = Manifest {
+            id: "m1".into(),
+            tema: "origem".into(),
+            titulo: "T".into(),
+            criado_em: "2026-08-08".into(),
+            atualizado_em: "2026-08-08".into(),
+            status: "done".into(),
+            modelo: "small".into(),
+            idioma: "pt".into(),
+            audio: Default::default(),
+            artifacts: vec![],
+            ..Default::default()
+        };
+        manifest_write(&dir, &m).unwrap();
+        std::fs::write(dir.join("reuniao.md"), "---\ntema: origem\n---\n\nx\n").unwrap();
+
+        super::retema_meeting(&dir, "destino").unwrap();
+
+        let back = manifest_read(&dir).unwrap();
+        assert_eq!(back.tema, "destino");
+        assert_eq!(back.id, "m1", "as demais chaves sobrevivem");
+        assert_eq!(back.status, "done");
+        let txt = std::fs::read_to_string(dir.join("manifest.json")).unwrap();
+        assert!(
+            txt.find("\"id\"").unwrap() < txt.find("\"tema\"").unwrap(),
+            "a ordem dos campos segue o tipo, não alfabética"
+        );
     }
 }

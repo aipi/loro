@@ -75,9 +75,32 @@ The two decisions behind the UI — which destinations exist, and whether a drop
 target is valid — are pure functions in `meeting.js` (`meetingMoveTargets`,
 `meetingDropTarget`), unit-tested without a DOM; `app.js` keeps only the wiring.
 
+### §5 A move is refused while the meeting is still recording
+
+`retema_meeting` lives in `meeting`, holds the meeting lock and writes through the
+atomic `manifest_write`, because a move racing an in-flight `brain_meeting_append`
+would lose a transcript chunk or a manifest key. Rewriting the manifest from
+`acervo` — as the first revision did — bypassed both.
+
+The UI closes the same hole from the other side: **mover para…** is gated on the
+meeting being finished, alongside *analisar* and *enviar para a fila*. A meeting
+that is still recording has nothing to gain from moving and everything to lose.
+
+### §6 Inbound references are retargeted, not left to rot
+
+Moving the folder makes every inbound `refs:` entry and every `acervo://` anchor
+(ADR-0007) point at a path that no longer exists — `resolve_ref` would start
+reporting `exists: false` in silence. After the rename, `retarget_refs_in_content`
+rewrites those paths across the non-versioned worlds and the contexts. Matching is
+on whole path **segments**, so `.../m1` never rewrites `.../m10`.
+
+This follows the precedent the promote flow already set: it rewrites or drops a
+dangling link rather than shipping one.
+
 ## Consequences
 
-- **New:** `acervo::move_meeting_dir` + `retema_meeting`, the `brain_move_meeting`
+- **New:** `acervo::move_meeting_dir` + `retarget_refs_in_content`,
+  `meeting::retema_meeting` + `retema_front_matter`, the `brain_move_meeting`
   command, `LoroMeeting.meetingMoveTargets` / `meetingDropTarget`, and the msgids
   `Mover reunião` / `movida` (both with English pairs).
 - **Unchanged:** `brain_move_pessoal` and every file-move path; BR-8's gate lives on
@@ -85,5 +108,11 @@ target is valid — are pure functions in `meeting.js` (`meetingMoveTargets`,
 - **Ordering with #43:** independent by construction (§3). #43 removes the report
   and with it `manifest.tema`'s only reader; this ADR does not depend on which
   lands first.
-- **BRs:** BR-8 is *named* by a test here (T-6) precisely to assert that this feature
-  does not re-implement it.
+- **BRs:** BR-8 is *named* by a test (T-6) precisely to assert that this feature does
+  not re-implement it. **BR-1** is named by a second test: `move_meeting_dir` is a new
+  path for relocating a transcript and its audio, so it re-checks world confinement
+  *after* `canonicalize` — a symlink under the brainstorming tree would otherwise
+  bridge into `contextos/`, which is what the rule and
+  `meeting_stays_under_brainstorming_and_is_never_versioned` exist to prevent.
+- **A destination without `reunioes/`** is created on demand rather than offered and
+  then failed, matching what `create_meeting` already does.

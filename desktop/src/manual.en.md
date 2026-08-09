@@ -99,7 +99,8 @@ palette: `Cmd/Ctrl+Shift+P` → "Loro tour".
   the top ("N new items — update index") with a button to regenerate.
 - **⋯ menu on a meeting**: beyond rename and delete, **⇄ move to…** takes the whole
   meeting — transcript, analyses and generated material — into another
-  brainstorming. You can also drag the meeting by its icon onto the destination's
+  brainstorming — available once the meeting has finished, like analysing and
+  queueing. You can also drag the meeting by its icon onto the destination's
   **📁 reuniões** header. A meeting with the same name at the destination is never
   overwritten.
 - **⋯ menu on any file** (note, attachment, misc, meeting note): beyond

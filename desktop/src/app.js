@@ -2041,7 +2041,11 @@ function wirePessoalDnd() {
     }
     const dest = pestoggleDestDir(key);
     if (!dest) return;
-    el2.ondragover = (e) => { e.preventDefault(); el2.classList.add("drop"); };
+    el2.ondragover = (e) => {
+      // uma reunião arrastada não pertence aqui: não acender nem prometer o drop
+      if (![...e.dataTransfer.types].includes("text/loro-file")) return;
+      e.preventDefault(); el2.classList.add("drop");
+    };
     el2.ondragleave = () => el2.classList.remove("drop");
     el2.ondrop = async (e) => {
       e.preventDefault(); el2.classList.remove("drop");
@@ -2616,11 +2620,13 @@ function openMeetingMenu(rel, id, title, status, anchor) {
     `<div class="fitem2" data-tools><span class="fn">${ico("skill")} ${t("executar habilidade…")}</span></div>` +
     `<div class="fsep"></div>` +
     `<div class="fitem2" data-ren><span class="fn">✎ ${t("renomear")}</span></div>` +
-    `<div class="fitem2" data-mvmtg><span class="fn">⇄ ${t("mover para…")}</span></div>` +
+    `<div class="fitem2${dis ? " off" : ""}" data-mvmtg><span class="fn">⇄ ${t("mover para…")}</span></div>` +
     copyPathItemsHtml() +
     `<div class="fitem2 danger" data-del><span class="fn">${t("apagar reunião")}</span></div>`;
   wireCopyPathItems(rel);
-  B.bMenu.querySelector("[data-mvmtg]").onclick = () => { closeFloat(); promptMoveMeeting(rel); };
+  // mover só depois de encerrada: durante a gravação o retema disputaria o
+  // manifesto e o arquivo vivo com o append, e um trecho se perderia
+  if (ready) B.bMenu.querySelector("[data-mvmtg]").onclick = () => { closeFloat(); promptMoveMeeting(rel); };
   if (ready) {
     B.bMenu.querySelector("[data-analyse]").onclick = () => { closeFloat(); openDoc(`${rel}/reuniao.md`, { preview: false }); runMeetingSkill("analyse", id, null, rel); };
     B.bMenu.querySelector("[data-report]").onclick = () => { closeFloat(); buildAndOpenReport(id); };
@@ -2749,6 +2755,8 @@ async function promptMoveMeeting(rel) {
 async function moveMeetingTo(rel, destSlug) {
   try {
     await invoke("brain_move_meeting", { rel, destSlug });
+    // abas abertas apontam para o caminho antigo: salvar falharia com "not found"
+    closeTabsUnder(rel);
     toast(t("movida"));
     pessoalSig = ""; refreshPessoal();
   } catch (e) { toast(tErr(String(e))); }
