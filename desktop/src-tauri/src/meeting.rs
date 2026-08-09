@@ -74,6 +74,10 @@ fn acervo_base() -> Result<PathBuf, String> {
 
 // One lock per meeting id: manifest writes (shared mutable state) are serialized
 // so no two commands interleave a read-modify-write (ADR-0010 consequences).
+//
+// The lock is keyed by ID, never by path, precisely because the path MOVES
+// (#44). Hence the discipline every mutating command follows: take the lock
+// FIRST, resolve the directory after — see `resolve_meeting_dir`.
 fn meeting_lock(id: &str) -> Arc<Mutex<()>> {
     static LOCKS: OnceLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> = OnceLock::new();
     let map = LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
@@ -105,6 +109,11 @@ fn valid_meeting_id(id: &str) -> bool {
 // Locate a meeting dir from its id by scanning brainstorming/*/reunioes/<id>/
 // (ADR-0013), falling back to the legacy pessoal/temas/*/reunioes/<id>/ for
 // un-migrated acervos; stateless and path-guarded (canonicalize + starts_with).
+//
+// The result is only valid while the meeting's lock is HELD: `move_meeting_dir`
+// renames the directory, so a caller that resolves before locking blocks on the
+// move and then writes into a folder that no longer exists — recreating it as an
+// orphan. A mutating caller therefore locks first and calls this second (#44).
 fn resolve_meeting_dir(base: &Path, id: &str) -> Result<PathBuf, String> {
     if !valid_meeting_id(id) {
         return Err("err.invalid_meeting_id".into());
@@ -296,19 +305,49 @@ pub(crate) fn status_of(dir: &Path) -> Result<String, String> {
     Ok(manifest_read(dir)?.status)
 }
 
-// #44 — a moved meeting must stop naming the brainstorming it came from. It
-// records that in two places: `manifest.json` -> `tema`, and `reuniao.md`'s front
-// matter -> `tema:`.
+// #44 — a moved meeting must stop naming the brainstorming it came from AND stop
+// pointing at its own old path. It records both in `manifest.json` — `tema`, and
+// the acervo-relative paths of its audio, artifacts and refs — and the
+// brainstorming's name once more in `reuniao.md`'s front matter (`tema:`).
 //
 // This lives here because this module owns the manifest format and its write
 // discipline. The CALLER must already hold `lock_for(<id>)` — the mutex is not
 // reentrant, so taking it again here would deadlock.
 //
-// Only the `tema` key and the `tema:` line change; the transcript body is never
-// touched.
-pub(crate) fn retema_meeting_locked(dir: &Path, new_tema: &str) -> Result<(), String> {
+// Only `tema` and paths under `old_rel` change; the transcript body is never
+// touched, and a ref pointing OUTSIDE the meeting did not move and is left alone.
+pub(crate) fn remap_meeting_locked(
+    dir: &Path,
+    new_tema: &str,
+    old_rel: &str,
+    new_rel: &str,
+) -> Result<(), String> {
     let mut manifest = manifest_read(dir)?;
     manifest.tema = new_tema.to_string();
+    for slot in [
+        &mut manifest.audio.mic,
+        &mut manifest.audio.system,
+        &mut manifest.audio.completo,
+    ] {
+        if let Some(next) = slot.as_deref().and_then(|p| repath(p, old_rel, new_rel)) {
+            *slot = Some(next);
+        }
+    }
+    for a in &mut manifest.artifacts {
+        if let Some(next) = repath(&a.rel, old_rel, new_rel) {
+            a.rel = next;
+        }
+        for r in &mut a.refs {
+            if let Some(next) = repath(r, old_rel, new_rel) {
+                *r = next;
+            }
+        }
+    }
+    for r in &mut manifest.refs {
+        if let Some(next) = repath(&r.caminho, old_rel, new_rel) {
+            r.caminho = next;
+        }
+    }
     manifest_write(dir, &manifest)?;
 
     let living = dir.join("reuniao.md");
@@ -324,6 +363,18 @@ pub(crate) fn retema_meeting_locked(dir: &Path, new_tema: &str) -> Result<(), St
         Err(e) if living.exists() => Err(format!("err.living_unreadable:{e}")),
         Err(_) => Ok(()),
     }
+}
+
+// Re-root an acervo-relative path that lived under `old_rel`. `None` when the
+// path is not the moved meeting's — matching on whole SEGMENTS, so `…/m10` is
+// never mistaken for `…/m1`.
+fn repath(p: &str, old_rel: &str, new_rel: &str) -> Option<String> {
+    if p == old_rel {
+        return Some(new_rel.to_string());
+    }
+    p.strip_prefix(old_rel)
+        .filter(|tail| tail.starts_with('/'))
+        .map(|tail| format!("{new_rel}{tail}"))
 }
 
 // Rewrite (or insert) the `tema:` line inside the FIRST front-matter block.
@@ -345,10 +396,10 @@ pub(crate) fn retema_front_matter(content: &str, new_tema: &str) -> String {
     };
     let (fm, tail) = rest.split_at(end);
     let mut lines: Vec<String> = fm.split(eol).map(|l| l.to_string()).collect();
-    match lines
-        .iter()
-        .position(|l| l.trim_start().starts_with("tema:"))
-    {
+    // `tema` is a TOP-LEVEL key. An indented `tema:` belongs to whatever mapping
+    // it is nested in (a ref entry, say) — rewriting it would change the wrong
+    // value and, re-emitted at column 0, break the block it lived in.
+    match lines.iter().position(|l| l.starts_with("tema:")) {
         Some(i) => lines[i] = format!("tema: {new_tema}"),
         None => lines.push(format!("tema: {new_tema}")),
     }
@@ -870,9 +921,9 @@ pub struct MeetingAppendInput {
 #[tauri::command]
 pub fn brain_meeting_append(app: AppHandle, input: MeetingAppendInput) -> Result<(), String> {
     let base = acervo_base()?;
-    let dir = resolve_meeting_dir(&base, &input.id)?;
     let lock = meeting_lock(&input.id);
     let _guard = lock.lock().map_err(|_| "lock envenenado".to_string())?;
+    let dir = resolve_meeting_dir(&base, &input.id)?;
 
     let living = dir.join("reuniao.md");
     let content = std::fs::read_to_string(&living).map_err(|e| e.to_string())?;
@@ -930,9 +981,9 @@ pub fn brain_meeting_write_artifact(
     }
     let name = safe_artifact_name(&input.name)?;
     let base = acervo_base()?;
-    let dir = resolve_meeting_dir(&base, &input.id)?;
     let lock = meeting_lock(&input.id);
     let _guard = lock.lock().map_err(|_| "lock envenenado".to_string())?;
+    let dir = resolve_meeting_dir(&base, &input.id)?;
 
     let kind_dir = dir.join("artefatos").join(&input.kind);
     std::fs::create_dir_all(&kind_dir).map_err(|e| e.to_string())?;
@@ -981,9 +1032,9 @@ pub fn brain_meeting_marker(input: MarkerInput) -> Result<(), String> {
         return Err("err.invalid_marker_type".into());
     }
     let base = acervo_base()?;
-    let dir = resolve_meeting_dir(&base, &input.id)?;
     let lock = meeting_lock(&input.id);
     let _guard = lock.lock().map_err(|_| "lock envenenado".to_string())?;
+    let dir = resolve_meeting_dir(&base, &input.id)?;
 
     let mut manifest = manifest_read(&dir)?;
     manifest.marcadores.push(Marker {
@@ -1009,9 +1060,9 @@ pub struct ConsentInput {
 #[tauri::command]
 pub fn brain_meeting_set_consent(input: ConsentInput) -> Result<Consent, String> {
     let base = acervo_base()?;
-    let dir = resolve_meeting_dir(&base, &input.id)?;
     let lock = meeting_lock(&input.id);
     let _guard = lock.lock().map_err(|_| "lock envenenado".to_string())?;
+    let dir = resolve_meeting_dir(&base, &input.id)?;
 
     let mut manifest = manifest_read(&dir)?;
     manifest.consent = Consent {
@@ -1104,9 +1155,9 @@ pub struct MeetingRenameInput {
 #[tauri::command]
 pub fn brain_meeting_rename(app: AppHandle, input: MeetingRenameInput) -> Result<Manifest, String> {
     let base = acervo_base()?;
-    let dir = resolve_meeting_dir(&base, &input.id)?;
     let lock = meeting_lock(&input.id);
     let _guard = lock.lock().map_err(|_| "lock envenenado".to_string())?;
+    let dir = resolve_meeting_dir(&base, &input.id)?;
     let manifest = rename_meeting(&dir, &input.titulo)?;
     let _ = app.emit(
         "pessoal-changed",
@@ -1128,9 +1179,9 @@ pub struct BuildOut {
 #[tauri::command]
 pub fn brain_meeting_build_notebook(app: AppHandle, id: String) -> Result<BuildOut, String> {
     let base = acervo_base()?;
-    let dir = resolve_meeting_dir(&base, &id)?;
     let lock = meeting_lock(&id);
     let _guard = lock.lock().map_err(|_| "lock envenenado".to_string())?;
+    let dir = resolve_meeting_dir(&base, &id)?;
 
     let mut manifest = manifest_read(&dir)?;
     // ADR-0013: fold any skill-written PII-free markers (marcadores.jsonl) into the
@@ -1209,9 +1260,9 @@ pub fn brain_meeting_delete_audio(
     input: DeleteAudioInput,
 ) -> Result<Manifest, String> {
     let base = acervo_base()?;
-    let dir = resolve_meeting_dir(&base, &input.id)?;
     let lock = meeting_lock(&input.id);
     let _guard = lock.lock().map_err(|_| "lock envenenado".to_string())?;
+    let dir = resolve_meeting_dir(&base, &input.id)?;
     let manifest = delete_audio_core(&dir, &input.which)?;
     let _ = app.emit(
         "pessoal-changed",
@@ -1255,9 +1306,9 @@ pub fn brain_meeting_purge_audio(
     input: PurgeAudioInput,
 ) -> Result<Manifest, String> {
     let base = acervo_base()?;
-    let dir = resolve_meeting_dir(&base, &input.id)?;
     let lock = meeting_lock(&input.id);
     let _guard = lock.lock().map_err(|_| "lock envenenado".to_string())?;
+    let dir = resolve_meeting_dir(&base, &input.id)?;
     let manifest = purge_audio_core(&dir)?;
     let _ = app.emit(
         "pessoal-changed",
@@ -1939,6 +1990,108 @@ mod tests {
         assert_eq!(super::retema_front_matter(nada, "destino"), nada);
     }
 
+    // `tema` is a TOP-LEVEL key. A `tema:` nested inside another mapping (a ref
+    // entry, say) belongs to that entry and is not the meeting's — rewriting it
+    // both changes the wrong value and, being re-emitted at column 0, breaks the
+    // block it lived in. Only column 0 is the meeting's own `tema`.
+    #[test]
+    fn retema_front_matter_only_touches_the_top_level_key() {
+        let doc = "---\nloro: 1\ntema: origem\nrefs:\n  - id: r1\n    tema: outro\n---\n\ncorpo\n";
+        let out = super::retema_front_matter(doc, "destino");
+        assert!(out.contains("\ntema: destino\n"), "top level: {out:?}");
+        assert!(
+            out.contains("\n    tema: outro\n"),
+            "the nested entry is left alone: {out:?}"
+        );
+        assert!(!out.contains("tema: origem"));
+
+        // and a file whose ONLY `tema:` is nested gains its own at top level
+        // instead of hijacking the nested one
+        let so_aninhado = "---\nrefs:\n  - tema: outro\n---\n\ncorpo\n";
+        let out = super::retema_front_matter(so_aninhado, "destino");
+        assert!(out.contains("\n  - tema: outro\n"), "intacto: {out:?}");
+        assert!(out.contains("\ntema: destino\n"), "inserido: {out:?}");
+    }
+
+    // #44 — a moved meeting also stops pointing at its OWN old path. The manifest
+    // stores acervo-relative paths (audio, artifacts, refs); left untouched they
+    // name a directory that no longer exists.
+    #[test]
+    fn remap_meeting_rewrites_the_manifest_paths_under_the_old_rel() {
+        let dir = std::env::temp_dir().join(format!("loro-remap-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let velho = "brainstorming/origem/reunioes/m1";
+        let novo = "brainstorming/destino/reunioes/m1";
+        let m = Manifest {
+            id: "m1".into(),
+            tema: "origem".into(),
+            status: "done".into(),
+            audio: Audio {
+                mic: Some(format!("{velho}/audio/mic.webm")),
+                system: Some(format!("{velho}/audio/sys.webm")),
+                completo: None,
+            },
+            artifacts: vec![Artifact {
+                id: "a1".into(),
+                kind: "notas".into(),
+                name: "n.md".into(),
+                rel: format!("{velho}/artefatos/notas/n.md"),
+                ..Default::default()
+            }],
+            refs: vec![
+                RefItem {
+                    id: "r1".into(),
+                    tipo: "anexo".into(),
+                    caminho: format!("{velho}/notas/analise.md"),
+                },
+                // a ref OUTSIDE the meeting is not the move's business
+                RefItem {
+                    id: "r2".into(),
+                    tipo: "anexo".into(),
+                    caminho: "brainstorming/origem/anexos/planilha.csv".into(),
+                },
+            ],
+            ..Default::default()
+        };
+        manifest_write(&dir, &m).unwrap();
+        std::fs::write(dir.join("reuniao.md"), "---\ntema: origem\n---\n\nx\n").unwrap();
+
+        super::remap_meeting_locked(&dir, "destino", velho, novo).unwrap();
+
+        let back = manifest_read(&dir).unwrap();
+        assert_eq!(back.tema, "destino");
+        assert_eq!(back.audio.mic.unwrap(), format!("{novo}/audio/mic.webm"));
+        assert_eq!(back.audio.system.unwrap(), format!("{novo}/audio/sys.webm"));
+        assert_eq!(
+            back.artifacts[0].rel,
+            format!("{novo}/artefatos/notas/n.md")
+        );
+        assert_eq!(back.refs[0].caminho, format!("{novo}/notas/analise.md"));
+        assert_eq!(
+            back.refs[1].caminho, "brainstorming/origem/anexos/planilha.csv",
+            "a path outside the meeting is left alone"
+        );
+    }
+
+    // A prefix that merely LOOKS like the old rel is a different meeting.
+    #[test]
+    fn repath_matches_only_whole_segments() {
+        let velho = "brainstorming/origem/reunioes/m1";
+        let novo = "brainstorming/destino/reunioes/m1";
+        assert_eq!(super::repath(velho, velho, novo).as_deref(), Some(novo));
+        assert_eq!(
+            super::repath(&format!("{velho}/audio/a.webm"), velho, novo).as_deref(),
+            Some(format!("{novo}/audio/a.webm").as_str())
+        );
+        assert_eq!(
+            super::repath("brainstorming/origem/reunioes/m10/x.md", velho, novo),
+            None,
+            "m10 is not m1"
+        );
+        assert_eq!(super::repath("outro/caminho.md", velho, novo), None);
+    }
+
     // The manifest is rewritten through the TYPE, so field order follows the
     // declaration instead of turning alphabetical. An unknown key does not survive
     // the roundtrip (`Manifest` has no `flatten`), as in every `manifest_write`.
@@ -1963,7 +2116,13 @@ mod tests {
         manifest_write(&dir, &m).unwrap();
         std::fs::write(dir.join("reuniao.md"), "---\ntema: origem\n---\n\nx\n").unwrap();
 
-        super::retema_meeting_locked(&dir, "destino").unwrap();
+        super::remap_meeting_locked(
+            &dir,
+            "destino",
+            "brainstorming/origem/reunioes/m1",
+            "brainstorming/destino/reunioes/m1",
+        )
+        .unwrap();
 
         let back = manifest_read(&dir).unwrap();
         assert_eq!(back.tema, "destino");

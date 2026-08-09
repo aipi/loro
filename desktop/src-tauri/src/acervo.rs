@@ -1592,14 +1592,44 @@ fn retarget_refs_after_move(base: &Path, old_rel: &str, new_rel: &str) -> usize 
     }
     let mut n = 0;
     for f in files {
-        if let Ok(txt) = std::fs::read_to_string(&f) {
-            let out = retarget_refs_in_content(&txt, old_rel, new_rel);
-            if out != txt && std::fs::write(&f, out).is_ok() {
-                n += 1;
+        // A document that belongs to a meeting is rewritten under THAT meeting's
+        // lock: `reuniao.md` may be receiving a transcript chunk right now, and a
+        // read-modify-write without the lock silently drops it.
+        let owner = meeting_id_of(base, &f).map(|id| crate::meeting::lock_for(&id));
+        let _guard = owner.as_ref().map(|l| l.lock());
+        let Ok(txt) = std::fs::read_to_string(&f) else {
+            continue;
+        };
+        let out = retarget_refs_in_content(&txt, old_rel, new_rel);
+        if out == txt {
+            continue;
+        }
+        match std::fs::write(&f, out) {
+            Ok(()) => n += 1,
+            // never silent: a refused write leaves the acervo PARTLY retargeted,
+            // and only the successes were being reported. The path is logged
+            // acervo-relative — never absolute, which carries the user's home.
+            Err(e) => {
+                let rel = f.strip_prefix(base).unwrap_or(f.as_path());
+                error!(file = %rel.display(), error = %e, "inbound reference not retargeted")
             }
         }
     }
     n
+}
+
+// The meeting that owns a file, if any: `…/reunioes/<id>/…`. Used to take the
+// right lock before rewriting someone else's living document. A file sitting
+// directly in `reunioes/` belongs to no meeting — hence the segment AFTER the id.
+fn meeting_id_of(base: &Path, f: &Path) -> Option<String> {
+    let rel = f
+        .strip_prefix(base)
+        .ok()?
+        .to_string_lossy()
+        .replace('\\', "/");
+    let segs: Vec<&str> = rel.split('/').collect();
+    let at = segs.iter().position(|s| *s == "reunioes")?;
+    (segs.len() > at + 2).then(|| segs[at + 1].to_string())
 }
 
 // #44 — move a WHOLE meeting into another brainstorming's `reunioes/`.
@@ -1686,24 +1716,29 @@ pub(crate) fn move_meeting_dir(base: &Path, rel: &str, dest_slug: &str) -> Resul
         return Err("err.meeting_not_finished".into());
     }
 
-    // The rename and the metadata rewrite share the meeting's lock, so the two
-    // halves of the move are never seen apart. It does NOT make the move safe
-    // against a concurrent append — every meeting command resolves its directory
-    // before locking, so one already past that point would block here and then
-    // write to a path that is gone. What actually protects the transcript is the
-    // `done` gate above; this lock keeps the move itself coherent.
-    let lock = crate::meeting::lock_for(&id);
-    let _guard = lock.lock().map_err(|_| "err.lock_poisoned".to_string())?;
-    std::fs::rename(&src, &dest).map_err(|e| e.to_string())?;
-
     let old_rel = normalize_rel(&rel)?;
     let new_rel = normalize_rel(&format!("{dest_dir_rel}/{id}"))?;
-    // DEC-1 (owner, 2026-08-08). Best-effort AFTER the rename: the move already
-    // happened and must not be reported as a failure, so a broken manifest is
-    // logged and the command still succeeds with the new rel.
-    if let Err(e) = crate::meeting::retema_meeting_locked(&dest, dest_slug) {
-        error!(meeting = %id, error = %e, "meeting moved but its tema was not rewritten");
+
+    // The rename and the meeting's own metadata rewrite share its lock, so the
+    // two halves of the move are never seen apart, and a concurrent command
+    // waits and then resolves the NEW path (every mutating meeting command
+    // resolves its directory only after taking this lock).
+    //
+    // Scoped: `retarget_refs_after_move` below locks the meetings whose
+    // documents it rewrites, and this meeting's own documents are among them —
+    // the mutex is not reentrant, so holding it there would deadlock.
+    {
+        let lock = crate::meeting::lock_for(&id);
+        let _guard = lock.lock().map_err(|_| "err.lock_poisoned".to_string())?;
+        std::fs::rename(&src, &dest).map_err(|e| e.to_string())?;
+        // DEC-1 (owner, 2026-08-08). Best-effort AFTER the rename: the move
+        // already happened and must not be reported as a failure, so a broken
+        // manifest is logged and the command still succeeds with the new rel.
+        if let Err(e) = crate::meeting::remap_meeting_locked(&dest, dest_slug, &old_rel, &new_rel) {
+            error!(meeting = %id, error = %e, "meeting moved but its metadata was not rewritten");
+        }
     }
+
     let touched = retarget_refs_after_move(base, &old_rel, &new_rel);
     if touched > 0 {
         info!(meeting = %id, files = touched, "retargeted inbound references");
@@ -3039,6 +3074,100 @@ mod tests {
         assert!(
             !base.join("brainstorming/reunioes").exists(),
             "no phantom folder is created"
+        );
+    }
+
+    // B5 — the manifest stores acervo-relative paths of its own material (audio,
+    // artifacts, refs). A move that rewrites only `tema` leaves every one of them
+    // naming a directory that no longer exists.
+    #[test]
+    fn move_meeting_dir_repaths_the_manifest_of_the_moved_meeting() {
+        let base = tmp("mvmtg-repath");
+        let src = meeting_fixture(&base, "origem", "m1");
+        std::fs::create_dir_all(base.join("brainstorming/destino/reunioes")).unwrap();
+        std::fs::write(
+            src.join("manifest.json"),
+            r#"{
+  "id": "m1",
+  "tema": "origem",
+  "status": "done",
+  "audio": { "mic": "brainstorming/origem/reunioes/m1/audio/mic.webm" },
+  "artifacts": [
+    { "id": "a1", "kind": "notas", "name": "n.md",
+      "rel": "brainstorming/origem/reunioes/m1/artefatos/notas/n.md" }
+  ],
+  "refs": [
+    { "id": "r1", "tipo": "anexo",
+      "caminho": "brainstorming/origem/reunioes/m1/notas/analise-2026-08-08.md" },
+    { "id": "r2", "tipo": "anexo",
+      "caminho": "brainstorming/origem/anexos/planilha.csv" }
+  ]
+}
+"#,
+        )
+        .unwrap();
+
+        let out = move_meeting_dir(&base, "brainstorming/origem/reunioes/m1", "destino").unwrap();
+        let manifest = std::fs::read_to_string(base.join(&out).join("manifest.json")).unwrap();
+
+        assert!(
+            !manifest.contains("brainstorming/origem/reunioes/m1"),
+            "no path still names the old location: {manifest}"
+        );
+        assert!(manifest.contains("brainstorming/destino/reunioes/m1/audio/mic.webm"));
+        assert!(manifest.contains("brainstorming/destino/reunioes/m1/artefatos/notas/n.md"));
+        assert!(
+            manifest.contains("brainstorming/origem/anexos/planilha.csv"),
+            "a ref OUTSIDE the meeting is not the move's business: {manifest}"
+        );
+    }
+
+    // B4 — the retarget is a read-modify-write over living documents. Another
+    // meeting's `reuniao.md` can be receiving a transcript chunk at that very
+    // moment, and without its lock the append is read-then-clobbered.
+    #[test]
+    fn retarget_refs_after_move_takes_the_lock_of_the_meeting_it_rewrites() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let base = tmp("mvmtg-lock");
+        let viva = base.join("brainstorming/x/reunioes/m2");
+        std::fs::create_dir_all(&viva).unwrap();
+        std::fs::write(
+            viva.join("reuniao.md"),
+            "  - caminho: brainstorming/a/reunioes/m1/reuniao.md\n",
+        )
+        .unwrap();
+
+        let lock = crate::meeting::lock_for("m2");
+        let guard = lock.lock().unwrap();
+
+        let (tx, rx) = mpsc::channel();
+        let b = base.clone();
+        let h = std::thread::spawn(move || {
+            let n = retarget_refs_after_move(
+                &b,
+                "brainstorming/a/reunioes/m1",
+                "brainstorming/b/reunioes/m1",
+            );
+            let _ = tx.send(n);
+        });
+
+        assert!(
+            rx.recv_timeout(Duration::from_millis(300)).is_err(),
+            "it must WAIT for the meeting that owns the file"
+        );
+        drop(guard);
+        assert_eq!(
+            rx.recv_timeout(Duration::from_secs(10)).unwrap(),
+            1,
+            "and rewrite it once the owner is done"
+        );
+        h.join().unwrap();
+        let txt = std::fs::read_to_string(viva.join("reuniao.md")).unwrap();
+        assert!(
+            txt.contains("brainstorming/b/reunioes/m1/reuniao.md"),
+            "{txt}"
         );
     }
 }

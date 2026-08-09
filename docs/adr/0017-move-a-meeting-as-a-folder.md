@@ -37,11 +37,19 @@ itself. A caller cannot express an unreachable destination.
 An `<id>` collision at the destination **refuses** with `err.file_exists_in_target`
 and moves nothing, following ADR-0009's rule that a move never overwrites.
 
-### §3 A moved meeting stops naming its old brainstorming
+### §3 A moved meeting stops naming its old brainstorming — and its old path
 
 A meeting records where it was born in two places: `manifest.json` → `tema`, and
 `reuniao.md`'s front matter → `tema:`. **Both are rewritten to the destination**
 (owner decision, 2026-08-08).
+
+The manifest also stores acervo-relative paths **of the meeting's own material**:
+`audio.mic` / `audio.system` / `audio.completo`, `artifacts[].rel` (and its
+`refs[]`), and `refs[].caminho`. Those are rewritten too, by the same argument as
+`tema`: a path that names a directory the move deleted is a field that lies for
+whoever reads it next. `meeting::repath` matches on whole **segments** and only
+re-roots what sat under the old rel — a `refs[]` entry pointing outside the
+meeting did not move and is left alone.
 
 The alternative — leave them, since `manifest.tema` today has exactly one reader
 (`assemble_notebook`, `meeting.rs:511`, the report's "Brainstorming: X" line) and
@@ -78,18 +86,32 @@ target is valid — are pure functions in `meeting.js` (`meetingMoveTargets`,
 ### §5 A move is refused while the meeting is still recording
 
 The **rename and the metadata rewrite happen under the meeting's own lock**, taken
-in `move_meeting_dir` before the rename. Locking only the rewrite — as an earlier
-revision did — left the original race open: `brain_meeting_append` resolves the
-meeting directory *before* it locks, so a rename slipping in between made its write
-land on a path that no longer exists and the transcript chunk was lost. The lock is
-not reentrant, so `retema_meeting_locked` documents that the caller already holds it.
+in `move_meeting_dir` before the rename, so the two halves of the move are never
+seen apart.
+
+That lock only closes the race because of a discipline this ADR establishes for
+the whole module: **a mutating meeting command takes the lock first and resolves
+its directory second.** The lock is keyed by meeting *id*, precisely because the
+*path* moves. Every command that resolved first — `brain_meeting_append`,
+`brain_meeting_write_artifact` and their siblings — captured the old path, blocked
+on the move, and then wrote into a folder that no longer existed, `create_dir_all`
+resurrecting it as an orphan while the manifest read failed. Refusing a meeting
+that is not `done` (below) hides that for the transcript, but not for the commands
+that legitimately run on a *finished* meeting, which is why the ordering — not the
+`done` gate — is what makes the lock mean something. `resolve_meeting_dir`
+documents that its result is valid only while the lock is held.
+
+The mutex is **not reentrant**, so the guard in `move_meeting_dir` is scoped: it
+covers the rename and `remap_meeting_locked` (which documents that its caller
+already holds it) and is released before the reference retarget of §6, which takes
+the locks of the meetings *it* rewrites.
 
 The **backend refuses a meeting that is not `done`** (`err.meeting_not_finished`),
 and the UI gates both doors — the `⋯` entry and the drag handle. The backend check
 is the one that matters: drag-and-drop is a second door into the same command, and
 an invariant enforced only in a menu is not enforced.
 
-The retema itself is **best-effort after the rename**: the move already happened and
+The remap itself is **best-effort after the rename**: the move already happened and
 must not be reported as a failure, so a broken manifest is logged and the command
 still returns the new rel.
 
@@ -98,13 +120,14 @@ still returns the new rel.
 Moving the folder makes every inbound `refs:` entry and every `acervo://` anchor
 (ADR-0007) point at a path that no longer exists — `resolve_ref` would start
 reporting `exists: false` in silence. After the rename, `retarget_refs_in_content`
-rewrites those paths across the non-versioned worlds and the contexts. Matching is
-on whole path **segments**, so `.../m1` never rewrites `.../m10`.
+rewrites those paths across the **non-versioned worlds** (`brainstorming/` and the
+legacy `pessoal/`). Matching is on whole path **segments**, so `.../m1` never
+rewrites `.../m10`.
 
 This follows the precedent the promote flow already set: it rewrites or drops a
 dangling link rather than shipping one.
 
-Two bounds on the walk, both learned from review:
+Bounds on the walk, all learned from review:
 
 - **`contextos/` is excluded.** It is the versioned tree, whose edits go through a
   branch (ADR-0002), and `move_pessoal_file` already refuses it on both ends.
@@ -112,13 +135,30 @@ Two bounds on the walk, both learned from review:
 - **Symlinks are not followed and depth is bounded.** A cycle would recurse until
   the stack overflows, which aborts the process — and this runs *after* the rename,
   so the app would die with the meeting already moved.
+- **A document owned by a meeting is rewritten under that meeting's lock.** The
+  retarget is a read-modify-write over living documents: another meeting's
+  `reuniao.md` may be receiving a transcript chunk at that instant, and an
+  unlocked rewrite reads before the append and clobbers it. The owner is read off
+  the path (`…/reunioes/<id>/…`).
+- **A refused write is logged, never swallowed.** It leaves the acervo *partly*
+  retargeted, and only the successes were being counted.
+- **Custom habilidades are out of scope.** They live outside the acervo
+  (`presets.rs`) and may carry `acervo://<rel>#<annot-id>` anchors (ADR-0007);
+  those are not rewritten. The retarget's promise is bounded to the acervo — a
+  user-authored skill file is not app-managed data, and editing one on a move is a
+  decision this ADR does not take.
 
 ## Consequences
 
-- **New:** `acervo::move_meeting_dir` + `retarget_refs_in_content`,
-  `meeting::retema_meeting` + `retema_front_matter`, the `brain_move_meeting`
-  command, `LoroMeeting.meetingMoveTargets` / `meetingDropTarget`, and the msgids
-  `Mover reunião` / `movida` (both with English pairs).
+- **New:** `acervo::move_meeting_dir` + `retarget_refs_in_content` +
+  `meeting_id_of`, `meeting::remap_meeting_locked` + `retema_front_matter` +
+  `repath`, the `brain_move_meeting` command, `LoroMeeting.meetingMoveTargets` /
+  `meetingDropTarget`, and the msgids `Mover reunião` / `movida` and the error
+  codes `err.meeting_not_finished` / `err.lock_poisoned` (all with English pairs).
+- **Changed beyond the feature:** every mutating command in `meeting.rs` now takes
+  the meeting lock *before* resolving its directory (§5). The move is what makes
+  the old order wrong, so the reorder belongs to this ADR rather than to a
+  separate one.
 - **Unchanged:** `brain_move_pessoal` and every file-move path; BR-8's gate lives on
   in `is_queueable`, untouched, because nothing here enumerates a meeting's files.
 - **Ordering with #43:** independent by construction (§3). #43 removes the report
