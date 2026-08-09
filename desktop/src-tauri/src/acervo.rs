@@ -1615,7 +1615,19 @@ fn retarget_refs_after_move(base: &Path, old_rel: &str, new_rel: &str) -> usize 
 // An `<id>` collision refuses instead of overwriting, as ADR-0009 decided for files.
 pub(crate) fn move_meeting_dir(base: &Path, rel: &str, dest_slug: &str) -> Result<String, String> {
     let rel = rel.replace('\\', "/");
-    if rel.contains("..") || dest_slug.contains("..") || dest_slug.contains('/') {
+    if rel.contains("..") {
+        return Err("err.invalid_path".into());
+    }
+    // The destination must be a real brainstorming slug. Empty, "." or a path
+    // fragment used to slip through every later guard: `brainstorming/` itself is
+    // a directory, so the meeting was renamed into a phantom
+    // `brainstorming/reunioes/` and `resolve_meeting_dir` could never find it
+    // again — analisar, relatório and apagar all failed with err.meeting_not_found.
+    // `avulso` is excluded on purpose: it holds loose files, not brainstormings.
+    if dest_slug.is_empty()
+        || dest_slug == "avulso"
+        || sanitize_slug(dest_slug).ok().as_deref() != Some(dest_slug)
+    {
         return Err("err.invalid_path".into());
     }
     let world_of = |p: &str| -> Option<&'static str> {
@@ -1674,9 +1686,12 @@ pub(crate) fn move_meeting_dir(base: &Path, rel: &str, dest_slug: &str) -> Resul
         return Err("err.meeting_not_finished".into());
     }
 
-    // The rename AND the metadata rewrite happen under the meeting's own lock.
-    // Locking only the rewrite left the race open: append resolves the directory
-    // before it locks, so a rename slipping in between loses the chunk.
+    // The rename and the metadata rewrite share the meeting's lock, so the two
+    // halves of the move are never seen apart. It does NOT make the move safe
+    // against a concurrent append — every meeting command resolves its directory
+    // before locking, so one already past that point would block here and then
+    // write to a path that is gone. What actually protects the transcript is the
+    // `done` gate above; this lock keeps the move itself coherent.
     let lock = crate::meeting::lock_for(&id);
     let _guard = lock.lock().map_err(|_| "err.lock_poisoned".to_string())?;
     std::fs::rename(&src, &dest).map_err(|e| e.to_string())?;
@@ -3001,6 +3016,29 @@ mod tests {
                 "brainstorming/b/reunioes/m1"
             ),
             doc
+        );
+    }
+
+    // B1 — an empty, dotted or non-slug destination used to slip through every
+    // guard and rename the meeting into a phantom `brainstorming/reunioes/`,
+    // where `resolve_meeting_dir` could never find it again.
+    #[test]
+    fn move_meeting_dir_refuses_a_destination_that_is_not_a_brainstorming() {
+        let base = tmp("mvmtg-slug");
+        let src = meeting_fixture(&base, "origem", "m1");
+        std::fs::create_dir_all(base.join("brainstorming/avulso")).unwrap();
+
+        for bad in ["", ".", "..", "avulso", "Com Espaço", "a/b", "MAIÚSCULO"] {
+            assert_eq!(
+                move_meeting_dir(&base, "brainstorming/origem/reunioes/m1", bad).unwrap_err(),
+                "err.invalid_path",
+                "destination {bad:?} must be refused"
+            );
+        }
+        assert!(src.join("reuniao.md").is_file(), "nothing moved");
+        assert!(
+            !base.join("brainstorming/reunioes").exists(),
+            "no phantom folder is created"
         );
     }
 }

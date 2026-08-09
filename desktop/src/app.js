@@ -2022,6 +2022,10 @@ function wirePessoalDnd() {
     handle.style.cursor = "grab";
     handle.title = t("arraste para mover");
     handle.ondragstart = (e) => {
+      // o slug de origem viaja no TIPO: o dragover só enxerga `types`, então é
+      // a única forma de o cabeçalho do PRÓPRIO brainstorming não acender
+      const origem = (/^brainstorming\/([^/]+)\//.exec(btn.dataset.mtgmenu) || [])[1] || "";
+      e.dataTransfer.setData(`text/loro-meeting-from-${origem}`, btn.dataset.mtgmenu);
       e.dataTransfer.setData("text/loro-meeting", btn.dataset.mtgmenu);
       e.dataTransfer.effectAllowed = "move";
     };
@@ -2032,7 +2036,12 @@ function wirePessoalDnd() {
     const mtgSlug = /^bsfolder:(.+):reunioes$/.test(key);
     if (mtgSlug) {
       el2.ondragover = (e) => {
-        if (![...e.dataTransfer.types].includes("text/loro-meeting")) return;
+        const tipos = [...e.dataTransfer.types];
+        if (!tipos.includes("text/loro-meeting")) return;
+        // não acender no brainstorming de origem: prometer um drop que não faz
+        // nada é pior que não aceitar
+        const destino = (/^bsfolder:(.+):reunioes$/.exec(key) || [])[1];
+        if (tipos.includes(`text/loro-meeting-from-${destino}`)) return;
         e.preventDefault(); el2.classList.add("drop");
       };
       el2.ondragleave = () => el2.classList.remove("drop");
@@ -2763,8 +2772,9 @@ async function promptMoveMeeting(rel) {
 async function moveMeetingTo(rel, destSlug) {
   try {
     await invoke("brain_move_meeting", { rel, destSlug });
-    // abas abertas apontam para o caminho antigo: salvar falharia com "not found"
-    closeTabsUnder(rel);
+    // abas abertas apontam para o caminho antigo: salvar falharia com "not found".
+    // Com a barra, para `…/m1` não fechar as abas de `…/m10`.
+    closeTabsUnder(rel.replace(/\/+$/, "") + "/");
     toast(t("movida"));
     pessoalSig = ""; refreshPessoal();
   } catch (e) { toast(tErr(String(e))); }
