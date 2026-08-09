@@ -33,7 +33,8 @@ explicit — **Brainstorming → Fila → Contexto**. A *brainstorming*
 meetings/notes/attachments; the user **selects the real files** to send and each
 one enters the **fila** (the `inbox/` queue) AS ITSELF — one queue item per file,
 no consolidated report (ADR-0014 supersedes the ADR-0013 merged relatorio). A
-meeting is queued as its `relatorio.md`; the raw transcript (`reuniao.md`), audit
+meeting is queued as its **analyses** (`reunioes/<id>/notas/*`, ADR-0018 — a
+meeting no longer has a `relatorio.md`); the raw transcript (`reuniao.md`), audit
 and audio never enter the fila (BR-8). **"gerar contexto"** runs `/loro-context`
 (the renamed loop skill) which distills the fila into versioned `contextos/`.
 
@@ -126,7 +127,8 @@ Brainstorming world + the fila → contexto flow (ADR-0001 §7):
 |---|---|---|---|
 | `brain_create_brainstorm` | `{nome, categoria?}` | `{slug, rel}` | create a brainstorming under `brainstorming/` |
 | `brain_list_brainstorms` | — | list | list brainstormings (with categoria) |
-| `brain_list_meetings` | `slug` | `[{id,rel,titulo,status}]` | a brainstorming's meetings, newest first, labelled by manifest `titulo` |
+| `brain_list_meetings` | `slug` | `[{id,rel,titulo,status,notas}]` | a brainstorming's meetings, newest first, labelled by manifest `titulo`; `notas` counts how many of the meeting's `notas/` the fila would accept (0 = nothing to send, ADR-0018) |
+| `brain_meeting_finish` | `id` | `{rel}` | close a meeting: `status: "done"`, nothing authored; returns the `reuniao.md` rel the UI opens (ADR-0018 — replaces `brain_meeting_build_notebook`) |
 | `brain_meeting_rename` | `{id, titulo}` | `()` | rename a meeting (manifest + heading; the folder id stays stable) |
 | `brain_rename_brainstorm` | `slug, nome` | `{slug, rel}` | rename a brainstorming (folder + meta) |
 | `brain_set_brainstorm_category` | `{slug, categoria?}` | `()` | set/clear the UI grouping category |
@@ -279,7 +281,7 @@ All technical decisions are consolidated in the single **`docs/adr/0001-baseline
 | Change proposal | RFC = branch + Pull Request; opt-in remote via `gh` + CODEOWNERS | ADR-0001 §5 |
 | Studio shell | multi-tab workspace, command palette, vendored CM6 IIFE | ADR-0001 §6 |
 | Knowledge flow | Brainstorming → Fila → Contexto (`/loro-context`) | ADR-0001 §7 |
-| Meetings | living file + notebook report, transient audio | ADR-0001 §8 |
+| Meetings | living file + analyses in `notas/`, transient audio | ADR-0001 §8, ADR-0018 |
 | Meeting AI | terminal-Claude skills, local-first | ADR-0001 §9 |
 | Doc language | English | ADR-0001 |
 | External-source sync | `/loro-sync <fonte>` (drive/slack/jira/confluence) → local anexo + ref, ambient terminal-agent connector | ADR-0005 |
