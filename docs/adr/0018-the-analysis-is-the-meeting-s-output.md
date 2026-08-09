@@ -107,9 +107,17 @@ still writes markers (AC-2) and still reads `manifest.json`.
 - **BRs:** **BR-8** is named by tests on both sides of the change — `is_queueable`
   still refuses transcript/audit/audio on every path, and the digest skill still
   forbids reading `reuniao.md` and audio. Nothing here widens what may enter the fila.
-- **Ordering with #44:** independent. #44 moves a meeting folder and rewrites the
-  paths it records; this ADR changes what the folder *contains*. Whichever lands
-  first leaves the other's premises intact.
+- **Ordering with #44:** independent, and #44 landed first. It moves a meeting
+  folder and rewrites the paths the folder records; this ADR changes what the
+  folder *contains*. Neither disturbed the other's premises.
+- **`manifest.tema` now has no reader.** ADR-0017 §3 anticipated exactly this:
+  it chose to rewrite `tema` on a move rather than leave it, *because* its only
+  reader (`assemble_notebook`, the report's "Brainstorming: X" line) was about to
+  disappear here — and a field that lies is worse than a field nobody reads. That
+  reasoning holds unchanged: the move keeps `tema` honest, and the reference to
+  `assemble_notebook` in ADR-0017 §3 is a record of the state at decision time,
+  not a pointer to live code. Retiring the field is a separate decision, not
+  taken here.
 - **Known limit:** a meeting closed while `notas/` is empty is a dead end in the fila
   until someone analyses it. That is the intended shape — the alternative was the
   empty placeholder this ADR removes.
