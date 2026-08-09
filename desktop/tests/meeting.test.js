@@ -211,3 +211,35 @@ test("looseEndAction tolera entrada faltando", () => {
   assert.strictEqual(LM.looseEndAction(), "none");
   assert.strictEqual(LM.looseEndAction({}), "none");
 });
+
+// ---- #44: mover uma reunião com toda a sua análise -------------------------
+// Uma reunião só existe em `<brainstorming>/reunioes/`, porque é exatamente esse
+// caminho que o list_meetings varre — então o destino nunca é avulso/notas/anexos.
+test("meetingMoveTargets exclui o brainstorming atual", () => {
+  const temas = [
+    { slug: "a", nome: "Alfa" },
+    { slug: "b", nome: "Beta" },
+    { slug: "c", nome: "" },
+  ];
+  const alvos = LM.meetingMoveTargets(temas, "b");
+  assert.deepStrictEqual(alvos.map((d) => d.slug), ["a", "c"]);
+  assert.strictEqual(alvos[0].label, "Alfa");
+  assert.strictEqual(alvos[1].label, "c", "sem nome, cai no slug");
+});
+
+test("meetingMoveTargets tolera lista vazia ou ausente", () => {
+  assert.deepStrictEqual(LM.meetingMoveTargets([], "a"), []);
+  assert.deepStrictEqual(LM.meetingMoveTargets(undefined, "a"), []);
+  assert.deepStrictEqual(LM.meetingMoveTargets([{ slug: "a" }], "a"), []);
+});
+
+// O alvo de drop: só o cabeçalho `reuniões` de outro brainstorming aceita uma
+// reunião. Soltar numa pasta de arquivos não é aceito.
+test("meetingDropTarget aceita só reuniões de OUTRO brainstorming", () => {
+  assert.strictEqual(LM.meetingDropTarget("bsfolder:destino:reunioes", "origem"), "destino");
+  assert.strictEqual(LM.meetingDropTarget("bsfolder:origem:reunioes", "origem"), null,
+    "o próprio brainstorming não é destino");
+  for (const k of ["bsfolder:destino:notas", "bsfolder:destino:anexos", "pes:avulso", "", null]) {
+    assert.strictEqual(LM.meetingDropTarget(k, "origem"), null, `não pode aceitar ${k}`);
+  }
+});

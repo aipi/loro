@@ -182,7 +182,27 @@
     return d.autosave ? "autosave" : "offer";
   }
 
+  // #44 — destinos possíveis para MOVER uma reunião. Uma reunião só existe em
+  // `<brainstorming>/reunioes/` (é o caminho que o list_meetings varre), então o
+  // destino é sempre outro brainstorming — nunca avulso, notas ou anexos, que
+  // guardam arquivos soltos. O brainstorming atual sai da lista.
+  function meetingMoveTargets(temas, slugAtual) {
+    return (Array.isArray(temas) ? temas : [])
+      .filter(function (b) { return b && b.slug && b.slug !== slugAtual; })
+      .map(function (b) { return { slug: b.slug, label: b.nome || b.slug }; });
+  }
+
+  // O alvo de arrastar-e-soltar: devolve o slug de destino quando a chave do
+  // grupo é o cabeçalho `reuniões` de OUTRO brainstorming, e null em qualquer
+  // outro caso (notas, anexos, avulso, o próprio brainstorming).
+  function meetingDropTarget(groupKey, slugAtual) {
+    var m = /^bsfolder:(.+):reunioes$/.exec(String(groupKey == null ? "" : groupKey));
+    if (!m) return null;
+    return m[1] && m[1] !== slugAtual ? m[1] : null;
+  }
+
   return {
+    meetingMoveTargets, meetingDropTarget,
     looseEndAction,
     livingId, reportId, isLiving, isReport, meetingDir,
     sanitizeSkillArg, meetingSkillCmd,

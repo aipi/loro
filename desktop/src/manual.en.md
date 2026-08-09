@@ -97,6 +97,12 @@ palette: `Cmd/Ctrl+Shift+P` → "Loro tour".
   reads the raw transcript or audio — only the reports and notes). When new
   material appears since the last index, `indice.md` shows a subtle banner at
   the top ("N new items — update index") with a button to regenerate.
+- **⋯ menu on a meeting**: beyond rename and delete, **⇄ move to…** takes the whole
+  meeting — transcript, analyses and generated material — into another
+  brainstorming — available once the meeting has finished, like analysing and
+  queueing. You can also drag the meeting by its icon onto the destination's
+  **📁 reuniões** header. A meeting with the same name at the destination is never
+  overwritten.
 - **⋯ menu on any file** (note, attachment, misc, meeting note): beyond
   **rename** and **delete**, it offers **⇄ move to…** (pick the destination
   folder — misc, or any brainstorming's notes/attachments folders) and
