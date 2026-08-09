@@ -1986,7 +1986,13 @@ function pestoggleDestDir(key) {
 // only the icon starts a move. Property assignment keeps this idempotent across
 // the repeated wirePessoal() calls on persistent nodes.
 function wirePessoalDnd() {
-  B.navPessoal.querySelectorAll(".bitem.file[data-artmenu]").forEach((row) => {
+  // #47 — `data-artmenu` sits on the ⋯ BUTTON, never on the row, so the old
+  // `.bitem.file[data-artmenu]` matched nothing and file drag never activated —
+  // silently, since a zero-length forEach raises no error. Start from the button
+  // and walk up, the same shape the meeting handle below uses.
+  B.navPessoal.querySelectorAll("[data-artmenu]").forEach((btn) => {
+    const row = btn.closest(".bitem.file");
+    if (!row) return;
     row.draggable = false;
     const handle = row.querySelector(".nico");
     if (!handle) return;
@@ -1998,15 +2004,70 @@ function wirePessoalDnd() {
       e.dataTransfer.effectAllowed = "move";
     };
   });
+  // #44 — a REUNIÃO também arrasta, carregando a pasta inteira. Marcada com um
+  // tipo de dado próprio (text/loro-meeting) para o alvo saber o que chegou: o
+  // cabeçalho `reuniões` aceita só isto, e as pastas de arquivo só o outro.
+  // `data-mtgmenu` fica no BOTÃO ⋯, não na linha — então parte-se do botão e
+  // sobe-se para a `.bitem`. Um seletor `.bitem[data-mtgmenu]` não casa nada e
+  // o arrastar nunca ativa, em silêncio (foi o que a revisão pegou aqui).
+  B.navPessoal.querySelectorAll("[data-mtgmenu]").forEach((btn) => {
+    const row = btn.closest(".bitem");
+    if (!row) return;
+    // gravando não arrasta: o backend recusa, e prometer o drop seria mentira
+    if (btn.dataset.mtgstatus !== "done") return;
+    row.draggable = false;
+    const handle = row.querySelector(".nico");
+    if (!handle) return;
+    handle.draggable = true;
+    handle.style.cursor = "grab";
+    handle.title = t("arraste para mover");
+    handle.ondragstart = (e) => {
+      // o slug de origem viaja no TIPO: o dragover só enxerga `types`, então é
+      // a única forma de o cabeçalho do PRÓPRIO brainstorming não acender
+      const origem = (/^brainstorming\/([^/]+)\//.exec(btn.dataset.mtgmenu) || [])[1] || "";
+      e.dataTransfer.setData(`text/loro-meeting-from-${origem}`, btn.dataset.mtgmenu);
+      e.dataTransfer.setData("text/loro-meeting", btn.dataset.mtgmenu);
+      e.dataTransfer.effectAllowed = "move";
+    };
+  });
   B.navPessoal.querySelectorAll("[data-pestoggle]").forEach((el2) => {
-    const dest = pestoggleDestDir(el2.dataset.pestoggle);
+    const key = el2.dataset.pestoggle;
+    // cabeçalho `reuniões`: aceita uma reunião de OUTRO brainstorming
+    const mtgSlug = /^bsfolder:(.+):reunioes$/.test(key);
+    if (mtgSlug) {
+      el2.ondragover = (e) => {
+        const tipos = [...e.dataTransfer.types];
+        if (!tipos.includes("text/loro-meeting")) return;
+        // não acender no brainstorming de origem: prometer um drop que não faz
+        // nada é pior que não aceitar
+        const destino = (/^bsfolder:(.+):reunioes$/.exec(key) || [])[1];
+        if (tipos.includes(`text/loro-meeting-from-${destino}`)) return;
+        e.preventDefault(); el2.classList.add("drop");
+      };
+      el2.ondragleave = () => el2.classList.remove("drop");
+      el2.ondrop = async (e) => {
+        e.preventDefault(); el2.classList.remove("drop");
+        const rel = e.dataTransfer.getData("text/loro-meeting");
+        if (!rel) return;
+        const origem = (/^brainstorming\/([^/]+)\//.exec(rel) || [])[1] || "";
+        const destino = LM.meetingDropTarget(key, origem);
+        if (!destino) return;
+        await moveMeetingTo(rel, destino);
+      };
+      return;
+    }
+    const dest = pestoggleDestDir(key);
     if (!dest) return;
-    el2.ondragover = (e) => { e.preventDefault(); el2.classList.add("drop"); };
+    el2.ondragover = (e) => {
+      // uma reunião arrastada não pertence aqui: não acender nem prometer o drop
+      if (![...e.dataTransfer.types].includes("text/loro-file")) return;
+      e.preventDefault(); el2.classList.add("drop");
+    };
     el2.ondragleave = () => el2.classList.remove("drop");
     el2.ondrop = async (e) => {
       e.preventDefault(); el2.classList.remove("drop");
       const rel = e.dataTransfer.getData("text/loro-file");
-      if (!rel) return;
+      if (!rel) return; // uma reunião arrastada não chega aqui: tipo de dado distinto
       if (rel.split("/").slice(0, -1).join("/") === dest) return; // already here
       try {
         await invoke("brain_move_pessoal", { rel, destDir: dest });
@@ -2576,9 +2637,13 @@ function openMeetingMenu(rel, id, title, status, anchor) {
     `<div class="fitem2" data-tools><span class="fn">${ico("skill")} ${t("executar habilidade…")}</span></div>` +
     `<div class="fsep"></div>` +
     `<div class="fitem2" data-ren><span class="fn">✎ ${t("renomear")}</span></div>` +
+    `<div class="fitem2${dis ? " off" : ""}" data-mvmtg><span class="fn">⇄ ${t("mover para…")}</span></div>` +
     copyPathItemsHtml() +
     `<div class="fitem2 danger" data-del><span class="fn">${t("apagar reunião")}</span></div>`;
   wireCopyPathItems(rel);
+  // mover só depois de encerrada: durante a gravação o retema disputaria o
+  // manifesto e o arquivo vivo com o append, e um trecho se perderia
+  if (ready) B.bMenu.querySelector("[data-mvmtg]").onclick = () => { closeFloat(); promptMoveMeeting(rel); };
   if (ready) {
     B.bMenu.querySelector("[data-analyse]").onclick = () => { closeFloat(); openDoc(`${rel}/reuniao.md`, { preview: false }); runMeetingSkill("analyse", id, null, rel); };
     B.bMenu.querySelector("[data-report]").onclick = () => { closeFloat(); buildAndOpenReport(id); };
@@ -2677,6 +2742,42 @@ function wirePathMenus(root) {
     e.stopPropagation();
     openPathMenu(el2.dataset.pathmenu, el2.dataset.pathlabel || el2.dataset.pathmenu, el2);
   }));
+}
+
+// #44 — "mover para…" de uma REUNIÃO: o destino é sempre o reunioes/ de outro
+// brainstorming (LM.meetingMoveTargets), nunca avulso/notas/anexos, que guardam
+// arquivos soltos. O backend confina a move e nunca sobrescreve.
+async function promptMoveMeeting(rel) {
+  const slugAtual = (/^brainstorming\/([^/]+)\//.exec(rel) || [])[1] || "";
+  let temas = [];
+  try { temas = (await invoke("brain_list_brainstorms")) || []; } catch (_) {}
+  const dests = LM.meetingMoveTargets(temas, slugAtual);
+  if (!dests.length) { toast(t("nenhum destino disponível")); return; }
+  openModal(
+    t("Mover reunião"),
+    `<label class="wfield"><span class="mono">${t("destino")}</span>` +
+      `<select id="mvMtgDest">` +
+      dests.map((d) => `<option value="${esc(d.slug)}">${esc(d.label)}</option>`).join("") +
+      `</select></label>`,
+    t("mover"),
+    async () => {
+      const destSlug = ($("mvMtgDest") && $("mvMtgDest").value) || "";
+      if (!destSlug) return;
+      await moveMeetingTo(rel, destSlug);
+    }
+  );
+}
+
+// A move em si, compartilhada pelo menu e pelo arrastar-e-soltar.
+async function moveMeetingTo(rel, destSlug) {
+  try {
+    await invoke("brain_move_meeting", { rel, destSlug });
+    // abas abertas apontam para o caminho antigo: salvar falharia com "not found".
+    // Com a barra, para `…/m1` não fechar as abas de `…/m10`.
+    closeTabsUnder(rel.replace(/\/+$/, "") + "/");
+    toast(t("movida"));
+    pessoalSig = ""; refreshPessoal();
+  } catch (e) { toast(tErr(String(e))); }
 }
 
 // "mover para…": pick a destination folder within the brainstorming world

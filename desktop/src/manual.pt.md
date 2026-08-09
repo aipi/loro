@@ -95,6 +95,12 @@ quando quiser pela paleta: `Cmd/Ctrl+Shift+P` → "apresentação do Loro".
   nem áudio — só os relatórios e notas). Quando surge material novo desde o
   último índice, o próprio `indice.md` mostra um aviso sutil no topo ("N itens
   novos — atualizar índice") com um botão para regerar.
+- **Menu ⋯ de uma reunião**: além de renomear e apagar, **⇄ mover para…** leva a
+  reunião inteira — transcrição, análises e material gerado — para outro
+  brainstorming — disponível depois que a reunião termina, como analisar e enviar
+  para a fila. Também dá para arrastar a reunião pelo ícone até o cabeçalho
+  **📁 reuniões** do brainstorming de destino. Uma reunião de mesmo nome no destino
+  nunca é sobrescrita.
 - **Menu ⋯ de qualquer arquivo** (nota, anexo, avulso, nota de reunião):
   além de **renomear** e **apagar**, traz **⇄ mover para…** (escolha a pasta
   de destino — avulso, ou as pastas notas/anexos de qualquer brainstorming) e

@@ -3753,6 +3753,7 @@ pub fn run() {
             brain_brainstorm_delete,
             brain_rename_pessoal,
             brain_move_pessoal,
+            brain_move_meeting,
             brain_abs_path,
             brain_list_brainstorms,
             brain_list_meetings,
