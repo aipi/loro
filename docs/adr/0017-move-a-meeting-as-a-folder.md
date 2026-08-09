@@ -121,7 +121,7 @@ Moving the folder makes every inbound `refs:` entry and every `acervo://` anchor
 (ADR-0007) point at a path that no longer exists — `resolve_ref` would start
 reporting `exists: false` in silence. After the rename, `retarget_refs_in_content`
 rewrites those paths across the **non-versioned worlds** (`brainstorming/` and the
-legacy `pessoal/`). Matching is on whole path **segments**, so `.../m1` never
+legacy `pessoal/`) and the acervo's own habilidades (`.claude/commands/`). Matching is on whole path **segments**, so `.../m1` never
 rewrites `.../m10`.
 
 This follows the precedent the promote flow already set: it rewrites or drops a
@@ -142,11 +142,15 @@ Bounds on the walk, all learned from review:
   the path (`…/reunioes/<id>/…`).
 - **A refused write is logged, never swallowed.** It leaves the acervo *partly*
   retargeted, and only the successes were being counted.
-- **Custom habilidades are out of scope.** They live outside the acervo
-  (`presets.rs`) and may carry `acervo://<rel>#<annot-id>` anchors (ADR-0007);
-  those are not rewritten. The retarget's promise is bounded to the acervo — a
-  user-authored skill file is not app-managed data, and editing one on a move is a
-  decision this ADR does not take.
+- **`.claude/commands/` is walked too.** A custom habilidade (ADR-0005 §E) lives
+  *inside* the acervo and, per ADR-0007, may be aimed at an excerpt through an
+  `acervo://<rel>#<annot-id>` anchor — a tool left pointing at a meeting that
+  moved is exactly the dangling ref this walk exists to prevent. (Review first
+  read the *template* skills of `presets.rs` — `~/.loro/templates/<id>/<lang>/
+  skills/` — as the live habilidade. Those are a seed for a *new* acervo, hold no
+  reference into an existing one, and are correctly out of scope.) The built-ins
+  there carry only literal `acervo://<caminho>` placeholders, which match no real
+  rel; a test pins both halves.
 
 ## Consequences
 

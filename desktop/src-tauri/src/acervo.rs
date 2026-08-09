@@ -1553,10 +1553,17 @@ pub(crate) fn retarget_refs_in_content(content: &str, old_rel: &str, new_rel: &s
         .join("\n")
 }
 
-// Walk the NON-VERSIONED worlds and retarget every inbound reference to a moved
-// meeting. `contextos/` is deliberately excluded: it is the versioned tree, whose
-// edits go through a branch (ADR-0002), and `move_pessoal_file` already refuses it
-// on both ends. Rewriting a context's CHANGELOG in place would falsify history.
+// Walk the NON-VERSIONED worlds plus the acervo's own habilidades, and retarget
+// every inbound reference to a moved meeting. `contextos/` is deliberately
+// excluded: it is the versioned tree, whose edits go through a branch (ADR-0002),
+// and `move_pessoal_file` already refuses it on both ends. Rewriting a context's
+// CHANGELOG in place would falsify history.
+//
+// `.claude/commands/` is IN: a custom habilidade (ADR-0005 §E) may be aimed at an
+// excerpt through an `acervo://<rel>#<annot-id>` anchor (ADR-0007), and a tool
+// pointing at a meeting that moved is exactly the dangling ref this walk exists
+// to prevent. The built-ins there carry only literal `acervo://<caminho>`
+// placeholders, which match no real rel.
 //
 // The walk does not follow symlinks and is depth-bounded: a cycle would otherwise
 // recurse until the stack overflows, which aborts the process — and this runs
@@ -1587,7 +1594,7 @@ fn retarget_refs_after_move(base: &Path, old_rel: &str, new_rel: &str) -> usize 
         }
     }
     let mut files = Vec::new();
-    for world in ["brainstorming", "pessoal"] {
+    for world in ["brainstorming", "pessoal", ".claude/commands"] {
         walk(&base.join(world), 0, &mut files);
     }
     let mut n = 0;
@@ -3119,6 +3126,43 @@ mod tests {
         assert!(
             manifest.contains("brainstorming/origem/anexos/planilha.csv"),
             "a ref OUTSIDE the meeting is not the move's business: {manifest}"
+        );
+    }
+
+    // B6 — a custom habilidade (ADR-0005 §E) lives in the acervo's
+    // `.claude/commands/` and, per ADR-0007, may be aimed at an EXCERPT through an
+    // `acervo://<rel>#<annot-id>` anchor. A move that skipped it left the tool
+    // pointing at a meeting that is no longer there.
+    #[test]
+    fn move_meeting_dir_retargets_a_custom_habilidade() {
+        let base = tmp("mvmtg-hab");
+        meeting_fixture(&base, "origem", "m1");
+        std::fs::create_dir_all(base.join("brainstorming/destino/reunioes")).unwrap();
+        let cmds = base.join(".claude/commands");
+        std::fs::create_dir_all(&cmds).unwrap();
+        std::fs::write(
+            cmds.join("minha-ferramenta.md"),
+            "Resuma [o trecho](acervo://brainstorming/origem/reunioes/m1/reuniao.md#an_7).\n",
+        )
+        .unwrap();
+        // a built-in carries only the literal placeholder, which matches no rel
+        std::fs::write(
+            cmds.join("loro-digest.md"),
+            "cada item é `- [<título>](acervo://<caminho>)`\n",
+        )
+        .unwrap();
+
+        move_meeting_dir(&base, "brainstorming/origem/reunioes/m1", "destino").unwrap();
+
+        let tool = std::fs::read_to_string(cmds.join("minha-ferramenta.md")).unwrap();
+        assert!(
+            tool.contains("acervo://brainstorming/destino/reunioes/m1/reuniao.md#an_7"),
+            "the anchor follows the meeting: {tool}"
+        );
+        let builtin = std::fs::read_to_string(cmds.join("loro-digest.md")).unwrap();
+        assert!(
+            builtin.contains("acervo://<caminho>"),
+            "a placeholder is not a reference: {builtin}"
         );
     }
 
