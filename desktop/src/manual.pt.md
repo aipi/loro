@@ -53,7 +53,7 @@ quando quiser pela paleta: `Cmd/Ctrl+Shift+P` → "apresentação do Loro".
    verificado. Se um modelo antigo tiver ficado pela metade, ele volta a aparecer
    como *não instalado* — basta baixar de novo.
 5. **Idioma** — na engrenagem (⚙), "idioma da interface" alterna pt-BR/inglês.
-   Tudo que o app **gera** (relatórios, documentos de reunião, contextos)
+   Tudo que o app **gera** (análises, documentos de reunião, contextos)
    nasce no idioma ativo da interface.
 6. **Versão** — o rodapé das Configurações (⚙) mostra a versão instalada
    (ex.: `v0.8.0`), para você conferir num relance se a atualização pegou.
@@ -87,12 +87,12 @@ quando quiser pela paleta: `Cmd/Ctrl+Shift+P` → "apresentação do Loro".
   direita de qualquer arquivo aberto**) aplica um pedido sobre o conteúdo
   existente — a IA evolui, nunca apaga.
 - **Atualizar índice (resumão)** (menu ⋯ do brainstorming) roda a habilidade
-  `/loro-digest`: ela lê **todo** o material do tema (relatórios de reunião,
+  `/loro-digest`: ela lê **todo** o material do tema (as análises das reuniões,
   notas e anexos) e (re)escreve o `indice.md` — o markdown principal — com um
   **resumo geral**, os **pontos-chave & highlights**, um **índice** com links
   para cada material e as **referências** (o painel no topo do arquivo). É
   disparada por você e reescreve o índice do zero (não lê a transcrição bruta
-  nem áudio — só os relatórios e notas). Quando surge material novo desde o
+  nem áudio — só as análises e notas). Quando surge material novo desde o
   último índice, o próprio `indice.md` mostra um aviso sutil no topo ("N itens
   novos — atualizar índice") com um botão para regerar.
 - **Menu ⋯ de uma reunião**: além de renomear e apagar, **⇄ mover para…** leva a
@@ -133,18 +133,21 @@ quando quiser pela paleta: `Cmd/Ctrl+Shift+P` → "apresentação do Loro".
   legível, então o histórico no git mostra apenas o que você mudou de fato.
   A mesma barra aparece no editor de pendentes da fila e das instruções do
   loop, onde **⌘S** salva.
-- As ações **analisar**, **perguntar…**, **ver relatório** e **enviar para a
-  fila** ficam no menu **⋯** da reunião na lateral. **Perguntar** funciona já
-  durante a gravação; as outras três habilitam quando a reunião termina (o
-  relatório é preenchido pelo analisar). **Enviar para a fila** manda o
-  **relatório** da reunião (a transcrição bruta nunca vai para a fila).
+- As ações **analisar**, **perguntar…** e **enviar para a fila** ficam no menu
+  **⋯** da reunião na lateral. **Perguntar** funciona já durante a gravação; as
+  outras duas habilitam quando a reunião termina. **Enviar para a fila** manda as
+  **análises** da reunião (o que estiver em `notas/`) — a transcrição bruta nunca
+  vai. Uma reunião que ninguém analisou não tem o que enviar, e o menu diz isso
+  em vez de falhar no clique.
 - A aba `reuniao.md` da reunião mostra, em vez de botões fixos, um único
   **dropdown de habilidades** ("o que fazer com esta reunião") — escolha
   qualquer habilidade (incluindo analisar/perguntar) e rode sobre a reunião
   aberta. Sem restrição: aparecem todas, padrão e customizadas.
 - Numa reunião: marque **dúvidas/decisões/investigações** durante a fala (via
-  paleta `Cmd/Ctrl+Shift+P` ou pelos botões); depois rode **analisar** (menu
-  ⋯) para o Claude preencher o relatório da reunião.
+  paleta `Cmd/Ctrl+Shift+P` ou pelos botões); depois rode **analisar** (menu ⋯)
+  para o Claude escrever a análise em `notas/`. Quando a gravação termina, o app
+  abre a transcrição e **oferece** analisar em um clique — é uma sugestão, não
+  roda nada sozinho, e some se você ignorar.
 - Nada do brainstorming é versionado nem sai da máquina.
 - As **notas** de cada reunião (análises, respostas e qualquer documento que
   uma habilidade gere) ficam **recolhidas por padrão** na lateral (toque na
@@ -245,8 +248,8 @@ de versionar/propor mudança normalmente).
 
 ## Fila → gerar contexto
 
-- Marque os **arquivos** de um brainstorming (reunião → seu relatório, notas,
-  análises, anexos) e **envie para a fila** — cada arquivo vira um item próprio
+- Marque os **arquivos** de um brainstorming (reunião → suas análises, notas,
+  anexos) e **envie para a fila** — cada arquivo vira um item próprio
   na fila (multi-seleção envia todos). No ⋯ do brainstorming, **"enviar tudo →
   fila"** manda todos os arquivos de uma vez. (Você também pode soltar arquivos
   `.md`/`.txt` direto na fila.) A transcrição bruta da reunião nunca vai (BR-8).

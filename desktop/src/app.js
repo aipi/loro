@@ -189,6 +189,26 @@ function toast(msg, ms = 2600) {
   if (ms) toast._t = setTimeout(() => (el.toast.hidden = true), ms);
 }
 
+// ADR-0018 · AC-5 — um toast que carrega ações. É o empurrãozinho: some sozinho
+// como qualquer toast (nenhum cromo permanente entra no layout), e clicar numa
+// ação a executa e fecha. Dispensar é não clicar em nada.
+function toastAction(msg, actions, ms = 12000) {
+  clearTimeout(toast._t);
+  el.toast.textContent = "";
+  const span = document.createElement("span");
+  span.textContent = msg;
+  el.toast.appendChild(span);
+  for (const a of actions || []) {
+    const b = document.createElement("button");
+    b.className = "toastbtn";
+    b.textContent = a.label;
+    b.onclick = () => { el.toast.hidden = true; clearTimeout(toast._t); a.run(); };
+    el.toast.appendChild(b);
+  }
+  el.toast.hidden = false;
+  if (ms) toast._t = setTimeout(() => (el.toast.hidden = true), ms);
+}
+
 // ---- timer ----
 function fmt(s) {
   const m = Math.floor(s / 60), r = s % 60;
@@ -626,7 +646,7 @@ function stopMeeting() {
 // STOP (ADR-0012 modelo A): a transcrição JÁ foi montada ao vivo pelos segmentos
 // de mic + janelas de sistema — NÃO há passe completo separado (duplicaria tudo).
 // Aqui apenas encerramos os loops, paramos o sidecar de sistema e concluímos
-// (monta o relatório + apaga todo o áudio; áudio é transiente).
+// (fecha a reunião + apaga todo o áudio; áudio é transiente).
 async function finalizeMeeting() {
   stopMeetingTail();
   stopMeetingPreview(); // faz o flush do último segmento de mic (append assíncrono)
@@ -640,7 +660,7 @@ async function finalizeMeeting() {
   // encerra o sidecar de áudio do sistema (o mix é ignorado — áudio é transiente)
   try { await invoke("brain_meeting_stop", { input: { id } }); }
   catch (e) { clog("brain_meeting_stop error: " + e); }
-  await finishMeetingAfterTranscription(); // monta o relatório + purga o áudio
+  await finishMeetingAfterTranscription(); // fecha a reunião + purga o áudio
 }
 
 // Acumula as linhas do transcript-line e as persiste em lote abaixo do marcador
@@ -663,8 +683,9 @@ async function flushMeetingLines() {
   catch (e) { clog("brain_meeting_append error: " + e); }
 }
 
-// Conclusão: garante o flush final, monta o relatório (brain_meeting_build_notebook)
-// e abre relatorio.md como aba. Reentrância protegida por meeting.active.
+// Conclusão: garante o flush final, fecha a reunião (brain_meeting_finish) e abre
+// reuniao.md como aba. ADR-0018: nada é autorado — a análise é OFERECIDA, em um
+// clique e dispensável, e só roda se o usuário pedir. Reentrância por meeting.active.
 async function finishMeetingAfterTranscription() {
   if (!meeting.active) return;
   meeting.active = false; meeting.phase = "done"; // reentrancy guard set synchronously
@@ -676,15 +697,15 @@ async function finishMeetingAfterTranscription() {
   updatePrivacy();
   let rel = null;
   if (id) {
-    try { const r = await invoke("brain_meeting_build_notebook", { id }); rel = r && r.rel; }
-    catch (e) { toast(t("não montei o relatório") + ": " + tErr(String(e))); clog("build_notebook error: " + e); }
+    try { const r = await invoke("brain_meeting_finish", { id }); rel = r && r.rel; }
+    catch (e) { toast(t("não encerrei a reunião") + ": " + tErr(String(e))); clog("meeting_finish error: " + e); }
     // Áudio é transiente (decisão do dono): apaga após a transcrição autoritativa.
     try { await invoke("brain_meeting_purge_audio", { input: { id } }); }
     catch (e) { clog("brain_meeting_purge_audio error: " + e); }
   }
   pessoalSig = ""; refreshPessoal();
   renderIfLiving(id);
-  if (rel) { toast(t("relatório pronto")); openDoc(rel, { preview: false }); }
+  if (rel) { openDoc(rel, { preview: false }); offerAnalyse(LM.meetingDir(rel)); }
   else if (id) toast(t("reunião encerrada"));
 }
 
@@ -704,7 +725,7 @@ async function markMeeting(tipo) {
   catch (e) { toast(tErr(String(e))); clog("brain_meeting_marker error: " + e); }
 }
 
-// paleta: "nova reunião" (independe do seletor de fonte) · "abrir relatório".
+// paleta: "nova reunião" (independe do seletor de fonte).
 // presetTema pins the brainstorming when the flow starts from its sidebar row.
 function startMeetingFlow(presetTema) {
   if (state.running || meeting.active) { toast(t("já há uma gravação em andamento")); return; }
@@ -736,17 +757,18 @@ function askAcervo(ctx) {
   const inp = $("askInput"); if (inp) inp.focus();
 }
 
-async function buildAndOpenReport(explicitId) {
-  let id = explicitId || meeting.id;
-  if (!id) { const rel = currentRel(); id = rel ? (LM.livingId(rel) || LM.reportId(rel)) : null; }
-  if (!id) { toast(t("abra uma reunião para gerar o relatório")); return; }
-  try {
-    const r = await invoke("brain_meeting_build_notebook", { id });
-    if (r && r.rel) openDoc(r.rel, { preview: false });
-    toast(t("relatório pronto"));
-    pessoalSig = ""; refreshPessoal();
-  }
-  catch (e) { toast(t("não montei o relatório") + ": " + tErr(String(e))); clog("build_notebook error: " + e); }
+// ADR-0018 · AC-5 — o empurrãozinho: um toast com "analisar" e "agora não". Nada
+// é injetado no agente a menos que o usuário clique; dispensar deixa a reunião
+// intocada. Nenhum cromo permanente entra no layout — o toast some sozinho.
+function offerAnalyse(dir) {
+  if (!dir) { toast(t("reunião encerrada")); return; }
+  toastAction(t("reunião encerrada — quer analisar agora?"), [
+    { label: t("analisar"), run: () => {
+        const cmd = LM.analyseOffer("analisar", dir);
+        if (cmd) termRunAgent(cmd);
+      } },
+    { label: t("agora não"), run: () => {} },
+  ]);
 }
 
 // modo "gravar tudo": não há processo do whisper-stream — apenas grava o áudio
@@ -1783,10 +1805,10 @@ function renderTemaNode(t) {
 // perguntas/, relatorios/) deixaram de existir: eram atrito, não estrutura.
 // A selectable part row: a checkbox (data-bssel/data-bskind) + the open target.
 // A meeting row carries a ⋯ menu (renomear/apagar); files keep the plain ×.
-function bsPartRow(kind, openRel, selRel, label, title, indent, meetingId, meetingStatus, mopen) {
+function bsPartRow(kind, openRel, selRel, label, title, indent, meetingId, meetingStatus, mopen, meetingNotas) {
   const act = meetingId
     ? `<button class="rowtoggle${mopen ? " open" : ""}" data-mtgtoggle="${esc(meetingId)}" title="${t("mostrar/ocultar as notas da reunião")}">▸</button>` +
-      `<button class="rowmenu" data-mtgmenu="${esc(selRel)}" data-mtgid="${esc(meetingId)}" data-mtgtitle="${esc(label)}" data-mtgstatus="${esc(meetingStatus || "")}" title="${t("ações da reunião (analisar, perguntar, relatório…)")}">⋯</button>`
+      `<button class="rowmenu" data-mtgmenu="${esc(selRel)}" data-mtgid="${esc(meetingId)}" data-mtgtitle="${esc(label)}" data-mtgstatus="${esc(meetingStatus || "")}" data-mtgnotas="${esc(String(meetingNotas || 0))}" title="${t("ações da reunião (analisar, perguntar, enviar para a fila…)")}">⋯</button>`
     : `<button class="rowmenu" data-artmenu="${esc(selRel)}" data-artlabel="${esc(label)}" title="${t("ações (renomear, apagar)")}">⋯</button>`;
   const icon = kind === "reuniao" ? "meeting" : kind === "nota" ? "note" : "file";
   return `<div class="bitem file${indent ? " bsub" : ""}" data-doc="${esc(openRel)}" title="${esc(title)}">` +
@@ -1825,7 +1847,7 @@ async function loadTemaChildren(slug) {
     const title = LM.meetingTitleFromManifest({ titulo: m.titulo }, m.id);
     const label = title === m.id ? LM.meetingLabel(m.id, settings.uiLang) : title;
     const mkey = "mtg:" + m.id, mopen = bOpen.has(mkey);
-    reunioesRows += bsPartRow("reuniao", `${m.rel}/reuniao.md`, m.rel, label, m.id, true, m.id, m.status, mopen);
+    reunioesRows += bsPartRow("reuniao", `${m.rel}/reuniao.md`, m.rel, label, m.id, true, m.id, m.status, mopen, m.notas);
     reunioesRows += `<div class="bchild" data-mtgchild="${esc(m.id)}" data-mtgrel="${esc(m.rel)}" ${mopen ? "" : "hidden"}></div>`;
     if (mopen) pendingMeetingFills.push([m.id, m.rel]);
   }
@@ -1918,7 +1940,7 @@ function wirePessoal() {
   }));
   B.navPessoal.querySelectorAll("[data-mtgmenu]").forEach((el2) => (el2.onclick = (e) => {
     e.stopPropagation();
-    openMeetingMenu(el2.dataset.mtgmenu, el2.dataset.mtgid, el2.dataset.mtgtitle, el2.dataset.mtgstatus, el2);
+    openMeetingMenu(el2.dataset.mtgmenu, el2.dataset.mtgid, el2.dataset.mtgtitle, el2.dataset.mtgstatus, el2, el2.dataset.mtgnotas);
   }));
   B.navPessoal.querySelectorAll("[data-tema]").forEach((el2) => (el2.onclick = (e) => {
     if (e.target.closest("[data-bsmenu]")) return;
@@ -2620,20 +2642,23 @@ function promptRenameBs(slug) {
 
 // O menu ⋯ de uma reunião na árvore — renomear (só o título; o id/pasta é
 // estável, então abas e artefatos continuam válidos) / apagar.
-function openMeetingMenu(rel, id, title, status, anchor) {
+function openMeetingMenu(rel, id, title, status, anchor, notas) {
   B.acervoMenu.hidden = true;
   // the meeting's AI actions live here too (not only in the open tab); the
   // report is only worth opening after the meeting is done — before that the
   // entry shows disabled with the reason instead of failing on click.
   const ready = status === "done";
   const dis = ready ? "" : " disabled";
+  // AC-7: a análise É a saída da reunião — sem nenhuma, não há o que enfileirar,
+  // e o motivo fica declarado em vez de o envio falhar em silêncio.
+  const bloqueio = LM.meetingQueueBlock(notas);
   B.bMenu.innerHTML =
     `<div class="fhead">${esc(title)}</div>` +
     `<div class="fitem2 strong${dis ? " off" : ""}" data-analyse><span class="fn">✦ ${t("analisar")}</span></div>` +
     `<div class="fitem2${ready ? "" : " strong"}" data-question><span class="fn">? ${t("perguntar…")}</span></div>` +
-    `<div class="fitem2${dis ? " off" : ""}" data-report><span class="fn">≡ ${t("ver relatório")}</span></div>` +
-    `<div class="fitem2${dis ? " off" : ""}" data-queue><span class="fn">${t("enviar para a fila")} →</span></div>` +
-    (ready ? "" : `<div class="fnote mono">${t("analisar, ver relatório e enviar para a fila ficam disponíveis quando a reunião terminar — perguntar já funciona agora")}</div>`) +
+    `<div class="fitem2${dis || bloqueio ? " off" : ""}" data-queue><span class="fn">${t("enviar para a fila")} →</span></div>` +
+    (ready ? "" : `<div class="fnote mono">${t("analisar e enviar para a fila ficam disponíveis quando a reunião terminar — perguntar já funciona agora")}</div>`) +
+    (ready && bloqueio ? `<div class="fnote mono">${t(bloqueio)}</div>` : "") +
     `<div class="fitem2" data-tools><span class="fn">${ico("skill")} ${t("executar habilidade…")}</span></div>` +
     `<div class="fsep"></div>` +
     `<div class="fitem2" data-ren><span class="fn">✎ ${t("renomear")}</span></div>` +
@@ -2646,10 +2671,11 @@ function openMeetingMenu(rel, id, title, status, anchor) {
   if (ready) B.bMenu.querySelector("[data-mvmtg]").onclick = () => { closeFloat(); promptMoveMeeting(rel); };
   if (ready) {
     B.bMenu.querySelector("[data-analyse]").onclick = () => { closeFloat(); openDoc(`${rel}/reuniao.md`, { preview: false }); runMeetingSkill("analyse", id, null, rel); };
-    B.bMenu.querySelector("[data-report]").onclick = () => { closeFloat(); buildAndOpenReport(id); };
     B.bMenu.querySelector("[data-queue]").onclick = () => {
       closeFloat();
-      // ADR-0014: the meeting is queued as its relatorio.md (never the transcript).
+      // ADR-0018: the meeting goes as its DIRECTORY; the backend's single owner
+      // expands it into the notas/ that represent it (BR-8 stays there).
+      if (bloqueio) { toast(t(bloqueio)); return; }
       sendFilesToQueue([LoroBrainstorm.queueRelForSelection("reuniao", rel)]);
     };
   }
@@ -2881,7 +2907,7 @@ function promptRenameMeeting(id, current) {
 
 // ADR-0014: send the given files to the fila, ONE queue item per file (no
 // consolidated report). `rels` are acervo-relative file paths already resolved by
-// the caller (meeting -> its relatorio.md, everything else -> the file itself).
+// the caller (meeting -> its directory, everything else -> the file itself).
 async function sendFilesToQueue(rels) {
   const list = (rels || []).filter(Boolean);
   if (!list.length) return;
@@ -2904,7 +2930,8 @@ async function sendBrainstormAllToQueue(slug) {
 }
 
 // The selected parts across the tree -> the ACTUAL files to queue (each its own
-// item). A meeting resolves to its relatorio.md; notes/analyses/anexos go as-is.
+// item). A meeting goes as its directory (the backend expands it into the
+// notas/ that represent it, ADR-0018); notes/analyses/anexos go as-is.
 async function sendSelectionToQueue() {
   const rels = [];
   B.navPessoal.querySelectorAll("[data-bssel]").forEach((chk) => {
@@ -2943,7 +2970,7 @@ function renderSelectionBar() {
 // Confinado a brainstorming/ no backend (nunca toca contextos/ versionado).
 async function delPessoal(rel, kind) {
   const what = kind === "tema" ? t("o brainstorming e TODO o seu conteúdo")
-    : kind === "reuniao" ? t("a reunião e todos os seus arquivos (transcrição, relatório, artefatos)")
+    : kind === "reuniao" ? t("a reunião e todos os seus arquivos (transcrição, análises, artefatos)")
     : t("este item");
   if (!confirm(`${t("Apagar")} ${what}? ${t("Não pode ser desfeito.")}`)) return;
   try {
@@ -3406,7 +3433,7 @@ function meetingStatusBar(status) {
 }
 
 // ADR-0005 (owner request): the meeting rail no longer lists fixed actions
-// (analisar/perguntar/ver relatório/enviar para a fila — all still reachable
+// (analisar/perguntar/enviar para a fila — all still reachable
 // from the meeting's ⋯ menu) — "o que fazer com esta reunião" is now a
 // single, UNRESTRICTED habilidade dropdown (every skill, including
 // analisar/perguntar's own /loro-analyse and /loro-question), so the rail
@@ -3670,7 +3697,7 @@ function currentMeetingDir(id) {
 // ADR-0012: inject the skill slash command into the terminal Claude. We reuse
 // termRun (opens the panel + types the command via term_input) — no in-app model
 // call. Results appear in the terminal AND, as the skill writes them, under the
-// meeting's artefatos/ + relatorio.md; we refresh the tree afterwards so the new
+// meeting's notas/; we refresh the tree afterwards so the new
 // files surface (the skill never touches manifest.json, so the rail's artefatos
 // list only reflects app-written artifacts).
 function runMeetingSkill(kind, id, question, dirOverride) {
@@ -4130,7 +4157,6 @@ const COMMANDS = [
   { label: "novo caderno", code: "KeyK", run: () => promptNewNotebook() },
   { label: "nova reunião", code: "KeyR", run: () => startMeetingFlow() },
   { label: "encerrar reunião", code: "KeyX", run: () => { if (meeting.active) stopSession(); else toast(t("nenhuma reunião em andamento")); } },
-  { label: "abrir relatório", code: "KeyO", run: () => buildAndOpenReport() },
   { label: "marcar dúvida", code: "Digit1", run: () => markMeeting("duvida") },
   { label: "marcar decisão", code: "Digit2", run: () => markMeeting("decisao") },
   { label: "marcar investigação", code: "Digit3", run: () => markMeeting("investigacao") },

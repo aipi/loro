@@ -96,15 +96,15 @@
       .map(function (p) { return { kind: p.kind, rel: p.rel }; });
   }
 
-  // Resolve one selected part into the ACTUAL file that goes to the fila (ADR-0014,
-  // one queue item per file — no consolidated report). A meeting is represented by
-  // its own relatorio.md (never reuniao.md — the transcript stays out, BR-8); every
-  // other kind (nota, anexo, análise) is already a file, so it goes as itself.
-  // `rel` for a meeting is its directory; for a file it is the file path. Pure.
+  // Resolve one selected part into what goes to the fila (ADR-0014, one queue
+  // item per file — no consolidated report). Every kind (nota, anexo, análise) is
+  // already a file and goes as itself; a MEETING is its directory and stays a
+  // directory here (ADR-0018) — which files represent it is decided by its one
+  // owner in the backend (`acervo::meeting_queueables`), so this helper never
+  // rebuilds the BR-8 gate on the JS side (hotspot #46). Pure.
   function queueRelForSelection(kind, rel) {
     const r = String(rel == null ? "" : rel).replace(/\/+$/, "");
-    if (!r) return null;
-    return kind === "reuniao" ? r + "/relatorio.md" : r;
+    return r || null;
   }
 
   // Build the "/loro-context" invocation the "gerar contexto" button injects

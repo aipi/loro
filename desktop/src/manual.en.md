@@ -55,7 +55,7 @@ palette: `Cmd/Ctrl+Shift+P` → "Loro tour".
    whole and verified. If an older model was left half-downloaded, it shows as
    *not installed* again — just download it once more.
 5. **Language** — in the gear (⚙), "interface language" switches pt-BR/English.
-   Everything the app **generates** (reports, meeting documents, contexts) is
+   Everything the app **generates** (analyses, meeting documents, contexts) is
    born in the active interface language.
 6. **Version** — the footer of Settings (⚙) shows the installed version
    (e.g. `v0.8.0`), so you can tell at a glance whether an update landed.
@@ -89,12 +89,12 @@ palette: `Cmd/Ctrl+Shift+P` → "Loro tour".
   rail of any open file**) applies a request to the existing content — the
   AI evolves it, never erases.
 - **Update index (digest)** (the brainstorming's ⋯ menu) runs the
-  `/loro-digest` habilidade: it reads **all** of the topic's material (meeting
-  reports, notes and attachments) and (re)writes `indice.md` — the main
+  `/loro-digest` habilidade: it reads **all** of the topic's material (the
+  meetings' analyses, notes and attachments) and (re)writes `indice.md` — the main
   markdown — with an **overall summary**, the **key points & highlights**, an
   **index** linking every material, and the **references** (the panel at the top
   of the file). You trigger it and it rewrites the index from scratch (it never
-  reads the raw transcript or audio — only the reports and notes). When new
+  reads the raw transcript or audio — only the analyses and notes). When new
   material appears since the last index, `indice.md` shows a subtle banner at
   the top ("N new items — update index") with a button to regenerate.
 - **⋯ menu on a meeting**: beyond rename and delete, **⇄ move to…** takes the whole
@@ -132,18 +132,21 @@ palette: `Cmd/Ctrl+Shift+P` → "Loro tour".
   formatted — the file stays readable markdown, so the git history shows only
   what you actually changed. The same bar appears in the editor for queue
   drafts and loop instructions, where **⌘S** saves.
-- The **analyse**, **ask…**, **view report** and **send to queue** actions
+- The **analyse**, **ask…** and **send to queue** actions
   live in the meeting's **⋯** menu in the sidebar. **Ask…** already works
-  while the meeting is still recording; the other three enable once the
-  meeting ends (analyse fills the report). **Send to queue** sends the
-  meeting's **report** (the raw transcript never enters the queue).
+  while the meeting is still recording; the other two enable once the meeting
+  ends. **Send to queue** sends the meeting's **analyses** (whatever is in
+  `notas/`) — the raw transcript never goes. A meeting nobody analysed has
+  nothing to send, and the menu says so instead of failing on click.
 - The meeting's `reuniao.md` tab shows, instead of fixed buttons, a single
   **habilidade dropdown** ("o que fazer com esta reunião") — pick any
   habilidade (including analyse/ask) and run it against the open meeting.
   Unrestricted: every habilidade shows up there, built-in and custom.
 - In a meeting: mark **questions/decisions/investigations** while people speak
   (via the palette `Cmd/Ctrl+Shift+P` or the buttons); then run **analyse**
-  (⋯ menu) so Claude fills in the meeting report.
+  (⋯ menu) so Claude writes the analysis into `notas/`. When the recording ends
+  the app opens the transcript and **offers** to analyse in one click — a
+  suggestion, never a run, and it goes away if you ignore it.
 - Nothing in a brainstorming is versioned or leaves the machine.
 - A meeting's **notes** (analyses, answers and any document a habilidade
   produces) are **collapsed by default** in the sidebar (tap the ▸ arrow next
@@ -240,8 +243,8 @@ normally).
 
 ## Queue → generate context
 
-- Check the **files** of a brainstorming (a meeting → its report, notes,
-  analyses, attachments) and **send to queue** — each file becomes its own queue
+- Check the **files** of a brainstorming (a meeting → its analyses, notes,
+  attachments) and **send to queue** — each file becomes its own queue
   item (multi-select sends them all). The brainstorming's ⋯ menu has **"send
   everything → queue"** to send them all at once. (You can also drop `.md`/`.txt`
   files straight into the queue.) The raw meeting transcript never goes (BR-8).
