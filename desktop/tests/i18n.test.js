@@ -127,3 +127,37 @@ test("every err.* emitted by the backend is translated", () => {
   const semPar = [...codigos].filter((c) => !(c in ERR_PT) || !(c in EN)).sort();
   assert.deepStrictEqual(semPar, [], "códigos sem tradução:\n  " + semPar.join("\n  "));
 });
+
+// T-11 · AC-4 (ADR-0018) — o relatório de reunião não pode mais ser nomeado por
+// nenhuma string viva, e todo msgid novo tem par em inglês.
+test("nenhum msgid vivo nomeia um relatório de reunião", () => {
+  const mortos = [
+    "abra uma reunião para gerar o relatório",
+    "Abre o relatório desta reunião (resumo, decisões, dúvidas, investigações).",
+    "abrir relatório",
+    "não montei o relatório",
+    "relatório pronto",
+    "ver relatório",
+  ];
+  for (const m of mortos) {
+    assert.ok(!(m in EN), `msgid removido ainda presente: ${m}`);
+  }
+  // as strings sobreviventes que FALAVAM de relatório foram reescritas
+  for (const [pt, en] of Object.entries(EN)) {
+    if (!/reuni[ãa]o|meeting/i.test(pt + " " + en)) continue;
+    assert.ok(!/relat[óo]rio|\breport\b/i.test(pt + " " + en),
+      `uma string de reunião ainda nomeia relatório: ${pt}`);
+  }
+});
+
+test("os msgids novos da ADR-0018 têm par em inglês", () => {
+  for (const m of [
+    "reunião encerrada — quer analisar agora?",
+    "agora não",
+    "analise a reunião antes de enviar para a fila",
+    "não encerrei a reunião",
+    "analisar e enviar para a fila ficam disponíveis quando a reunião terminar — perguntar já funciona agora",
+  ]) {
+    assert.ok(EN[m] && EN[m] !== m, `sem par em inglês: ${m}`);
+  }
+});

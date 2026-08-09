@@ -47,20 +47,6 @@ const ARTIFACT_KINDS: [&str; 8] = [
     "mcp",
 ];
 
-// The report seeds Resumo/Decisões/Dúvidas from markers only until the meeting AI
-// fills them in; the placeholder tells the user exactly how to populate it (no
-// internal ADR reference leaks into a user-facing report).
-const DEFERRED_PROSE: &str = "_(resumo automático — rode “analisar” para preencher)_";
-const DEFERRED_PROSE_EN: &str = "_(automatic summary — run “analyse” to fill it in)_";
-
-fn deferred_prose(lang: &str) -> &'static str {
-    if lang == "en" {
-        DEFERRED_PROSE_EN
-    } else {
-        DEFERRED_PROSE
-    }
-}
-
 // ---- base + per-meeting serialization ---------------------------------------
 
 // The active acervo root, canonicalized — the single trust boundary for every FS
@@ -605,98 +591,6 @@ fn fmt_timecode(t_ms: Option<u64>) -> String {
 
 // ---- notebook assembler (pure) ----------------------------------------------
 
-// Assemble relatorio.md from the manifest (ADR-0010). Pure and IO-free. Owner
-// decision (2026-07-28): the report carries ONLY the analysis sections — no
-// Investigações/Dados/Linha do tempo/Transcrição/Referências/Estatísticas
-// boilerplate. The transcript lives in reuniao.md (duplicating it here was
-// noise) and the empty-count blocks were dropped everywhere. v1 seeds
-// Resumo/Decisões/Dúvidas from MARKERS ONLY and never invents prose (BR-8 safe:
-// it emits marker types + timecodes, never transcript text).
-// The notebook is born in the active UI language (ADR-0002 §1); anything but
-// "en" falls back to pt, the original.
-fn assemble_notebook(m: &Manifest, lang: &str) -> String {
-    let en = lang == "en";
-    let prose = deferred_prose(lang);
-    let mut out = String::new();
-
-    out.push_str(&format!("# {}\n\n", m.titulo));
-    out.push_str(if en {
-        "## Header\n\n"
-    } else {
-        "## Cabeçalho\n\n"
-    });
-    // ADR-0013: the header is trimmed to what the reader needs — no
-    // modelo/idioma/consentimento (audio is transient, inference is local-first).
-    out.push_str(&format!(
-        "- {}: {}\n",
-        if en { "Title" } else { "Título" },
-        m.titulo
-    ));
-    out.push_str(&format!("- Brainstorming: {}\n", m.tema));
-    out.push_str(&format!(
-        "- {}: {}\n\n",
-        if en { "Date" } else { "Data" },
-        m.criado_em
-    ));
-
-    // Summary (deferred prose)
-    out.push_str(if en {
-        "## Summary\n\n"
-    } else {
-        "## Resumo\n\n"
-    });
-    out.push_str(prose);
-    out.push_str("\n\n");
-
-    // Decisions / Q&A — seeded from markers only
-    out.push_str(if en {
-        "## Decisions\n\n"
-    } else {
-        "## Decisões\n\n"
-    });
-    out.push_str(prose);
-    out.push('\n');
-    push_marker_bullets(
-        &mut out,
-        m,
-        "decisao",
-        if en { "Decision" } else { "Decisão" },
-        lang,
-    );
-    out.push('\n');
-
-    out.push_str(if en {
-        "## Questions & Answers\n\n"
-    } else {
-        "## Dúvidas & Respostas\n\n"
-    });
-    out.push_str(prose);
-    out.push('\n');
-    push_marker_bullets(
-        &mut out,
-        m,
-        "duvida",
-        if en { "Question" } else { "Dúvida" },
-        lang,
-    );
-    out.push('\n');
-
-    out
-}
-
-fn push_marker_bullets(out: &mut String, m: &Manifest, tipo: &str, label: &str, lang: &str) {
-    let at = if lang == "en" { "at" } else { "em" };
-    for mk in m.marcadores.iter().filter(|x| x.tipo == tipo) {
-        match &mk.r#ref {
-            Some(r) => out.push_str(&format!(
-                "- {label} {at} {} (ref: {r})\n",
-                fmt_timecode(mk.t_ms)
-            )),
-            None => out.push_str(&format!("- {label} {at} {}\n", fmt_timecode(mk.t_ms))),
-        }
-    }
-}
-
 // ---- meeting creation (fs, testable with a temp dir) ------------------------
 
 pub struct Created {
@@ -1168,41 +1062,47 @@ pub fn brain_meeting_rename(app: AppHandle, input: MeetingRenameInput) -> Result
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct BuildOut {
+pub struct FinishOut {
     rel: String,
 }
 
-// Assemble relatorio.md from manifest + reuniao.md body (assemble_notebook) and
-// set status:done. Charts/audio are emitted as acervo:// links the renderer
-// resolves; the summary/decision/doubt sections are seeded from markers only
-// (auto-authored prose deferred to ADR-0011).
+// ADR-0018 — close a meeting: `status: "done"`, and nothing is authored. The
+// report this command used to assemble is gone; the meeting's output is the
+// analysis in `notas/`, written by the habilidade when the USER asks for it.
+//
+// `done` is what enables **analisar** and **enviar para a fila** in the `⋯` menu,
+// so it stays exactly as it was — it simply stopped being a side effect of
+// building a document.
+//
+// ADR-0013's sidecar incorporation SURVIVES here: folding `marcadores.jsonl` into
+// the manifest was never about the report, and the app remains the only writer of
+// `manifest.json`. Its reach is unchanged too — the fold happens when the
+// recording ends, so markers a habilidade appends later stay in the sidecar,
+// which is where ADR-0013 keeps them anyway.
+//
+// Returns the rel of `reuniao.md`: the transcript is what the user gets back.
 #[tauri::command]
-pub fn brain_meeting_build_notebook(app: AppHandle, id: String) -> Result<BuildOut, String> {
+pub fn brain_meeting_finish(app: AppHandle, id: String) -> Result<FinishOut, String> {
     let base = acervo_base()?;
     let lock = meeting_lock(&id);
     let _guard = lock.lock().map_err(|_| "lock envenenado".to_string())?;
     let dir = resolve_meeting_dir(&base, &id)?;
 
     let mut manifest = manifest_read(&dir)?;
-    // ADR-0013: fold any skill-written PII-free markers (marcadores.jsonl) into the
-    // manifest BEFORE assembling, then consume the sidecar so a re-run never
-    // double-counts. The app is still the only writer of manifest.json.
     let sidecar = dir.join("marcadores.jsonl");
     if sidecar.is_file() {
         manifest.marcadores = fold_markers_file(&dir, &manifest.marcadores);
         let _ = std::fs::remove_file(&sidecar);
     }
-    let notebook = assemble_notebook(&manifest, &crate::config::ui_lang());
-    std::fs::write(dir.join("relatorio.md"), notebook).map_err(|e| e.to_string())?;
 
     manifest.status = "done".into();
     manifest.atualizado_em = now_iso();
     manifest_write(&dir, &manifest)?;
 
-    let rel = format!("{}/relatorio.md", rel_of(&base, &dir));
+    let rel = format!("{}/reuniao.md", rel_of(&base, &dir));
     let _ = app.emit("brainstorming-changed", serde_json::json!({ "rel": rel }));
     let _ = app.emit("pessoal-changed", serde_json::json!({ "rel": rel }));
-    Ok(BuildOut { rel })
+    Ok(FinishOut { rel })
 }
 
 // ---- audio management (ADR-0010: audio must be manageable/deletable) --------
@@ -1279,7 +1179,8 @@ pub struct PurgeAudioInput {
 
 // Owner decision (2026-07-27): meeting audio is TRANSIENT — never stored long-term.
 // Deletes every track under the meeting's audio/ dir and clears all audio keys.
-// The transcript (reuniao.md/relatorio.md) is the durable artifact; audio is only
+// The transcript (reuniao.md) and the analyses in notas/ are the durable
+// artifacts; audio is only
 // a means to it. Called after the authoritative stop-transcription. Idempotent.
 fn purge_audio_core(dir: &Path) -> Result<Manifest, String> {
     let audio_dir = dir.join("audio");
@@ -1741,140 +1642,55 @@ mod tests {
             .contains("artefatos/graficos/vendas-2026.svg"));
     }
 
+    // T-1 · T-2 · AC-1 (ADR-0018) — finishing a meeting sets `done` and authors
+    // NOTHING. The report is gone: the meeting's output is the analysis the user
+    // asks for, in `notas/`.
     #[test]
-    fn build_notebook_assembles_fixture_from_markers_only() {
-        // fixture manifest with markers + artifacts; assert sections + counts and
-        // that no transcript prose is invented (only the verbatim body appears)
-        let m = Manifest {
-            id: "2026-07-27-1430-x".into(),
-            tema: "frota-2026".into(),
-            titulo: "Semanal".into(),
-            criado_em: "2026-07-27T14:30:00Z".into(),
-            status: "transcribing".into(),
-            modelo: "large-v3-turbo".into(),
-            idioma: "pt".into(),
-            marcadores: vec![
-                Marker {
-                    tipo: "decisao".into(),
-                    t_ms: Some(65_000),
-                    r#ref: None,
-                },
-                Marker {
-                    tipo: "duvida".into(),
-                    t_ms: Some(5_000),
-                    r#ref: None,
-                },
-                Marker {
-                    tipo: "duvida".into(),
-                    t_ms: Some(9_000),
-                    r#ref: None,
-                },
-            ],
-            artifacts: vec![Artifact {
-                id: "a1".into(),
-                kind: "graficos".into(),
-                name: "vendas.svg".into(),
-                rel: "brainstorming/frota-2026/reunioes/2026-07-27-1430-x/artefatos/graficos/vendas.svg".into(),
-                ..Default::default()
-            }],
-            ..Default::default()
-        };
-        let nb = assemble_notebook(&m, "pt");
-
-        for h in [
-            "## Cabeçalho",
-            "## Resumo",
-            "## Decisões",
-            "## Dúvidas & Respostas",
-        ] {
-            assert!(nb.contains(h), "missing section {h}");
-        }
-        // owner decision (2026-07-28): no boilerplate sections and no count
-        // blocks — the transcript stays in reuniao.md, never duplicated here
-        for h in [
-            "## Investigações",
-            "## Dados & Gráficos",
-            "## Linha do tempo",
-            "## Transcrição",
-            "## Referências",
-            "## Estatísticas",
-            "sem marcadores",
-            "sem referências",
-            "Dúvidas: ",
-            "Artefatos: ",
-        ] {
-            assert!(!nb.contains(h), "seção/contador removido reapareceu: {h}");
-        }
-        // ADR-0013: header is trimmed — no modelo/idioma/consentimento, no audio ref
-        assert!(nb.contains("- Brainstorming: frota-2026"));
-        assert!(!nb.contains("Modelo:"));
-        assert!(!nb.contains("Idioma:"));
-        assert!(!nb.contains("Consentimento:"));
-        assert!(
-            !nb.contains("[áudio]"),
-            "audio is transient — never referenced"
-        );
-        // deferred prose is labelled honestly, not fabricated (no ADR ref leaks)
-        assert!(nb.contains("resumo automático"));
-        assert!(!nb.contains("ADR-0011"));
-        // decisão bullet carries a timecode (65s -> 01:05), never text
-        assert!(nb.contains("Decisão em 01:05"));
-        // duvida bullets survive under Dúvidas & Respostas
-        assert!(nb.contains("Dúvida em 00:05"));
-    }
-
-    // ADR-0002 §1 — the notebook is born in the active UI language.
-    #[test]
-    fn notebook_is_english_when_lang_is_en() {
-        let m = Manifest {
-            titulo: "Kickoff".into(),
-            tema: "fleet-2026".into(),
-            criado_em: "2026-07-28".into(),
-            marcadores: vec![Marker {
-                tipo: "decisao".into(),
-                t_ms: Some(65_000),
-                r#ref: None,
-            }],
-            ..Default::default()
-        };
-        let nb = assemble_notebook(&m, "en");
-        for h in [
-            "## Header",
-            "## Summary",
-            "## Decisions",
-            "## Questions & Answers",
-        ] {
-            assert!(nb.contains(h), "missing section {h}");
-        }
-        assert!(!nb.contains("## Resumo") && !nb.contains("## Cabeçalho"));
-        assert!(nb.contains("- Title: Kickoff"));
-        assert!(nb.contains("- Brainstorming: fleet-2026"));
-        assert!(nb.contains("automatic summary"));
-        assert!(nb.contains("Decision at 01:05"));
-        // unknown languages fall back to pt
-        assert!(assemble_notebook(&m, "fr").contains("## Resumo"));
-    }
-
-    #[test]
-    fn build_notebook_command_core_sets_status_done() {
-        let base = tmp("build");
+    fn finish_sets_status_done_and_writes_no_report() {
+        let base = tmp("finish");
         let c = seed(&base);
         append_one(&c.dir, "[00:00] abertura").unwrap();
-        // mirror brain_meeting_build_notebook's core (no AppHandle)
+
+        // mirror brain_meeting_finish's core (no AppHandle)
         let mut m = manifest_read(&c.dir).unwrap();
-        let nb = assemble_notebook(&m, "pt");
-        std::fs::write(c.dir.join("relatorio.md"), nb).unwrap();
         m.status = "done".into();
         manifest_write(&c.dir, &m).unwrap();
 
-        assert!(c.dir.join("relatorio.md").is_file());
         assert_eq!(manifest_read(&c.dir).unwrap().status, "done");
-        // the transcript stays in reuniao.md only — the report never duplicates it
-        let report = std::fs::read_to_string(c.dir.join("relatorio.md")).unwrap();
-        assert!(!report.contains("[00:00] abertura"));
+        assert!(
+            !c.dir.join("relatorio.md").exists(),
+            "no report is ever authored"
+        );
+        // the transcript is untouched and remains the only place it lives
         assert!(std::fs::read_to_string(c.dir.join("reuniao.md"))
             .unwrap()
             .contains("[00:00] abertura"));
+    }
+
+    // T-2 — finishing adds no file to the meeting folder. The assembler and its
+    // command are gone (that part is enforced by the compiler); what a test can
+    // still catch is a future path quietly authoring a document again.
+    #[test]
+    fn finish_adds_no_file_to_the_meeting_folder() {
+        let base = tmp("finish-nofile");
+        let c = seed(&base);
+        append_one(&c.dir, "[00:00] abertura").unwrap();
+        let listar = || {
+            let mut v: Vec<String> = std::fs::read_dir(&c.dir)
+                .unwrap()
+                .flatten()
+                .map(|e| e.file_name().to_string_lossy().to_string())
+                .collect();
+            v.sort();
+            v
+        };
+        let antes = listar();
+
+        let mut m = manifest_read(&c.dir).unwrap();
+        m.status = "done".into();
+        manifest_write(&c.dir, &m).unwrap();
+
+        assert_eq!(listar(), antes, "finishing authors nothing");
     }
 
     #[test]

@@ -11,12 +11,11 @@
   // A meeting home is brainstorming/<slug>/reunioes/<id>/ (ADR-0013) where <id>
   // is [a-z0-9-] (validated in meeting.rs); the legacy pessoal/temas/<slug>/…
   // home is still recognized for un-migrated acervos. The living notebook is
-  // reuniao.md and the built report is relatorio.md — both under the gitignore
-  // quarantine (never versioned).
+  // reuniao.md, under the gitignore quarantine (never versioned); ADR-0018
+  // removed the built report, so the meeting's output is its notas/.
   const HOME = "(?:brainstorming\\/[^/]+|pessoal\\/temas\\/[^/]+)\\/reunioes";
   const LIVING_RE = new RegExp("^" + HOME + "\\/([a-z0-9-]+)\\/reuniao\\.md$");
-  const REPORT_RE = new RegExp("^" + HOME + "\\/([a-z0-9-]+)\\/relatorio\\.md$");
-  const DIR_RE = new RegExp("^(" + HOME + "\\/[a-z0-9-]+)\\/(?:reuniao|relatorio)\\.md$");
+  const DIR_RE = new RegExp("^(" + HOME + "\\/[a-z0-9-]+)\\/reuniao\\.md$");
 
   // The stable append marker meeting.rs writes into the living file; the reader
   // must strip it so the transcript surface never shows the raw comment.
@@ -26,14 +25,10 @@
     const m = LIVING_RE.exec(String(rel == null ? "" : rel));
     return m ? m[1] : null;
   }
-  function reportId(rel) {
-    const m = REPORT_RE.exec(String(rel == null ? "" : rel));
-    return m ? m[1] : null;
-  }
   function isLiving(rel) { return livingId(rel) != null; }
-  function isReport(rel) { return reportId(rel) != null; }
 
-  // Derive the acervo-relative meeting directory from a living/report path. The
+  // Derive the acervo-relative meeting directory from the living transcript path.
+  // ADR-0018 removed the report, so `reuniao.md` is the only door. The
   // meeting AI skills (ADR-0012) take this dir as $ARGUMENTS, and the embedded
   // terminal runs with the acervo root as cwd, so acervo-relative is exactly
   // what the slash command needs.
@@ -201,10 +196,25 @@
     return m[1] && m[1] !== slugAtual ? m[1] : null;
   }
 
+  // ADR-0018 · AC-5 — o fim de uma gravação SUGERE a análise, nunca a executa.
+  // O desfecho da oferta é decidido aqui, puro: só o clique em "analisar" produz
+  // um comando; dispensar devolve null e a reunião fica intocada.
+  function analyseOffer(escolha, dir) {
+    if (escolha !== "analisar" || !dir) return null;
+    return meetingSkillCmd("analyse", dir);
+  }
+
+  // ADR-0018 · AC-7 — a análise É a saída da reunião, então uma reunião sem nada
+  // em `notas/` não tem o que enfileirar. Devolve o motivo (msgid) quando o envio
+  // deve ficar bloqueado, e null quando pode ir. Puro.
+  function meetingQueueBlock(notas) {
+    return Number(notas) > 0 ? null : "analise a reunião antes de enviar para a fila";
+  }
+
   return {
     meetingMoveTargets, meetingDropTarget,
-    looseEndAction,
-    livingId, reportId, isLiving, isReport, meetingDir,
+    looseEndAction, analyseOffer, meetingQueueBlock,
+    livingId, isLiving, meetingDir,
     sanitizeSkillArg, meetingSkillCmd,
     stripMarker, acervoJoin, aiStatusLine, MARKER,
     isHallucination, filterHallucinations,

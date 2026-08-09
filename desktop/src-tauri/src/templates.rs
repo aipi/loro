@@ -479,18 +479,14 @@ editar aqui geraria corrida com esse escritor).
 5. Registre estatísticas SEM PII: para cada dúvida/decisão/investigação/pergunta
    identificada, acrescente UMA linha JSON em `$ARGUMENTS/marcadores.jsonl` no
    formato `{"tipo":"decisao","ref":"notas/analise-<ISO>.md"}`
-   (só `tipo` + `t_ms?`/`ref?`, NUNCA texto de transcrição). O app incorpora esses
-   marcadores ao relatório — não edite `manifest.json`.
-6. Atualize `$ARGUMENTS/relatorio.md`: substitua a prosa provisória das seções
-   `## Resumo`, `## Decisões` e `## Dúvidas & Respostas` (ou suas equivalentes em
-   inglês: `## Summary`, `## Decisions`, `## Questions & Answers` — o notebook
-   pode ter nascido em qualquer um dos dois idiomas) por prosa real e objetiva
-   derivada da transcrição, mantendo os títulos existentes. Se `relatorio.md`
-   ainda não existir, crie-o com essas seções no idioma deste skill.
+   (só `tipo` + `t_ms?`/`ref?`, NUNCA texto de transcrição). Os marcadores ficam
+   no próprio `marcadores.jsonl` — não edite `manifest.json`.
+6. A análise que você escreveu em `notas/` É a saída da reunião. Não existe
+   `relatorio.md`: não crie, não procure e não remende nenhum.
 7. Acrescente UMA linha JSON, orientada a evento, em `$ARGUMENTS/auditoria.jsonl`
    registrando o que leu e produziu — nunca texto de transcrição, PII ou segredos
    (BR-8/BR-9), ex.:
-   `{"em":"<ISO>","event":"analyse","read":["reuniao.md","manifest.json"],"wrote":["notas/analise-<ISO>.md","relatorio.md","marcadores.jsonl"]}`.
+   `{"em":"<ISO>","event":"analyse","read":["reuniao.md","manifest.json"],"wrote":["notas/analise-<ISO>.md","marcadores.jsonl"]}`.
 
 Ao final, responda em pt-BR com 1–2 linhas do que você escreveu.
 
@@ -591,16 +587,14 @@ race that writer).
 5. Record PII-free stats: for each doubt/decision/investigation/question, append
    ONE JSON line to `$ARGUMENTS/marcadores.jsonl` like
    `{"tipo":"decisao","ref":"notas/analise-<ISO>.md"}` (only
-   `tipo` + `t_ms?`/`ref?`, NEVER transcript text). The app folds these markers
-   into the report — do not edit `manifest.json`.
-6. Update `$ARGUMENTS/relatorio.md`: replace the placeholder prose in the
-   `## Summary`, `## Decisions` and `## Questions & Answers` sections (or their
-   pt equivalents `## Resumo`, `## Decisões`, `## Dúvidas & Respostas` — the
-   notebook may have been born in either language) with real, objective prose
-   derived from the transcript, keeping the existing titles. If `relatorio.md`
-   does not exist yet, create it with those sections in this skill's language.
+   `tipo` + `t_ms?`/`ref?`, NEVER transcript text). Markers stay in
+   `marcadores.jsonl` itself — do not edit `manifest.json`.
+6. The analysis you wrote in `notas/` IS the meeting's output. There is no
+   `relatorio.md`: do not create one, look for one, or patch one.
 7. Append ONE event-oriented JSON line to `$ARGUMENTS/auditoria.jsonl` recording
-   what you read and produced — never transcript text, PII or secrets (BR-8/BR-9).
+   what you read and produced — never transcript text, PII or secrets (BR-8/BR-9),
+   e.g.
+   `{"em":"<ISO>","event":"analyse","read":["reuniao.md","manifest.json"],"wrote":["notas/analise-<ISO>.md","marcadores.jsonl"]}`.
 
 Finish with a 1–2 line summary (in English) of what you wrote.
 
@@ -1343,8 +1337,9 @@ pub fn loro_artifact_skill(lang: &str) -> &'static str {
 // living reading surface: a prose summary, key points/highlights, and a linked
 // index of all material, with the front-matter `refs:` populated so the
 // "Referências" panel renders. It stamps `digest_em` and `digest_itens` so the
-// UI can nudge "N new items since the index" (ADR-0011). BR-8: it reads the
-// PII-free `relatorio.md`, never the raw `reuniao.md` transcript or audio.
+// UI can nudge "N new items since the index" (ADR-0011). BR-8: a meeting reaches
+// it through the manifest's `titulo`/`status` and the PII-free analyses in
+// `notas/` (ADR-0018) — never the raw `reuniao.md` transcript or audio.
 pub const LORO_DIGEST_SKILL: &str = r#"---
 description: Resume TODO o material de um brainstorming (reuniões, notas, anexos) no indice.md — resumo, pontos-chave, índice e referências (ADR-0011)
 argument-hint: <alvo:brainstorming/tema>
@@ -1360,9 +1355,10 @@ leitura viva do tema — um resumão de tudo que existe ali, sempre reproduzíve
 1. **Levante o material** do tema (delegue a leitura a subagentes num modelo
    rápido — ADR-0002 §5 — devolvendo só o essencial de cada arquivo):
    - Reuniões: para cada `reunioes/<id>/`, leia o `manifest.json` (só o
-     `titulo`/`status`) e o `relatorio.md`. **BR-8: nunca leia o `reuniao.md`
-     (transcrição) nem áudio** — o `relatorio.md` já é o resumo sem PII.
-     Inclua também as notas geradas em `reunioes/<id>/notas/`.
+     `titulo`/`status`) e TODAS as análises em `reunioes/<id>/notas/` — é ali que
+     mora a saída da reunião. **BR-8: nunca leia o `reuniao.md` (transcrição) nem
+     áudio** — as notas já são o resumo sem PII. Uma reunião que ninguém analisou
+     entra no índice só pelo título e pelo status, sem conteúdo inventado.
    - Notas: cada `.md` em `notas/`.
    - Anexos: cada arquivo em `anexos/` que você consiga ler (`.md`, `.txt`,
      `.pdf`, planilhas). Se não conseguir abrir um formato, liste-o mesmo assim
@@ -1415,9 +1411,11 @@ surface — a digest of everything that lives there, always reproducible.
 1. **Gather the material** of the topic (delegate reading to subagents on a
    fast model — ADR-0002 §5 — returning only each file's essentials):
    - Meetings: for each `reunioes/<id>/`, read the `manifest.json` (only
-     `titulo`/`status`) and `relatorio.md`. **BR-8: never read `reuniao.md`
-     (the transcript) or audio** — `relatorio.md` is already the PII-free
-     summary. Include the generated notes in `reunioes/<id>/notas/` too.
+     `titulo`/`status`) and EVERY analysis in `reunioes/<id>/notas/` — that is
+     where the meeting's output lives. **BR-8: never read `reuniao.md` (the
+     transcript) or audio** — the notes are already the PII-free summary. A
+     meeting nobody analysed enters the index by title and status alone, with no
+     invented content.
    - Notes: each `.md` in `notas/`.
    - Attachments: each file in `anexos/` you can read (`.md`, `.txt`, `.pdf`,
      spreadsheets). If a format won't open, still list it in the index without
@@ -1694,8 +1692,19 @@ mod tests {
             assert!(s.contains("## Resumo geral"));
             assert!(s.contains("## Pontos-chave & highlights"));
             assert!(s.contains("## Índice do material"));
-            // BR-8: reads the PII-free report, never the raw transcript/audio
-            assert!(s.contains("relatorio.md") && s.contains("BR-8"));
+            // T-4 · BR-8 (ADR-0018): a meeting reaches the digest through its
+            // manifest + the PII-free analyses in notas/, never a report and
+            // never the raw transcript/audio.
+            // the only surviving mention is the ADR-0014 legacy CONSOLIDATED
+            // report in anexos/, which is skipped, never read
+            for l in s.lines().filter(|l| l.contains("relatorio.md")) {
+                assert!(
+                    l.contains("*-relatorio.md"),
+                    "digest/{lang}: a meeting report is not a source: {l}"
+                );
+            }
+            assert!(s.contains("notas/") && s.contains("manifest.json"));
+            assert!(s.contains("BR-8"));
             let never_transcript = if lang == "en" {
                 "never read `reuniao.md`"
             } else {
@@ -1740,6 +1749,21 @@ mod tests {
             // reads the LIVE stream (reuniao.md + manifest.json)
             assert!(analyse.contains("reuniao.md") && analyse.contains("manifest.json"));
             assert!(answer.contains("reuniao.md") && answer.contains("manifest.json"));
+            // T-3 · AC-2 (ADR-0018): the analysis in notas/ IS the output — the
+            // skill never authors or patches a report, and never names one as
+            // something it wrote.
+            assert!(
+                analyse.contains("notas/analise-<ISO>.md"),
+                "analyse [{lang}] must write the analysis into notas/"
+            );
+            for s in [analyse, answer] {
+                let mentions_report = s
+                    .lines()
+                    .filter(|l| l.contains("relatorio.md"))
+                    .filter(|l| !l.contains("não crie") && !l.contains("do not create"))
+                    .count();
+                assert_eq!(mentions_report, 0, "[{lang}] no line may name a report");
+            }
             // never edits the manifest (avoids racing the app's atomic writer)
             let edict = if lang == "en" {
                 "NOT edit"

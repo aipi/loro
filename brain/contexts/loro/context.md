@@ -94,14 +94,19 @@ the model: ideas live here, inline, not as separate files.)
 > ADR-0001 §6) organized around ONE sequential, visible flow (ADR-0001 §7):
 > **Brainstorming → Fila → Contexto**. A *brainstorming* (`brainstorming/<slug>/`,
 > the renamed NON-VERSIONED world — was `pessoal/temas/`, one .gitignore line)
-> gathers meetings/investigations/questions/notes; the user elects parts into ONE
-> consolidated report that enters the *fila* (the `inbox/` queue); "gerar contexto"
+> gathers meetings/investigations/questions/notes; the user selects the REAL files
+> and each enters the *fila* (the `inbox/` queue) as itself, one item per file
+> (ADR-0014 superseded the single consolidated report); "gerar contexto"
 > runs `/loro-context` (the renamed loop skill) to distill the fila into VERSIONED
-> `contextos/` (RFC=PR, ADR-0001 §5). Meetings are living folders with a built report;
-> audio is transient (deleted after transcription). Meeting AI (`/loro-analyse`,
+> `contextos/` (RFC=PR, ADR-0001 §5). Meetings are living folders; **the meeting's
+> output is its analysis in `notas/` — there is no built report** (ADR-0018), a
+> meeting is queued as those analyses, and a legacy `relatorio.md` is deleted on
+> the first listing (an explicit derogation from the non-destructive premise,
+> owner 2026-08-07). A meeting nobody analysed has nothing to send, and says so.
+> Audio is transient (deleted after transcription). Meeting AI (`/loro-analyse`,
 > `/loro-question`) runs as a terminal-Claude skill, LOCAL-FIRST (reads the context
 > before any external/MCP source). Direct promotion (`brain_promote`) is retired
-> from the primary path. Recorded in ADR-0001 §6–§9. Open: fate of legacy notas/.
+> from the primary path. Recorded in ADR-0001 §6–§9, ADR-0014, ADR-0018.
 
 > [!HOTSPOT] H-2 — Usage templates (presets) & per-acervo agent — vertical skill catalog pending
 > The wizard now offers usage templates (generico, vendas, engenharia, produto,
