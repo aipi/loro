@@ -2001,7 +2001,12 @@ function wirePessoalDnd() {
   // #44 — a REUNIÃO também arrasta, carregando a pasta inteira. Marcada com um
   // tipo de dado próprio (text/loro-meeting) para o alvo saber o que chegou: o
   // cabeçalho `reuniões` aceita só isto, e as pastas de arquivo só o outro.
-  B.navPessoal.querySelectorAll(".bitem[data-mtgmenu]").forEach((row) => {
+  // `data-mtgmenu` fica no BOTÃO ⋯, não na linha — então parte-se do botão e
+  // sobe-se para a `.bitem`. Um seletor `.bitem[data-mtgmenu]` não casa nada e
+  // o arrastar nunca ativa, em silêncio (foi o que a revisão pegou aqui).
+  B.navPessoal.querySelectorAll("[data-mtgmenu]").forEach((btn) => {
+    const row = btn.closest(".bitem");
+    if (!row) return;
     row.draggable = false;
     const handle = row.querySelector(".nico");
     if (!handle) return;
@@ -2009,7 +2014,7 @@ function wirePessoalDnd() {
     handle.style.cursor = "grab";
     handle.title = t("arraste para mover");
     handle.ondragstart = (e) => {
-      e.dataTransfer.setData("text/loro-meeting", row.dataset.mtgmenu);
+      e.dataTransfer.setData("text/loro-meeting", btn.dataset.mtgmenu);
       e.dataTransfer.effectAllowed = "move";
     };
   });
