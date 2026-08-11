@@ -1338,8 +1338,23 @@ pub struct TranscribeTail {
 // This preview may be IMPERFECT at window edges; the authoritative mic+system
 // mix+transcription at brain_meeting_stop stays the source of truth and
 // reconciles it. No global transcript-line event is emitted here.
+//
+// ASSÍNCRONO por necessidade, não por estilo. Um `#[tauri::command]` síncrono roda
+// na THREAD PRINCIPAL, e este aqui copia o WAV, corta com ffmpeg e transcreve com
+// whisper — medido em 1,7s para uma janela de 18s de tom puro, e é o PISO: com
+// fala de verdade demora mais, e o segmento de microfone faz o mesmo trabalho no
+// mesmo instante. A cada 18 segundos a janela inteira congelava por segundos.
+// Mesmo defeito, mesma cura do `env_doctor` (ADR-0022 §4).
 #[tauri::command]
-pub fn brain_meeting_transcribe_tail(input: TranscribeTailInput) -> Result<TranscribeTail, String> {
+pub async fn brain_meeting_transcribe_tail(
+    input: TranscribeTailInput,
+) -> Result<TranscribeTail, String> {
+    tauri::async_runtime::spawn_blocking(move || transcribe_tail_blocking(input))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn transcribe_tail_blocking(input: TranscribeTailInput) -> Result<TranscribeTail, String> {
     let base = acervo_base()?;
     let dir = resolve_meeting_dir(&base, &input.id)?;
 
@@ -1433,10 +1448,18 @@ pub struct TranscribeSegment {
 // bytes. We write it to a transient temp under the (quarantined) meeting dir,
 // transcribe the WHOLE segment, delete the temp, and return the text — audio is
 // never stored (owner decision). The frontend filters hallucinations and appends.
+// Mesma razão do tail acima: escreve um temporário, roda ffmpeg e whisper. Os
+// dois disparam no MESMO tique de 18s, então somavam o congelamento.
 #[tauri::command]
-pub fn brain_meeting_transcribe_segment(
+pub async fn brain_meeting_transcribe_segment(
     input: TranscribeSegmentInput,
 ) -> Result<TranscribeSegment, String> {
+    tauri::async_runtime::spawn_blocking(move || transcribe_segment_blocking(input))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn transcribe_segment_blocking(input: TranscribeSegmentInput) -> Result<TranscribeSegment, String> {
     let base = acervo_base()?;
     let dir = resolve_meeting_dir(&base, &input.id)?;
     if input.data.is_empty() {
@@ -1859,6 +1882,41 @@ mod tests {
             !valid_tipo("qualquer"),
             "tipo desconhecido continua recusado"
         );
+    }
+
+    // Terceira aparição da MESMA classe de bug: trabalho pesado dentro de um
+    // `#[tauri::command]` síncrono, que roda na thread principal e congela a
+    // janela. Foi o `env_doctor` (ADR-0022 §4) e foram estes dois, que disparam a
+    // cada 18 segundos de gravação — o usuário relatou a aplicação travando "para
+    // gerar o texto". Um comentário não impede a quarta; este teste impede.
+    #[test]
+    fn the_transcription_commands_never_run_on_the_main_thread() {
+        let src = include_str!("meeting.rs");
+        for cmd in [
+            "brain_meeting_transcribe_tail",
+            "brain_meeting_transcribe_segment",
+        ] {
+            let assinatura = format!("pub async fn {cmd}");
+            assert!(
+                src.contains(&assinatura),
+                "{cmd} precisa ser async: ele roda ffmpeg + whisper (medido: 1,7s \
+                 para uma janela de 18s de tom puro, e é o piso) a cada tique da \
+                 gravação. Síncrono, isso congela a janela inteira."
+            );
+        }
+        // O trabalho pesado tem de viver num núcleo separado, fora do comando.
+        // As agulhas são MONTADAS: escritas por extenso, elas apareceriam neste
+        // próprio arquivo e o teste passaria sozinho — foi o que aconteceu na
+        // primeira versão, e só apareceu porque tentei fazê-lo falhar de verdade.
+        for nucleo in ["transcribe_tail", "transcribe_segment"] {
+            let agulha = format!("fn {nucleo}_{}", "blocking");
+            assert!(
+                src.contains(&agulha),
+                "o núcleo bloqueante de {nucleo} sumiu — sem ele o comando volta \
+                 a fazer o trabalho pesado dentro do próprio turno"
+            );
+        }
+        assert!(src.contains(&format!("spawn_{}", "blocking")));
     }
 
     #[test]
