@@ -25,6 +25,7 @@ domain `loro`); technical decisions live in the code repo.
 |---|---|
 | `brain/contexts/loro/context.md` | What the product is, its rationale, and the immutable business rules (`BR-…`) |
 | `docs/ARCHITECTURE.md` | How it is built (contexts, IPC contract, flows) |
+| `docs/DESIGN.md` | How it LOOKS and BEHAVES — anatomy, tokens, vocabulary, components, and the principles each one came from. Read before drawing new UI |
 | `docs/adr/0001-baseline.md` | The consolidated **baseline ADR**: all technical decisions up to 2026-07, with a map from the former ADR numbers still referenced in code comments |
 | `docs/adr/0002-….md` | Incremental ADRs from 2026-07-28 on. Each file states its own decision — read the ones you touch instead of a summary here. The ones that govern CURRENT behavior and are most often mis-assumed: **0018** (the analysis IS the meeting's output — there is no report), **0020** (the UI anatomy, and the brainstorming digest it revoked), **0021** (the chat runs the acervo's own agent CLI; `--permission-mode` is always passed), **0022** (meeting pause/resume, raw mic capture, cross-track echo filter), **0022 §28** (the 18s freeze: the live-preview commands ran whisper on the main thread — third time for that bug class, now guarded by a test), **0024** (intake triage: a credential BLOCKS at the fila's door — the acervo is versioned, so that door is one-way). A number cited in code with no file resolves through the baseline map in `0001` |
 | `CLAUDE.md` | How to work (this file) |

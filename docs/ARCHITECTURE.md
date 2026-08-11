@@ -301,6 +301,7 @@ All technical decisions are consolidated in the single **`docs/adr/0001-baseline
 | Terminal launch/status | `active_agent()` used for auto-launch (not hardcoded); `justLaunched` grace window avoids retyping into a live session | ADR-0005 |
 | Distribution | Homebrew Cask (`brew install --cask loro`) with `whisper-cpp`+`ffmpeg` as formula deps; tap `aipi/homebrew-loro` bumped by release CI | ADR-0006 |
 | First-run models | not bundled; downloaded on demand over HTTPS, verified by pinned SHA-256, atomic install into `~/.loro/models`; a model is only used when whole | ADR-0006 |
+| Design system | anatomy, tokens, vocabulary, components and the principles behind them live in `docs/DESIGN.md` — values there are taken from `style.css`, so the code wins when they disagree | ADR-0020/0021/0022 |
 | UI anatomy | one shell everywhere: header 54px (project · nav pill · Record · ✦ AI) → sidebar 250/60px │ document tabs │ right panel 330px (Documento·Chat·Terminal); three destinations replace the numbered flow, no Home tab, no `ⓘ` tooltips | ADR-0020 |
 | Theme | `data-theme` on `<html>`, preference `light\|dark\|system` resolved in JS; warm dark tokens (`#211e19`) | ADR-0020 |
 | UI vocabulary | projeto · ideias · para organizar · conhecimento · **habilidades de IA** · salvar versão · enviar para revisão do time (internal terms unchanged in code/IPC/disk) | ADR-0020, renamed from "ações de IA" by ADR-0022 §7 |
