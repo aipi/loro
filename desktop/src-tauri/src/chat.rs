@@ -486,8 +486,13 @@ pub fn chat_send(app: AppHandle, input: ChatSendInput) -> Result<(), String> {
         // com o wait() dentro do `with_state` a trava global ficava presa pelo
         // tempo inteiro do processo seguinte, e as chamadas do chat — inclusive o
         // cancelar, o único capaz de destravar — bloqueavam na thread principal.
-        let mine = with_state(|st| if st.turn == my_turn { st.child.take() } else { None });
-        let cancelled = mine.is_none();
+        let mine = with_state(|st| {
+            if st.turn == my_turn {
+                st.child.take()
+            } else {
+                None
+            }
+        });
         let code = match mine.map(|mut c| c.wait()) {
             Some(Ok(s)) => s.code().unwrap_or(-1),
             Some(Err(_)) => -1,
@@ -495,7 +500,6 @@ pub fn chat_send(app: AppHandle, input: ChatSendInput) -> Result<(), String> {
             // falha do agente, e reportar -1 pintava um cancelamento como erro.
             None => 0,
         };
-        let _ = cancelled;
         if code != 0 && done.ok {
             done.ok = false;
             done.error = Some("err.chat_agent_failed".into());

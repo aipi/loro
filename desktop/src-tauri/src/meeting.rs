@@ -39,13 +39,7 @@ const TRANSCRIPT_MARKER: &str = "<!-- loro:transcricao -->";
 // redesign shipped. `momento` leads because it is the only kind still written;
 // the four legacy kinds stay accepted so a manifest recorded before the redesign
 // keeps validating.
-const MARKER_TIPOS: [&str; 5] = [
-    "momento",
-    "duvida",
-    "decisao",
-    "investigacao",
-    "pergunta",
-];
+const MARKER_TIPOS: [&str; 5] = ["momento", "duvida", "decisao", "investigacao", "pergunta"];
 
 // The `artefatos/` operational-memory folders (ADR-0010). An artifact kind must
 // be one of these, which also path-guards the write to a fixed subtree.
@@ -1851,11 +1845,20 @@ mod tests {
     fn the_marker_the_ui_actually_sends_is_accepted() {
         // ADR-0020 deixou UM tipo na interface; a lista aqui ficou com os quatro
         // antigos, então todo marcador era recusado. O teste amarra os dois lados.
-        assert!(valid_tipo("momento"), "'momento' é o único tipo que a UI envia");
+        assert!(
+            valid_tipo("momento"),
+            "'momento' é o único tipo que a UI envia"
+        );
         for legado in ["duvida", "decisao", "investigacao", "pergunta"] {
-            assert!(valid_tipo(legado), "manifest anterior ao redesign tem {legado}");
+            assert!(
+                valid_tipo(legado),
+                "manifest anterior ao redesign tem {legado}"
+            );
         }
-        assert!(!valid_tipo("qualquer"), "tipo desconhecido continua recusado");
+        assert!(
+            !valid_tipo("qualquer"),
+            "tipo desconhecido continua recusado"
+        );
     }
 
     #[test]
