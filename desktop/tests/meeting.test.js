@@ -21,25 +21,26 @@ test("filterHallucinations drops whisper silence-artifacts, keeps real speech", 
   );
 });
 
-test("livingId / reportId extract the meeting id only from the canonical home", () => {
+// T-7 (ADR-0018): the report is gone, so reuniao.md is the only door into a
+// meeting. A relatorio.md left on disk by an old version is NOT a meeting file.
+test("livingId extracts the meeting id only from the canonical home", () => {
   const living = "pessoal/temas/frota-2026/reunioes/2026-07-27-1430-semanal/reuniao.md";
   const report = "pessoal/temas/frota-2026/reunioes/2026-07-27-1430-semanal/relatorio.md";
   assert.strictEqual(LM.livingId(living), "2026-07-27-1430-semanal");
-  assert.strictEqual(LM.reportId(report), "2026-07-27-1430-semanal");
   // wrong file / wrong world / traversal-ish never match
   assert.strictEqual(LM.livingId(report), null);
-  assert.strictEqual(LM.reportId(living), null);
   assert.strictEqual(LM.livingId("contextos/x/context.md"), null);
   assert.strictEqual(LM.livingId("pessoal/temas/t/reunioes/../reuniao.md"), null);
   assert.strictEqual(LM.livingId(null), null);
+  // the report helpers are gone with the report itself
+  assert.strictEqual(LM.reportId, undefined);
+  assert.strictEqual(LM.isReport, undefined);
 });
 
-test("isLiving / isReport mirror the id extractors", () => {
+test("isLiving mirrors the id extractor", () => {
   const living = "pessoal/temas/t/reunioes/2026-07-27-1430-x/reuniao.md";
   assert.strictEqual(LM.isLiving(living), true);
-  assert.strictEqual(LM.isReport(living), false);
   assert.strictEqual(LM.isLiving("pessoal/temas/t/reunioes/2026-07-27-1430-x/relatorio.md"), false);
-  assert.strictEqual(LM.isReport("pessoal/temas/t/reunioes/2026-07-27-1430-x/relatorio.md"), true);
 });
 
 test("stripMarker removes every occurrence of the append marker (BR-8: never shows the raw comment)", () => {
@@ -104,9 +105,9 @@ test("aiStatusLine renders in English when lang is 'en'", () => {
 // that must never leak a premature submit (a raw newline) or a bad dir.
 const DIR = "pessoal/temas/frota-2026/reunioes/2026-07-27-1430-x";
 
-test("meetingDir derives the acervo-relative dir from living and report paths", () => {
+test("meetingDir derives the acervo-relative dir from the living path", () => {
   assert.strictEqual(LM.meetingDir(DIR + "/reuniao.md"), DIR);
-  assert.strictEqual(LM.meetingDir(DIR + "/relatorio.md"), DIR);
+  assert.strictEqual(LM.meetingDir(DIR + "/relatorio.md"), null);
   // non-meeting paths, the bare dir, and nullish input never match
   assert.strictEqual(LM.meetingDir("contextos/frota/context.md"), null);
   assert.strictEqual(LM.meetingDir(DIR), null);
@@ -121,32 +122,30 @@ test("sanitizeSkillArg flattens whitespace/newlines to one PTY line", () => {
 });
 
 test("meetingSkillCmd builds the analyse and answer slash commands", () => {
-  assert.strictEqual(LM.meetingSkillCmd("analyse", DIR), "/brain-analyse " + DIR);
+  assert.strictEqual(LM.meetingSkillCmd("analyse", DIR), "/loro-analyse " + DIR);
   assert.strictEqual(
-    LM.meetingSkillCmd("answer", DIR, "qual foi a decisão?"),
-    "/brain-answer " + DIR + " qual foi a decisão?"
+    LM.meetingSkillCmd("question", DIR, "qual foi a decisão?"),
+    "/loro-question " + DIR + " qual foi a decisão?"
   );
 });
 
 test("meetingSkillCmd flattens a multiline question — never a premature submit", () => {
-  const cmd = LM.meetingSkillCmd("answer", DIR, "linha 1\nlinha 2");
-  assert.strictEqual(cmd, "/brain-answer " + DIR + " linha 1 linha 2");
+  const cmd = LM.meetingSkillCmd("question", DIR, "linha 1\nlinha 2");
+  assert.strictEqual(cmd, "/loro-question " + DIR + " linha 1 linha 2");
   assert.ok(!/[\r\n]/.test(cmd));
 });
 
 test("meetingSkillCmd returns null without a dir, or with an empty answer question", () => {
   assert.strictEqual(LM.meetingSkillCmd("analyse", ""), null);
   assert.strictEqual(LM.meetingSkillCmd("analyse", null), null);
-  assert.strictEqual(LM.meetingSkillCmd("answer", DIR, "   \n  "), null);
-  assert.strictEqual(LM.meetingSkillCmd("answer", DIR, ""), null);
+  assert.strictEqual(LM.meetingSkillCmd("question", DIR, "   \n  "), null);
+  assert.strictEqual(LM.meetingSkillCmd("question", DIR, ""), null);
 });
 
 test("ADR-0013: meeting helpers recognize the brainstorming/ world", () => {
   const dir = "brainstorming/frota-2026/reunioes/2026-07-27-1430-x";
   assert.strictEqual(LM.meetingDir(dir + "/reuniao.md"), dir);
-  assert.strictEqual(LM.meetingDir(dir + "/relatorio.md"), dir);
   assert.strictEqual(LM.livingId(dir + "/reuniao.md"), "2026-07-27-1430-x");
-  assert.strictEqual(LM.reportId(dir + "/relatorio.md"), "2026-07-27-1430-x");
   assert.strictEqual(LM.isLiving(dir + "/reuniao.md"), true);
 });
 
@@ -185,4 +184,83 @@ test("meetingTitleFromManifest also rejects the English stale defaults (manifest
   assert.strictEqual(LM.meetingTitleFromManifest({ titulo: "new meeting" }, "id-x"), "id-x");
   // the pt defaults keep being rejected too
   assert.strictEqual(LM.meetingTitleFromManifest({ titulo: "nova reunião" }, "id-x"), "id-x");
+});
+
+// O que acontece com o buffer avulso quando uma sessão termina. Bug relatado:
+// ao encerrar uma gravação feita NUM BRAINSTORMING, o painel da transcrição
+// avulsa subia por cima. A superfície da reunião é a aba reuniao.md — o rodapé
+// avulso não tem nada a fazer ali (o onStarted já respeitava isso; o onStopped
+// não respeitava).
+test("reunião nunca aciona o rodapé avulso, mesmo com sobras no buffer", () => {
+  assert.strictEqual(LM.looseEndAction({ meetingActive: true, lineCount: 12, autosave: false }), "none");
+  assert.strictEqual(LM.looseEndAction({ meetingActive: true, lineCount: 12, autosave: true }), "none");
+});
+
+test("sem linhas não há o que salvar", () => {
+  assert.strictEqual(LM.looseEndAction({ meetingActive: false, lineCount: 0, autosave: false }), "none");
+  assert.strictEqual(LM.looseEndAction({ meetingActive: false, lineCount: 0, autosave: true }), "none");
+});
+
+test("transcrição avulsa com linhas: salva sozinha ou oferece a barra", () => {
+  assert.strictEqual(LM.looseEndAction({ meetingActive: false, lineCount: 3, autosave: true }), "autosave");
+  assert.strictEqual(LM.looseEndAction({ meetingActive: false, lineCount: 3, autosave: false }), "offer");
+});
+
+test("looseEndAction tolera entrada faltando", () => {
+  assert.strictEqual(LM.looseEndAction(), "none");
+  assert.strictEqual(LM.looseEndAction({}), "none");
+});
+
+// ---- #44: mover uma reunião com toda a sua análise -------------------------
+// Uma reunião só existe em `<brainstorming>/reunioes/`, porque é exatamente esse
+// caminho que o list_meetings varre — então o destino nunca é avulso/notas/anexos.
+test("meetingMoveTargets exclui o brainstorming atual", () => {
+  const temas = [
+    { slug: "a", nome: "Alfa" },
+    { slug: "b", nome: "Beta" },
+    { slug: "c", nome: "" },
+  ];
+  const alvos = LM.meetingMoveTargets(temas, "b");
+  assert.deepStrictEqual(alvos.map((d) => d.slug), ["a", "c"]);
+  assert.strictEqual(alvos[0].label, "Alfa");
+  assert.strictEqual(alvos[1].label, "c", "sem nome, cai no slug");
+});
+
+test("meetingMoveTargets tolera lista vazia ou ausente", () => {
+  assert.deepStrictEqual(LM.meetingMoveTargets([], "a"), []);
+  assert.deepStrictEqual(LM.meetingMoveTargets(undefined, "a"), []);
+  assert.deepStrictEqual(LM.meetingMoveTargets([{ slug: "a" }], "a"), []);
+});
+
+// O alvo de drop: só o cabeçalho `reuniões` de outro brainstorming aceita uma
+// reunião. Soltar numa pasta de arquivos não é aceito.
+test("meetingDropTarget aceita só reuniões de OUTRO brainstorming", () => {
+  assert.strictEqual(LM.meetingDropTarget("bsfolder:destino:reunioes", "origem"), "destino");
+  assert.strictEqual(LM.meetingDropTarget("bsfolder:origem:reunioes", "origem"), null,
+    "o próprio brainstorming não é destino");
+  for (const k of ["bsfolder:destino:notas", "bsfolder:destino:anexos", "pes:avulso", "", null]) {
+    assert.strictEqual(LM.meetingDropTarget(k, "origem"), null, `não pode aceitar ${k}`);
+  }
+});
+
+// T-9 · AC-5 (ADR-0018) — o fim de uma gravação SUGERE a análise. O desfecho é
+// puro: só "analisar" produz um comando, e ele é o mesmo que o menu injeta.
+test("analyseOffer só injeta quando o usuário aceita", () => {
+  const dir = "brainstorming/frota/reunioes/2026-07-27-1430-x";
+  assert.strictEqual(LM.analyseOffer("analisar", dir), LM.meetingSkillCmd("analyse", dir));
+  // dispensar não roda nada
+  assert.strictEqual(LM.analyseOffer("agora não", dir), null);
+  assert.strictEqual(LM.analyseOffer(null, dir), null);
+  // sem reunião não há o que oferecer
+  assert.strictEqual(LM.analyseOffer("analisar", null), null);
+});
+
+// T-12 · AC-7 — a análise É a saída da reunião: sem nenhuma, não há o que enviar.
+test("meetingQueueBlock declara o motivo quando não há análise", () => {
+  assert.strictEqual(LM.meetingQueueBlock(0), "analise a reunião antes de enviar para a fila");
+  assert.strictEqual(LM.meetingQueueBlock("0"), "analise a reunião antes de enviar para a fila");
+  assert.strictEqual(LM.meetingQueueBlock(undefined), "analise a reunião antes de enviar para a fila");
+  // uma nota basta
+  assert.strictEqual(LM.meetingQueueBlock(1), null);
+  assert.strictEqual(LM.meetingQueueBlock("3"), null);
 });

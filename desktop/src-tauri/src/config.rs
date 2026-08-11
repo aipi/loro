@@ -17,6 +17,33 @@ pub struct Acervo {
     pub color: String, // accent color for this project (hex; empty = default)
     #[serde(default)]
     pub lang: String, // project language ("pt" | "en"); drives the templates
+    // Usage template (preset) id that seeded this acervo ("generico" default).
+    // Drives seeding only — never re-applied destructively (ADR-0003).
+    #[serde(default = "default_template")]
+    pub template: String,
+    // AI agent command launched in the embedded terminal ("claude" default).
+    // Any CLI the user owns — the app never ships credentials (BR-9).
+    #[serde(default = "default_agent")]
+    pub agent: String,
+}
+
+pub fn default_template() -> String {
+    "generico".into()
+}
+
+pub fn default_agent() -> String {
+    "claude".into()
+}
+
+// Empty/blank agent falls back to the default; the command is otherwise the
+// user's own, verbatim (any CLI, including local models).
+pub fn normalize_agent(s: &str) -> String {
+    let s = s.trim();
+    if s.is_empty() {
+        default_agent()
+    } else {
+        s.to_string()
+    }
 }
 
 // Global config (~/.loro/config.json). New format: list of acervos + active id.
@@ -85,6 +112,57 @@ mod tests {
         assert_eq!(back.ui_lang, "en");
     }
 
+    // usage templates (ADR-0003): existing acervos gain the default preset id
+    #[test]
+    fn acervo_template_and_agent_default_when_absent() {
+        let a: Acervo = serde_json::from_str(r#"{"id":"x","name":"X","dir":"/tmp/x"}"#).unwrap();
+        assert_eq!(a.template, "generico");
+        assert_eq!(a.agent, "claude");
+    }
+
+    #[test]
+    fn acervo_template_and_agent_roundtrip_as_camel_case_json() {
+        let a = Acervo {
+            id: "x".into(),
+            name: "X".into(),
+            dir: "/tmp/x".into(),
+            auto_context: false,
+            color: String::new(),
+            lang: "pt".into(),
+            template: "vendas".into(),
+            agent: "ollama run llama3".into(),
+        };
+        let json = serde_json::to_string(&a).unwrap();
+        assert!(json.contains(r#""template":"vendas""#));
+        assert!(json.contains(r#""agent":"ollama run llama3""#));
+        let back: Acervo = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.template, "vendas");
+        assert_eq!(back.agent, "ollama run llama3");
+    }
+
+    #[test]
+    fn normalize_agent_falls_back_to_claude_when_blank() {
+        assert_eq!(normalize_agent(""), "claude");
+        assert_eq!(normalize_agent("   "), "claude");
+        assert_eq!(normalize_agent(" gemini "), "gemini");
+    }
+
+    // ADR-0005: the local marker the /loro-context skill reads, distinct from
+    // the global multi-acervo config.
+    #[test]
+    fn write_acervo_settings_writes_readable_local_marker() {
+        let dir = std::env::temp_dir().join(format!("loro-cfg-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        write_acervo_settings(&dir, true).unwrap();
+        let txt = std::fs::read_to_string(dir.join(".loro/settings.json")).unwrap();
+        assert!(txt.contains(r#""autoContext": true"#));
+        write_acervo_settings(&dir, false).unwrap();
+        let txt = std::fs::read_to_string(dir.join(".loro/settings.json")).unwrap();
+        assert!(txt.contains(r#""autoContext": false"#));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn normalize_lang_accepts_only_pt_and_en() {
         assert_eq!(normalize_lang("en"), "en");
@@ -105,9 +183,10 @@ pub struct BrainConfig {
     pub auto_context: bool,
 }
 
+// Config lives in the Loro data dir (~/.loro, or LORO_HOME). Reuses the shared
+// resolver so it is correct on Windows (USERPROFILE) too — see paths.rs.
 pub fn loro_config_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-    PathBuf::from(home).join(".loro/config.json")
+    crate::paths::loro_data_dir().join("config.json")
 }
 
 pub fn slugify_id(s: &str) -> String {
@@ -152,6 +231,8 @@ pub fn read_loro_config() -> LoroConfig {
                     auto_context: false,
                     color: String::new(),
                     lang: "pt".into(),
+                    template: default_template(),
+                    agent: default_agent(),
                 }],
                 active: id,
                 ui_lang: default_ui_lang(),
@@ -171,6 +252,29 @@ pub fn write_loro_config(cfg: &LoroConfig) -> Result<(), String> {
     std::fs::write(
         &p,
         serde_json::to_string_pretty(cfg).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())
+}
+
+// Per-acervo local marker (ADR-0005), distinct from the global
+// ~/.loro/config.json (which lists every acervo): lets the /loro-context
+// skill read just THIS acervo's autoContext setting from inside its own
+// working directory, without exposing the global config to the terminal
+// agent. Written at brain_setup and whenever the Settings toggle changes.
+#[derive(serde::Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AcervoSettings {
+    #[serde(default)]
+    pub auto_context: bool,
+}
+
+pub fn write_acervo_settings(base: &Path, auto_context: bool) -> Result<(), String> {
+    let dir = base.join(".loro");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let settings = AcervoSettings { auto_context };
+    std::fs::write(
+        dir.join("settings.json"),
+        serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?,
     )
     .map_err(|e| e.to_string())
 }

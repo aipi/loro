@@ -21,7 +21,7 @@ use tauri::{AppHandle, Emitter, State};
 
 use crate::config::read_brain_config;
 use crate::git::sanitize_slug;
-use crate::paths::which;
+use crate::paths::{ffmpeg_not_found_err, which};
 use crate::AppState;
 
 // ---- constants --------------------------------------------------------------
@@ -47,20 +47,6 @@ const ARTIFACT_KINDS: [&str; 8] = [
     "mcp",
 ];
 
-// The report seeds Resumo/Decisões/Dúvidas from markers only until the meeting AI
-// fills them in; the placeholder tells the user exactly how to populate it (no
-// internal ADR reference leaks into a user-facing report).
-const DEFERRED_PROSE: &str = "_(resumo automático — rode “analisar” para preencher)_";
-const DEFERRED_PROSE_EN: &str = "_(automatic summary — run “analyse” to fill it in)_";
-
-fn deferred_prose(lang: &str) -> &'static str {
-    if lang == "en" {
-        DEFERRED_PROSE_EN
-    } else {
-        DEFERRED_PROSE
-    }
-}
-
 // ---- base + per-meeting serialization ---------------------------------------
 
 // The active acervo root, canonicalized — the single trust boundary for every FS
@@ -74,6 +60,10 @@ fn acervo_base() -> Result<PathBuf, String> {
 
 // One lock per meeting id: manifest writes (shared mutable state) are serialized
 // so no two commands interleave a read-modify-write (ADR-0010 consequences).
+//
+// The lock is keyed by ID, never by path, precisely because the path MOVES
+// (#44). Hence the discipline every mutating command follows: take the lock
+// FIRST, resolve the directory after — see `resolve_meeting_dir`.
 fn meeting_lock(id: &str) -> Arc<Mutex<()>> {
     static LOCKS: OnceLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> = OnceLock::new();
     let map = LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
@@ -105,6 +95,11 @@ fn valid_meeting_id(id: &str) -> bool {
 // Locate a meeting dir from its id by scanning brainstorming/*/reunioes/<id>/
 // (ADR-0013), falling back to the legacy pessoal/temas/*/reunioes/<id>/ for
 // un-migrated acervos; stateless and path-guarded (canonicalize + starts_with).
+//
+// The result is only valid while the meeting's lock is HELD: `move_meeting_dir`
+// renames the directory, so a caller that resolves before locking blocks on the
+// move and then writes into a folder that no longer exists — recreating it as an
+// orphan. A mutating caller therefore locks first and calls this second (#44).
 fn resolve_meeting_dir(base: &Path, id: &str) -> Result<PathBuf, String> {
     if !valid_meeting_id(id) {
         return Err("err.invalid_meeting_id".into());
@@ -280,6 +275,121 @@ pub struct Manifest {
     consent: Consent,
     #[serde(default)]
     refs: Vec<RefItem>,
+}
+
+// #44 — the meeting lock, reachable from `acervo::move_meeting_dir` so the rename
+// and the metadata rewrite happen under the SAME lock. Locking only the rewrite
+// left the original race open: `brain_meeting_append` resolves the directory
+// before it locks, so a rename slipping in between made its write land on a path
+// that no longer exists and the transcript chunk was lost.
+pub(crate) fn lock_for(id: &str) -> Arc<Mutex<()>> {
+    meeting_lock(id)
+}
+
+// The meeting's lifecycle status (`done` once the recording was finalized).
+pub(crate) fn status_of(dir: &Path) -> Result<String, String> {
+    Ok(manifest_read(dir)?.status)
+}
+
+// #44 — a moved meeting must stop naming the brainstorming it came from AND stop
+// pointing at its own old path. It records both in `manifest.json` — `tema`, and
+// the acervo-relative paths of its audio, artifacts and refs — and the
+// brainstorming's name once more in `reuniao.md`'s front matter (`tema:`).
+//
+// This lives here because this module owns the manifest format and its write
+// discipline. The CALLER must already hold `lock_for(<id>)` — the mutex is not
+// reentrant, so taking it again here would deadlock.
+//
+// Only `tema` and paths under `old_rel` change; the transcript body is never
+// touched, and a ref pointing OUTSIDE the meeting did not move and is left alone.
+pub(crate) fn remap_meeting_locked(
+    dir: &Path,
+    new_tema: &str,
+    old_rel: &str,
+    new_rel: &str,
+) -> Result<(), String> {
+    let mut manifest = manifest_read(dir)?;
+    manifest.tema = new_tema.to_string();
+    for slot in [
+        &mut manifest.audio.mic,
+        &mut manifest.audio.system,
+        &mut manifest.audio.completo,
+    ] {
+        if let Some(next) = slot.as_deref().and_then(|p| repath(p, old_rel, new_rel)) {
+            *slot = Some(next);
+        }
+    }
+    for a in &mut manifest.artifacts {
+        if let Some(next) = repath(&a.rel, old_rel, new_rel) {
+            a.rel = next;
+        }
+        for r in &mut a.refs {
+            if let Some(next) = repath(r, old_rel, new_rel) {
+                *r = next;
+            }
+        }
+    }
+    for r in &mut manifest.refs {
+        if let Some(next) = repath(&r.caminho, old_rel, new_rel) {
+            r.caminho = next;
+        }
+    }
+    manifest_write(dir, &manifest)?;
+
+    let living = dir.join("reuniao.md");
+    match std::fs::read_to_string(&living) {
+        Ok(txt) => {
+            let out = retema_front_matter(&txt, new_tema);
+            if out != txt {
+                std::fs::write(&living, out).map_err(|e| e.to_string())?;
+            }
+            Ok(())
+        }
+        // an unreadable living file is reported, never swallowed (D9)
+        Err(e) if living.exists() => Err(format!("err.living_unreadable:{e}")),
+        Err(_) => Ok(()),
+    }
+}
+
+// Re-root an acervo-relative path that lived under `old_rel`. `None` when the
+// path is not the moved meeting's — matching on whole SEGMENTS, so `…/m10` is
+// never mistaken for `…/m1`.
+fn repath(p: &str, old_rel: &str, new_rel: &str) -> Option<String> {
+    if p == old_rel {
+        return Some(new_rel.to_string());
+    }
+    p.strip_prefix(old_rel)
+        .filter(|tail| tail.starts_with('/'))
+        .map(|tail| format!("{new_rel}{tail}"))
+}
+
+// Rewrite (or insert) the `tema:` line inside the FIRST front-matter block.
+// Handles both LF and CRLF openers, and keeps the file's own line ending on the
+// line it rewrites or inserts. Pure, so the edge cases are unit-covered: a file
+// with no front matter comes back untouched.
+pub(crate) fn retema_front_matter(content: &str, new_tema: &str) -> String {
+    let (opener, eol) = if content.starts_with("---\r\n") {
+        ("---\r\n", "\r\n")
+    } else if content.starts_with("---\n") {
+        ("---\n", "\n")
+    } else {
+        return content.to_string();
+    };
+    let rest = &content[opener.len()..];
+    let close = format!("{eol}---");
+    let Some(end) = rest.find(&close) else {
+        return content.to_string();
+    };
+    let (fm, tail) = rest.split_at(end);
+    let mut lines: Vec<String> = fm.split(eol).map(|l| l.to_string()).collect();
+    // `tema` is a TOP-LEVEL key. An indented `tema:` belongs to whatever mapping
+    // it is nested in (a ref entry, say) — rewriting it would change the wrong
+    // value and, re-emitted at column 0, break the block it lived in.
+    match lines.iter().position(|l| l.starts_with("tema:")) {
+        Some(i) => lines[i] = format!("tema: {new_tema}"),
+        None => lines.push(format!("tema: {new_tema}")),
+    }
+    format!("{opener}{}{}", lines.join(eol), tail)
 }
 
 // Read the meeting manifest. Absent/corrupt is an error (never a silent default)
@@ -480,98 +590,6 @@ fn fmt_timecode(t_ms: Option<u64>) -> String {
 }
 
 // ---- notebook assembler (pure) ----------------------------------------------
-
-// Assemble relatorio.md from the manifest (ADR-0010). Pure and IO-free. Owner
-// decision (2026-07-28): the report carries ONLY the analysis sections — no
-// Investigações/Dados/Linha do tempo/Transcrição/Referências/Estatísticas
-// boilerplate. The transcript lives in reuniao.md (duplicating it here was
-// noise) and the empty-count blocks were dropped everywhere. v1 seeds
-// Resumo/Decisões/Dúvidas from MARKERS ONLY and never invents prose (BR-8 safe:
-// it emits marker types + timecodes, never transcript text).
-// The notebook is born in the active UI language (ADR-0002 §1); anything but
-// "en" falls back to pt, the original.
-fn assemble_notebook(m: &Manifest, lang: &str) -> String {
-    let en = lang == "en";
-    let prose = deferred_prose(lang);
-    let mut out = String::new();
-
-    out.push_str(&format!("# {}\n\n", m.titulo));
-    out.push_str(if en {
-        "## Header\n\n"
-    } else {
-        "## Cabeçalho\n\n"
-    });
-    // ADR-0013: the header is trimmed to what the reader needs — no
-    // modelo/idioma/consentimento (audio is transient, inference is local-first).
-    out.push_str(&format!(
-        "- {}: {}\n",
-        if en { "Title" } else { "Título" },
-        m.titulo
-    ));
-    out.push_str(&format!("- Brainstorming: {}\n", m.tema));
-    out.push_str(&format!(
-        "- {}: {}\n\n",
-        if en { "Date" } else { "Data" },
-        m.criado_em
-    ));
-
-    // Summary (deferred prose)
-    out.push_str(if en {
-        "## Summary\n\n"
-    } else {
-        "## Resumo\n\n"
-    });
-    out.push_str(prose);
-    out.push_str("\n\n");
-
-    // Decisions / Q&A — seeded from markers only
-    out.push_str(if en {
-        "## Decisions\n\n"
-    } else {
-        "## Decisões\n\n"
-    });
-    out.push_str(prose);
-    out.push('\n');
-    push_marker_bullets(
-        &mut out,
-        m,
-        "decisao",
-        if en { "Decision" } else { "Decisão" },
-        lang,
-    );
-    out.push('\n');
-
-    out.push_str(if en {
-        "## Questions & Answers\n\n"
-    } else {
-        "## Dúvidas & Respostas\n\n"
-    });
-    out.push_str(prose);
-    out.push('\n');
-    push_marker_bullets(
-        &mut out,
-        m,
-        "duvida",
-        if en { "Question" } else { "Dúvida" },
-        lang,
-    );
-    out.push('\n');
-
-    out
-}
-
-fn push_marker_bullets(out: &mut String, m: &Manifest, tipo: &str, label: &str, lang: &str) {
-    let at = if lang == "en" { "at" } else { "em" };
-    for mk in m.marcadores.iter().filter(|x| x.tipo == tipo) {
-        match &mk.r#ref {
-            Some(r) => out.push_str(&format!(
-                "- {label} {at} {} (ref: {r})\n",
-                fmt_timecode(mk.t_ms)
-            )),
-            None => out.push_str(&format!("- {label} {at} {}\n", fmt_timecode(mk.t_ms))),
-        }
-    }
-}
 
 // ---- meeting creation (fs, testable with a temp dir) ------------------------
 
@@ -797,9 +815,9 @@ pub struct MeetingAppendInput {
 #[tauri::command]
 pub fn brain_meeting_append(app: AppHandle, input: MeetingAppendInput) -> Result<(), String> {
     let base = acervo_base()?;
-    let dir = resolve_meeting_dir(&base, &input.id)?;
     let lock = meeting_lock(&input.id);
     let _guard = lock.lock().map_err(|_| "lock envenenado".to_string())?;
+    let dir = resolve_meeting_dir(&base, &input.id)?;
 
     let living = dir.join("reuniao.md");
     let content = std::fs::read_to_string(&living).map_err(|e| e.to_string())?;
@@ -857,9 +875,9 @@ pub fn brain_meeting_write_artifact(
     }
     let name = safe_artifact_name(&input.name)?;
     let base = acervo_base()?;
-    let dir = resolve_meeting_dir(&base, &input.id)?;
     let lock = meeting_lock(&input.id);
     let _guard = lock.lock().map_err(|_| "lock envenenado".to_string())?;
+    let dir = resolve_meeting_dir(&base, &input.id)?;
 
     let kind_dir = dir.join("artefatos").join(&input.kind);
     std::fs::create_dir_all(&kind_dir).map_err(|e| e.to_string())?;
@@ -908,9 +926,9 @@ pub fn brain_meeting_marker(input: MarkerInput) -> Result<(), String> {
         return Err("err.invalid_marker_type".into());
     }
     let base = acervo_base()?;
-    let dir = resolve_meeting_dir(&base, &input.id)?;
     let lock = meeting_lock(&input.id);
     let _guard = lock.lock().map_err(|_| "lock envenenado".to_string())?;
+    let dir = resolve_meeting_dir(&base, &input.id)?;
 
     let mut manifest = manifest_read(&dir)?;
     manifest.marcadores.push(Marker {
@@ -936,9 +954,9 @@ pub struct ConsentInput {
 #[tauri::command]
 pub fn brain_meeting_set_consent(input: ConsentInput) -> Result<Consent, String> {
     let base = acervo_base()?;
-    let dir = resolve_meeting_dir(&base, &input.id)?;
     let lock = meeting_lock(&input.id);
     let _guard = lock.lock().map_err(|_| "lock envenenado".to_string())?;
+    let dir = resolve_meeting_dir(&base, &input.id)?;
 
     let mut manifest = manifest_read(&dir)?;
     manifest.consent = Consent {
@@ -1031,9 +1049,9 @@ pub struct MeetingRenameInput {
 #[tauri::command]
 pub fn brain_meeting_rename(app: AppHandle, input: MeetingRenameInput) -> Result<Manifest, String> {
     let base = acervo_base()?;
-    let dir = resolve_meeting_dir(&base, &input.id)?;
     let lock = meeting_lock(&input.id);
     let _guard = lock.lock().map_err(|_| "lock envenenado".to_string())?;
+    let dir = resolve_meeting_dir(&base, &input.id)?;
     let manifest = rename_meeting(&dir, &input.titulo)?;
     let _ = app.emit(
         "pessoal-changed",
@@ -1044,41 +1062,47 @@ pub fn brain_meeting_rename(app: AppHandle, input: MeetingRenameInput) -> Result
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct BuildOut {
+pub struct FinishOut {
     rel: String,
 }
 
-// Assemble relatorio.md from manifest + reuniao.md body (assemble_notebook) and
-// set status:done. Charts/audio are emitted as acervo:// links the renderer
-// resolves; the summary/decision/doubt sections are seeded from markers only
-// (auto-authored prose deferred to ADR-0011).
+// ADR-0018 — close a meeting: `status: "done"`, and nothing is authored. The
+// report this command used to assemble is gone; the meeting's output is the
+// analysis in `notas/`, written by the habilidade when the USER asks for it.
+//
+// `done` is what enables **analisar** and **enviar para a fila** in the `⋯` menu,
+// so it stays exactly as it was — it simply stopped being a side effect of
+// building a document.
+//
+// ADR-0013's sidecar incorporation SURVIVES here: folding `marcadores.jsonl` into
+// the manifest was never about the report, and the app remains the only writer of
+// `manifest.json`. Its reach is unchanged too — the fold happens when the
+// recording ends, so markers a habilidade appends later stay in the sidecar,
+// which is where ADR-0013 keeps them anyway.
+//
+// Returns the rel of `reuniao.md`: the transcript is what the user gets back.
 #[tauri::command]
-pub fn brain_meeting_build_notebook(app: AppHandle, id: String) -> Result<BuildOut, String> {
+pub fn brain_meeting_finish(app: AppHandle, id: String) -> Result<FinishOut, String> {
     let base = acervo_base()?;
-    let dir = resolve_meeting_dir(&base, &id)?;
     let lock = meeting_lock(&id);
     let _guard = lock.lock().map_err(|_| "lock envenenado".to_string())?;
+    let dir = resolve_meeting_dir(&base, &id)?;
 
     let mut manifest = manifest_read(&dir)?;
-    // ADR-0013: fold any skill-written PII-free markers (marcadores.jsonl) into the
-    // manifest BEFORE assembling, then consume the sidecar so a re-run never
-    // double-counts. The app is still the only writer of manifest.json.
     let sidecar = dir.join("marcadores.jsonl");
     if sidecar.is_file() {
         manifest.marcadores = fold_markers_file(&dir, &manifest.marcadores);
         let _ = std::fs::remove_file(&sidecar);
     }
-    let notebook = assemble_notebook(&manifest, &crate::config::ui_lang());
-    std::fs::write(dir.join("relatorio.md"), notebook).map_err(|e| e.to_string())?;
 
     manifest.status = "done".into();
     manifest.atualizado_em = now_iso();
     manifest_write(&dir, &manifest)?;
 
-    let rel = format!("{}/relatorio.md", rel_of(&base, &dir));
+    let rel = format!("{}/reuniao.md", rel_of(&base, &dir));
     let _ = app.emit("brainstorming-changed", serde_json::json!({ "rel": rel }));
     let _ = app.emit("pessoal-changed", serde_json::json!({ "rel": rel }));
-    Ok(BuildOut { rel })
+    Ok(FinishOut { rel })
 }
 
 // ---- audio management (ADR-0010: audio must be manageable/deletable) --------
@@ -1136,9 +1160,9 @@ pub fn brain_meeting_delete_audio(
     input: DeleteAudioInput,
 ) -> Result<Manifest, String> {
     let base = acervo_base()?;
-    let dir = resolve_meeting_dir(&base, &input.id)?;
     let lock = meeting_lock(&input.id);
     let _guard = lock.lock().map_err(|_| "lock envenenado".to_string())?;
+    let dir = resolve_meeting_dir(&base, &input.id)?;
     let manifest = delete_audio_core(&dir, &input.which)?;
     let _ = app.emit(
         "pessoal-changed",
@@ -1155,7 +1179,8 @@ pub struct PurgeAudioInput {
 
 // Owner decision (2026-07-27): meeting audio is TRANSIENT — never stored long-term.
 // Deletes every track under the meeting's audio/ dir and clears all audio keys.
-// The transcript (reuniao.md/relatorio.md) is the durable artifact; audio is only
+// The transcript (reuniao.md) and the analyses in notas/ are the durable
+// artifacts; audio is only
 // a means to it. Called after the authoritative stop-transcription. Idempotent.
 fn purge_audio_core(dir: &Path) -> Result<Manifest, String> {
     let audio_dir = dir.join("audio");
@@ -1182,9 +1207,9 @@ pub fn brain_meeting_purge_audio(
     input: PurgeAudioInput,
 ) -> Result<Manifest, String> {
     let base = acervo_base()?;
-    let dir = resolve_meeting_dir(&base, &input.id)?;
     let lock = meeting_lock(&input.id);
     let _guard = lock.lock().map_err(|_| "lock envenenado".to_string())?;
+    let dir = resolve_meeting_dir(&base, &input.id)?;
     let manifest = purge_audio_core(&dir)?;
     let _ = app.emit(
         "pessoal-changed",
@@ -1258,7 +1283,7 @@ pub fn brain_meeting_transcribe_tail(input: TranscribeTailInput) -> Result<Trans
         let _ = std::fs::remove_file(&snap);
         return Err("err.live_model_unavailable".into());
     }
-    let ffmpeg = which("ffmpeg").ok_or("err.ffmpeg_not_found")?;
+    let ffmpeg = which("ffmpeg").ok_or_else(ffmpeg_not_found_err)?;
     let cli = crate::paths::whisper_cli_bin();
     let model = crate::paths::model_path(&manifest.modelo);
     let lang = if manifest.idioma.is_empty() {
@@ -1320,7 +1345,7 @@ pub fn brain_meeting_transcribe_segment(
     std::fs::create_dir_all(&audio_dir).map_err(|e| e.to_string())?;
     let seg = audio_dir.join(".seg.webm");
     std::fs::write(&seg, &input.data).map_err(|e| e.to_string())?;
-    let ffmpeg = which("ffmpeg").ok_or("err.ffmpeg_not_found")?;
+    let ffmpeg = which("ffmpeg").ok_or_else(ffmpeg_not_found_err)?;
     let cli = crate::paths::whisper_cli_bin();
     let model = crate::paths::model_path(&manifest.modelo);
     let lang = if manifest.idioma.is_empty() {
@@ -1617,140 +1642,55 @@ mod tests {
             .contains("artefatos/graficos/vendas-2026.svg"));
     }
 
+    // T-1 · T-2 · AC-1 (ADR-0018) — finishing a meeting sets `done` and authors
+    // NOTHING. The report is gone: the meeting's output is the analysis the user
+    // asks for, in `notas/`.
     #[test]
-    fn build_notebook_assembles_fixture_from_markers_only() {
-        // fixture manifest with markers + artifacts; assert sections + counts and
-        // that no transcript prose is invented (only the verbatim body appears)
-        let m = Manifest {
-            id: "2026-07-27-1430-x".into(),
-            tema: "frota-2026".into(),
-            titulo: "Semanal".into(),
-            criado_em: "2026-07-27T14:30:00Z".into(),
-            status: "transcribing".into(),
-            modelo: "large-v3-turbo".into(),
-            idioma: "pt".into(),
-            marcadores: vec![
-                Marker {
-                    tipo: "decisao".into(),
-                    t_ms: Some(65_000),
-                    r#ref: None,
-                },
-                Marker {
-                    tipo: "duvida".into(),
-                    t_ms: Some(5_000),
-                    r#ref: None,
-                },
-                Marker {
-                    tipo: "duvida".into(),
-                    t_ms: Some(9_000),
-                    r#ref: None,
-                },
-            ],
-            artifacts: vec![Artifact {
-                id: "a1".into(),
-                kind: "graficos".into(),
-                name: "vendas.svg".into(),
-                rel: "brainstorming/frota-2026/reunioes/2026-07-27-1430-x/artefatos/graficos/vendas.svg".into(),
-                ..Default::default()
-            }],
-            ..Default::default()
-        };
-        let nb = assemble_notebook(&m, "pt");
-
-        for h in [
-            "## Cabeçalho",
-            "## Resumo",
-            "## Decisões",
-            "## Dúvidas & Respostas",
-        ] {
-            assert!(nb.contains(h), "missing section {h}");
-        }
-        // owner decision (2026-07-28): no boilerplate sections and no count
-        // blocks — the transcript stays in reuniao.md, never duplicated here
-        for h in [
-            "## Investigações",
-            "## Dados & Gráficos",
-            "## Linha do tempo",
-            "## Transcrição",
-            "## Referências",
-            "## Estatísticas",
-            "sem marcadores",
-            "sem referências",
-            "Dúvidas: ",
-            "Artefatos: ",
-        ] {
-            assert!(!nb.contains(h), "seção/contador removido reapareceu: {h}");
-        }
-        // ADR-0013: header is trimmed — no modelo/idioma/consentimento, no audio ref
-        assert!(nb.contains("- Brainstorming: frota-2026"));
-        assert!(!nb.contains("Modelo:"));
-        assert!(!nb.contains("Idioma:"));
-        assert!(!nb.contains("Consentimento:"));
-        assert!(
-            !nb.contains("[áudio]"),
-            "audio is transient — never referenced"
-        );
-        // deferred prose is labelled honestly, not fabricated (no ADR ref leaks)
-        assert!(nb.contains("resumo automático"));
-        assert!(!nb.contains("ADR-0011"));
-        // decisão bullet carries a timecode (65s -> 01:05), never text
-        assert!(nb.contains("Decisão em 01:05"));
-        // duvida bullets survive under Dúvidas & Respostas
-        assert!(nb.contains("Dúvida em 00:05"));
-    }
-
-    // ADR-0002 §1 — the notebook is born in the active UI language.
-    #[test]
-    fn notebook_is_english_when_lang_is_en() {
-        let m = Manifest {
-            titulo: "Kickoff".into(),
-            tema: "fleet-2026".into(),
-            criado_em: "2026-07-28".into(),
-            marcadores: vec![Marker {
-                tipo: "decisao".into(),
-                t_ms: Some(65_000),
-                r#ref: None,
-            }],
-            ..Default::default()
-        };
-        let nb = assemble_notebook(&m, "en");
-        for h in [
-            "## Header",
-            "## Summary",
-            "## Decisions",
-            "## Questions & Answers",
-        ] {
-            assert!(nb.contains(h), "missing section {h}");
-        }
-        assert!(!nb.contains("## Resumo") && !nb.contains("## Cabeçalho"));
-        assert!(nb.contains("- Title: Kickoff"));
-        assert!(nb.contains("- Brainstorming: fleet-2026"));
-        assert!(nb.contains("automatic summary"));
-        assert!(nb.contains("Decision at 01:05"));
-        // unknown languages fall back to pt
-        assert!(assemble_notebook(&m, "fr").contains("## Resumo"));
-    }
-
-    #[test]
-    fn build_notebook_command_core_sets_status_done() {
-        let base = tmp("build");
+    fn finish_sets_status_done_and_writes_no_report() {
+        let base = tmp("finish");
         let c = seed(&base);
         append_one(&c.dir, "[00:00] abertura").unwrap();
-        // mirror brain_meeting_build_notebook's core (no AppHandle)
+
+        // mirror brain_meeting_finish's core (no AppHandle)
         let mut m = manifest_read(&c.dir).unwrap();
-        let nb = assemble_notebook(&m, "pt");
-        std::fs::write(c.dir.join("relatorio.md"), nb).unwrap();
         m.status = "done".into();
         manifest_write(&c.dir, &m).unwrap();
 
-        assert!(c.dir.join("relatorio.md").is_file());
         assert_eq!(manifest_read(&c.dir).unwrap().status, "done");
-        // the transcript stays in reuniao.md only — the report never duplicates it
-        let report = std::fs::read_to_string(c.dir.join("relatorio.md")).unwrap();
-        assert!(!report.contains("[00:00] abertura"));
+        assert!(
+            !c.dir.join("relatorio.md").exists(),
+            "no report is ever authored"
+        );
+        // the transcript is untouched and remains the only place it lives
         assert!(std::fs::read_to_string(c.dir.join("reuniao.md"))
             .unwrap()
             .contains("[00:00] abertura"));
+    }
+
+    // T-2 — finishing adds no file to the meeting folder. The assembler and its
+    // command are gone (that part is enforced by the compiler); what a test can
+    // still catch is a future path quietly authoring a document again.
+    #[test]
+    fn finish_adds_no_file_to_the_meeting_folder() {
+        let base = tmp("finish-nofile");
+        let c = seed(&base);
+        append_one(&c.dir, "[00:00] abertura").unwrap();
+        let listar = || {
+            let mut v: Vec<String> = std::fs::read_dir(&c.dir)
+                .unwrap()
+                .flatten()
+                .map(|e| e.file_name().to_string_lossy().to_string())
+                .collect();
+            v.sort();
+            v
+        };
+        let antes = listar();
+
+        let mut m = manifest_read(&c.dir).unwrap();
+        m.status = "done".into();
+        manifest_write(&c.dir, &m).unwrap();
+
+        assert_eq!(listar(), antes, "finishing authors nothing");
     }
 
     #[test]
@@ -1815,7 +1755,7 @@ mod tests {
         std::fs::write(base.join("contextos-README.md"), "x").unwrap();
         stage_and_commit(&base, "base".into()).unwrap();
 
-        let tracked = std::process::Command::new("git")
+        let tracked = crate::proc::command("git")
             .args(["ls-files"])
             .current_dir(&base)
             .output()
@@ -1830,5 +1770,184 @@ mod tests {
             "the transcript is never versioned"
         );
         assert!(!files.contains(".wav"), "audio is never versioned");
+    }
+
+    // #44 — front-matter edges when rewriting `tema`.
+    #[test]
+    fn retema_front_matter_rewrites_inserts_and_preserves_line_endings() {
+        // the ordinary case
+        let doc = "---\nloro: 1\ntema: origem\nid: m1\n---\n\ncorpo\n";
+        let out = super::retema_front_matter(doc, "destino");
+        assert!(out.contains("tema: destino"));
+        assert!(!out.contains("tema: origem"));
+        assert!(out.ends_with("\n---\n\ncorpo\n"), "corpo intacto: {out}");
+
+        // no `tema:` line — AC-2 requires the field, so it is inserted
+        let sem = "---\nloro: 1\nid: m1\n---\n\ncorpo\n";
+        assert!(super::retema_front_matter(sem, "destino").contains("tema: destino"));
+
+        // Real CRLF: a `---\r\n` opener, which is what a Windows editor produces. The
+        // earlier version of this test used a `---\n…\r\n` hybrid no editor emits,
+        // so it never exercised the path it claimed to.
+        let crlf = "---\r\nloro: 1\r\ntema: origem\r\n---\r\n\r\ncorpo\r\n";
+        let out = super::retema_front_matter(crlf, "destino");
+        assert!(out.contains("tema: destino\r\n"), "CRLF: {out:?}");
+        assert!(!out.contains("tema: origem"));
+        assert!(
+            out.ends_with("---\r\n\r\ncorpo\r\n"),
+            "corpo CRLF intacto: {out:?}"
+        );
+        // and an LF file never gains a \r
+        let lf = super::retema_front_matter("---\nid: m1\n---\n\nx\n", "destino");
+        assert!(!lf.contains('\r'), "LF must not become CRLF: {lf:?}");
+
+        // no front matter — returned identical, never corrupted
+        let nada = "# só um título\n\ncorpo\n";
+        assert_eq!(super::retema_front_matter(nada, "destino"), nada);
+    }
+
+    // `tema` is a TOP-LEVEL key. A `tema:` nested inside another mapping (a ref
+    // entry, say) belongs to that entry and is not the meeting's — rewriting it
+    // both changes the wrong value and, being re-emitted at column 0, breaks the
+    // block it lived in. Only column 0 is the meeting's own `tema`.
+    #[test]
+    fn retema_front_matter_only_touches_the_top_level_key() {
+        let doc = "---\nloro: 1\ntema: origem\nrefs:\n  - id: r1\n    tema: outro\n---\n\ncorpo\n";
+        let out = super::retema_front_matter(doc, "destino");
+        assert!(out.contains("\ntema: destino\n"), "top level: {out:?}");
+        assert!(
+            out.contains("\n    tema: outro\n"),
+            "the nested entry is left alone: {out:?}"
+        );
+        assert!(!out.contains("tema: origem"));
+
+        // and a file whose ONLY `tema:` is nested gains its own at top level
+        // instead of hijacking the nested one
+        let so_aninhado = "---\nrefs:\n  - tema: outro\n---\n\ncorpo\n";
+        let out = super::retema_front_matter(so_aninhado, "destino");
+        assert!(out.contains("\n  - tema: outro\n"), "intacto: {out:?}");
+        assert!(out.contains("\ntema: destino\n"), "inserido: {out:?}");
+    }
+
+    // #44 — a moved meeting also stops pointing at its OWN old path. The manifest
+    // stores acervo-relative paths (audio, artifacts, refs); left untouched they
+    // name a directory that no longer exists.
+    #[test]
+    fn remap_meeting_rewrites_the_manifest_paths_under_the_old_rel() {
+        let dir = std::env::temp_dir().join(format!("loro-remap-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let velho = "brainstorming/origem/reunioes/m1";
+        let novo = "brainstorming/destino/reunioes/m1";
+        let m = Manifest {
+            id: "m1".into(),
+            tema: "origem".into(),
+            status: "done".into(),
+            audio: Audio {
+                mic: Some(format!("{velho}/audio/mic.webm")),
+                system: Some(format!("{velho}/audio/sys.webm")),
+                completo: None,
+            },
+            artifacts: vec![Artifact {
+                id: "a1".into(),
+                kind: "notas".into(),
+                name: "n.md".into(),
+                rel: format!("{velho}/artefatos/notas/n.md"),
+                ..Default::default()
+            }],
+            refs: vec![
+                RefItem {
+                    id: "r1".into(),
+                    tipo: "anexo".into(),
+                    caminho: format!("{velho}/notas/analise.md"),
+                },
+                // a ref OUTSIDE the meeting is not the move's business
+                RefItem {
+                    id: "r2".into(),
+                    tipo: "anexo".into(),
+                    caminho: "brainstorming/origem/anexos/planilha.csv".into(),
+                },
+            ],
+            ..Default::default()
+        };
+        manifest_write(&dir, &m).unwrap();
+        std::fs::write(dir.join("reuniao.md"), "---\ntema: origem\n---\n\nx\n").unwrap();
+
+        super::remap_meeting_locked(&dir, "destino", velho, novo).unwrap();
+
+        let back = manifest_read(&dir).unwrap();
+        assert_eq!(back.tema, "destino");
+        assert_eq!(back.audio.mic.unwrap(), format!("{novo}/audio/mic.webm"));
+        assert_eq!(back.audio.system.unwrap(), format!("{novo}/audio/sys.webm"));
+        assert_eq!(
+            back.artifacts[0].rel,
+            format!("{novo}/artefatos/notas/n.md")
+        );
+        assert_eq!(back.refs[0].caminho, format!("{novo}/notas/analise.md"));
+        assert_eq!(
+            back.refs[1].caminho, "brainstorming/origem/anexos/planilha.csv",
+            "a path outside the meeting is left alone"
+        );
+    }
+
+    // A prefix that merely LOOKS like the old rel is a different meeting.
+    #[test]
+    fn repath_matches_only_whole_segments() {
+        let velho = "brainstorming/origem/reunioes/m1";
+        let novo = "brainstorming/destino/reunioes/m1";
+        assert_eq!(super::repath(velho, velho, novo).as_deref(), Some(novo));
+        assert_eq!(
+            super::repath(&format!("{velho}/audio/a.webm"), velho, novo).as_deref(),
+            Some(format!("{novo}/audio/a.webm").as_str())
+        );
+        assert_eq!(
+            super::repath("brainstorming/origem/reunioes/m10/x.md", velho, novo),
+            None,
+            "m10 is not m1"
+        );
+        assert_eq!(super::repath("outro/caminho.md", velho, novo), None);
+    }
+
+    // The manifest is rewritten through the TYPE, so field order follows the
+    // declaration instead of turning alphabetical. An unknown key does not survive
+    // the roundtrip (`Manifest` has no `flatten`), as in every `manifest_write`.
+    #[test]
+    fn retema_meeting_preserves_the_manifest_shape() {
+        let dir = std::env::temp_dir().join(format!("loro-retema-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let m = Manifest {
+            id: "m1".into(),
+            tema: "origem".into(),
+            titulo: "T".into(),
+            criado_em: "2026-08-08".into(),
+            atualizado_em: "2026-08-08".into(),
+            status: "done".into(),
+            modelo: "small".into(),
+            idioma: "pt".into(),
+            audio: Default::default(),
+            artifacts: vec![],
+            ..Default::default()
+        };
+        manifest_write(&dir, &m).unwrap();
+        std::fs::write(dir.join("reuniao.md"), "---\ntema: origem\n---\n\nx\n").unwrap();
+
+        super::remap_meeting_locked(
+            &dir,
+            "destino",
+            "brainstorming/origem/reunioes/m1",
+            "brainstorming/destino/reunioes/m1",
+        )
+        .unwrap();
+
+        let back = manifest_read(&dir).unwrap();
+        assert_eq!(back.tema, "destino");
+        assert_eq!(back.id, "m1", "the DECLARED fields survive");
+        assert_eq!(back.status, "done");
+        let txt = std::fs::read_to_string(dir.join("manifest.json")).unwrap();
+        assert!(
+            txt.find("\"id\"").unwrap() < txt.find("\"tema\"").unwrap(),
+            "field order follows the type, not the alphabet"
+        );
     }
 }

@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "name": { "pt": "Recrutamento", "en": "Hiring" },
+  "description": {
+    "pt": "Vagas, candidatos e processos — critérios e feedbacks de entrevista com minimização.",
+    "en": "Openings, candidates and processes — interview criteria and feedback, minimized."
+  },
+  "contexts": {
+    "pt": ["vagas", "candidatos", "processos"],
+    "en": ["openings", "candidates", "processes"]
+  }
+}

@@ -3,7 +3,7 @@
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
@@ -19,16 +19,22 @@ use tracing::{error, info};
 
 mod paths;
 use paths::*;
+// every subprocess goes through proc::command so no console window flashes on
+// Windows — see proc.rs
 mod config;
+mod proc;
 use config::*;
 mod templates;
 use templates::*;
+mod presets;
+use presets::*;
 mod git;
 use git::*;
 mod acervo;
 use acervo::*;
 mod meeting;
 use meeting::*;
+mod models;
 // ADR-0011 v1 contract-lock. `pub mod` because these types/commands are the
 // locked privacy surface for the (deferred) multi-agent graph — reachable API,
 // not dead code, even though the transport is not wired yet.
@@ -89,6 +95,63 @@ struct TermSession {
     writer: Box<dyn Write + Send>,
     master: Box<dyn portable_pty::MasterPty + Send>,
     child: Box<dyn portable_pty::Child + Send + Sync>,
+    // when the agent auto-launch line was written (ADR-0005): term_status uses
+    // this to tell "still starting up" apart from "never came up", so the
+    // frontend doesn't retype the launch command into a session that already
+    // has it in flight (ps-based detection lags a live process by ~1 poll).
+    launched_at: std::time::Instant,
+}
+
+// Streaming UTF-8 decoder for PTY output. A single `read()` off the master can
+// slice the middle of a multi-byte codepoint — the agent's TUI is full of
+// emoji and box-drawing glyphs, and a redraw frame routinely exceeds the 4096-
+// byte read buffer. Decoding each chunk independently with `from_utf8_lossy`
+// turns the split halves into U+FFFD replacement chars, whose display width
+// (1 col) diverges from the original (often 2). The TUI then erases the wrong
+// number of wrapped lines on its next redraw and overprints — "text over text".
+// Holding the incomplete trailing bytes until their continuation arrives keeps
+// the emitted stream byte-faithful.
+#[derive(Default)]
+struct Utf8Stream {
+    pending: Vec<u8>,
+}
+
+impl Utf8Stream {
+    // Feed raw bytes; return the text that is now fully decodable, keeping any
+    // incomplete trailing multi-byte sequence for the next call.
+    fn push(&mut self, bytes: &[u8]) -> String {
+        self.pending.extend_from_slice(bytes);
+        let mut out = String::new();
+        loop {
+            match std::str::from_utf8(&self.pending) {
+                Ok(s) => {
+                    out.push_str(s);
+                    self.pending.clear();
+                    break;
+                }
+                Err(e) => {
+                    let valid = e.valid_up_to();
+                    if valid > 0 {
+                        // valid_up_to() guarantees this prefix is well-formed.
+                        out.push_str(std::str::from_utf8(&self.pending[..valid]).unwrap());
+                    }
+                    match e.error_len() {
+                        // Genuinely invalid bytes: emit one replacement, skip them.
+                        Some(bad) => {
+                            out.push('\u{FFFD}');
+                            self.pending.drain(..valid + bad);
+                        }
+                        // Incomplete tail: keep it until the continuation arrives.
+                        None => {
+                            self.pending.drain(..valid);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
 }
 
 // ---- structured logging (tracing) -----------------------------------------
@@ -155,6 +218,109 @@ fn doctor() -> Doctor {
         "diagnostics"
     );
     d
+}
+
+// The transcription models Loro uses, each flagged installed or missing, for
+// the first-run model manager (ADR-0006). Pure catalog + filesystem check.
+#[tauri::command]
+fn list_models() -> Vec<models::ModelInfo> {
+    models::catalog_status()
+}
+
+// Download a catalog model into ~/.loro/models with a verified, atomic install
+// (ADR-0006). Streams over HTTPS via system curl and emits
+// `model-download-progress { model, downloaded, total }` while it runs; the file
+// is checked against its pinned SHA-256 before it is placed, so a tampered or
+// truncated download never becomes the active model (protects the user's
+// machine; BR-1 keeps everything local — the only host contacted is the model
+// mirror). Idempotent: a model already present returns immediately.
+#[tauri::command]
+async fn download_model(app: AppHandle, model: String) -> Result<(), String> {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    let spec = models::spec(&model).ok_or("err.unknown_model")?;
+    if models::is_installed(&model) {
+        return Ok(());
+    }
+    if which("curl").is_none() {
+        return Err("err.curl_missing".into());
+    }
+
+    let total = spec.size;
+    let expected = spec.sha256;
+    let url = models::model_url(&model);
+    let tmp = models::download_tmp_path(&model);
+    let dest = models::install_dest(&model);
+
+    std::fs::create_dir_all(models_dir()).map_err(|_| "err.models_dir".to_string())?;
+    let _ = std::fs::remove_file(&tmp); // clear any stale partial
+
+    // progress poller: report the growing temp file against the known total
+    let stop = Arc::new(AtomicBool::new(false));
+    let poller = {
+        let (app, model, tmp, stop) = (app.clone(), model.clone(), tmp.clone(), stop.clone());
+        std::thread::spawn(move || {
+            while !stop.load(Ordering::Relaxed) {
+                let downloaded = std::fs::metadata(&tmp).map(|m| m.len()).unwrap_or(0);
+                let _ = app.emit(
+                    "model-download-progress",
+                    serde_json::json!({ "model": model, "downloaded": downloaded, "total": total }),
+                );
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+        })
+    };
+
+    // download in the blocking pool. `--proto =https` refuses any non-HTTPS
+    // redirect; `--fail` turns HTTP errors into a non-zero exit.
+    let dl_tmp = tmp.clone();
+    let dl = tauri::async_runtime::spawn_blocking(move || {
+        proc::command("curl")
+            .args(["-fSL", "--proto", "=https", "--tlsv1.2", "-o"])
+            .arg(&dl_tmp)
+            .arg(&url)
+            .status()
+    })
+    .await;
+
+    stop.store(true, Ordering::Relaxed);
+    let _ = poller.join();
+
+    let ok = matches!(&dl, Ok(Ok(s)) if s.success());
+    if !ok {
+        let _ = std::fs::remove_file(&tmp);
+        error!(model = %model, "model download failed");
+        return Err("err.download_failed".into());
+    }
+
+    models::verify_and_install(&tmp, &dest, expected)?;
+    let _ = app.emit(
+        "model-download-progress",
+        serde_json::json!({ "model": model, "downloaded": total, "total": total }),
+    );
+    let _ = app.emit("model-download-done", &model);
+    info!(model = %model, "model installed");
+    Ok(())
+}
+
+// The model file a transcription run will load, refusing anything that is not
+// the whole model. Existence alone was the old check, and a truncated download
+// passed it: whisper then aborted with "not all tensors loaded from model file"
+// *after* capture had started, so the user saw the meter running and no
+// transcript, with the real cause only in engine.log. Both errors are
+// actionable in the UI — settings opens on either so the model can be fetched.
+fn resolve_model(id: &str) -> Result<PathBuf, String> {
+    let model = model_path(id);
+    if !model.exists() {
+        error!(model = %model.display(), "model not found");
+        return Err(format!("err.model_not_found:{}", model.display()));
+    }
+    if !models::is_installed(id) {
+        error!(model = %id, "model file incomplete");
+        return Err(format!("err.model_incomplete:{id}"));
+    }
+    Ok(model)
 }
 
 // builds the whisper-stream arguments (isolated so it is testable)
@@ -246,14 +412,15 @@ fn capture_devices() -> Result<Vec<CaptureDevice>, String> {
     if !bin.exists() {
         return Err(format!("err.whisper_stream_not_found:{}", bin.display()));
     }
-    // any model just so the binary starts; killed as soon as the list is read
-    let model = model_path("small");
-    let model = if model.exists() {
-        model
+    // any model just so the binary starts; killed as soon as the list is read.
+    // It must be a *complete* one — whisper aborts on a truncated file before
+    // it ever prints the device list.
+    let model = if models::is_installed("small") {
+        model_path("small")
     } else {
         model_path("large-v3-turbo")
     };
-    let mut child = Command::new(&bin)
+    let mut child = proc::command(&bin)
         .args(["-m", &model.to_string_lossy(), "-c", "999"]) // invalid -c: lists devices and exits
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -346,11 +513,7 @@ fn start(app: AppHandle, state: State<AppState>, cfg: StartCfg) -> Result<(), St
                 .into(),
         );
     }
-    let model = model_path(&cfg.model);
-    if !model.exists() {
-        error!(model = %model.display(), "model not found");
-        return Err(format!("err.model_not_found:{}", model.display()));
-    }
+    let model = resolve_model(&cfg.model)?;
     let threads = cfg.threads.unwrap_or(8).to_string();
 
     let args = stream_args(
@@ -360,7 +523,7 @@ fn start(app: AppHandle, state: State<AppState>, cfg: StartCfg) -> Result<(), St
         &threads,
         cfg.capture,
     );
-    let mut command = Command::new(&bin);
+    let mut command = proc::command(&bin);
     command
         .args(&args)
         .stdin(Stdio::null())
@@ -447,13 +610,9 @@ async fn transcribe_file(app: AppHandle, path: String, cfg: StartCfg) -> Result<
                 .into(),
         );
     }
-    let model = model_path(&cfg.model);
-    if !model.exists() {
-        error!(model = %model.display(), "model not found");
-        return Err(format!("err.model_not_found:{}", model.display()));
-    }
+    let model = resolve_model(&cfg.model)?;
     let Some(ffmpeg) = which("ffmpeg") else {
-        return Err("err.ffmpeg_not_found".into());
+        return Err(ffmpeg_not_found_err());
     };
     let ffmpeg = PathBuf::from(ffmpeg);
     let threads = cfg.threads.unwrap_or(8).to_string();
@@ -500,7 +659,7 @@ fn run_file_transcription(
     threads: &str,
     app: &AppHandle,
 ) -> Result<(), String> {
-    let out = Command::new(ffmpeg)
+    let out = proc::command(ffmpeg)
         .arg("-y")
         .args(["-loglevel", "error"])
         .arg("-i")
@@ -535,7 +694,7 @@ fn transcribe_wav(
         threads,
         &wav.to_string_lossy(),
     );
-    let mut child = Command::new(cli)
+    let mut child = proc::command(cli)
         .args(&args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -656,7 +815,7 @@ pub(crate) fn transcribe_wav_window(
     to_ms: Option<u64>,
 ) -> Result<Vec<String>, String> {
     let dst = src.with_file_name(format!(".window-{from_ms}.wav"));
-    let carve = Command::new(ffmpeg)
+    let carve = proc::command(ffmpeg)
         .args(window_ffmpeg_args(src, &dst, from_ms, to_ms))
         .output()
         .map_err(|e| e.to_string())?;
@@ -671,7 +830,7 @@ pub(crate) fn transcribe_wav_window(
         threads,
         &dst.to_string_lossy(),
     );
-    let out = Command::new(cli)
+    let out = proc::command(cli)
         .args(&args)
         .stdin(Stdio::null())
         .output()
@@ -695,7 +854,7 @@ pub(crate) fn mix_to_wav(
     sys: Option<&Path>,
     wav: &Path,
 ) -> Result<(), String> {
-    let mut cmd = Command::new(ffmpeg);
+    let mut cmd = proc::command(ffmpeg);
     cmd.arg("-y").args(["-loglevel", "error"]);
     match (mic, sys) {
         (Some(m), Some(s)) => {
@@ -755,6 +914,13 @@ fn start_system_capture(app: AppHandle, state: State<AppState>) -> Result<String
 // Core of the sidecar start, callable from meeting.rs (ADR-0010) as a plain
 // pub(crate) fn — the #[tauri::command] wrapper cannot be reused directly.
 pub(crate) fn system_capture_start(app: &AppHandle, state: &AppState) -> Result<String, String> {
+    // The sidecar is Swift + ScreenCaptureKit, so meeting mode exists on macOS
+    // only. Say that instead of letting the spawn fail and surfacing an internal
+    // binary name ("loro-syscap (program not found)"), which tells the user
+    // nothing about what to do next.
+    if !cfg!(target_os = "macos") {
+        return Err("err.meeting_macos_only".into());
+    }
     {
         let mut guard = state.syscap.lock().unwrap();
         if let Some(mut child) = guard.take() {
@@ -767,7 +933,7 @@ pub(crate) fn system_capture_start(app: &AppHandle, state: &AppState) -> Result<
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let out = dir.join(format!("loro-sys-{}.wav", epoch_millis()));
 
-    let mut child = Command::new(&bin)
+    let mut child = proc::command(&bin)
         .arg(&out)
         .stdin(Stdio::piped()) // closing this stdin later signals a clean stop
         .stdout(Stdio::null())
@@ -858,13 +1024,9 @@ async fn transcribe_meeting(
                 .into(),
         );
     }
-    let model = model_path(&cfg.model);
-    if !model.exists() {
-        error!(model = %model.display(), "model not found");
-        return Err(format!("err.model_not_found:{}", model.display()));
-    }
+    let model = resolve_model(&cfg.model)?;
     let Some(ffmpeg) = which("ffmpeg") else {
-        return Err("err.ffmpeg_not_found".into());
+        return Err(ffmpeg_not_found_err());
     };
     let ffmpeg = PathBuf::from(ffmpeg);
     let mic = mic_path.map(PathBuf::from);
@@ -965,7 +1127,7 @@ fn valid_segment(s: &str) -> bool {
 
 // a context name may be hierarchical (e.g. "engineering/frontend"), up to 3
 // levels; each segment is a lowercase slug. Guards against path traversal.
-// A domain is recursive (ADR-0006): a context is itself a domain with
+// A domain is recursive (ADR-0005): a context is itself a domain with
 // context.md + CHANGELOG.md that MAY contain subdomain folders in the same shape.
 // The bound is a safety limit against pathological trees, not the old 3-level cap.
 const MAX_CONTEXT_DEPTH: usize = 6;
@@ -975,11 +1137,12 @@ pub(crate) fn valid_context(name: &str) -> bool {
     !parts.is_empty() && parts.len() <= MAX_CONTEXT_DEPTH && parts.iter().all(|p| valid_segment(p))
 }
 
-// domain context (the official source of truth, MARKDOWN); {{CONTEXT}} = name.
-// 6 business sections; section 6 (Hotspots) holds the unconsolidated. The lenses
-// facts/thoughts/emotions/actions are how the loop INTERPRETS (see AGENTS.md).
-fn context_md(name: &str, lang: &str) -> String {
-    context_template(lang).replace("{{CONTEXT}}", name)
+// context (the official source of truth, MARKDOWN); {{CONTEXT}} = name.
+// Section "Hotspots" holds the unconsolidated. The usage template may provide
+// its own per-vertical mold (ADR-0003); the baseline template is the fallback.
+fn context_md(name: &str, lang: &str, mold: Option<&str>) -> String {
+    mold.unwrap_or_else(|| context_template(lang))
+        .replace("{{CONTEXT}}", name)
 }
 
 // the single knowledge file of a context; "guia.md" is the legacy name (kept so
@@ -994,7 +1157,7 @@ fn context_file(dir: &Path) -> Option<PathBuf> {
     None
 }
 
-fn seed_context(base: &Path, name: &str, lang: &str) -> Result<(), String> {
+fn seed_context(base: &Path, name: &str, lang: &str, mold: Option<&str>) -> Result<(), String> {
     let d = base.join("contextos").join(name);
     std::fs::create_dir_all(&d).map_err(|e| e.to_string())?;
     let ch = d.join("CHANGELOG.md");
@@ -1009,7 +1172,8 @@ fn seed_context(base: &Path, name: &str, lang: &str) -> Result<(), String> {
     // Non-destructive: only seed context.md when neither the new nor the legacy
     // knowledge file exists (an already-populated context is never overwritten).
     if context_file(&d).is_none() {
-        std::fs::write(d.join("context.md"), context_md(name, lang)).map_err(|e| e.to_string())?;
+        std::fs::write(d.join("context.md"), context_md(name, lang, mold))
+            .map_err(|e| e.to_string())?;
     }
     // Ideas are no longer files: unconsolidated knowledge lives as HOTSPOTS inside
     // context.md. New contexts get no brainstorming/ folder; legacy folders on
@@ -1094,7 +1258,17 @@ fn acervos_view() -> AcervosView {
 }
 
 // Materialize the acervo folder structure (idempotent, non-destructive).
-fn ensure_acervo_structure(base: &Path, ctxs: &[String], lang: &str) -> Result<(), String> {
+// `tpl` is the usage template (preset, ADR-0003) applied only at creation:
+// AGENTS.md vertical addendum, extra skills and the initial queue guide.
+fn ensure_acervo_structure(
+    base: &Path,
+    ctxs: &[String],
+    lang: &str,
+    tpl: Option<&TemplateContent>,
+) -> Result<(), String> {
+    // First setup = no loop state yet. The queue guide (inbox/_prompt.md) is
+    // consumed by the loop, so re-materializations must never re-inject it.
+    let first_setup = !base.join(".brain/state.json").exists();
     for sub in [
         "inbox",
         "processed",
@@ -1106,29 +1280,61 @@ fn ensure_acervo_structure(base: &Path, ctxs: &[String], lang: &str) -> Result<(
     ] {
         std::fs::create_dir_all(base.join(sub)).map_err(|e| e.to_string())?;
     }
-    // /brain-context is the thin Claude adapter for the queue -> context loop
+    // /loro-context is the thin Claude adapter for the queue -> context loop
     // (ADR-0013); analyse/answer are the meeting-AI skills the terminal Claude runs
     // over a meeting's live stream (ADR-0012). Neutral instructions live in
     // AGENTS.md. Non-destructive.
     for (rel, body) in [
-        (".claude/commands/brain-context.md", brain_skill(lang)),
+        (".claude/commands/loro-context.md", brain_skill(lang)),
         (
-            ".claude/commands/brain-analyse.md",
+            ".claude/commands/loro-analyse.md",
             meeting_analyse_skill(lang),
         ),
         (
-            ".claude/commands/brain-answer.md",
-            meeting_answer_skill(lang),
+            ".claude/commands/loro-question.md",
+            meeting_question_skill(lang),
         ),
-        (".claude/commands/brain-ask.md", brain_ask_skill(lang)),
+        (".claude/commands/loro-ask.md", brain_ask_skill(lang)),
+        (".claude/commands/loro-note.md", loro_note_skill(lang)),
+        (".claude/commands/loro-sync.md", loro_sync_skill(lang)),
+        (".claude/commands/loro-tool.md", loro_tool_skill(lang)),
+        (
+            ".claude/commands/loro-presentation.md",
+            loro_presentation_skill(lang),
+        ),
+        (
+            ".claude/commands/loro-artifact.md",
+            loro_artifact_skill(lang),
+        ),
+        (".claude/commands/loro-slack.md", loro_slack_skill(lang)),
+        (".claude/commands/loro-digest.md", loro_digest_skill(lang)),
     ] {
         let p = base.join(rel);
         if !p.exists() {
             std::fs::write(&p, body).map_err(|e| e.to_string())?;
         }
     }
+    // Vertical extra skills from the usage template (ADR-0003), after the four
+    // standard ones and equally non-destructive.
+    if let Some(tpl) = tpl {
+        for (name, body) in &tpl.skills {
+            let p = base.join(".claude/commands").join(name);
+            if !p.exists() {
+                std::fs::write(&p, body).map_err(|e| e.to_string())?;
+            }
+        }
+        if first_setup {
+            if let Some(prompt) = &tpl.inbox_prompt {
+                let p = base.join("inbox/_prompt.md");
+                if !p.exists() {
+                    std::fs::write(&p, prompt).map_err(|e| e.to_string())?;
+                }
+            }
+        }
+    }
+    let mold = tpl.and_then(|t| t.context_md.as_deref());
     for c in ctxs {
-        seed_context(base, c, lang)?;
+        seed_context(base, c, lang, mold)?;
     }
     let state = base.join(".brain/state.json");
     if !state.exists() {
@@ -1138,10 +1344,17 @@ fn ensure_acervo_structure(base: &Path, ctxs: &[String], lang: &str) -> Result<(
     if !act.exists() {
         std::fs::write(&act, "").map_err(|e| e.to_string())?;
     }
-    // agnostic instruction file (AGENTS.md); keep any legacy CLAUDE.md untouched
+    // agnostic instruction file (AGENTS.md); keep any legacy CLAUDE.md untouched.
+    // The template contributes an addendum, never a replacement — the default
+    // body carries the loop mechanics the whole model depends on (ADR-0003).
     let agents = base.join("AGENTS.md");
     if !agents.exists() && !base.join("CLAUDE.md").exists() {
-        std::fs::write(&agents, agents_template(ctxs, lang)).map_err(|e| e.to_string())?;
+        let mut body = agents_template(ctxs, lang);
+        if let Some(extra) = tpl.and_then(|t| t.agents_extra.as_deref()) {
+            body.push('\n');
+            body.push_str(extra);
+        }
+        std::fs::write(&agents, body).map_err(|e| e.to_string())?;
     }
     let index = base.join("INDEX.md");
     if !index.exists() {
@@ -1177,6 +1390,14 @@ fn ui_get_lang() -> String {
     ui_lang()
 }
 
+// The app version (compile-time, from Cargo.toml — kept in sync with
+// tauri.conf.json by the release bump). Surfaced in Settings so the user can tell
+// at a glance whether an update landed.
+#[tauri::command]
+fn app_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
 #[tauri::command]
 fn ui_set_lang(lang: String, state: State<AppState>) -> Result<String, String> {
     let lang = normalize_lang(&lang);
@@ -1193,6 +1414,7 @@ fn ui_set_lang(lang: String, state: State<AppState>) -> Result<String, String> {
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // mirrors the wizard form 1:1 (IPC contract)
 fn brain_setup(
     dir: String,
     contexts: Vec<String>,
@@ -1201,6 +1423,8 @@ fn brain_setup(
     git_init: Option<bool>,
     color: Option<String>,
     lang: Option<String>,
+    template: Option<String>,
+    agent: Option<String>,
 ) -> Result<AcervosView, String> {
     let dir = if dir.trim().is_empty() {
         default_brain_dir().display().to_string()
@@ -1224,8 +1448,17 @@ fn brain_setup(
     // ADR-0002 §1: generated content follows the UI language; the per-acervo
     // language field is retired (still stored for older tooling, never asked).
     let lang = lang.map(|l| normalize_lang(&l)).unwrap_or_else(ui_lang);
+    // Usage template (ADR-0003): resolve early so an unknown id fails before
+    // any disk write. Only the id is ever logged (BR-8).
+    let template = template
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+        .unwrap_or_else(default_template);
+    let tpl = resolve_template(&template, &lang)?;
+    let agent = normalize_agent(&agent.unwrap_or_default());
     let base = PathBuf::from(&dir);
-    ensure_acervo_structure(&base, &ctxs, &lang)?;
+    ensure_acervo_structure(&base, &ctxs, &lang, Some(&tpl))?;
+    write_acervo_settings(&base, auto)?;
     if git_init.unwrap_or(false) {
         git_init_repo(&base)?;
     }
@@ -1245,6 +1478,8 @@ fn brain_setup(
         a.name = display_name;
         a.auto_context = auto;
         a.lang = lang;
+        a.template = template;
+        a.agent = agent;
         if !color.is_empty() {
             a.color = color;
         }
@@ -1261,6 +1496,8 @@ fn brain_setup(
             auto_context: auto,
             color,
             lang,
+            template,
+            agent,
         });
         id
     };
@@ -1272,6 +1509,38 @@ fn brain_setup(
 #[tauri::command]
 fn brain_list_acervos() -> AcervosView {
     acervos_view()
+}
+
+// ADR-0005: post-creation toggle (Configurações) for the active acervo's
+// autoContext — updates the global config (so the "auto" pill stays accurate)
+// AND the local .loro/settings.json marker the /loro-context skill reads.
+#[tauri::command]
+fn brain_set_auto_context(value: bool) -> Result<(), String> {
+    let mut cfg = read_loro_config();
+    let dir = active_acervo(&cfg)
+        .map(|a| a.dir.clone())
+        .ok_or("acervo not configured")?;
+    if let Some(a) = cfg.acervos.iter_mut().find(|a| a.dir == dir) {
+        a.auto_context = value;
+    }
+    write_loro_config(&cfg)?;
+    write_acervo_settings(&PathBuf::from(&dir), value)
+}
+
+// ---- ADR-0003: acervo usage templates (presets) -----------------------------
+#[tauri::command]
+fn brain_list_templates(lang: Option<String>) -> Vec<TemplateInfo> {
+    let lang = lang.map(|l| normalize_lang(&l)).unwrap_or_else(ui_lang);
+    list_templates(&lang)
+}
+
+// Copy a template into ~/.loro/templates as an editable custom template;
+// returns the created directory path.
+#[tauri::command]
+fn brain_duplicate_template(id: String) -> Result<String, String> {
+    let dir = duplicate_template(&id)?;
+    info!(template = %id, "template duplicated"); // id only, never content (BR-8)
+    Ok(dir.display().to_string())
 }
 
 // set the accent color of a project (persisted in the acervo config)
@@ -1322,7 +1591,14 @@ fn brain_add_context(name: String) -> Result<(), String> {
         return Err(format!("err.invalid_context:{slug}"));
     }
     let cfg = read_brain_config().ok_or("err.acervo_not_configured")?;
-    seed_context(Path::new(&cfg.brain_dir), &slug, &ui_lang())
+    let lang = ui_lang();
+    // Later-added contexts follow the acervo's usage template (ADR-0003); a
+    // vanished custom template degrades to the default mold, never an error.
+    let full = read_loro_config();
+    let mold = active_acervo(&full)
+        .and_then(|a| resolve_template(&a.template, &lang).ok())
+        .and_then(|t| t.context_md);
+    seed_context(Path::new(&cfg.brain_dir), &slug, &lang, mold.as_deref())
 }
 
 // Pure, testable core: delete a context/folder dir under contextos/.
@@ -1410,14 +1686,70 @@ fn brain_move_context_to_acervo(name: String, target_id: String) -> Result<(), S
     std::fs::rename(&src, &dest).map_err(|e| e.to_string())
 }
 
-// macOS: opens Audio MIDI Setup (Multi-Output Device is created by the user)
+// Where the user configures loopback capture (ADR-0012): the Audio MIDI Setup on
+// macOS (where a Multi-Output Device is created by hand), the Sound panel's
+// Recording tab on Windows (where "Mixagem estéreo" is enabled).
+fn audio_setup_cmd() -> (&'static str, Vec<&'static str>) {
+    if cfg!(target_os = "windows") {
+        ("control.exe", vec!["mmsys.cpl,,1"])
+    } else {
+        ("open", vec!["-a", "Audio MIDI Setup"])
+    }
+}
+
 #[tauri::command]
-fn open_audio_midi() -> Result<(), String> {
-    Command::new("open")
-        .args(["-a", "Audio MIDI Setup"])
+fn open_audio_setup() -> Result<(), String> {
+    let (bin, args) = audio_setup_cmd();
+    proc::command(bin)
+        .args(args)
         .spawn()
         .map(|_| ())
         .map_err(|e| e.to_string())
+}
+
+// VB-Cable is not installable from any package manager, so the guided Windows
+// flow can only hand the user the official download (ADR-0012).
+#[tauri::command]
+fn open_vbcable_download() -> Result<(), String> {
+    const URL: &str = "https://vb-audio.com/Cable/";
+    let (bin, args) = if cfg!(target_os = "windows") {
+        ("cmd", vec!["/C", "start", "", URL])
+    } else {
+        ("open", vec![URL])
+    };
+    proc::command(bin)
+        .args(args)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+// Guided Windows setup: whisper.cpp has no prebuilt whisper-stream (live mode
+// needs SDL2), so the engine is built from source. The script is bundled in the
+// binary and materialized into the Loro data dir on demand; the setup button
+// runs it in the embedded terminal. See scripts/setup-whisper-windows.ps1.
+#[cfg(target_os = "windows")]
+const WIN_SETUP_SCRIPT: &str = include_str!("../scripts/setup-whisper-windows.ps1");
+
+#[tauri::command]
+fn whisper_setup_script() -> Result<String, String> {
+    #[cfg(target_os = "windows")]
+    {
+        let dir = loro_data_dir();
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let path = dir.join("setup-whisper-windows.ps1");
+        // Written BOM-first: Windows PowerShell 5.1 falls back to CP1252 for a
+        // BOM-less .ps1, and the script's accented pt-BR text then decodes into
+        // smart quotes that unbalance the parser. The BOM pins it to UTF-8.
+        let mut bytes = Vec::from("\u{feff}");
+        bytes.extend_from_slice(WIN_SETUP_SCRIPT.trim_start_matches('\u{feff}').as_bytes());
+        std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+        Ok(path.display().to_string())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err("err.windows_only".into())
+    }
 }
 
 // ---- git/GitHub environment doctor + collaboration commands ----------------
@@ -1802,7 +2134,7 @@ struct MigrationReport {
 // Rename preserving git history when possible; falls back to a plain move.
 fn migrate_rename(base: &Path, rel_from: &str, rel_to: &str) -> Result<(), String> {
     if base.join(".git").is_dir() && git_available() {
-        let out = Command::new("git")
+        let out = proc::command("git")
             .args(["mv", rel_from, rel_to])
             .current_dir(base)
             .output()
@@ -1909,7 +2241,7 @@ fn migrate_acervo(base: &Path, apply: bool, lang: &str) -> Result<MigrationRepor
     }
 
     // A legacy `.claude/commands/brain.md` (the old loop skill) is left on disk for
-    // back-compat and only reported — the new loop skill is `brain-context.md`
+    // back-compat and only reported — the new loop skill is `loro-context.md`
     // (created below). Never delete the user's file.
     if base.join(".claude/commands/brain.md").is_file() {
         report
@@ -1917,25 +2249,53 @@ fn migrate_acervo(base: &Path, apply: bool, lang: &str) -> Result<MigrationRepor
             .push(".claude/commands/brain.md (legado)".into());
     }
 
-    // ADR-0013/0012: the loop skill (brain-context) and the meeting-AI skills
+    // ADR-0013/0012: the loop skill (loro-context) and the meeting-AI skills
     // (analyse/answer) are created only if absent so existing acervos gain them on
     // migration; never overwrites edits.
     for (rel, body) in [
         (
-            ".claude/commands/brain-context.md",
+            ".claude/commands/loro-context.md",
             brain_skill(lang).to_string(),
         ),
         (
-            ".claude/commands/brain-analyse.md",
+            ".claude/commands/loro-analyse.md",
             meeting_analyse_skill(lang).to_string(),
         ),
         (
-            ".claude/commands/brain-answer.md",
-            meeting_answer_skill(lang).to_string(),
+            ".claude/commands/loro-question.md",
+            meeting_question_skill(lang).to_string(),
         ),
         (
-            ".claude/commands/brain-ask.md",
+            ".claude/commands/loro-ask.md",
             brain_ask_skill(lang).to_string(),
+        ),
+        (
+            ".claude/commands/loro-note.md",
+            loro_note_skill(lang).to_string(),
+        ),
+        (
+            ".claude/commands/loro-sync.md",
+            loro_sync_skill(lang).to_string(),
+        ),
+        (
+            ".claude/commands/loro-tool.md",
+            loro_tool_skill(lang).to_string(),
+        ),
+        (
+            ".claude/commands/loro-presentation.md",
+            loro_presentation_skill(lang).to_string(),
+        ),
+        (
+            ".claude/commands/loro-artifact.md",
+            loro_artifact_skill(lang).to_string(),
+        ),
+        (
+            ".claude/commands/loro-slack.md",
+            loro_slack_skill(lang).to_string(),
+        ),
+        (
+            ".claude/commands/loro-digest.md",
+            loro_digest_skill(lang).to_string(),
         ),
     ] {
         let p = base.join(rel);
@@ -2247,53 +2607,114 @@ fn brain_write_inbox(name: String, content: String) -> Result<(), String> {
     std::fs::write(dir.join(&name), content).map_err(|e| e.to_string())
 }
 
-// ADR-0013: the fila (inbox/) is THE path brainstorming -> contexto. Copy an
-// existing report (or any acervo text file) into the queue, steered to a target
-// context via the `<contexto>--<nome>` prefix the /brain-context loop reads. The
-// report stays in the brainstorming; only a copy enters the queue. Path-guarded to
-// the acervo root; contexts with '/' collapse to '-' so the queue name stays flat.
+// ADR-0014: the fila (inbox/) is THE path brainstorming -> contexto. Each selected
+// brainstorming file is copied into the queue AS ITSELF — one queue item per file,
+// no consolidated report (supersedes ADR-0013). The /loro-context loop then distils
+// each entry into a versioned context. The raw meeting transcript, audit and audio
+// NEVER enter the queue (BR-8; `crate::acervo::is_queueable`).
+
+// Validate + resolve ONE brainstorming file into (abs source, queue name): scope
+// (brainstorming/ only), path-guard (canonicalize under base), text-only + the BR-8
+// transcript/audio/audit guard, and a collision-free flattened queue name (steered
+// to a context via the `<contexto>--<nome>` prefix the /loro-context loop reads).
+fn resolve_queue_entry(
+    base: &Path,
+    rel: &str,
+    ctx: Option<&str>,
+) -> Result<(PathBuf, String), String> {
+    let r = rel.replace('\\', "/");
+    if r.contains("..") {
+        return Err("err.invalid_path".into());
+    }
+    if !r.starts_with("brainstorming/") {
+        return Err("err.queue_brainstorming_only".into());
+    }
+    if !crate::acervo::is_queueable(&r) {
+        return Err("err.transcript_not_queueable".into());
+    }
+    let src = base
+        .join(&r)
+        .canonicalize()
+        .map_err(|_| "err.report_not_found".to_string())?;
+    if !src.starts_with(base) || !src.is_file() {
+        return Err("err.report_outside_acervo".into());
+    }
+    let name = import_name(ctx, &crate::acervo::queue_name_for(&r));
+    if !valid_inbox_name(&name) {
+        return Err("err.invalid_queue_name".into());
+    }
+    Ok((src, name))
+}
+
+// Send N selected brainstorming files to the fila, one queue item each. Validates
+// ALL entries before writing ANY (a bad rel fails the batch, no partial queue).
 #[tauri::command]
-fn brain_send_report_to_queue(
-    report_rel: String,
+fn brain_send_files_to_queue(
+    rels: Vec<String>,
     dest_context: Option<String>,
-) -> Result<String, String> {
-    let rel = report_rel.replace('\\', "/");
-    if !(rel.ends_with(".md") || rel.ends_with(".txt")) {
-        return Err("err.queue_text_only".into());
+) -> Result<Vec<String>, String> {
+    if rels.is_empty() {
+        return Err("err.queue_empty_selection".into());
     }
     if let Some(c) = dest_context.as_deref() {
         if !c.is_empty() && !valid_context(c) {
             return Err(format!("err.invalid_context:{c}"));
         }
     }
-    let cfg = read_brain_config().ok_or("err.acervo_not_configured")?;
-    let base = PathBuf::from(&cfg.brain_dir)
-        .canonicalize()
-        .map_err(|e| e.to_string())?;
-    let src = base
-        .join(&rel)
-        .canonicalize()
-        .map_err(|_| "err.report_not_found".to_string())?;
-    if !src.starts_with(&base) || !src.is_file() {
-        return Err("err.report_outside_acervo".into());
-    }
-    let content = std::fs::read_to_string(&src).map_err(|e| e.to_string())?;
-    let basename = src
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("relatorio.md");
     let ctx = dest_context
         .as_deref()
         .filter(|c| !c.is_empty())
         .map(|c| c.replace('/', "-"));
-    let name = import_name(ctx.as_deref(), basename);
-    if !valid_inbox_name(&name) {
-        return Err("err.invalid_queue_name".into());
+    let cfg = read_brain_config().ok_or("err.acervo_not_configured")?;
+    let base = PathBuf::from(&cfg.brain_dir)
+        .canonicalize()
+        .map_err(|e| e.to_string())?;
+    // ADR-0018: a selected MEETING is a directory, and what represents it in the
+    // fila is decided by its one owner (`acervo::meeting_queueables`) — never by
+    // a second walk here (hotspot #46). A meeting nobody analysed expands to
+    // nothing and says so instead of queueing an empty item.
+    let mut expanded = Vec::with_capacity(rels.len());
+    for rel in &rels {
+        if base.join(rel.replace('\\', "/")).is_dir() {
+            let files = crate::acervo::meeting_queueables(&base, rel);
+            if files.is_empty() {
+                return Err("err.meeting_not_analysed".into());
+            }
+            expanded.extend(files);
+        } else {
+            expanded.push(rel.clone());
+        }
+    }
+    let mut entries = Vec::with_capacity(expanded.len());
+    for rel in &expanded {
+        entries.push(resolve_queue_entry(&base, rel, ctx.as_deref())?);
     }
     let inbox = base.join("inbox");
     std::fs::create_dir_all(&inbox).map_err(|e| e.to_string())?;
-    std::fs::write(inbox.join(&name), content).map_err(|e| e.to_string())?;
-    Ok(name)
+    let mut names = Vec::with_capacity(entries.len());
+    for (src, name) in &entries {
+        let content = std::fs::read_to_string(src).map_err(|e| e.to_string())?;
+        std::fs::write(inbox.join(name), content).map_err(|e| e.to_string())?;
+        names.push(name.clone());
+    }
+    Ok(names)
+}
+
+// "enviar tudo → fila": every queueable file of the brainstorming, each its own item.
+#[tauri::command]
+fn brain_send_brainstorm_to_queue(
+    slug: String,
+    dest_context: Option<String>,
+) -> Result<Vec<String>, String> {
+    let cfg = read_brain_config().ok_or("err.acervo_not_configured")?;
+    let base = PathBuf::from(&cfg.brain_dir)
+        .canonicalize()
+        .map_err(|e| e.to_string())?;
+    let rels = crate::acervo::queueable_files(&base, &slug);
+    if rels.is_empty() {
+        return Err("err.queue_empty_selection".into());
+    }
+    brain_send_files_to_queue(rels, dest_context)
 }
 
 #[derive(serde::Serialize)]
@@ -2395,7 +2816,7 @@ fn quickopen_kind(rel: &str) -> &'static str {
 }
 
 // Recursive walk producing every text-ish file by full rel path. Unlike the
-// ADR-0007 display tree this does NOT skip subdomain dirs — the palette indexes
+// ADR-0005 display tree this does NOT skip subdomain dirs — the palette indexes
 // everything. Pure over `base` so it is testable without a running app.
 fn list_all_in(base: &Path) -> Vec<FileHit> {
     let mut out = Vec::new();
@@ -2657,6 +3078,56 @@ async fn brain_import(app: AppHandle, context: Option<String>) -> Result<usize, 
     Ok(n)
 }
 
+// ADR-0005: import files from the computer straight into an anexos/ folder —
+// a brainstorming's OR a context's (owner request: "no contexto ... consiga
+// add a partir do computador"). Mirrors brain_import, but the destination is
+// an anexos/ folder (not the inbox), filenames are kept as-is (anexos are
+// arbitrary files — pdf/xlsx/images), and collisions get a numeric suffix
+// instead of clobbering. dest_rel is guarded by guarded_anexos_dir (only a
+// normalized brainstorming/contextos anexos path is accepted).
+#[tauri::command]
+async fn brain_import_files(app: AppHandle, dest_rel: String) -> Result<usize, String> {
+    let cfg = read_brain_config().ok_or("err.acervo_not_configured")?;
+    let base = PathBuf::from(&cfg.brain_dir);
+    let dir = guarded_anexos_dir(&base, &dest_rel)?;
+    let dialog = app.dialog().clone();
+    let files = tauri::async_runtime::spawn_blocking(move || dialog.file().blocking_pick_files())
+        .await
+        .map_err(|e| e.to_string())?;
+    let Some(files) = files else { return Ok(0) };
+    let mut n = 0;
+    for f in files {
+        let src = PathBuf::from(f.to_string());
+        let Some(name) = src.file_name().map(|s| s.to_string_lossy().to_string()) else {
+            continue;
+        };
+        // never overwrite: on collision, insert a numeric suffix before the ext
+        let mut dest = dir.join(&name);
+        if dest.exists() {
+            let stem = std::path::Path::new(&name)
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| name.clone());
+            let ext = std::path::Path::new(&name)
+                .extension()
+                .map(|e| format!(".{}", e.to_string_lossy()))
+                .unwrap_or_default();
+            let mut i = 2;
+            loop {
+                let cand = dir.join(format!("{stem}-{i}{ext}"));
+                if !cand.exists() {
+                    dest = cand;
+                    break;
+                }
+                i += 1;
+            }
+        }
+        std::fs::copy(&src, &dest).map_err(|e| format!("{name}: {e}"))?;
+        n += 1;
+    }
+    Ok(n)
+}
+
 // Import explicit file paths into the active acervo's inbox (used by external
 // drag-and-drop of one or more files onto the queue).
 #[tauri::command]
@@ -2729,7 +3200,7 @@ fn save_recording(data: Vec<u8>, filename: String) -> Result<String, String> {
 async fn diarize(audio_path: String) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
         let script = project_dir().join("loro.sh");
-        let output = Command::new("bash")
+        let output = proc::command("bash")
             .arg(&script)
             .arg("diarize")
             .arg(&audio_path)
@@ -2787,7 +3258,7 @@ fn client_log(msg: String) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 // ---- embedded terminal (interactive PTY) — runs the agent CLI in the dock ----
 // ADR-0012: guarantee the meeting-AI skills exist in the acervo so
-// `/brain-context`, `/brain-analyse` and `/brain-answer` are discoverable by the
+// `/loro-context`, `/loro-analyse` and `/loro-question` are discoverable by the
 // terminal Claude even for acervos created before this change — no explicit
 // "migrar acervo" needed. Create-if-absent; never overwrites user edits.
 fn ensure_meeting_skills(base: &Path, lang: &str) {
@@ -2795,16 +3266,29 @@ fn ensure_meeting_skills(base: &Path, lang: &str) {
         return;
     }
     for (rel, body) in [
-        (".claude/commands/brain-context.md", brain_skill(lang)),
+        (".claude/commands/loro-context.md", brain_skill(lang)),
         (
-            ".claude/commands/brain-analyse.md",
+            ".claude/commands/loro-analyse.md",
             meeting_analyse_skill(lang),
         ),
         (
-            ".claude/commands/brain-answer.md",
-            meeting_answer_skill(lang),
+            ".claude/commands/loro-question.md",
+            meeting_question_skill(lang),
         ),
-        (".claude/commands/brain-ask.md", brain_ask_skill(lang)),
+        (".claude/commands/loro-ask.md", brain_ask_skill(lang)),
+        (".claude/commands/loro-note.md", loro_note_skill(lang)),
+        (".claude/commands/loro-sync.md", loro_sync_skill(lang)),
+        (".claude/commands/loro-tool.md", loro_tool_skill(lang)),
+        (
+            ".claude/commands/loro-presentation.md",
+            loro_presentation_skill(lang),
+        ),
+        (
+            ".claude/commands/loro-artifact.md",
+            loro_artifact_skill(lang),
+        ),
+        (".claude/commands/loro-slack.md", loro_slack_skill(lang)),
+        (".claude/commands/loro-digest.md", loro_digest_skill(lang)),
     ] {
         let p = base.join(rel);
         if !p.exists() {
@@ -2855,18 +3339,22 @@ fn term_open(app: AppHandle, state: State<AppState>, cols: u16, rows: u16) -> Re
     drop(pair.slave);
     let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
     let mut writer = pair.master.take_writer().map_err(|e| e.to_string())?;
-    // Auto-launch the terminal Claude so the /brain-* skills (analisar/responder/
+    // Auto-launch the terminal agent so the /loro-* skills (analisar/perguntar/
     // ask/gerar contexto) work out of the box — the buttons inject slash commands
-    // that only a running Claude understands. The login shell sources the profile
-    // (real PATH) before reading this stdin, so `claude` resolves; if it is not
-    // installed the shell just prints "command not found" and stays usable.
+    // that only a running agent understands. The login shell sources the profile
+    // (real PATH) before reading this stdin, so the agent command resolves; if
+    // it is not installed the shell just prints "command not found" and stays
+    // usable. Uses the ACTIVE acervo's configured agent (ADR-0005) — this used
+    // to hardcode "claude", breaking any acervo configured with another CLI.
+    let launched_at = std::time::Instant::now();
     if in_acervo {
-        let _ = writer.write_all(b"claude\n");
+        let _ = writer.write_all(format!("{}\n", active_agent()).as_bytes());
         let _ = writer.flush();
     }
     let apph = app.clone();
     std::thread::spawn(move || {
         let mut buf = [0u8; 4096];
+        let mut dec = Utf8Stream::default();
         loop {
             match reader.read(&mut buf) {
                 Ok(0) | Err(_) => {
@@ -2874,10 +3362,10 @@ fn term_open(app: AppHandle, state: State<AppState>, cols: u16, rows: u16) -> Re
                     break;
                 }
                 Ok(n) => {
-                    let _ = apph.emit(
-                        "term-output",
-                        String::from_utf8_lossy(&buf[..n]).to_string(),
-                    );
+                    let s = dec.push(&buf[..n]);
+                    if !s.is_empty() {
+                        let _ = apph.emit("term-output", s);
+                    }
                 }
             }
         }
@@ -2886,6 +3374,7 @@ fn term_open(app: AppHandle, state: State<AppState>, cols: u16, rows: u16) -> Re
         writer,
         master: pair.master,
         child,
+        launched_at,
     });
     info!(target: "term", "terminal opened");
     Ok(())
@@ -2925,17 +3414,126 @@ fn term_close(state: State<AppState>) {
     }
 }
 
-// ---- ADR-0002 §4: terminal/Claude readiness handshake ----------------------
-// Slash-commands only mean something to a running Claude. The frontend asks
-// this instead of guessing from terminal output: is the PTY open, and does a
-// `claude` process live under its shell right now?
+// ---- ADR-0002 §4: terminal/agent readiness handshake ------------------------
+// Slash-commands only mean something to a running agent. The frontend asks
+// this instead of guessing from terminal output: is the PTY open, and does the
+// active acervo's agent process live under its shell right now? The agent is
+// per-acervo (ADR-0003) — any CLI, `claude` by default.
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct TermStatus {
     open: bool,
-    claude_running: bool,
+    agent_running: bool,
+    // ADR-0005: true for a short grace window right after term_open wrote the
+    // launch line — `ps`-based detection lags a freshly spawned process by at
+    // least one poll, so the frontend must not treat "not detected yet" as
+    // "never launched" and retype the agent command into a session that
+    // already has it in flight.
+    just_launched: bool,
 }
 
+const TERM_LAUNCH_GRACE: std::time::Duration = std::time::Duration::from_secs(6);
+
+fn is_within_grace(elapsed: std::time::Duration) -> bool {
+    elapsed < TERM_LAUNCH_GRACE
+}
+
+// Process name to look for: basename of the agent command's first token
+// (e.g. "ollama run llama3" -> "ollama"; "/usr/local/bin/claude" -> "claude").
+fn agent_process_name(agent: &str) -> String {
+    agent
+        .split_whitespace()
+        .next()
+        .unwrap_or("claude")
+        .rsplit('/')
+        .next()
+        .unwrap_or("claude")
+        .to_string()
+}
+
+fn active_agent() -> String {
+    let cfg = read_loro_config();
+    active_acervo(&cfg)
+        .map(|a| normalize_agent(&a.agent))
+        .unwrap_or_else(default_agent)
+}
+
+// Does a process-table entry name the given agent? macOS `ps -axo comm=` may
+// print a full path, while Windows reports the bare image name and always keeps
+// the `.exe`, so both sides are reduced to a lowercase, extension-free basename.
+// Windows process names are case-insensitive, so lowercasing is required there
+// and harmless elsewhere (agent binaries are lowercase by convention).
+fn process_name_matches(comm: &str, name: &str) -> bool {
+    fn base(s: &str) -> String {
+        let leaf = s
+            .rsplit(['/', '\\'])
+            .next()
+            .unwrap_or(s)
+            .to_ascii_lowercase();
+        match leaf.strip_suffix(".exe") {
+            Some(stem) => stem.to_string(),
+            None => leaf,
+        }
+    }
+    base(comm) == base(name)
+}
+
+// (pid, ppid, name) for every process on the machine.
+//
+// Unix reads it from `ps`. Windows has no `ps`, and `wmic` was removed from
+// Windows 11, so it walks the ToolHelp snapshot directly — which is also far
+// cheaper than a subprocess, and term_status is polled every 300ms while a
+// habilidade waits for its agent (ADR-0014).
+#[cfg(not(windows))]
+fn process_table() -> Vec<(u32, u32, String)> {
+    proc::command("ps")
+        .args(["-axo", "pid=,ppid=,comm="])
+        .output()
+        .ok()
+        .map(|o| parse_ps_table(&String::from_utf8_lossy(&o.stdout)))
+        .unwrap_or_default()
+}
+
+#[cfg(windows)]
+fn process_table() -> Vec<(u32, u32, String)> {
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        TH32CS_SNAPPROCESS,
+    };
+    let mut table = Vec::new();
+    // SAFETY: the snapshot handle is checked before use and closed on every exit
+    // path; PROCESSENTRY32W is zeroed with dwSize set, as the API requires.
+    unsafe {
+        let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if snap == INVALID_HANDLE_VALUE {
+            return table;
+        }
+        let mut entry: PROCESSENTRY32W = std::mem::zeroed();
+        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+        if Process32FirstW(snap, &mut entry) != 0 {
+            loop {
+                let n = entry
+                    .szExeFile
+                    .iter()
+                    .position(|&c| c == 0)
+                    .unwrap_or(entry.szExeFile.len());
+                table.push((
+                    entry.th32ProcessID,
+                    entry.th32ParentProcessID,
+                    String::from_utf16_lossy(&entry.szExeFile[..n]),
+                ));
+                if Process32NextW(snap, &mut entry) == 0 {
+                    break;
+                }
+            }
+        }
+        CloseHandle(snap);
+    }
+    table
+}
+
+#[cfg(not(windows))]
 fn parse_ps_table(out: &str) -> Vec<(u32, u32, String)> {
     out.lines()
         .filter_map(|l| {
@@ -2957,9 +3555,7 @@ fn has_descendant_process(table: &[(u32, u32, String)], root: u32, name: &str) -
         }
         for (cpid, ppid, comm) in table {
             if *ppid == pid {
-                // `ps -axo comm=` may print the full executable path on macOS
-                let base = comm.rsplit('/').next().unwrap_or(comm);
-                if base == name {
+                if process_name_matches(comm, name) {
                     return true;
                 }
                 frontier.push(*cpid);
@@ -2971,34 +3567,35 @@ fn has_descendant_process(table: &[(u32, u32, String)], root: u32, name: &str) -
 
 #[tauri::command]
 fn term_status(state: State<AppState>) -> TermStatus {
-    let shell_pid = state
-        .term
-        .lock()
-        .unwrap()
-        .as_ref()
-        .and_then(|s| s.child.process_id());
-    let Some(root) = shell_pid else {
+    let guard = state.term.lock().unwrap();
+    let Some(session) = guard.as_ref() else {
         return TermStatus {
             open: false,
-            claude_running: false,
+            agent_running: false,
+            just_launched: false,
         };
     };
-    let claude_running = Command::new("ps")
-        .args(["-axo", "pid=,ppid=,comm="])
-        .output()
-        .ok()
-        .map(|o| {
-            has_descendant_process(
-                &parse_ps_table(&String::from_utf8_lossy(&o.stdout)),
-                root,
-                "claude",
-            )
-        })
-        .unwrap_or(false);
+    let Some(root) = session.child.process_id() else {
+        return TermStatus {
+            open: false,
+            agent_running: false,
+            just_launched: false,
+        };
+    };
+    let just_launched = is_within_grace(session.launched_at.elapsed());
+    let agent_name = agent_process_name(&active_agent());
+    let agent_running = has_descendant_process(&process_table(), root, &agent_name);
     TermStatus {
         open: true,
-        claude_running,
+        agent_running,
+        just_launched,
     }
+}
+
+// The agent command of the active acervo (frontend launches it in the PTY).
+#[tauri::command]
+fn term_agent() -> String {
+    active_agent()
 }
 
 pub fn run() {
@@ -3102,23 +3699,31 @@ pub fn run() {
             toggle_overlay,
             client_log,
             doctor,
+            list_models,
+            download_model,
             selftest_enabled,
             pick_folder,
             default_save_dir,
             auto_save,
             list_capture_devices,
             ui_get_lang,
+            app_version,
             ui_set_lang,
             brain_get_config,
             brain_setup,
             brain_list_acervos,
+            brain_set_auto_context,
+            brain_list_templates,
+            brain_duplicate_template,
             brain_set_active,
             brain_set_color,
             brain_remove_acervo,
             brain_add_context,
             brain_rename_context,
             brain_move_context_to_acervo,
-            open_audio_midi,
+            open_audio_setup,
+            open_vbcable_download,
+            whisper_setup_script,
             brain_delete_context,
             brain_move_to_acervo,
             brain_move,
@@ -3143,11 +3748,14 @@ pub fn run() {
             term_resize,
             term_close,
             term_status,
+            term_agent,
             brain_import,
+            brain_import_files,
+            brain_new_note_in,
             brain_delete_inbox,
             brain_write_inbox,
-            brain_send_report_to_queue,
-            brain_brainstorm_build_report,
+            brain_send_files_to_queue,
+            brain_send_brainstorm_to_queue,
             brain_write,
             brain_list_dir,
             brain_list_all,
@@ -3159,12 +3767,23 @@ pub fn run() {
             brain_rename_brainstorm,
             brain_set_brainstorm_category,
             brain_brainstorm_delete,
+            brain_rename_pessoal,
+            brain_move_pessoal,
+            brain_move_meeting,
+            brain_abs_path,
             brain_list_brainstorms,
             brain_list_meetings,
             brain_new_notebook,
+            brain_new_tool,
+            brain_delete_tool,
             brain_read_asset,
             brain_open_external,
+            brain_open_link,
             brain_resolve_ref,
+            brain_annotations_get,
+            brain_annotation_add,
+            brain_annotation_update,
+            brain_annotation_delete,
             brain_add_ref,
             brain_promote,
             brain_meeting_start,
@@ -3175,7 +3794,7 @@ pub fn run() {
             brain_meeting_set_consent,
             brain_meeting_manifest,
             brain_meeting_rename,
-            brain_meeting_build_notebook,
+            brain_meeting_finish,
             brain_meeting_delete_audio,
             brain_meeting_purge_audio,
             brain_meeting_transcribe_segment,
@@ -3209,18 +3828,61 @@ mod tests {
     // ADR-0002 §4 — the terminal/Claude readiness handshake asks the OS whether
     // a `claude` process lives under the PTY shell, instead of guessing from
     // terminal output.
+    // The tree walk is shared by every platform, so it is tested against a
+    // literal table rather than `ps` output.
     #[test]
-    fn ps_table_parses_and_finds_descendant_by_name() {
-        let table = parse_ps_table(
-            "  1     0  launchd\n 300     1  zsh\n 412   300  claude\n 500   412  node\n 600     1  zsh\n",
-        );
+    fn finds_descendant_by_name_in_the_process_tree() {
+        let t = |pid, ppid, name: &str| (pid, ppid, name.to_string());
+        let table = vec![
+            t(1, 0, "launchd"),
+            t(300, 1, "zsh"),
+            t(412, 300, "claude"),
+            t(500, 412, "node"),
+            t(600, 1, "zsh"),
+        ];
         assert!(has_descendant_process(&table, 300, "claude"));
         assert!(!has_descendant_process(&table, 600, "claude"));
         // the root itself does not count as its own descendant match
         assert!(!has_descendant_process(&table, 412, "zsh"));
         // grandchildren are found too
         assert!(has_descendant_process(&table, 300, "node"));
-        // malformed lines are skipped, not fatal
+    }
+
+    #[test]
+    fn windows_process_names_match_despite_the_exe_suffix() {
+        // ToolHelp reports "claude.exe"; the configured agent is "claude". Before
+        // this, agent detection could never succeed on Windows.
+        assert!(process_name_matches("claude.exe", "claude"));
+        assert!(process_name_matches("Claude.EXE", "claude")); // case-insensitive
+        assert!(process_name_matches("C:\\bin\\claude.exe", "claude")); // backslash path
+        assert!(process_name_matches("/usr/local/bin/claude", "claude")); // unix path
+        assert!(process_name_matches("claude", "claude"));
+        // still discriminating
+        assert!(!process_name_matches("node.exe", "claude"));
+        assert!(!process_name_matches("claudex.exe", "claude"));
+    }
+
+    // The whole point of term_status: an agent running under the PTY is found on
+    // this machine's real process table. Uses the test binary itself as the root,
+    // since cargo's runner is a live process with a known name.
+    #[test]
+    fn process_table_reads_this_machine() {
+        let table = process_table();
+        assert!(table.len() > 5, "tabela vazia: {}", table.len());
+        let me = std::process::id();
+        assert!(
+            table.iter().any(|(pid, _, _)| *pid == me),
+            "o proprio processo de teste deve aparecer na tabela"
+        );
+        // every entry carries a usable name
+        assert!(table.iter().all(|(_, _, n)| !n.is_empty()));
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn ps_table_parsing_skips_malformed_lines() {
+        let table = parse_ps_table("  1     0  launchd\n 300     1  zsh\n");
+        assert_eq!(table.len(), 2);
         assert!(parse_ps_table("garbage\n").is_empty());
     }
 
@@ -3291,6 +3953,20 @@ mod tests {
         assert!(a.windows(2).any(|w| w[0] == "-c" && w[1] == "2"));
     }
 
+    // Settings surfaces the version so the user can tell an update landed: the
+    // command must return the crate version (a non-empty semver-shaped string).
+    #[test]
+    fn app_version_is_the_crate_semver() {
+        let v = app_version();
+        assert_eq!(v, env!("CARGO_PKG_VERSION"));
+        assert!(!v.is_empty());
+        assert_eq!(
+            v.split('.').count(),
+            3,
+            "expected MAJOR.MINOR.PATCH, got {v}"
+        );
+    }
+
     #[test]
     fn valid_contexts() {
         assert!(valid_context("frota"));
@@ -3312,25 +3988,104 @@ mod tests {
         assert!(t.contains("CODEOWNERS")); // collaboration per context owner
         assert!(!t.contains("index.html")); // no HTML product
         assert!(t.contains("hotspot")); // ideas become hotspots, not idea files
-        assert!(t.contains("/brain-context")); // ADR-0013: renamed skill
+        assert!(t.contains("/loro-context")); // ADR-0013: renamed skill
     }
 
     #[test]
     fn context_markdown_replaces_context_placeholder() {
         assert!(CONTEXT_TEMPLATE.contains("{{CONTEXT}}"));
-        let g = context_md("frota", "pt");
-        assert!(g.starts_with("# frota — contexto do domínio"));
+        let g = context_md("frota", "pt", None);
+        assert!(g.starts_with("# frota — contexto"));
         assert!(!g.contains("{{CONTEXT}}"));
         assert!(!g.contains("<html")); // pure markdown, no HTML
         assert!(g.contains("Hotspots")); // section 6 is the evolution backlog
                                          // the en language uses the English template
-        assert!(context_md("fleet", "en").contains("domain context"));
+        assert!(context_md("fleet", "en", None).contains("context"));
+    }
+
+    #[test]
+    fn audio_setup_cmd_opens_the_platform_panel() {
+        // ADR-0012: each OS has its own audio panel, and the wrong command only
+        // fails at runtime, so the choice is pinned here.
+        let (bin, args) = audio_setup_cmd();
+        if cfg!(target_os = "windows") {
+            assert_eq!(bin, "control.exe");
+            // ",,1" selects the Recording tab, where Stereo Mix lives
+            assert_eq!(args, vec!["mmsys.cpl,,1"]);
+        } else {
+            assert_eq!(bin, "open");
+            assert_eq!(args, vec!["-a", "Audio MIDI Setup"]);
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn whisper_setup_script_is_written_as_bom_prefixed_utf8() {
+        // Windows PowerShell 5.1 decodes a BOM-less .ps1 as CP1252, where the
+        // UTF-8 em dash (E2 80 94) becomes "â€”" — and that trailing U+201D is a
+        // smart quote the parser accepts as a string delimiter, which unbalances
+        // the quoting and kills the whole script. The BOM forces UTF-8.
+        let tmp = std::env::temp_dir().join(format!("loro-setup-{}", std::process::id()));
+        std::env::set_var("LORO_HOME", &tmp);
+        let path = whisper_setup_script().expect("script deve ser escrito");
+
+        let bytes = std::fs::read(&path).unwrap();
+        assert_eq!(&bytes[..3], b"\xEF\xBB\xBF", "script precisa de BOM UTF-8");
+        assert_ne!(&bytes[3..6], b"\xEF\xBB\xBF", "BOM duplicado");
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("WHISPER_SDL2")); // build do modo ao vivo
+        assert!(content.contains("whisper-stream"));
+
+        std::env::remove_var("LORO_HOME");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn utf8_stream_reassembles_codepoint_split_across_reads() {
+        // The parrot emoji is 4 bytes (F0 9F A6 9C). A PTY read that ends after
+        // the first two must not surface replacement chars — the completing
+        // bytes arrive on the next read and the codepoint is emitted whole.
+        let mut d = super::Utf8Stream::default();
+        let b = "🦜".as_bytes();
+        assert_eq!(d.push(&b[..2]), "");
+        assert_eq!(d.push(&b[2..]), "🦜");
+    }
+
+    #[test]
+    fn utf8_stream_passes_ascii_and_ansi_through() {
+        let mut d = super::Utf8Stream::default();
+        assert_eq!(d.push(b"\x1b[2Khello"), "\x1b[2Khello");
+    }
+
+    #[test]
+    fn utf8_stream_handles_three_way_split() {
+        // 'a' + emoji(4) + 'b', sliced mid-emoji on both sides.
+        let mut d = super::Utf8Stream::default();
+        let b = "a🦜b".as_bytes();
+        let mut out = String::new();
+        out.push_str(&d.push(&b[..3])); // 'a' + first 2 emoji bytes
+        out.push_str(&d.push(&b[3..5])); // next 2 emoji bytes -> completes it
+        out.push_str(&d.push(&b[5..])); // 'b'
+        assert_eq!(out, "a🦜b");
+    }
+
+    #[test]
+    fn utf8_stream_recovers_from_invalid_byte() {
+        // A genuinely invalid byte becomes one replacement char and never stalls
+        // the surrounding text.
+        let mut d = super::Utf8Stream::default();
+        assert_eq!(d.push(&[b'x', 0xFF, b'y']), "x\u{FFFD}y");
     }
 
     #[test]
     fn pty_opens_spawns_and_exits() {
-        // exercises the same path as term_open (openpty + spawn + reader + writer)
-        // without a blocking read: proves the portable-pty stack works on this machine.
+        // Exercises the same path as term_open (openpty + spawn + reader + writer)
+        // without a blocking read: proves the portable-pty stack works on this
+        // machine. Windows has no /bin/sh, and ConPTY has finicky
+        // natural-exit/wait semantics, so there we spawn the same kind of
+        // interactive shell term_open uses and tear it down with kill() instead
+        // of waiting on a child to exit on its own (which deadlocks).
         let sys = portable_pty::native_pty_system();
         let pair = sys
             .openpty(portable_pty::PtySize {
@@ -3340,14 +4095,24 @@ mod tests {
                 pixel_height: 0,
             })
             .unwrap();
-        let mut cmd = portable_pty::CommandBuilder::new("/bin/sh");
-        cmd.args(["-c", "exit 0"]);
-        let mut child = pair.slave.spawn_command(cmd).unwrap();
-        drop(pair.slave);
-        let _reader = pair.master.try_clone_reader().unwrap();
-        let _writer = pair.master.take_writer().unwrap();
-        let status = child.wait().unwrap();
-        assert!(status.success());
+        if cfg!(target_os = "windows") {
+            let cmd = portable_pty::CommandBuilder::new("cmd.exe");
+            let mut child = pair.slave.spawn_command(cmd).unwrap();
+            drop(pair.slave);
+            let _reader = pair.master.try_clone_reader().unwrap();
+            let _writer = pair.master.take_writer().unwrap();
+            // killing a live pty child proves teardown works on this OS
+            child.kill().unwrap();
+        } else {
+            let mut cmd = portable_pty::CommandBuilder::new("/bin/sh");
+            cmd.args(["-c", "exit 0"]);
+            let mut child = pair.slave.spawn_command(cmd).unwrap();
+            drop(pair.slave);
+            let _reader = pair.master.try_clone_reader().unwrap();
+            let _writer = pair.master.take_writer().unwrap();
+            let status = child.wait().unwrap();
+            assert!(status.success());
+        }
     }
 
     #[test]
@@ -3427,7 +4192,7 @@ mod tests {
 
     #[test]
     fn list_contexts_is_recursive_and_beyond_three_levels() {
-        // ADR-0006: recursive domain — parent with context.md + nested subdomains
+        // ADR-0005: recursive domain — parent with context.md + nested subdomains
         let root = std::env::temp_dir().join(format!("loro-rec-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let with_ctx = [
@@ -3521,7 +4286,7 @@ mod tests {
     fn seeding_uses_context_md_and_collaboration_without_brainstorming() {
         let root = std::env::temp_dir().join(format!("loro-seed-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        ensure_acervo_structure(&root, &["frota".into()], "pt").unwrap();
+        ensure_acervo_structure(&root, &["frota".into()], "pt", None).unwrap();
         // the official source of truth is context.md; no guia.md nor brainstorming/
         assert!(root.join("contextos/frota/context.md").is_file());
         assert!(!root.join("contextos/frota/guia.md").exists());
@@ -3529,9 +4294,79 @@ mod tests {
         // collaboration scaffolding
         assert!(root.join(".github/CODEOWNERS").is_file());
         assert!(root.join(".github/pull_request_template.md").is_file());
+        // ADR-0011: the digest skill is seeded like every other built-in
+        assert!(root.join(".claude/commands/loro-digest.md").is_file());
         // idempotent and non-destructive: running again does not break
-        ensure_acervo_structure(&root, &["frota".into()], "pt").unwrap();
+        ensure_acervo_structure(&root, &["frota".into()], "pt", None).unwrap();
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ---- ADR-0003: usage templates seed AGENTS.md addendum, skills and the
+    // queue guide — non-destructively and only on first setup for the guide.
+    #[test]
+    fn template_seeds_agents_addendum_skills_and_queue_guide() {
+        let root = std::env::temp_dir().join(format!("loro-tpl-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let tpl = TemplateContent {
+            agents_extra: Some("## Regras da vertical: teste\n".into()),
+            inbox_prompt: Some("# Guia da fila — teste\n".into()),
+            context_md: Some("# {{CONTEXT}} — contexto\n\n## 1 · Molde da vertical\n".into()),
+            skills: vec![("brain-mensagem.md".into(), "corpo da skill".into())],
+        };
+        ensure_acervo_structure(&root, &["contas".into()], "pt", Some(&tpl)).unwrap();
+        let agents = std::fs::read_to_string(root.join("AGENTS.md")).unwrap();
+        // addendum appended after the default body — the loop mechanics survive
+        assert!(agents.contains("Acervo de contextos"));
+        assert!(agents.contains("Regras da vertical: teste"));
+        assert_eq!(
+            std::fs::read_to_string(root.join(".claude/commands/brain-mensagem.md")).unwrap(),
+            "corpo da skill"
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("inbox/_prompt.md")).unwrap(),
+            "# Guia da fila — teste\n"
+        );
+        // the vertical's own context.md mold, placeholder resolved
+        let ctx = std::fs::read_to_string(root.join("contextos/contas/context.md")).unwrap();
+        assert!(ctx.starts_with("# contas — contexto"));
+        assert!(ctx.contains("Molde da vertical"));
+        // the loop consumed the guide; a re-materialization must NOT re-inject it
+        std::fs::remove_file(root.join("inbox/_prompt.md")).unwrap();
+        ensure_acervo_structure(&root, &["contas".into()], "pt", Some(&tpl)).unwrap();
+        assert!(!root.join("inbox/_prompt.md").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn no_template_matches_previous_behavior() {
+        let root = std::env::temp_dir().join(format!("loro-notpl-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        ensure_acervo_structure(&root, &["frota".into()], "pt", None).unwrap();
+        let agents = std::fs::read_to_string(root.join("AGENTS.md")).unwrap();
+        assert_eq!(agents, agents_template(&["frota".into()], "pt"));
+        assert!(!root.join("inbox/_prompt.md").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn agent_process_name_takes_first_token_basename() {
+        assert_eq!(agent_process_name("claude"), "claude");
+        assert_eq!(agent_process_name("ollama run llama3"), "ollama");
+        assert_eq!(
+            agent_process_name("/usr/local/bin/gemini --flash"),
+            "gemini"
+        );
+        assert_eq!(agent_process_name(""), "claude");
+    }
+
+    // ADR-0005: the grace window that stops termRunAgent from retyping the
+    // agent launch line into a session that already has it in flight.
+    #[test]
+    fn is_within_grace_holds_for_a_short_window_only() {
+        assert!(is_within_grace(std::time::Duration::from_secs(0)));
+        assert!(is_within_grace(std::time::Duration::from_secs(5)));
+        assert!(!is_within_grace(std::time::Duration::from_secs(6)));
+        assert!(!is_within_grace(std::time::Duration::from_secs(30)));
     }
 
     #[test]
@@ -3683,7 +4518,7 @@ mod tests {
         let d = root.join("contextos/frota");
         std::fs::create_dir_all(&d).unwrap();
         std::fs::write(d.join("guia.md"), "conhecimento legado").unwrap();
-        seed_context(&root, "frota", "pt").unwrap();
+        seed_context(&root, "frota", "pt", None).unwrap();
         // legacy guia preserved; no context.md created over it
         assert_eq!(
             std::fs::read_to_string(d.join("guia.md")).unwrap(),
@@ -3699,7 +4534,7 @@ mod tests {
         assert!(valid_context("frota"));
         assert!(valid_context("engineering/frontend"));
         assert!(valid_context("engineering/sre/platform"));
-        assert!(valid_context("frota/eletrica/piloto/pods/sp/zona-leste")); // 6 levels ok (ADR-0006)
+        assert!(valid_context("frota/eletrica/piloto/pods/sp/zona-leste")); // 6 levels ok (ADR-0005)
         assert!(!valid_context("a/b/c/d/e/f/g")); // > MAX_CONTEXT_DEPTH (7) levels
         assert!(!valid_context("Engineering/frontend")); // uppercase
         assert!(!valid_context("a//b")); // empty segment

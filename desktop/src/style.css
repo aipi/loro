@@ -150,9 +150,14 @@ body {
 
 /* ---- acervo + terminal: empilhado ou lado a lado ---- */
 .mainrow { display: flex; flex-direction: column; flex: 1; min-height: 0; }
-.mainrow.side { flex-direction: row; }
-.mainrow.side .termpanel { width: clamp(320px, 42%, 560px); height: auto;
+/* Side mode is a grid, not a row: the live panel must NEVER become a row item
+   (it turned into a squeezed middle column — loose text over a broken screen).
+   Top row: studio | terminal; bottom row: the live panel spanning full width. */
+.mainrow.side { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: minmax(0, 1fr) auto; }
+.mainrow.side > .bwrap { grid-area: 1 / 1; min-height: 0; }
+.mainrow.side .termpanel { grid-area: 1 / 2; width: clamp(320px, 42vw, 560px); height: auto;
   border-top: none; border-left: 1px solid var(--line); }
+.mainrow.side .livepanel { grid-column: 1 / -1; grid-row: 2; }
 
 /* ---- terminal embutido ---- */
 .termpanel { flex: none; height: 40vh; display: flex; flex-direction: column;
@@ -237,11 +242,20 @@ body {
 }
 .wfield > span { flex: none; width: 78px; }
 .wfield input,
-.wfield select {
+.wfield select,
+.wfield textarea {
   flex: 1; border: none; background: none; color: var(--ink);
   font-family: var(--sans); font-size: 14px; outline: none; max-width: none;
 }
 .wfield select { cursor: pointer; }
+/* read-only argument row (ADR-0005): the alvo a habilidade runs against is
+   fixed — shown as a value, never inside the writable input */
+.wfield .lockval {
+  flex: 1; min-width: 0; font-size: 11.5px; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.wfield textarea { resize: vertical; font-family: var(--mono); font-size: 12px; line-height: 1.5; }
+.wfield:has(textarea) { align-items: flex-start; }
 .wfield .dirbtn { flex: 1; max-width: none; border: none; padding: 0; }
 .hint { font-family: var(--mono); font-size: 10.5px; color: var(--muted); letter-spacing: .03em; }
 .hint.err { color: var(--red); }
@@ -358,6 +372,7 @@ body {
 .sheet .field select { flex: 1; max-width: none; border: none; background: none; }
 .sheet .opt { padding: 8px 2px; }
 .sheet .hint { margin: 2px 2px 0; }
+.cfgver { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--line); text-align: center; }
 .sheet .dirbtn { flex: 1; max-width: none; border: none; padding: 0; }
 .dirinfo {
   flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -386,6 +401,15 @@ body {
   font-family: var(--mono); font-size: 9.5px; letter-spacing: .1em;
   text-transform: uppercase; color: var(--muted); margin: 16px 8px 4px;
 }
+/* ADR-0005: search/filter for a long brainstorming list — only shown once
+   there are enough temas to make the tree hard to scan (see renderPessoal). */
+.sidefilter {
+  display: block; width: calc(100% - 16px); margin: 0 8px 6px;
+  padding: 5px 8px; font-size: 11.5px; font-family: var(--sans);
+  border: 1px solid var(--line); border-radius: 6px;
+  background: var(--panel); color: var(--ink);
+}
+.sidefilter:focus { outline: none; border-color: var(--accent); }
 /* (i) explicando cada mundo/passo: botão que abre um tooltip clicável (.tipbox).
    O title nativo era tímido demais — o (i) agora tem ação. */
 .ghelp {
@@ -395,6 +419,17 @@ body {
   text-transform: none; letter-spacing: 0;
 }
 .ghelp:hover, .ghelp:focus-visible { opacity: 1; color: var(--accent); }
+/* ADR-0005: collapsible section header (habilidades) — the label itself is the
+   toggle, inheriting the .bgroup typography; the caret telegraphs state. */
+.bgtoggle {
+  appearance: none; background: none; border: none; padding: 0;
+  font: inherit; color: inherit; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 4px;
+  text-transform: inherit; letter-spacing: inherit;
+}
+.bgtoggle:hover, .bgtoggle:focus-visible { color: var(--accent); }
+.seccaret { display: inline-block; font-size: 11px; line-height: 1; transition: transform .12s ease; }
+.bgtoggle.closed .seccaret { transform: rotate(-90deg); }
 .tipbox {
   position: fixed; z-index: 95; max-width: 300px;
   background: var(--panel); color: var(--ink);
@@ -442,6 +477,12 @@ body {
   border: 1px solid var(--line); border-radius: 8px; padding: 8px 14px; cursor: pointer;
 }
 .abtn:hover { border-color: var(--accent); color: var(--accent); }
+/* icon inside a hero .abtn (executar habilidade): centered with the label and
+   inheriting the button's color — .nico's sidebar defaults (baseline inline,
+   muted) misaligned it here */
+.bhero .abtn { display: inline-flex; align-items: center; gap: 6px; }
+.bhero .abtn .nico { color: inherit; }
+.bhero .abtn .nico svg { width: 13px; height: 13px; }
 /* CTA do fluxo (gerar contexto · enviar para a fila): o passo seguinte é o único
    botão "cheio" da vizinhança — hierarquia por cor, não por tamanho. */
 .abtn.cta {
@@ -465,6 +506,31 @@ body {
 .edithost { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--panel); }
 .edithost .cm-editor { height: 100%; min-height: 60vh; }
 
+/* ADR-0016: barra de formatação markdown. `flex-wrap: wrap` é requisito, não
+   estilo: na janela padrão (560×520) os quinze controles não caberiam em uma
+   linha e estourariam a largura do painel no WKWebView. */
+.mdbar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 2px;
+  padding: 4px 6px; margin-bottom: 6px;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--panel);
+}
+.mdbar .mdsep { width: 1px; height: 14px; background: var(--line); margin: 0 5px; }
+.mdbar button {
+  min-width: 26px; height: 24px; padding: 0 6px;
+  font-family: var(--mono); font-size: 11px; line-height: 1;
+  color: var(--muted); background: transparent;
+  border: 1px solid transparent; border-radius: 6px; cursor: pointer;
+}
+.mdbar button:hover { color: var(--ink); border-color: var(--line); }
+.mdbar button[data-md="bold"] { font-weight: 700; }
+.mdbar button[data-md="italic"] { font-style: italic; }
+.mdbar button[data-md="strike"] { text-decoration: line-through; }
+/* no modo editar a barra é altura fixa; só o editor abaixo dela cresce/rola */
+#wsBody.editing .mdbar { flex: none; margin: 0 clamp(16px, 3vw, 28px) 6px; }
+/* o modal tem altura própria: o CM6 rola dentro dela em vez de esticar o sheet */
+#editModalHost { height: 320px; margin-top: 2px; }
+#editModalHost .cm-editor { min-height: 0; }
+
 /* ADR-0008: no modo editar o CM6 ocupa o painel inteiro (não um card contido).
    #wsBody deixa de rolar/pad e o #bDocWrap vira coluna flex que enche a altura;
    o editor rola internamente (cm-scroller). */
@@ -472,7 +538,57 @@ body {
 #wsBody.editing #bDocWrap { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 #wsBody.editing .dochead { padding: 14px clamp(16px, 3vw, 28px) 0; }
 #wsBody.editing .findbar { margin: 0 clamp(16px, 3vw, 28px) 8px; }
+/* The view-mode `.docbody` uses `align-items: flex-start` (line ~530) so the
+   reader and the sticky rail top-align. In edit mode that leaks in and stops
+   .docmain from being stretched to the panel height, so it grows to the full
+   document height instead — the editor never gets a bounded height and can't
+   scroll. Reset to stretch so the flex chain constrains the editor. */
+#wsBody.editing .docbody { flex: 1; min-height: 0; display: flex; align-items: stretch; }
+#wsBody.editing .docmain { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 #wsBody.editing .edithost { flex: 1; min-height: 0; border: 0; border-radius: 0; background: transparent; }
+/* ADR-0008: in edit mode the CM6 editor owns the whole panel, so the actions
+   rail is not shown. Leaving it visible let the ≤900px breakpoint (line ~536)
+   stack it below the editor as a flex column and take the vertical space it
+   needs, collapsing the editor (flex:1) to ~0px on the default 560×520 window —
+   the document then had no viewport and could not scroll. The rail's actions
+   stay available in view mode and the acervo header. */
+#wsBody.editing .doc-rail { display: none; }
+/* Belt-and-suspenders once the chain above is bounded: the contained-card 60vh
+   floor (line ~506) has no place in edit mode, where the editor fills the panel
+   exactly. On a very short window it would exceed edithost and get clipped by
+   its `overflow: hidden`; reset it so the editor never outgrows the panel. */
+#wsBody.editing .edithost .cm-editor { min-height: 0; }
+
+/* ADR-0005: doc actions rail — habilidade/pedir à IA/versionar, o mesmo
+   padrão em todo lugar onde essas ações existem (documento, reunião,
+   cabeçalho do acervo). Visible, button-shaped controls (owner request:
+   "esses botões precisam ser visíveis que são botões"). */
+.docbody { display: flex; gap: 20px; align-items: flex-start; }
+.docmain { flex: 1 1 auto; min-width: 0; }
+.doc-rail { flex: 0 0 220px; display: flex; flex-direction: column; gap: 14px; position: sticky; top: 0; }
+@media (max-width: 900px) {
+  .docbody { flex-direction: column; }
+  .doc-rail { flex-basis: auto; width: 100%; position: static; }
+}
+.rail-sec { display: flex; flex-direction: column; gap: 6px; }
+/* each rail action is its own bordered card so neighbors never read as one
+   sequential flow (owner feedback: "pedir à IA parece sequencial ao dropdown") */
+.rail-sec.card { border: 1px solid var(--line); border-radius: 10px; padding: 10px 10px 12px; background: var(--panel); }
+/* the SELECTED habilidade's description, always visible (option-title hover
+   is unreliable in webviews); min-height keeps the card from jumping */
+.rail-desc { font-size: 10.5px; line-height: 1.5; color: var(--muted); margin: 0; min-height: 2.4em; }
+.rail-head { font-family: var(--mono); font-size: 9.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+.rail-row { display: flex; gap: 6px; align-items: center; }
+.rail-row .mini-select { flex: 1; min-width: 0; }
+.railbtn {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--panel);
+  color: var(--ink); font-family: var(--sans); font-size: 12.5px;
+  padding: 8px 10px; cursor: pointer; width: 100%;
+}
+.railbtn:hover { border-color: var(--accent); color: var(--accent); }
+.railbtn.cta { background: var(--accent, var(--teal)); border-color: transparent; color: var(--paper); font-weight: 600; }
+.railbtn.icon { width: 34px; flex: none; padding: 8px; }
 /* input dentro do menu flutuante (renomear/mover contexto) */
 .menuinput { width: calc(100% - 16px); margin: 4px 8px 2px; }
 
@@ -483,6 +599,48 @@ body {
 .findbar .mono { flex: none; }
 .doc mark.hl { background: color-mix(in srgb, var(--yellow) 40%, transparent); color: inherit; border-radius: 2px; }
 .doc mark.hl.cur { background: var(--accent); color: var(--panel); }
+
+/* ---- anotações: grifos, comentários, popover (ADR-0007) ---- */
+/* the rendered body is selectable again (body sets user-select:none globally) */
+.annotatable { user-select: text; -webkit-user-select: text; }
+.annotatable mark.annot {
+  background: color-mix(in srgb, var(--yellow) 38%, transparent);
+  color: inherit; border-radius: 2px; cursor: pointer;
+  box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--yellow) 70%, transparent);
+}
+.annotatable mark.annot.cor-verde { background: color-mix(in srgb, var(--teal) 30%, transparent); box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--teal) 70%, transparent); }
+.annotatable mark.annot.cor-vermelho { background: color-mix(in srgb, var(--red) 26%, transparent); box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--red) 70%, transparent); }
+.annotatable mark.annot.has-comment { box-shadow: inset 0 -2px 0 var(--accent); }
+.annotatable mark.annot:hover { filter: brightness(1.06); }
+
+.annot-pop {
+  position: fixed; z-index: 60; display: flex; flex-wrap: wrap; gap: 4px;
+  max-width: 280px; padding: 6px; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--panel); box-shadow: 0 10px 32px rgba(0, 0, 0, .18); user-select: none;
+}
+.annot-act {
+  border: 1px solid var(--line); background: var(--paper); color: var(--ink);
+  font: 12px var(--sans); padding: 4px 8px; border-radius: 7px; cursor: pointer; white-space: nowrap;
+}
+.annot-act:hover { border-color: var(--accent); color: var(--accent); }
+.annot-act.danger:hover { border-color: var(--red); color: var(--red); }
+.annot-cmts { flex-basis: 100%; max-height: 160px; overflow-y: auto; margin-bottom: 2px; }
+.annot-cmt { font: 12px var(--sans); padding: 4px 6px; border-left: 2px solid var(--accent); margin-bottom: 3px; background: color-mix(in srgb, var(--accent) 7%, transparent); border-radius: 0 5px 5px 0; }
+.annot-none { flex-basis: 100%; color: var(--muted); font-size: 11px; padding: 2px 4px; }
+
+/* ADR-0011: indice.md staleness nudge — a quiet amber (brainstorming world) bar */
+.digest-banner { display: flex; align-items: center; gap: 10px; justify-content: space-between;
+  margin: 0 0 16px; padding: 8px 12px; font-size: 12px; color: var(--yellow);
+  border: 1px solid color-mix(in srgb, var(--yellow) 45%, transparent); border-radius: 10px;
+  background: color-mix(in srgb, var(--yellow) 9%, transparent); }
+.digest-banner .link { color: var(--yellow); font-family: var(--mono); font-size: 12px; white-space: nowrap; }
+.annot-panel { margin: 18px 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: color-mix(in srgb, var(--accent) 4%, transparent); }
+.annot-panel > summary { cursor: pointer; color: var(--accent); font-size: 13px; user-select: none; }
+.annot-prow { margin: 8px 0; }
+.annot-pquote { color: var(--muted); font-size: 11px; margin-bottom: 3px; }
+.annot-pcmt { font-size: 12px; padding: 3px 6px; border-left: 2px solid var(--accent); background: color-mix(in srgb, var(--accent) 7%, transparent); border-radius: 0 5px 5px 0; margin: 2px 0; }
+.annot-orphans { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--line); }
+.annot-ohead { color: var(--muted); font-size: 11px; margin-bottom: 4px; }
 
 /* ---- markdown completo no leitor ---- */
 .doc h4 { font-size: .95em; margin: .7em 0 .3em; font-weight: 650; }
@@ -547,6 +705,10 @@ body {
 }
 .mini.act:hover { color: var(--accent); border-color: var(--accent); }
 .mini.act.danger:hover { color: var(--red); border-color: var(--red); }
+/* the AI action wears the acervo accent AT REST (owner request) — this rule
+   must outrank .mini.act above, hence the triple class */
+.mini.act.ai { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); }
+.mini.act.ai:hover { color: var(--ink); border-color: var(--accent); }
 /* confirmação destrutiva explícita */
 .fitem2.fstatic { cursor: default; }
 .fitem2.fstatic:hover { background: none; }
@@ -571,6 +733,19 @@ body {
   font-size: 13px; cursor: pointer; padding: 0;
 }
 .rowmenu:hover { color: var(--accent); border-color: var(--accent); }
+/* colapsa investigações/respostas de uma reunião (fechado por padrão) —
+   button-shaped like .rowmenu so it visibly IS a control, not decoration;
+   the square rotates invisibly (symmetric), only the glyph appears to turn */
+.rowtoggle {
+  flex: none; margin-left: 6px;
+  width: 22px; height: 22px; line-height: 1;
+  border: 1px solid var(--line); border-radius: 6px;
+  background: var(--panel); color: var(--muted);
+  font-size: 12px; cursor: pointer; padding: 0;
+  transition: transform .12s ease;
+}
+.rowtoggle.open { transform: rotate(90deg); }
+.rowtoggle:hover { color: var(--accent); border-color: var(--accent); }
 .fitem2.ditem .fn, .fitem2.danger .fn { color: var(--red); }
 .fitem2 .fn { flex: 1 1 auto; }
 .fitem2 .rowmenu { margin-left: auto; width: 22px; height: 18px; }
@@ -606,7 +781,7 @@ body {
 /* versionamento (estilo VSCode): novo=verde · modificado=âmbar · apagado=vermelho */
 .g-new > .bn, .g-new > .nico { color: #3fb950; }
 .g-mod > .bn, .g-mod > .nico { color: var(--yellow); }
-/* indicador de mudança não commitada num contexto (ADR-0007) */
+/* indicador de mudança não commitada num contexto (ADR-0005) */
 .bitem .gdot { color: var(--yellow); font-size: 9px; line-height: 1; opacity: .9; }
 .g-del > .bn, .g-del > .nico { color: var(--red); text-decoration: line-through; }
 .g-new > .bn::after { content: "U"; }
@@ -668,6 +843,8 @@ body {
 .qfoot .link { font-size: 10.5px; }
 .rowsplit { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
 .hfoot { margin-top: auto; padding-top: 12px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.toolsrow { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.toolsrow:empty { margin-top: 0; }
 .qrow { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line); }
 .qrow:last-of-type { border-bottom: none; }
 .qname { font-size: 11px; color: var(--ink); cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -689,12 +866,6 @@ body {
 
 /* ---- editor (edit unprocessed / guide prompt) ---- */
 .sheet.editor { width: min(640px, calc(100vw - 32px)); display: flex; flex-direction: column; }
-.editarea {
-  width: 100%; min-height: 320px; resize: vertical; margin-top: 10px;
-  font-family: var(--mono); font-size: 12.5px; line-height: 1.6;
-  color: var(--ink); background: var(--panel);
-  border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px;
-}
 .editbar { display: flex; align-items: center; gap: 14px; margin-top: 12px; }
 
 /* ---- toast ---- */
@@ -705,6 +876,14 @@ body {
   padding: 8px 14px; border-radius: 999px; z-index: 30; max-width: 84%;
   text-align: center;
 }
+/* ADR-0018: o toast do fim de reunião carrega a oferta de analisar — uma ação
+   em um clique, dispensável. Herda o toast: nada permanente entra no layout. */
+.toastbtn {
+  margin-left: 10px; padding: 2px 10px; border-radius: 999px;
+  border: 1px solid var(--paper); background: transparent; color: var(--paper);
+  font-family: inherit; font-size: inherit; letter-spacing: inherit; cursor: pointer;
+}
+.toastbtn:hover { background: var(--paper); color: var(--ink); }
 
 /* linha de pendente: só o nome navega; botões à direita */
 .row.nohover:hover { color: inherit; }
@@ -804,7 +983,6 @@ body {
 #navPessoal .bitem.on { background: color-mix(in srgb, var(--yellow) 14%, transparent); color: var(--yellow); }
 #navPessoal .bitem.file.on, #navPessoal .bitem.file:hover { color: var(--yellow); }
 #navPessoal .bitem.on > .nico, #navPessoal .bitem.on > .bn { color: var(--yellow); }
-#navPessoal .pill { background: color-mix(in srgb, var(--yellow) 16%, transparent); color: var(--yellow); }
 #navPessoal .bitem.addctx {
   border-color: color-mix(in srgb, var(--yellow) 55%, transparent); color: var(--yellow);
 }
@@ -878,11 +1056,13 @@ body {
    artefatos + bloco de análise/consentimento. Reaproveita os tokens do tema. */
 .mtg-surface { display: flex; align-items: flex-start; gap: 20px; }
 .mtg-doc { flex: 1 1 auto; min-width: 0; }
+/* same width and breakpoint as .doc-rail — the habilidade card must sit in
+   the SAME place whether the open tab is a meeting or a plain document */
 .mtg-rail {
-  flex: 0 0 214px; position: sticky; top: 0;
+  flex: 0 0 220px; position: sticky; top: 0;
   display: flex; flex-direction: column; gap: 14px;
 }
-@media (max-width: 720px) {
+@media (max-width: 900px) {
   .mtg-surface { flex-direction: column; }
   .mtg-rail { flex-basis: auto; width: 100%; position: static; }
 }
@@ -942,6 +1122,8 @@ body {
 .mtg-action { display: flex; flex-direction: column; gap: 5px; }
 .mtg-action + .mtg-action { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
 .mtg-action .mtg-note { margin: 0; }
+.mtg-skillrow { display: flex; gap: 6px; align-items: center; }
+.mtg-skillrow .mini-select { flex: 1; min-width: 0; }
 
 /* ai_doctor posture (ADR-0011): honest booleans only, never a secret (BR-9). */
 .mtg-aistatus {
@@ -1004,10 +1186,60 @@ body {
 .bitem.bsub .bn { color: var(--muted); }
 /* Barra de ação da seleção → fila. */
 .bsselbar {
-  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-  margin: 8px 10px; padding: 8px 10px;
+  display: flex; flex-direction: column; gap: 8px;
+  margin: 8px 10px; padding: 10px;
   border: 1px solid color-mix(in srgb, var(--yellow) 40%, var(--line));
   border-radius: 10px; background: color-mix(in srgb, var(--yellow) 10%, transparent);
-  font-size: 12px;
+  font-size: 11.5px;
 }
 .bsselbar span { color: var(--ink); }
+.bsselrow { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.bsselrow .link { font-size: 10.5px; }
+
+/* usage template picker (wizard, ADR-0003): hint under the dropdown, aligned
+   with the field column (.wfield > span is 78px + gap) */
+.tplhint { margin: -4px 0 0 90px; }
+
+/* palette shortcut hint (every command has one) */
+.cmdk-k { margin-left: auto; flex: none; font-size: 10px; color: var(--muted);
+  border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; }
+
+/* compact creation (owner feedback 2026-07-28): ＋ in the section header;
+   inside a brainstorming, one row with two half-width actions */
+.gadd { margin-left: auto; background: none; border: 1px solid transparent; border-radius: 5px;
+  color: var(--muted); font-size: 13px; line-height: 1; padding: 1px 6px; cursor: pointer; }
+.gadd:hover, .gadd:focus-visible { color: var(--accent); border-color: var(--line); }
+.bsadd { display: flex; gap: 4px; padding: 2px 8px 4px; }
+/* inside a folder group (ADR-0005): the creation row aligns with the rows it
+   creates, with a touch of air so it reads as the folder's toolbar */
+.bchild .bsadd { padding: 4px 4px 6px 2px; }
+.bempty.sub { padding: 2px 10px 6px; font-size: 10px; }
+.bsaddbtn { flex: 1; min-width: 0; background: none; border: 1px dashed var(--line); border-radius: 6px;
+  font-family: var(--mono); font-size: 10px; letter-spacing: .04em; color: var(--muted);
+  padding: 3px 4px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bsaddbtn:hover { color: var(--ink); border-color: var(--muted); }
+.bsaddbtn.rec2:hover { color: var(--red); border-color: color-mix(in srgb, var(--red) 50%, transparent); }
+
+/* meeting ⋯ menu: emphasized primary action, disabled entries with a reason */
+.fitem2.strong .fn { color: var(--accent); }
+.fitem2.off { opacity: .45; pointer-events: none; }
+.fnote { padding: 2px 10px 6px; font-size: 10px; color: var(--muted); }
+.fsep { border-top: 1px solid var(--line); margin: 4px 0; }
+
+/* first-launch welcome tour */
+.welcome { margin: 4px 0 10px 18px; display: grid; gap: 8px; font-size: 13px; line-height: 1.5; }
+
+/* model manager (ADR-0006): installed/missing state + on-demand download */
+.modelmgr { display: grid; gap: 6px; margin: 6px 2px 0; }
+.modelrow { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+.modelinfo { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.modelname { color: var(--ink); font-size: 12px; letter-spacing: .03em; }
+.modelnote { font-family: var(--mono); font-size: 10px; color: var(--muted); letter-spacing: .02em; }
+.modeltag { font-family: var(--mono); font-size: 9px; text-transform: uppercase; color: var(--teal);
+  border: 1px solid var(--teal); border-radius: 6px; padding: 0 4px; margin-left: 6px; vertical-align: middle; }
+.modelaction { flex: none; }
+.modeldl { padding: 6px 10px; font-size: 10.5px; white-space: nowrap; }
+.modelok { font-family: var(--mono); font-size: 10.5px; color: var(--teal); letter-spacing: .03em; }
+.modelprog { width: 120px; height: 6px; border-radius: 4px; background: var(--line); overflow: hidden; }
+.modelprog .bar { height: 100%; width: 0; background: var(--teal); transition: width .3s ease; }

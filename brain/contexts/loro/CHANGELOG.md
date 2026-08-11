@@ -1,6 +1,17 @@
 # loro — CHANGELOG
 > Dated history; the loop only appends. Approved decisions rise to context.md.
 
+## 2026-07-29 — efficient-reading layer for the acervo (ADR-0004)
+Reading the knowledge base becomes cheap by structure, not by tooling: every
+`context.md` now opens with a **Summary card** (1 line per section + key IDs,
+regenerated on every update), decisions get stable IDs (`D-YYYY-MM-DD-<slug>`),
+hotspots get `H-<n>`, and the `INDEX.md` line carries description + updated
+date + hotspot range so routing decides without opening files. The generated
+`AGENTS.md` and all skills teach the protocol explicitly: index → card → ID
+search → targeted section read. Retrieval infrastructure (vector RAG, knowledge
+graphs) was evaluated and deferred — see ADR-0004 §5. This brain adopts the
+same layer (dogfooding). _Source: docs/adr/0004-acervo-reading-layer.md._
+
 ## 2026-07-28 — open-source preparation: one ADR, brain made consistent
 Preparing the repository to go public: the thirteen ADRs (`0001`–`0013`) were
 consolidated into a single `docs/adr/0001-baseline.md` (with a map from the

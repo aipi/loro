@@ -11,12 +11,11 @@
   // A meeting home is brainstorming/<slug>/reunioes/<id>/ (ADR-0013) where <id>
   // is [a-z0-9-] (validated in meeting.rs); the legacy pessoal/temas/<slug>/…
   // home is still recognized for un-migrated acervos. The living notebook is
-  // reuniao.md and the built report is relatorio.md — both under the gitignore
-  // quarantine (never versioned).
+  // reuniao.md, under the gitignore quarantine (never versioned); ADR-0018
+  // removed the built report, so the meeting's output is its notas/.
   const HOME = "(?:brainstorming\\/[^/]+|pessoal\\/temas\\/[^/]+)\\/reunioes";
   const LIVING_RE = new RegExp("^" + HOME + "\\/([a-z0-9-]+)\\/reuniao\\.md$");
-  const REPORT_RE = new RegExp("^" + HOME + "\\/([a-z0-9-]+)\\/relatorio\\.md$");
-  const DIR_RE = new RegExp("^(" + HOME + "\\/[a-z0-9-]+)\\/(?:reuniao|relatorio)\\.md$");
+  const DIR_RE = new RegExp("^(" + HOME + "\\/[a-z0-9-]+)\\/reuniao\\.md$");
 
   // The stable append marker meeting.rs writes into the living file; the reader
   // must strip it so the transcript surface never shows the raw comment.
@@ -26,14 +25,10 @@
     const m = LIVING_RE.exec(String(rel == null ? "" : rel));
     return m ? m[1] : null;
   }
-  function reportId(rel) {
-    const m = REPORT_RE.exec(String(rel == null ? "" : rel));
-    return m ? m[1] : null;
-  }
   function isLiving(rel) { return livingId(rel) != null; }
-  function isReport(rel) { return reportId(rel) != null; }
 
-  // Derive the acervo-relative meeting directory from a living/report path. The
+  // Derive the acervo-relative meeting directory from the living transcript path.
+  // ADR-0018 removed the report, so `reuniao.md` is the only door. The
   // meeting AI skills (ADR-0012) take this dir as $ARGUMENTS, and the embedded
   // terminal runs with the acervo root as cwd, so acervo-relative is exactly
   // what the slash command needs.
@@ -51,21 +46,21 @@
   }
 
   // Build the exact slash-command string the app injects into the terminal
-  // Claude (ADR-0012): analyse -> "/brain-analyse <dir>"; answer ->
-  // "/brain-answer <dir> <question>". Command names use hyphens (a dot is not a
+  // Claude (ADR-0012): analyse -> "/loro-analyse <dir>"; question ->
+  // "/loro-question <dir> <question>". Command names use hyphens (a dot is not a
   // valid Claude Code command name); they must match the files materialised by
-  // templates.rs (.claude/commands/brain-analyse.md, brain-answer.md). Returns
-  // null when the dir is missing, or (for answer) when the question is empty
+  // templates.rs (.claude/commands/loro-analyse.md, loro-question.md). Returns
+  // null when the dir is missing, or (for question) when the question is empty
   // after sanitising, so the caller declines to inject.
   function meetingSkillCmd(kind, dir, question) {
     const d = sanitizeSkillArg(dir);
     if (!d) return null;
-    if (kind === "answer") {
+    if (kind === "question") {
       const q = sanitizeSkillArg(question);
       if (!q) return null;
-      return "/brain-answer " + d + " " + q;
+      return "/loro-question " + d + " " + q;
     }
-    return "/brain-analyse " + d;
+    return "/loro-analyse " + d;
   }
 
   function stripMarker(text) {
@@ -166,8 +161,60 @@
       .trim();
   }
 
+  // O que fazer com o buffer da transcrição AVULSA quando uma sessão termina.
+  // Uma reunião tem a própria superfície (a aba reuniao.md, ADR-0010): o rodapé
+  // avulso não participa dela, nem para salvar nem para aparecer. Decisão pura
+  // porque os dois pontos de término (onStopped e o fim de transcribe-state)
+  // precisam responder igual — era a divergência entre eles que deixava o
+  // rodapé subir por cima de uma reunião.
+  //   "none"     → não mexe no rodapé
+  //   "autosave" → salva sozinho na pasta configurada
+  //   "offer"    → mostra a barra salvar/descartar e abre o painel
+  function looseEndAction(o) {
+    const d = o || {};
+    if (d.meetingActive) return "none";
+    if (!(Number(d.lineCount) > 0)) return "none";
+    return d.autosave ? "autosave" : "offer";
+  }
+
+  // #44 — destinos possíveis para MOVER uma reunião. Uma reunião só existe em
+  // `<brainstorming>/reunioes/` (é o caminho que o list_meetings varre), então o
+  // destino é sempre outro brainstorming — nunca avulso, notas ou anexos, que
+  // guardam arquivos soltos. O brainstorming atual sai da lista.
+  function meetingMoveTargets(temas, slugAtual) {
+    return (Array.isArray(temas) ? temas : [])
+      .filter(function (b) { return b && b.slug && b.slug !== slugAtual; })
+      .map(function (b) { return { slug: b.slug, label: b.nome || b.slug }; });
+  }
+
+  // O alvo de arrastar-e-soltar: devolve o slug de destino quando a chave do
+  // grupo é o cabeçalho `reuniões` de OUTRO brainstorming, e null em qualquer
+  // outro caso (notas, anexos, avulso, o próprio brainstorming).
+  function meetingDropTarget(groupKey, slugAtual) {
+    var m = /^bsfolder:(.+):reunioes$/.exec(String(groupKey == null ? "" : groupKey));
+    if (!m) return null;
+    return m[1] && m[1] !== slugAtual ? m[1] : null;
+  }
+
+  // ADR-0018 · AC-5 — o fim de uma gravação SUGERE a análise, nunca a executa.
+  // O desfecho da oferta é decidido aqui, puro: só o clique em "analisar" produz
+  // um comando; dispensar devolve null e a reunião fica intocada.
+  function analyseOffer(escolha, dir) {
+    if (escolha !== "analisar" || !dir) return null;
+    return meetingSkillCmd("analyse", dir);
+  }
+
+  // ADR-0018 · AC-7 — a análise É a saída da reunião, então uma reunião sem nada
+  // em `notas/` não tem o que enfileirar. Devolve o motivo (msgid) quando o envio
+  // deve ficar bloqueado, e null quando pode ir. Puro.
+  function meetingQueueBlock(notas) {
+    return Number(notas) > 0 ? null : "analise a reunião antes de enviar para a fila";
+  }
+
   return {
-    livingId, reportId, isLiving, isReport, meetingDir,
+    meetingMoveTargets, meetingDropTarget,
+    looseEndAction, analyseOffer, meetingQueueBlock,
+    livingId, isLiving, meetingDir,
     sanitizeSkillArg, meetingSkillCmd,
     stripMarker, acervoJoin, aiStatusLine, MARKER,
     isHallucination, filterHallucinations,

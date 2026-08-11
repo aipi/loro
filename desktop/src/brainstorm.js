@@ -9,7 +9,7 @@
   root.LoroBrainstorm = api;
 })(typeof window !== "undefined" ? window : globalThis, function () {
   // The sequential flow the UI must make legible. The user always moves left to
-  // right: build ideas in a brainstorming, elect parts into the context queue,
+  // right: build ideas in a brainstorming, elect files into the context queue,
   // then generate the versioned context.
   // Stage copy per language. Keys are stable identifiers (never translated);
   // labels/hints are UI copy — pure modules cannot reach the window-level i18n
@@ -17,13 +17,13 @@
   const STAGES_BY_LANG = {
     pt: [
       { key: "brainstorming", label: "Brainstorming", hint: "construa a ideia: reuniões e notas" },
-      { key: "fila", label: "Fila", hint: "eleja partes → um relatório entra na fila de geração de contexto" },
-      { key: "contexto", label: "Contexto", hint: "gere o contexto versionado a partir da fila (/brain-context)" },
+      { key: "fila", label: "Fila", hint: "escolha arquivos → cada um entra na fila de geração de contexto" },
+      { key: "contexto", label: "Contexto", hint: "gere o contexto versionado a partir da fila (/loro-context)" },
     ],
     en: [
       { key: "brainstorming", label: "Brainstorming", hint: "build the idea: meetings and notes" },
-      { key: "fila", label: "Queue", hint: "elect parts → a report enters the context generation queue" },
-      { key: "contexto", label: "Context", hint: "generate the versioned context from the queue (/brain-context)" },
+      { key: "fila", label: "Queue", hint: "choose files → each one enters the context generation queue" },
+      { key: "contexto", label: "Context", hint: "generate the versioned context from the queue (/loro-context)" },
     ],
   };
   function stages(lang) {
@@ -54,8 +54,30 @@
     return cats.map(function (c) { return { categoria: c, items: map.get(c) }; });
   }
 
+  // ADR-0005: with many brainstormings the always-expanded tree got unreadable
+  // — a search box replaces it. A query filters by nome/slug; with no query,
+  // caps to the `cap` most recently updated (unless `showAll`), reporting how
+  // many were hidden so the caller can render a "ver todos (N)" row.
+  function filterAndCapTemas(temas, query, showAll, cap) {
+    const arr = Array.isArray(temas) ? temas : [];
+    const q = String(query == null ? "" : query).trim().toLowerCase();
+    if (q) {
+      const items = arr.filter(function (t) {
+        const nome = String((t && t.nome) || "").toLowerCase();
+        const slug = String((t && t.slug) || "").toLowerCase();
+        return nome.includes(q) || slug.includes(q);
+      });
+      return { items, hiddenCount: 0 };
+    }
+    if (showAll || arr.length <= cap) return { items: arr, hiddenCount: 0 };
+    const sorted = arr.slice().sort(function (a, b) {
+      return String((b && b.atualizadoEm) || "").localeCompare(String((a && a.atualizadoEm) || ""));
+    });
+    return { items: sorted.slice(0, cap), hiddenCount: arr.length - cap };
+  }
+
   // A selection model over a brainstorming's parts. Each part is
-  // { kind: "reuniao"|"investigacao"|"pergunta"|"nota", rel }. The model is a
+  // { kind: "reuniao"|"nota"|"anexo", rel }. The model is a
   // plain Set of rels so it stays serializable/testable.
   function emptySelection() { return new Set(); }
   function toggleSelection(sel, rel) {
@@ -74,34 +96,133 @@
       .map(function (p) { return { kind: p.kind, rel: p.rel }; });
   }
 
-  // The queue (inbox) filename for a report sent to the fila, steered to a
-  // context via the `<contexto>--<nome>` prefix (contexts with '/' collapse to
-  // '-' so the queue name stays flat). Mirrors the Rust import_name contract.
-  function reportInboxName(reportRel, destContext) {
-    const base = String(reportRel == null ? "" : reportRel).split("/").pop() || "relatorio.md";
-    const c = String(destContext == null ? "" : destContext).trim().replace(/\//g, "-");
-    return c ? c + "--" + base : base;
+  // Resolve one selected part into what goes to the fila (ADR-0014, one queue
+  // item per file — no consolidated report). Every kind (nota, anexo, análise) is
+  // already a file and goes as itself; a MEETING is its directory and stays a
+  // directory here (ADR-0018) — which files represent it is decided by its one
+  // owner in the backend (`acervo::meeting_queueables`), so this helper never
+  // rebuilds the BR-8 gate on the JS side (hotspot #46). Pure.
+  function queueRelForSelection(kind, rel) {
+    const r = String(rel == null ? "" : rel).replace(/\/+$/, "");
+    return r || null;
   }
 
-  // Build the "/brain-context" invocation the "gerar contexto" button injects
+  // Build the "/loro-context" invocation the "gerar contexto" button injects
   // into the terminal (the renamed loop skill; hyphen, not a dot). No argument is
   // required — the loop reads the whole inbox — so it is a bare command. Kept as a
   // helper (symmetry with meetingSkillCmd) so the command string has one source.
-  function brainContextCmd() { return "/brain-context"; }
+  function brainContextCmd() { return "/loro-context"; }
 
-  // Build the "/brain-ask <question>" invocation for the general Q&A over the
+  // Build the "/loro-ask <question>" invocation for the general Q&A over the
   // acervo's contexts (+ MCP). Flattens whitespace/newlines to one PTY line (the
   // terminal submits on newline). Returns null when the question is empty after
   // sanitizing, so the caller declines to inject.
-  function brainAskCmd(question) {
+  // ctx (optional) scopes the question to one context: the scope travels as a
+  // plain-text prefix, so the /loro-ask contract stays a free-text question
+  // and any agent understands it.
+  function brainAskCmd(question, ctx) {
     const q = String(question == null ? "" : question).replace(/\s+/g, " ").trim();
-    return q ? "/brain-ask " + q : null;
+    if (!q) return null;
+    const c = String(ctx == null ? "" : ctx).replace(/\s+/g, " ").trim();
+    return "/loro-ask " + (c ? "[contexto: " + c + "] " : "") + q;
+  }
+
+  // /loro-note: first token is the target (notes folder → create; .md file →
+  // evolve in place); the rest is the prompt, flattened to one line.
+  function noteCmd(target, prompt) {
+    const d = String(target == null ? "" : target).replace(/\s+/g, " ").trim();
+    const p = String(prompt == null ? "" : prompt).replace(/\s+/g, " ").trim();
+    return d && p ? "/loro-note " + d + " " + p : null;
+  }
+
+  // /loro-sync <fonte> <alvo> [busca-ou-link]: first token is the source (v1:
+  // "drive" only), second is the target note/topic, optional third narrows the
+  // search (a title keyword) or names the document directly (a Drive link) —
+  // useful when the default title search misses a shared meeting. Returns
+  // null when source or target is empty.
+  function syncCmd(source, target, query) {
+    const s = String(source == null ? "" : source).replace(/\s+/g, " ").trim();
+    const t = String(target == null ? "" : target).replace(/\s+/g, " ").trim();
+    const q = String(query == null ? "" : query).replace(/\s+/g, " ").trim();
+    return s && t ? "/loro-sync " + s + " " + t + (q ? " " + q : "") : null;
+  }
+
+  // /loro-tool: mirrors noteCmd's dual shape, but for custom tools — first
+  // token is the target (a description → create; an existing tool .md →
+  // evolve in place with the rest as the request).
+  function toolCmd(target, prompt) {
+    const d = String(target == null ? "" : target).replace(/\s+/g, " ").trim();
+    const p = String(prompt == null ? "" : prompt).replace(/\s+/g, " ").trim();
+    return d && p ? "/loro-tool " + d + " " + p : null;
+  }
+  // /loro-tool <descrição>: the create-a-new-tool shape — a single free-text
+  // description, no target file. Returns null when empty.
+  function newToolCmd(descricao) {
+    const d = String(descricao == null ? "" : descricao).replace(/\s+/g, " ").trim();
+    return d ? "/loro-tool " + d : null;
+  }
+
+  // ADR-0011: the indice.md staleness nudge. `current` is the live material
+  // count of the brainstorming (meetings + notas + anexos); `stampedRaw` is the
+  // `digest_itens` front-matter value the last /loro-digest wrote (a string or
+  // number, possibly absent). Returns null when no notice is warranted, else
+  // { kind: "gerar" | "novos", n }: "gerar" when there is material but no digest
+  // yet, "novos" when the count grew (n = how many new). A shrink/equal count is
+  // silent — the digest is at least as fresh as the material.
+  function digestNotice(current, stampedRaw) {
+    var cur = Math.max(0, Math.floor(Number(current) || 0));
+    if (cur === 0) return null;
+    if (stampedRaw == null || String(stampedRaw).trim() === "") {
+      return { kind: "gerar", n: cur };
+    }
+    var stamped = Math.floor(Number(stampedRaw));
+    if (!isFinite(stamped)) return { kind: "gerar", n: cur };
+    var delta = cur - stamped;
+    return delta > 0 ? { kind: "novos", n: delta } : null;
+  }
+
+  // ---- assinatura da árvore lateral ---------------------------------------
+  // A lateral só re-renderiza quando esta string muda. Ela PRECISA cobrir os
+  // filhos EXPANDIDOS, não só o topo: uma análise que o agente escreve cai em
+  // <reunião>/notas/ e não mexe em nada do nível de cima — a contagem de
+  // reuniões é a mesma e `atualizado_em` é uma data vinda do manifest. Com a
+  // assinatura rasa o relatório nunca aparecia, e a única saída era zerar a
+  // assinatura de fora — o que reconstruía a árvore inteira a cada 5s e comia
+  // os cliques do usuário.
+  //
+  // Lê SÓ o que está aberto: nó fechado não custa I/O e não dispara render.
+  // `world` injeta as duas listagens (listDir(rel) -> [nomes],
+  // listMeetings(slug) -> [{id, rel, titulo, status}]), então isto é pura e
+  // testável sem Tauri e sem DOM. Uma listagem que falhe vira [] — a
+  // assinatura degrada para "sem novidade" em vez de piscar a árvore.
+  async function pessoalSig(temas, avulsoNames, open, world) {
+    const isOpen = (k) => (open && typeof open.has === "function" ? open.has(k) : false);
+    const dir = async (rel) => { try { return (await world.listDir(rel)) || []; } catch (_) { return []; } };
+    const parts = [temas || [], avulsoNames || []];
+    for (const t of temas || []) {
+      if (!isOpen("pes:tema:" + t.slug)) continue;
+      let meetings = [];
+      try { meetings = (await world.listMeetings(t.slug)) || []; } catch (_) { meetings = []; }
+      parts.push([
+        t.slug,
+        await dir("brainstorming/" + t.slug + "/notas"),
+        await dir("brainstorming/" + t.slug + "/anexos"),
+        meetings.map((m) => [m.id, m.titulo || "", m.status || ""]),
+      ]);
+      for (const m of meetings) {
+        if (!isOpen("mtg:" + m.id)) continue;
+        parts.push([m.id, await dir(m.rel + "/notas")]);
+      }
+    }
+    return JSON.stringify(parts);
   }
 
   return {
+    pessoalSig,
     STAGES, stages,
-    groupByCategory,
+    groupByCategory, filterAndCapTemas,
     emptySelection, toggleSelection, selectedItems,
-    reportInboxName, brainContextCmd, brainAskCmd,
+    queueRelForSelection, brainContextCmd, brainAskCmd, noteCmd, syncCmd, toolCmd, newToolCmd,
+    digestNotice,
   };
 });

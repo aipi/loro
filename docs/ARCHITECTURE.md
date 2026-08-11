@@ -24,15 +24,19 @@ processes captured transcripts into a knowledge base on disk.
                                |
                         ~/.loro/  (config, models, logs)
                                |
-   transcripts (inbox) ---> Claude loop (/brain-context) ---> knowledge base
+   transcripts (inbox) ---> Claude loop (/loro-context) ---> knowledge base
 ```
 
-**Knowledge flow (ADR-0001 §7):** the studio makes one sequential path explicit —
-**Brainstorming → Fila → Contexto**. A *brainstorming* (`brainstorming/<slug>/`, the
-renamed non-versioned world) gathers meetings/investigations/questions/notes; the
-user elects parts into ONE consolidated report that enters the **fila** (the
-`inbox/` queue); **"gerar contexto"** runs `/brain-context` (the renamed loop skill)
-which distills the fila into versioned `contextos/`.
+**Knowledge flow (ADR-0001 §7; ADR-0014):** the studio makes one sequential path
+explicit — **Brainstorming → Fila → Contexto**. A *brainstorming*
+(`brainstorming/<slug>/`, the renamed non-versioned world) gathers
+meetings/notes/attachments; the user **selects the real files** to send and each
+one enters the **fila** (the `inbox/` queue) AS ITSELF — one queue item per file,
+no consolidated report (ADR-0014 supersedes the ADR-0013 merged relatorio). A
+meeting is queued as its **analyses** (`reunioes/<id>/notas/*`, ADR-0018 — a
+meeting no longer has a `relatorio.md`); the raw transcript (`reuniao.md`), audit
+and audio never enter the fila (BR-8). **"gerar contexto"** runs `/loro-context`
+(the renamed loop skill) which distills the fila into versioned `contextos/`.
 
 Config, models and logs live under `~/.loro/`. The knowledge base ("brain") is a
 separate, user-chosen folder and is **not** part of the codebase.
@@ -97,12 +101,25 @@ OS/serde errors may still pass through and are shown untranslated.
 | `save_transcript` | `content` | path or `null` | native save dialog + write |
 | `auto_save` | `content, dir, filename` | path | silent save to the configured folder |
 | `list_capture_devices` | — | `[{index,name}]` | enumerate capture devices (for `-c`) |
-| `brain_get_config` / `brain_setup` / `brain_add_context` / `brain_remove_context` | … | config | acervo config lifecycle |
+| `list_models` | — | `[{id,label,sizeBytes,installed,default}]` | the transcription models Loro uses, each flagged installed or missing, for the first-run model manager (ADR-0006). `installed` means the file is *whole* — its size matches the pinned `spec.size`, so a truncated download reads as missing |
+| `download_model` | `model` | `()` / err | download a catalog model into `~/.loro/models` over HTTPS (system `curl`), verify its pinned SHA-256, install atomically; emits `model-download-progress` (ADR-0006). Idempotent |
+| `brain_get_config` / `brain_setup` / `brain_add_context` / `brain_remove_context` | … | config | acervo config lifecycle; `brain_setup` takes `template?` (usage preset id, ADR-0003) and `agent?` (per-acervo AI CLI command, default `claude`) |
+| `brain_list_templates` | `lang?` | `[{id,name,description,contexts,builtin,dir?}]` | usage templates for the wizard (ADR-0003): builtins + `~/.loro/templates`, localized |
+| `brain_duplicate_template` | `id` | dir path | copy a template into `~/.loro/templates` as an editable custom template |
 | `ui_get_lang` / `ui_set_lang` | — / `lang ("pt"\|"en")` | lang | user-level UI language (ADR-0001 §10, ADR-0002 §1: generated content follows it); set relabels the tray live |
+| `app_version` | — | version | the app version (`CARGO_PKG_VERSION`), shown in Settings so an update is visible at a glance |
 | `brain_status` | — | status | contexts, inbox, processed, activity |
 | `brain_read` | `rel` | content | read a file inside the acervo (path-traversal guarded) |
 | `brain_import` | `context?` | count | copy files into the inbox (prefix `<ctx>--`) |
+| `brain_import_files` | `destRel` | count | native file picker → copy chosen files into an `anexos/` folder — a brainstorming's or a context's (guarded, ADR-0005) |
+| `brain_new_note_in` | `destRel, titulo` | rel | create a living-front-matter note inside an `anexos/` folder (context counterpart of `brain_new_notebook`, ADR-0005) |
 | `brain_delete_inbox` | `name` | `()` | delete an unprocessed queue item |
+| `brain_set_auto_context` | `value: bool` | `()` | post-creation toggle (Settings) for autoContext — global config + local `.loro/settings.json` (ADR-0005 §3) |
+| `brain_new_tool` / `brain_delete_tool` | `nome, conteudo` / `rel` | rel / `()` | create (imported skill content) or delete a custom habilidade — any `.claude/commands/*.md` outside the 11 built-in skills (ADR-0005) |
+| `brain_annotations_get` | `rel` | `{doc, anotacoes[]}` | read a document's annotation sidecar `<doc>.anotacoes.json` (empty if none); highlights/comments anchored by text-quote (ADR-0007) |
+| `brain_annotation_add` | `rel, anotacao` | id | add a highlight/comment; returns the assigned stable `an_…` id (ADR-0007) |
+| `brain_annotation_update` | `rel, id, patch` | `()` | patch an annotation — change `cor` and/or append a `comentario` (ADR-0007) |
+| `brain_annotation_delete` | `rel, id` | `()` | remove a highlight/comment ("desgrifar") (ADR-0007) |
 
 Brainstorming world + the fila → contexto flow (ADR-0001 §7):
 
@@ -110,13 +127,18 @@ Brainstorming world + the fila → contexto flow (ADR-0001 §7):
 |---|---|---|---|
 | `brain_create_brainstorm` | `{nome, categoria?}` | `{slug, rel}` | create a brainstorming under `brainstorming/` |
 | `brain_list_brainstorms` | — | list | list brainstormings (with categoria) |
-| `brain_list_meetings` | `slug` | `[{id,rel,titulo,status}]` | a brainstorming's meetings, newest first, labelled by manifest `titulo` |
+| `brain_list_meetings` | `slug` | `[{id,rel,titulo,status,notas}]` | a brainstorming's meetings, newest first, labelled by manifest `titulo`; `notas` counts how many of the meeting's `notas/` the fila would accept (0 = nothing to send, ADR-0018) |
+| `brain_meeting_finish` | `id` | `{rel}` | close a meeting: `status: "done"`, nothing authored; returns the `reuniao.md` rel the UI opens (ADR-0018 — replaces `brain_meeting_build_notebook`) |
 | `brain_meeting_rename` | `{id, titulo}` | `()` | rename a meeting (manifest + heading; the folder id stays stable) |
 | `brain_rename_brainstorm` | `slug, nome` | `{slug, rel}` | rename a brainstorming (folder + meta) |
 | `brain_set_brainstorm_category` | `{slug, categoria?}` | `()` | set/clear the UI grouping category |
 | `brain_brainstorm_delete` | `{rel}` | `()` | delete a brainstorming item (guarded to `brainstorming/`) |
-| `brain_brainstorm_build_report` | `slug, selection[]` | `{rel}` | build ONE consolidated report (empty selection = all parts) |
-| `brain_send_report_to_queue` | `reportRel, destContext?` | name | copy a report into the fila (`inbox/`) steered by `<ctx>--` |
+| `brain_rename_pessoal` | `rel, name` | new rel | rename a note/analysis file in place (world-confined, keeps extension, never overwrites — ADR-0003 §5) |
+| `brain_move_pessoal` | `rel, destDir` | new rel | move a file into another folder of the same non-versioned world (brainstorming/pessoal); never overwrites — ADR-0009 |
+| `brain_move_meeting` | `rel, destSlug` | new rel | move a whole meeting folder into another brainstorming's `reunioes/`, rewriting the `tema` and the meeting's own paths in `manifest.json`, the `tema:` in `reuniao.md`'s front matter, and every inbound ref across the non-versioned worlds and `.claude/commands/`; refuses a meeting still recording; never overwrites — ADR-0017 |
+| `brain_abs_path` | `rel` | abs path | resolve an acervo-relative path to its absolute on-disk path (guarded to the acervo root); backs "copy absolute path" — ADR-0009 |
+| `brain_send_files_to_queue` | `rels[], destContext?` | `name[]` | send the selected brainstorming files to the fila (`inbox/`), one item per file, steered by `<ctx>--`; validates all before writing any; rejects transcript/audio/audit (BR-8) |
+| `brain_send_brainstorm_to_queue` | `slug, destContext?` | `name[]` | "enviar tudo → fila": send every queueable file of the brainstorming, each its own item |
 
 Knowledge versioning & collaboration (ADR-0001 §5) — all opt-in, no credentials stored:
 
@@ -127,7 +149,8 @@ Knowledge versioning & collaboration (ADR-0001 §5) — all opt-in, no credentia
 | `env_set_identity` | `name, email` | `()` / err | the one safe wizard fix — sets git identity scoped to the acervo |
 | `brain_version` | `slug, message` | `{branch, result, warn?}` | Versionar (ADR-0002 §2): sync local default with origin (fetch + ff-only, degradable — `warn` = `err.git_offline`/`err.main_diverged`), then `rfc/<slug>` + add + commit (local) |
 | `git_branches` / `git_switch_branch` / `git_create_branch` | — / `branch` / `slug` | `{current, default, branches, dirty}` / branch / branch | branch-first flow (ADR-0002 §2): picker data, switch (blocked on dirty tree), create `rfc/<slug>` off the synced default |
-| `term_status` | — | `{open, claudeRunning}` | readiness handshake (ADR-0002 §4): slash-commands are injected only when a `claude` process lives under the PTY shell |
+| `term_status` | — | `{open, agentRunning}` | readiness handshake (ADR-0002 §4, ADR-0003 §3): skill invocations are injected only when the acervo's agent process lives under the PTY shell |
+| `term_agent` | — | command string | the active acervo's AI agent command (frontend launches it in the PTY; non-Claude agents get skills as plain prompts) |
 | `brain_propose_change` | `title, body` | `{number, url}` | Propor: push the rfc/ branch + `gh pr create` (the RFC); gated |
 | `gh_pr_list` / `gh_pr_status` | — / `number` | PR(s) | read open PRs / one PR's review status via `gh --json` |
 | `brain_notifications` | — | inbox by category | collaboration inbox from open PRs; `connected:false` when local-only |
@@ -143,6 +166,8 @@ Knowledge versioning & collaboration (ADR-0001 §5) — all opt-in, no credentia
 | `transcribe-state` | `bool` | file-mode transcription job running / finished |
 | `transcribe-error` | `string` | file-mode transcription failed with a message |
 | `hotkey-toggle` | — | global shortcut or tray toggle fired |
+| `model-download-progress` | `{model, downloaded, total}` | model download progress in bytes (ADR-0006) |
+| `model-download-done` | `string` | a model finished downloading and was installed (ADR-0006) |
 
 Path resolution: `LORO_HOME` (exported by `loro.sh`) or a sensible default;
 `~/.loro/config.json` holds engine/model/brain configuration.
@@ -164,13 +189,51 @@ Path resolution: `LORO_HOME` (exported by `loro.sh`) or a sensible default;
   Errors surface via `transcribe-error`.
 - **Auto-save:** on stop, if enabled, the buffer is written to
   `<saveDir>/loro-<timestamp>.md` (validated filename).
-- **Brain loop (`/brain-context`, ADR-0001 §7):** `loop → /brain-context` reads the acervo inbox, distills each new input
+- **Brain loop (`/loro-context`, ADR-0001 §7):** `loop → /loro-context` reads the acervo inbox, distills each new input
   into `reunioes/` or `notas/`, appends prose to `contextos/<c>/CHANGELOG.md`,
   updates `contextos/<c>/context.md` (consolidated in sections 1–5; anything still
   open/contradictory as a **hotspot** in section 6 — ideas are no longer files),
   moves raw to `processed/`, updates state. Suggests a new context when none fits,
   and splits a composite domain into recursive `contextos/<c>/<sub>/` subdomains
   (parent becomes overview + index), up to `MAX_CONTEXT_DEPTH` levels (ADR-0001 §4).
+- **Efficient-reading layer (ADR-0004):** every `context.md` opens with a
+  regenerated **Summary card** (§0); decisions carry stable IDs
+  (`D-YYYY-MM-DD-<slug>`), hotspots carry `H-<n>`, and the `INDEX.md` line is
+  enriched (description · updated date · hotspot range) so agents route without
+  opening files. The generated `AGENTS.md` and every skill teach the protocol:
+  index → card → ID search → targeted section read.
+- **External-source sync (`/loro-sync`, ADR-0005):** brings an
+  external item — a Gemini note on Google Drive (full document), a Slack
+  channel message, a Jira ticket, or a Confluence page (agent-written
+  summaries) — into a LOCAL anexo file (`brainstorming/<tema>/anexos/`),
+  referenced by an acervo note (`tipo: doc`, never the external URL
+  directly in `refs:`). Runs as a terminal-Claude skill like `/loro-note`,
+  using the terminal agent's own connector access (ambient-credential
+  model, ADR-0004 baseline) — the Tauri app never talks to any of these
+  APIs or stores a token. Always an explicit, user-triggered invocation
+  (BR-1); the agent confirms the exact item before bringing it in; content
+  lives only in the acervo's own material, never in a log (BR-8).
+  Reachable from a brainstorming's sidebar or a meeting's `⋯` menu
+  ("executar habilidade…", ADR-0005).
+- **Habilidades (built-in + custom, ADR-0005):** any `.claude/
+  commands/*.md` is a "habilidade" (UI label; code says `tool`) — the
+  filename IS the slash-command. 11 built-ins ship with the acervo
+  (`/loro-context`, `/loro-analyse`, `/loro-question`, `/loro-ask`,
+  `/loro-note`, `/loro-sync`, `/loro-tool`, `/loro-presentation`,
+  `/loro-artifact`, `/loro-slack`, `/loro-digest`); built-ins can be edited but never deleted. Custom ones
+  are created either by describing them to `/loro-tool` (AI drafts the
+  skill, same dual create-or-evolve shape as `/loro-note`) or by importing
+  an already-written skill file directly (`brain_new_tool`, no AI). Listed
+  in a sidebar section (usar/editar/pedir à IA/excluir-if-custom) and run
+  from "⋯ → executar habilidade" on a brainstorming (curated picker,
+  excludes the 5 workflow-specific built-ins with dedicated UI elsewhere),
+  from the top of ANY open markdown document's viewer, or — unrestricted,
+  no exclusion — from a single dropdown in a meeting's rail
+  ("o que fazer com esta reunião" no longer lists fixed actions; those
+  moved to the meeting's `⋯` menu). `/loro-presentation`/`/loro-artifact`
+  generate material (markdown by default) into `anexos/` — a
+  brainstorming's `brainstorming/<tema>/anexos/` or a context's
+  `contextos/<c>/anexos/`; there is no separate presentations folder.
 - **Knowledge versioning (ADR-0001 §5), Git hidden behind two buttons:** *Versionar*
   → `brain_version` creates `rfc/<slug>` off the default branch and commits the
   working changes locally (Git only). *Propor mudança* → `brain_propose_change`
@@ -191,6 +254,12 @@ model presence and permissions. Logging rules: ADR-0001 §3 (BR-8).
 - 100% local inference (BR-1); restrictive Tauri CSP; minimal command allowlist.
 - `brain_read` and file operations are guarded against path traversal.
 - No secrets requested or persisted (BR-9); no personal paths in code.
+- Model downloads are HTTPS-only and verified against a pinned SHA-256 before
+  install (ADR-0006), so a compromised mirror or MITM cannot substitute the
+  model file; the only host contacted is the model mirror. Both the app and
+  `loro.sh` stream into a temp file and move it into place only once verified,
+  and a model is only *used* when its size matches the pinned one — a partial
+  download can never become the active model.
 - Remote collaboration is opt-in and credential-free: `git`/`gh` run with fixed
   argument tokens (never a shell), branch slugs are sanitized to `[a-z0-9-]`, and
   the environment doctor reads only booleans/versions/public login — tokens are
@@ -211,7 +280,16 @@ All technical decisions are consolidated in the single **`docs/adr/0001-baseline
 | Product per context | single `context.md` (source of truth) + CHANGELOG; inline hotspots | ADR-0001 §4 |
 | Change proposal | RFC = branch + Pull Request; opt-in remote via `gh` + CODEOWNERS | ADR-0001 §5 |
 | Studio shell | multi-tab workspace, command palette, vendored CM6 IIFE | ADR-0001 §6 |
-| Knowledge flow | Brainstorming → Fila → Contexto (`/brain-context`) | ADR-0001 §7 |
-| Meetings | living file + notebook report, transient audio | ADR-0001 §8 |
+| Knowledge flow | Brainstorming → Fila → Contexto (`/loro-context`) | ADR-0001 §7 |
+| Meetings | living file + analyses in `notas/`, transient audio | ADR-0001 §8, ADR-0018 |
 | Meeting AI | terminal-Claude skills, local-first | ADR-0001 §9 |
 | Doc language | English | ADR-0001 |
+| External-source sync | `/loro-sync <fonte>` (drive/slack/jira/confluence) → local anexo + ref, ambient terminal-agent connector | ADR-0005 |
+| Habilidades (built-in + custom) | any `.claude/commands/*.md`; 11 built-ins, editable-not-deletable; `/loro-tool` (AI-drafted) or direct import for custom ones | ADR-0005 |
+| Brainstorming digest | `/loro-digest brainstorming/<slug>` (re)writes the topic's `indice.md` (summary + key points + linked material index + `refs:`); manual/re-runnable with an `indice.md` staleness nudge (`digest_itens`) | ADR-0011 |
+| Annotation layer | select a passage in any markdown → grifar/comentar + excerpt-scoped habilidade (perguntar/analisar/Slack); highlights/comments in a co-located `<doc>.anotacoes.json` sidecar anchored by text-quote; alvo `acervo://<rel>#<annot-id>`; outbound `/loro-slack` via the agent's connector | ADR-0007 |
+| `autoContext` | per-acervo `.loro/settings.json` gate on the loop creating a brand-new context; toggle in wizard + Settings | ADR-0005 |
+| Terminal launch/status | `active_agent()` used for auto-launch (not hardcoded); `justLaunched` grace window avoids retyping into a live session | ADR-0005 |
+| Distribution | Homebrew Cask (`brew install --cask loro`) with `whisper-cpp`+`ffmpeg` as formula deps; tap `aipi/homebrew-loro` bumped by release CI | ADR-0006 |
+| First-run models | not bundled; downloaded on demand over HTTPS, verified by pinned SHA-256, atomic install into `~/.loro/models`; a model is only used when whole | ADR-0006 |
+| Edit-mode formatting | markdown-aware bar (not WYSIWYG): pure `LoroMdEdit.apply(doc, anchor, head, action)` → CM6 `{changes, selection}`; `⌘B`/`⌘I`/`⌘K` captured off the editor DOM; same bar + CM6 in the Studio tab and the modal editor | ADR-0016 |

@@ -87,18 +87,82 @@ cmd_doctor() {
   for t in whisper-stream whisper-cli ffmpeg; do
     if have "$t"; then c_ok "$t: $(command -v "$t")"; else c_warn "$t: missing"; fi
   done
-  [ -f "$(model_path "$MODEL")" ] && c_ok "model $MODEL: present" || c_warn "model $MODEL: missing"
+  check_model "$MODEL"
+}
+
+# doctor's model check. Presence is not health: a truncated model
+# reads as "present" and only fails deep inside whisper, mid-recording. When the
+# digest is pinned, doctor is the one place worth paying the full hash for — it
+# is an explicit diagnostic, and it turns a silent failure into one line.
+check_model() {
+  local m="$1" p want got
+  p="$(model_path "$m")"
+  if [ ! -f "$p" ]; then c_warn "model $m: missing"; return; fi
+  if want="$(model_sha256 "$m")"; then
+    if ! got="$(sha256_of "$p")"; then
+      c_warn "model $m: present (no SHA-256 tool to verify)"
+    elif [ "$got" = "$want" ]; then
+      c_ok "model $m: present and verified"
+    else
+      c_err "model $m: CORRUPT or incomplete — delete $p and re-download (./loro.sh setup)"
+    fi
+  else
+    c_ok "model $m: present (no pinned digest to verify against)"
+  fi
 }
 
 # ---- setup: engine + models -------------------------------------------------
+# Pinned SHA-256 per model. MUST mirror the CATALOG in
+# desktop/src-tauri/src/models.rs — a Rust test (`loro_sh_pins_every_catalog_sha256`)
+# fails the build if the two drift. A model the CLI accepts but the catalog does
+# not pin (MODEL=medium and friends) has no digest here; it is installed with a
+# warning rather than refused, since the CLI has always taken any ggml id.
+model_sha256() {
+  case "$1" in
+    large-v3-turbo) echo "1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69" ;;
+    small)          echo "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b" ;;
+    *)              return 1 ;;
+  esac
+}
+
+# Lowercase hex digest of a file, via whichever system tool exists (same
+# engine-is-a-system-tool stance as models.rs: no new dependency).
+sha256_of() {
+  if   have shasum;    then shasum -a 256 "$1" | awk '{print $1}'
+  elif have sha256sum; then sha256sum   "$1" | awk '{print $1}'
+  else return 1
+  fi
+}
+
+# Streams into "<dest>.part" and only moves it into place once the download
+# succeeded AND its digest matched — the same verified, atomic install the app
+# does (ADR-0006), which the CLI was not honouring. Downloading straight into $dest —
+# what this did before — left a truncated .bin behind on any Ctrl-C or dropped
+# connection, and both the app and `doctor` reported that stub as an installed
+# model; whisper then aborted mid-recording with "not all tensors loaded from
+# model file", so the symptom reached the user as "recording does not work".
 download_model() {
-  local m="$1" dest
+  local m="$1" dest tmp want got
   dest="$(model_path "$m")"
   if [ -f "$dest" ]; then c_ok "model $m already present"; return; fi
   mkdir -p "$MODELS_DIR"
+  tmp="$dest.part"
+  rm -f "$tmp"
   c_info "downloading model $m -> $dest"
-  curl -L --fail --progress-bar "$HF_BASE/ggml-$m.bin" -o "$dest" \
-    || die "failed to download model $m"
+  curl -L --fail --proto '=https' --tlsv1.2 --progress-bar "$HF_BASE/ggml-$m.bin" -o "$tmp" \
+    || { rm -f "$tmp"; die "failed to download model $m"; }
+
+  if want="$(model_sha256 "$m")"; then
+    got="$(sha256_of "$tmp")" || { rm -f "$tmp"; die "no SHA-256 tool available to verify model $m"; }
+    if [ "$got" != "$want" ]; then
+      rm -f "$tmp"
+      die "model $m failed SHA-256 verification — nothing was installed"
+    fi
+    c_ok "model $m verified (sha256)"
+  else
+    c_warn "model $m has no pinned SHA-256 — installed without integrity verification"
+  fi
+  mv -f "$tmp" "$dest"
 }
 
 cmd_setup() {
@@ -156,12 +220,15 @@ cmd_live() {
   fi
   c_info "Live [$MODEL/$LANG_CODE, $THREADS_N threads] · source: $src_label — Ctrl+C to stop"
   c_info "Saving transcript to: $out"
+  # cap may be empty (mic source). ${cap[@]+…} keeps that safe under `set -u`
+  # on macOS's stock bash 3.2, where a plain "${cap[@]}" on an empty array
+  # aborts with "unbound variable".
   "$BIN_STREAM" \
     -m "$(model_path "$MODEL")" \
     -l "$LANG_CODE" \
     --step "$STEP" --length "$LENGTH" -vth "$VAD_THOLD" \
     -t "$THREADS_N" \
-    "${cap[@]}" \
+    ${cap[@]+"${cap[@]}"} \
     -f "$out"
 }
 
@@ -266,6 +333,8 @@ cmd_app_build() {
 }
 cmd_test() {
   _cargo_path
+  c_info "CLI tests (loro.sh under the system bash)"
+  bash tests/cli.sh
   c_info "Rust tests (backend)"
   ( cd desktop/src-tauri && cargo test --lib )
   c_info "JS tests (frontend)"
