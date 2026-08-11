@@ -422,3 +422,37 @@ The ADR-0023 renumbering note claimed the Windows file "had no citation at all".
 `git log -S` disproves it: `proc.rs` cited it from the very commit that created
 both. That citation now points at 0023, `Cargo.toml`'s bare "ADR-0013" is
 qualified, and the note carries the correction rather than the tidy story.
+
+### 26. The echo filter never ran — the two tracks are synchronous
+
+Second capture from the owner: the duplication survived §25. The log settled it —
+**zero** dropped echoes, while the reported pair scores 0.91 containment. The
+threshold was never the problem.
+
+`appendMeetingChunk` recorded a chunk in the comparison list only **after**
+awaiting the append. The two tracks rotate on the SAME 18s interval (the mic
+recorder and the system tail were each given `MEETING_TAIL_MS`, deliberately), so
+both copies of an utterance arrive within milliseconds of one another: both
+tested against a list that did not yet contain the other, both passed, and the
+filter never saw a pair. The synchronised rotation makes this the NORMAL case,
+not a corner one — which is why the feature looked completely inert.
+
+The chunk is now recorded **before** the await, with nothing awaited between the
+test and the record, and removed again if the append fails — a chunk that never
+reached the file must not block its legitimate twin.
+
+### 27. Partial overlap is evidence, not garbage
+
+The other half of the same capture: a mic chunk carrying the user's OWN speech
+followed by the leak ("E tá de boa aí? Tá pegado" + the far end) scores 0.65 —
+below the drop threshold, and rightly so: dropping it would delete what only the
+mic heard. But it is the same proof that the mic is hearing the speaker.
+
+`partialCrossTalk` recognises that band (0.35–0.70) without filtering anything.
+At the third signal in a meeting the app connects the symptom to the control the
+user has no reason to know exists: *as duas trilhas estão ouvindo a mesma fala —
+ligue o cancelamento de eco*. Once per meeting, never when it is already on.
+
+That is the honest division of labour: the filter cleans what it can safely
+clean, and what only physics can fix is handed to the person who can change the
+physics.
