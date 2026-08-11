@@ -50,18 +50,6 @@ inference stays local`). Never weaken a BR without a recorded ADR decision.
 
 ## 5. Project structure
 
-```
-loro/
-├─ docs/            ARCHITECTURE, adr/ (the single consolidated 0001-baseline.md)
-├─ brain/           this repo's own harness (product context, domain `loro`)
-├─ desktop/         Tauri app
-│  ├─ src/          frontend (vanilla JS; tests in tests/)
-│  └─ src-tauri/    Rust core (cargo test --lib)
-├─ loro.sh          CLI (setup, live, file, ui, diarize, test…)
-├─ Makefile         quality targets
-└─ CLAUDE.md · CONTRIBUTING.md
-```
-
 The transcription engine (whisper) is **not** in the repo — it is a system
 dependency (ADR-0001 §1).
 
