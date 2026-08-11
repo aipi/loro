@@ -30,6 +30,7 @@ mod presets;
 use presets::*;
 mod chat;
 mod git;
+mod intake;
 use git::*;
 mod acervo;
 use acervo::*;
@@ -2724,10 +2725,57 @@ fn brain_send_files_to_queue(
     let mut names = Vec::with_capacity(entries.len());
     for (src, name) in &entries {
         let content = std::fs::read_to_string(src).map_err(|e| e.to_string())?;
+        // Triagem de entrada (ADR-0024). O bloqueio é revalidado AQUI e não só na
+        // tela: o acervo é versionado, então uma credencial que passa vira commit
+        // — e um portão que confia no frontend ter perguntado não é portão.
+        // BR-8: o erro nomeia o ARQUIVO e a regra, jamais o que foi encontrado.
+        if intake::blocked(&intake::scan(&content)) {
+            return Err(format!("err.intake_secret:{name}"));
+        }
         std::fs::write(inbox.join(name), content).map_err(|e| e.to_string())?;
         names.push(name.clone());
     }
     Ok(names)
+}
+
+// Triagem: o que estes arquivos carregam, ANTES de entrarem. Só leitura — nada é
+// escrito, nada é movido. A tela chama isto primeiro, mostra os achados e deixa o
+// usuário decidir; o bloqueio de credencial não é decisão dele nem dela (ADR-0024).
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FileTriage {
+    rel: String,
+    findings: Vec<intake::Finding>,
+}
+
+#[tauri::command]
+fn brain_triage_files(rels: Vec<String>) -> Result<Vec<FileTriage>, String> {
+    let cfg = read_brain_config().ok_or("err.acervo_not_configured")?;
+    let base = PathBuf::from(&cfg.brain_dir)
+        .canonicalize()
+        .map_err(|e| e.to_string())?;
+    let mut expanded = Vec::with_capacity(rels.len());
+    for rel in &rels {
+        if base.join(rel.replace('\\', "/")).is_dir() {
+            expanded.extend(crate::acervo::meeting_queueables(&base, rel));
+        } else {
+            expanded.push(rel.clone());
+        }
+    }
+    let mut out = Vec::with_capacity(expanded.len());
+    for rel in expanded {
+        let Ok(src) = crate::acervo::guarded_existing(&base, &rel) else {
+            continue;
+        };
+        let Ok(content) = std::fs::read_to_string(&src) else {
+            continue; // binário ou ilegível: a triagem é de texto
+        };
+        let findings = intake::scan(&content);
+        if !findings.is_empty() {
+            out.push(FileTriage { rel, findings });
+        }
+    }
+    Ok(out)
 }
 
 // "enviar tudo → fila": every queueable file of the brainstorming, each its own item.
@@ -3797,6 +3845,7 @@ pub fn run() {
             brain_delete_inbox,
             brain_write_inbox,
             brain_send_files_to_queue,
+            brain_triage_files,
             brain_send_brainstorm_to_queue,
             brain_write,
             brain_list_dir,

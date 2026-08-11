@@ -3328,12 +3328,67 @@ function promptRenameMeeting(id, current) {
   const inp = $("mtgRenInput"); if (inp) { inp.focus(); inp.select(); }
 }
 
+// ---- ADR-0024 · triagem de entrada -----------------------------------------
+// Mostra o que os arquivos carregam antes de eles entrarem. Credencial RECUSA o
+// arquivo (BR-9: o acervo é versionado; um segredo que passa vira commit); o
+// resto avisa e quem decide é o usuário — bloquear por heurística seria censurar
+// o material dele. Devolve true quando o envio deve seguir.
+//
+// BR-8: o achado que chega aqui tem regra, linha e contagem — nunca o texto
+// encontrado. A tela não tem como vazar o que não recebeu.
+const INTAKE_LABEL = {
+  "intake.secret": (f) => t("parece conter uma credencial") + " (" + t("linha") + " " + f.line + ")",
+  "intake.cpf": (f) => t("parece conter CPF") + " (" + t("linha") + " " + f.line + ")",
+  "intake.transcript": (f) => f.count + " " + t("marcas de transcrição — a BR-8 mantém transcrição fora da fila"),
+};
+async function passIntake(rels, whole) {
+  let report;
+  try { report = await invoke("brain_triage_files", { rels }); }
+  catch (e) { clog("brain_triage_files error: " + e); return true; } // triagem indisponível não trava o trabalho
+  if (!report || !report.length) return true;
+  const blocked = report.filter((r) => r.findings.some((f) => f.severity === "block"));
+  const warned = report.filter((r) => !r.findings.some((f) => f.severity === "block"));
+  const row = (r, cls) =>
+    `<div class="intakerow ${cls}"><b>${esc(r.rel.split("/").pop())}</b>` +
+    r.findings.map((f) => `<span>${esc(INTAKE_LABEL[f.rule] ? INTAKE_LABEL[f.rule](f) : f.rule)}</span>`).join("") +
+    `<i class="mono">${esc(r.rel)}</i></div>`;
+  const body =
+    (blocked.length
+      ? `<p class="intakehead block">${blocked.length > 1
+          ? blocked.length + " " + t("arquivos não vão entrar")
+          : t("um arquivo não vai entrar")} — ${t("o acervo é versionado e vai para o git")}</p>` +
+        blocked.map((r) => row(r, "block")).join("")
+      : "") +
+    (warned.length
+      ? `<p class="intakehead warn">${t("confira antes de enviar")}</p>` + warned.map((r) => row(r, "warn")).join("")
+      : "");
+  // Quando TUDO que sobrou está bloqueado não há o que confirmar: o modal só
+  // informa. Se sobrou algo enviável, o botão manda o resto — os bloqueados são
+  // recusados pelo backend de qualquer forma, então não há como escapar deles.
+  const soBloqueio = warned.length === 0;
+  return await new Promise((resolve) => {
+    let decidiu = false;
+    openModal(
+      t("triagem de entrada"),
+      body,
+      soBloqueio ? null : t("enviar assim mesmo"),
+      soBloqueio ? null : () => { decidiu = true; resolve(true); },
+    );
+    const fecha = () => { if (!decidiu) { decidiu = true; resolve(false); } };
+    PM.cancel.addEventListener("click", fecha, { once: true });
+    PM.close.addEventListener("click", fecha, { once: true });
+  });
+}
+
 // ADR-0014: send the given files to the fila, ONE queue item per file (no
 // consolidated report). `rels` are acervo-relative file paths already resolved by
 // the caller (meeting -> its directory, everything else -> the file itself).
 async function sendFilesToQueue(rels) {
   const list = (rels || []).filter(Boolean);
   if (!list.length) return;
+  // ADR-0024: o que entra no acervo passa por uma triagem ANTES. A porta é de mão
+  // única — o acervo é versionado, e o que vira commit e é empurrado não volta.
+  if (!(await passIntake(list))) return;
   try {
     const names = await invoke("brain_send_files_to_queue", { rels: list, destContext: null });
     pessoalSig = ""; refreshPessoal(); sideSig = ""; brainRefresh();
@@ -3344,6 +3399,7 @@ async function sendFilesToQueue(rels) {
 
 // Send EVERY queueable file of a brainstorming (the ⋯ "enviar tudo → fila").
 async function sendBrainstormAllToQueue(slug) {
+  if (!(await passIntake([`brainstorming/${slug}`], true))) return;
   try {
     const names = await invoke("brain_send_brainstorm_to_queue", { slug, destContext: null });
     pessoalSig = ""; refreshPessoal(); sideSig = ""; brainRefresh();

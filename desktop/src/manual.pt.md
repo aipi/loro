@@ -341,6 +341,12 @@ de versionar/propor mudança normalmente).
 
 ## Fila → gerar contexto
 
+- **Antes de entrar, o Loro confere o que o arquivo carrega.** Se parecer haver
+  uma credencial (chave de API, token, chave privada), o arquivo **não entra** —
+  o projeto é versionado e vai para o git, e o que é empurrado não volta. CPF ou
+  transcrição colada dentro de uma nota geram um aviso: você lê e decide.
+  O aviso diz a regra e a linha, nunca repete o que encontrou.
+
 - Marque os **arquivos** de um brainstorming (reunião → suas análises, notas,
   anexos) e **envie para a fila** — cada arquivo vira um item próprio
   na fila (multi-seleção envia todos). No ⋯ do brainstorming, **"enviar tudo →

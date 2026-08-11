@@ -2234,3 +2234,17 @@ details.chatstep pre {
    rolagem para o título não colar no topo quando a nav navega até elas. */
 .cfgsec { scroll-margin-top: 14px; }
 .cfgsec + .cfgsec { border-top: 1px solid var(--line-soft); margin-top: 30px; padding-top: 26px; }
+
+/* ADR-0024 · triagem de entrada: o que cada arquivo carrega, antes de entrar */
+.intakehead { margin: 0 0 8px; font: 600 12.5px var(--sans); }
+.intakehead.block { color: var(--red); }
+.intakehead.warn { color: var(--yellow-ink); }
+.intakerow {
+  display: flex; flex-direction: column; gap: 3px;
+  border-left: 3px solid var(--line); padding: 8px 0 8px 11px; margin-bottom: 8px;
+}
+.intakerow.block { border-left-color: var(--red); }
+.intakerow.warn { border-left-color: var(--yellow); }
+.intakerow b { font: 600 13px var(--sans); color: var(--ink); }
+.intakerow span { font: 12px/1.5 var(--sans); color: var(--ink3); }
+.intakerow i { font: 11px var(--mono); color: var(--muted); font-style: normal; }

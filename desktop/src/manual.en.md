@@ -338,6 +338,13 @@ normally).
 
 ## Queue → generate context
 
+- **Before anything goes in, Loro checks what the file carries.** If it looks
+  like a credential (API key, token, private key), the file **does not go in** —
+  the project is versioned and goes to git, and what is pushed cannot be taken
+  back. A national ID or a pasted transcript raises a warning instead: you read
+  it and decide. The warning names the rule and the line, never repeats what it
+  found.
+
 - Check the **files** of a brainstorming (a meeting → its analyses, notes,
   attachments) and **send to queue** — each file becomes its own queue
   item (multi-select sends them all). The brainstorming's ⋯ menu has **"send
