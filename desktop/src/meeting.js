@@ -223,6 +223,27 @@
     return null;
   }
 
+  // Sobreposição PARCIAL: o trecho traz fala própria E o vazamento da outra
+  // trilha. Descartar seria perder a fala legítima junto, então isto não filtra
+  // nada — só reconhece a evidência de que o microfone está ouvindo a caixa,
+  // para o app poder oferecer o cancelamento de eco em vez de deixar o usuário
+  // descobrir sozinho. Piso mais baixo que o do eco, teto no piso dele.
+  const PARTIAL_MIN = 0.35;
+  function partialCrossTalk(chunk, recent) {
+    const c = chunk || {};
+    const mine = c.tokens || [];
+    if (mine.length < ECHO_MIN_TOKENS) return false;
+    const list = Array.isArray(recent) ? recent : [];
+    for (let i = list.length - 1; i >= 0; i--) {
+      const prev = list[i];
+      if (!prev || prev === chunk || prev.source === c.source) continue;
+      if (Math.abs((prev.tMs || 0) - (c.tMs || 0)) > ECHO_WINDOW_MS) continue;
+      const overlap = tokenContainment(mine, prev.tokens || []);
+      if (overlap >= PARTIAL_MIN && overlap < ECHO_MIN_CONTAINMENT) return true;
+    }
+    return false;
+  }
+
   // O que fazer com o buffer da transcrição AVULSA quando uma sessão termina.
   // Uma reunião tem a própria superfície (a aba reuniao.md, ADR-0010): o rodapé
   // avulso não participa dela, nem para salvar nem para aparecer. Decisão pura
@@ -280,7 +301,7 @@
     sanitizeSkillArg, meetingSkillCmd,
     stripMarker, acervoJoin, aiStatusLine, MARKER,
     isHallucination, filterHallucinations,
-    speechTokens, tokenContainment, echoOfOtherSource,
+    speechTokens, tokenContainment, echoOfOtherSource, partialCrossTalk,
     meetingTitleFromManifest, meetingLabel,
   };
 });

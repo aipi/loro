@@ -1010,6 +1010,8 @@
     "item na fila": "item queued",
     "nada na fila": "nothing queued",
     "anexar precisa de uma reunião aberta": "attaching needs an open meeting",
+    "as duas trilhas estão ouvindo a mesma fala — ligue o cancelamento de eco em Configurações → Captura":
+      "both tracks are hearing the same speech — turn on echo cancellation in Settings → Capture",
     "claro": "light",
     "escuro": "dark",
     "sistema": "system",

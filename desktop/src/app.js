@@ -642,7 +642,8 @@ async function startMeetingWith(choice) {
   meeting.active = true; meeting.id = res.id; meeting.dir = res.dir;
   meeting.livingRel = res.livingRel; meeting.tema = choice.tema;
   meeting.phase = "recording"; meeting.pendingLines = [];
-  meeting.appended = [];   // histórico de eco é POR reunião (antes dependia de o
+  meeting.appended = []; crossTalkHits = 0; crossTalkNudged = false;
+                           // histórico de eco é POR reunião (antes dependia de o
                            // relógio ler exatamente 0 — um tique de 1ms vazava a
                            // reunião anterior para dentro da nova)
   state.meetingMode = true;
@@ -734,16 +735,49 @@ function stopMeetingPreview() {
 // Ponto ÚNICO de anexação da transcrição ao vivo: as duas trilhas passam por
 // aqui, e é aqui que o eco de uma na outra é barrado. Devolve true se appendou.
 async function appendMeetingChunk(id, text, tMs, source) {
-  const eco = LM.echoOfOtherSource({ text: text, tMs: tMs || 0, source: source }, meeting.appended);
+  const chunk = { tMs: tMs || 0, source: source, tokens: LM.speechTokens(text) };
+  const eco = LM.echoOfOtherSource({ text: text, tMs: chunk.tMs, source: source }, meeting.appended);
   if (eco) {
     // BR-8: o log conta O QUE aconteceu, nunca o que foi dito.
     clog("meeting append: dropped cross-source echo (source=" + source + " prev=" + eco.source + ")");
+    noteCrossTalk(1);
     return false;
   }
-  await invoke("brain_meeting_append", { input: { id, chunk: text, tMs: tMs || 0, source } });
-  meeting.appended.push({ tMs: tMs || 0, source: source, tokens: LM.speechTokens(text) });
+  // REGISTRA ANTES DE ESPERAR. As duas trilhas giram no MESMO intervalo de 18s,
+  // então as duas cópias da mesma fala chegam praticamente juntas: registrando
+  // só depois do `await`, as duas testavam contra uma lista que ainda não tinha
+  // a outra, as duas passavam e o filtro nunca via par nenhum — o log ficou com
+  // ZERO descartes enquanto a transcrição duplicava. Entre este push e o teste
+  // acima não há await, então nada se intercala.
+  meeting.appended.push(chunk);
   if (meeting.appended.length > 40) meeting.appended.shift();
+  // Sobreposição PARCIAL (uma trilha com fala própria + o vazamento da outra)
+  // não pode ser descartada — perderia fala legítima — mas é a mesma evidência
+  // de que o microfone está ouvindo a caixa.
+  if (!eco && LM.partialCrossTalk({ tMs: chunk.tMs, source: source, tokens: chunk.tokens }, meeting.appended)) {
+    noteCrossTalk(1);
+  }
+  try {
+    await invoke("brain_meeting_append", { input: { id, chunk: text, tMs: chunk.tMs, source } });
+  } catch (e) {
+    // não ficou no arquivo: sair da lista para não barrar o gêmeo legítimo
+    const i = meeting.appended.indexOf(chunk);
+    if (i >= 0) meeting.appended.splice(i, 1);
+    throw e;
+  }
   return true;
+}
+
+// O vazamento da caixa é físico: o filtro limpa o texto, mas quem resolve de
+// verdade é o cancelamento de eco — um controle que o usuário não tem por que
+// adivinhar que existe. Ao terceiro sinal, o app liga os dois: o sintoma que ele
+// está vendo e a chave que o desliga. Uma vez por reunião.
+let crossTalkHits = 0, crossTalkNudged = false;
+function noteCrossTalk(n) {
+  crossTalkHits += n;
+  if (crossTalkHits < 3 || crossTalkNudged || settings.micEchoCancel) return;
+  crossTalkNudged = true;
+  toast(t("as duas trilhas estão ouvindo a mesma fala — ligue o cancelamento de eco em Configurações → Captura"), 12000);
 }
 
 async function onPreviewSegment(chunks, mime, tMs) {
