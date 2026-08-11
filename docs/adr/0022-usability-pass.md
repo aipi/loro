@@ -456,3 +456,32 @@ ligue o cancelamento de eco*. Once per meeting, never when it is already on.
 That is the honest division of labour: the filter cleans what it can safely
 clean, and what only physics can fix is handed to the person who can change the
 physics.
+
+### 28. The 18-second freeze — the same bug, a third time
+
+Reported in real use: "quando uma gravação chega em 18 seg, a aplicação trava
+para gerar o texto". 18s is `MEETING_TAIL_MS`, the tick that transcribes the
+live preview — and both commands it fires were **synchronous**
+`#[tauri::command]`s, so both ran ffmpeg + whisper **on the main thread**.
+
+Measured on this machine, `large-v3-turbo`, an 18s window of a pure tone:
+**1.68s** — and that is the FLOOR, since a tone gives whisper nothing to
+transcribe. Two of them fire per tick (the system window and the mic segment),
+so the window froze for seconds, every 18 seconds, for the whole meeting.
+
+Both are now `async` + `spawn_blocking`, with the heavy work in a
+`*_blocking` core. Identical shape to §4's `env_doctor` fix.
+
+The JS side was measured too and **cleared**: `Array.from` over a ~150KB segment
+plus its JSON serialisation costs 3.7ms. Reporting it as a cause would have been
+a guess; it is not one.
+
+**A guard test** now fails if either command loses its `async` or its blocking
+core — this is the third appearance of one bug class (`env_doctor`, then these
+two), and a comment does not stop a fourth.
+
+The guard's first version was **self-satisfying**: it searched the source for a
+literal that its own assertion contained, so it passed no matter what. It only
+surfaced because I tried to make it fail. The needles are composed at runtime
+now, and the failure is demonstrated, not assumed — the same flaw the code review
+found in the `index.html` i18n test earlier the same day.
