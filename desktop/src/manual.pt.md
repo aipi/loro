@@ -12,11 +12,108 @@ um entra na fila como ele mesmo (um item por arquivo — não há mais relatóri
 consolidado); o botão "gerar contexto" pede ao Claude do terminal que destile a
 fila em `contextos/` — a fonte oficial da verdade, versionada em git.
 
+## A tela, em uma olhada
+
+Toda tela tem a mesma anatomia:
+
+```
+CABEÇALHO 54px — [projeto ⌄] [Início · Organizar · Conhecimento] ··· [Gravar] [✦ IA]
+BARRA LATERAL │ ABAS (só quando há documento aberto) │ PAINEL 330px
+250px ou 60px │ CONTEÚDO                             │ Documento · Chat · Terminal
+```
+
+- **Os três destinos** ficam no cabeçalho: **Início** (o que você quer guardar
+  hoje), **Organizar** (o que foi capturado e ainda não virou conhecimento — o
+  número âmbar é a contagem) e **Conhecimento** (os temas oficiais do time).
+- **Gravar** é o botão vermelho do cabeçalho; enquanto grava, ele vira **Parar**
+  e a gravação continua se você trocar de aba — um selo `gravando · mm:ss`
+  aparece no cabeçalho e leva de volta.
+- **Se você ouve por alto-falante**, o microfone escuta de volta o que os
+  outros falam, e a mesma frase entra nas duas trilhas. O Loro descarta a
+  cópia sozinho; se ainda assim ele confundir quem falou, ligue **cancelar o
+  eco do alto-falante** em Configurações → Captura — com o custo, declarado
+  ali, de a sua voz sair mais baixa. Com fone, deixe desligado.
+- **O rodapé de gravação** é o mesmo para a gravação avulsa e para a reunião:
+  relógio, onda do áudio e o selo de privacidade no pé do conteúdo. Numa reunião
+  ele ganha **⏸ pausar / ▶ retomar** e **■ Encerrar reunião**, à esquerda do
+  relógio. Pausar **para a captura de verdade** — nada é gravado até você
+  retomar, o relógio congela e o papagaio da barra de menu para de piscar.
+- **✦ IA** mostra ou recolhe o painel da direita.
+- **Abas são só documentos abertos** — não existe aba "Início". Um clique na
+  árvore abre uma aba de pré-visualização (em itálico); dois cliques fixam.
+- O **alternador da barra lateral** (250px ⇄ 60px) fica embaixo, ao lado de
+  **⚙ Configurações**.
+- `Cmd/Ctrl+K` abre a **paleta**: arquivos e comandos na mesma lista, agrupados
+  em *ir para · gravar · criar · documento · fazer*, com o atalho de cada um à
+  direita. Ela é a lista viva de tudo o que dá para fazer.
+
+### O chat (painel ✦ IA)
+
+A aba **Chat** conversa com o **agente do seu projeto** — o mesmo CLI que roda no
+terminal embutido (Configurações → IA e terminal). Nada sai para uma API do
+Loro: o processo é local e a conta é sua.
+
+- Escreva a pergunta e envie (Enter; Shift+Enter quebra linha). A resposta vai
+  aparecendo aos poucos, no próprio chat.
+- Os **chips** acima do campo são as habilidades de IA mais usadas. Clicar arma a ação;
+  enviar sem texto roda com a instrução padrão, e o `×` desarma.
+- A conversa **continua** de uma pergunta para a outra. **reiniciar** começa do
+  zero.
+- `sonnet · alto ⌄` é um controle só: escolha o **modelo** e o **esforço** (quanto
+  o agente pensa antes de responder).
+- O ↑ vira **■** enquanto responde — clique para parar o turno.
+- Se o agente precisar de **permissão** para mexer na pasta, aparece um bloco
+  âmbar: **Permitir esta pasta** (vale só para esta conversa) ou **Continuar no
+  terminal**, onde ele pode pedir permissão passo a passo.
+
+- **Onde as habilidades rodam** é escolha sua: **Configurações → IA e terminal**.
+  *No chat*, a resposta fica na conversa; *no terminal*, você acompanha o passo a
+  passo e pode intervir. Vale para tudo — analisar uma reunião, perguntar ao
+  projeto, rodar uma ação pelo menu ⋯.
+- As três seções da barra lateral (**ideias**, **para organizar**,
+  **conhecimento**) **recolhem**: clique no título. Com muitos temas isso é o que
+  mantém a árvore navegável.
+
+- **O que o chat pode fazer** também é escolha sua (**Configurações → IA e
+  terminal**). O chat não consegue parar e perguntar no meio de uma ação, então
+  ele já vem com permissão para agir: *ler e editar o projeto* cobre analisar uma
+  reunião e escrever notas; *tudo, sem perguntar* libera também conectores
+  externos (Slack, Drive…) e caminhos fora da pasta do projeto.
+- Cada passo do agente (uma ferramenta que ele usou) **abre**: clique para ver o
+  que foi pedido e o que voltou. Um passo que falhou já abre sozinho.
+
+### Ajustar as larguras
+
+As três colunas laterais são ajustáveis: **arraste** a divisória entre a barra de
+ideias e o conteúdo, entre o conteúdo e o painel ✦ IA, ou o topo do terminal
+quando ele está embaixo. **Dois cliques** na divisória volta ao tamanho padrão.
+O tamanho escolhido fica guardado.
+
+### Como as coisas se chamam
+
+O Loro fala a sua língua na tela e guarda os nomes técnicos no disco:
+
+| Na tela | No disco / nos ADRs |
+|---|---|
+| projeto | acervo |
+| ideias | brainstorming |
+| para organizar | fila (`inbox/`) |
+| conhecimento | contextos |
+| habilidades de IA | habilidades |
+| salvar versão | versionar (commit) |
+| enviar para revisão do time | propor mudança (RFC = PR) |
+| juntar a um conhecimento | promover |
+
+### Tema
+
+Em **Configurações → Aparência** você escolhe **claro**, **escuro** ou
+**sistema** (acompanha o macOS/Windows).
+
 ## Primeiros passos
 
 Na primeira abertura, um **modal de boas-vindas** resume as principais
 funcionalidades (fluxo, gravação, modelos, agente, IA e atalhos) — reabra
-quando quiser pela paleta: `Cmd/Ctrl+Shift+P` → "apresentação do Loro".
+quando quiser pela paleta: `Cmd/Ctrl+K` → "apresentação do Loro".
 
 1. **Criar o acervo** — na primeira abertura, o assistente pede um nome, a
    pasta onde gerar e os contextos iniciais (ex.: `produto`, `engenharia`).
@@ -64,7 +161,7 @@ quando quiser pela paleta: `Cmd/Ctrl+Shift+P` → "apresentação do Loro".
   brainstorming (vira uma reunião ligada ao tema) ou "transcrição avulsa"
   (o texto fica no painel ao vivo para salvar/descartar ao final). O atalho
   global é `Cmd/Ctrl+Alt+Espaço`.
-- Cada comando da paleta (`Cmd/Ctrl+Shift+P`) tem um atalho `Cmd/Ctrl+Alt+
+- Cada comando da paleta (`Cmd/Ctrl+K`) tem um atalho `Cmd/Ctrl+Alt+
   <tecla>`, exibido ao lado do comando na própria paleta.
 - **Fontes**: microfone, áudio do sistema (requer BlackHole — o app guia a
   instalação) ou **reunião** (mic + sistema juntos; a transcrição acontece ao
@@ -74,11 +171,15 @@ quando quiser pela paleta: `Cmd/Ctrl+Shift+P` → "apresentação do Loro".
 
 ## Brainstorming (o mundo não versionado)
 
+- **Escrever uma nota** (na tela Início) abre um markdown **em branco** na hora:
+  você escreve primeiro e, ao salvar, escolhe o título e onde a nota vai morar —
+  um brainstorming existente ou um contexto. Enquanto não salvar, nada é gravado
+  em disco.
 - O **＋** no cabeçalho da seção cria um brainstorming (espaço privado para
   um tema); o **＋** da seção contextos cria um contexto.
 - Dentro dele (expanda o brainstorming na lateral): cada pasta tem sua
   própria ação de criação no topo — **notas** → **＋ nova nota**;
-  **reuniões** → **● gravar reunião** (também na paleta `Cmd/Ctrl+Shift+P`
+  **reuniões** → **● gravar reunião** (também na paleta `Cmd/Ctrl+K`
   → "nova reunião"); **anexos** → **⇄ sincronizar** (traz de Drive/Slack/
   Jira/Confluence) e **＋ do computador** (abre o seletor de arquivos e copia
   um `.pdf`/`.xlsx`/imagem que você já tem para os anexos do tema).
@@ -86,15 +187,6 @@ quando quiser pela paleta: `Cmd/Ctrl+Shift+P` → "apresentação do Loro".
   pedido seu; **✦ pedir à IA** (menu ⋯ de uma nota/análise **e no rail à
   direita de qualquer arquivo aberto**) aplica um pedido sobre o conteúdo
   existente — a IA evolui, nunca apaga.
-- **Atualizar índice (resumão)** (menu ⋯ do brainstorming) roda a habilidade
-  `/loro-digest`: ela lê **todo** o material do tema (as análises das reuniões,
-  notas e anexos) e (re)escreve o `indice.md` — o markdown principal — com um
-  **resumo geral**, os **pontos-chave & highlights**, um **índice** com links
-  para cada material e as **referências** (o painel no topo do arquivo). É
-  disparada por você e reescreve o índice do zero (não lê a transcrição bruta
-  nem áudio — só as análises e notas). Quando surge material novo desde o
-  último índice, o próprio `indice.md` mostra um aviso sutil no topo ("N itens
-  novos — atualizar índice") com um botão para regerar.
 - **Menu ⋯ de uma reunião**: além de renomear e apagar, **⇄ mover para…** leva a
   reunião inteira — transcrição, análises e material gerado — para outro
   brainstorming — disponível depois que a reunião termina, como analisar e enviar
@@ -143,8 +235,9 @@ quando quiser pela paleta: `Cmd/Ctrl+Shift+P` → "apresentação do Loro".
   **dropdown de habilidades** ("o que fazer com esta reunião") — escolha
   qualquer habilidade (incluindo analisar/perguntar) e rode sobre a reunião
   aberta. Sem restrição: aparecem todas, padrão e customizadas.
-- Numa reunião: marque **dúvidas/decisões/investigações** durante a fala (via
-  paleta `Cmd/Ctrl+Shift+P` ou pelos botões); depois rode **analisar** (menu ⋯)
+- Numa reunião: use **✎ Marcar momento** (`Cmd/Ctrl+Alt+M`, ou o botão acima da
+  transcrição) para ancorar o instante em que algo importante foi dito — é um
+  marcador só, sem tipo a escolher no meio da fala; depois rode **analisar** (menu ⋯)
   para o Claude escrever a análise em `notas/`. Quando a gravação termina, o app
   abre a transcrição e **oferece** analisar em um clique — é uma sugestão, não
   roda nada sozinho, e some se você ignorar.

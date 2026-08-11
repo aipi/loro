@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="pt-br">
+<html lang="pt-br" data-theme="light">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -10,408 +10,684 @@
   </head>
   <body>
     <div id="app">
-      <!-- faixa de status -->
-      <header class="status">
-        <div class="cluster">
-          <span class="brand mono">loro<span id="dot" class="dot" aria-hidden="true"></span></span>
-        </div>
-        <div class="cluster">
-          <button id="helpBtn" class="iconbtn mono" title="Manual de uso" aria-label="Manual de uso" data-i18n-attrs="title,aria-label">?</button>
-          <button id="cfgBtn" class="iconbtn" title="Configurações" aria-label="Configurações" data-i18n-attrs="title,aria-label">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 00.12-.61l-1.92-3.32a.49.49 0 00-.59-.22l-2.39.96a7.03 7.03 0 00-1.62-.94l-.36-2.54a.48.48 0 00-.48-.41h-3.84a.48.48 0 00-.48.41l-.36 2.54c-.59.24-1.13.56-1.62.94l-2.39-.96a.49.49 0 00-.59.22L2.74 8.87a.49.49 0 00.12.61l2.03 1.58c-.05.3-.07.62-.07.94 0 .33.02.64.07.94l-2.03 1.58a.49.49 0 00-.12.61l1.92 3.32c.13.22.39.3.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.48-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.49.49 0 00-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1112 8.4a3.6 3.6 0 010 7.2z"/></svg>
+      <!-- ============ CABEÇALHO (54px) ============
+           Anatomia única do redesign: [logo+projeto ⌄] [nav pill] ··· [Gravar][✦ IA].
+           Gravar vem SEMPRE antes de ✦ IA; ✦ IA é o toggle do painel direito. -->
+      <header class="apphead">
+        <div id="acervoSwitch" class="switch">
+          <button id="acervoBtn" class="projbtn" title="Trocar de projeto" data-i18n-attrs="title">
+            <img src="parrot.png" width="28" height="28" alt="" class="projlogo" />
+            <span id="acervoName" class="projname">acervo</span>
+            <span class="swcaret" aria-hidden="true">⌄</span>
           </button>
+          <div id="acervoMenu" class="switchmenu" hidden></div>
+        </div>
+
+        <nav id="destNav" class="destnav" aria-label="destinos" data-i18n-attrs="aria-label">
+          <button class="dest on" data-dest="home" data-i18n>Início</button>
+          <button class="dest" data-dest="organize"><span data-i18n>Organizar</span><span id="destQueueBadge" class="destbadge" hidden>0</span></button>
+          <button class="dest" data-dest="knowledge" data-i18n>Conhecimento</button>
+        </nav>
+
+        <!-- estado de gravação em outras telas: pill que volta para a aba -->
+        <span id="headRec" class="headrec mono" hidden></span>
+
+        <div class="headright">
+          <span id="appVersion" class="localtag mono" title="tudo roda 100% no seu computador" data-i18n-attrs="title">—</span>
+          <button id="toggleBtn" class="recbtn" title="Gravar" aria-label="Gravar / Parar" data-i18n-attrs="title,aria-label">
+            <span class="rec-glyph" aria-hidden="true"></span>
+            <span id="recLabel" data-i18n>Gravar</span>
+          </button>
+          <button id="aiPanelBtn" class="aibtn" title="mostrar / recolher painel de IA" data-i18n-attrs="title">
+            <span aria-hidden="true">✦</span> <span data-i18n>IA</span>
+          </button>
+          <span id="dot" class="dot" aria-hidden="true"></span>
         </div>
       </header>
 
-      <!-- ============ acervo + terminal (empilhado ou lado a lado) ============ -->
       <div id="mainRow" class="mainrow">
       <main id="brain" class="bwrap">
-        <!-- setup / criar acervo (novo projeto) -->
+        <!-- ============ 1j · PRIMEIRO USO ============ -->
         <section id="brainSetup" class="wizard" hidden>
-          <img src="parrot.png" width="56" height="56" alt="" class="wizard-icon" />
-          <h1 id="wizTitle" data-i18n>Criar seu acervo de contextos</h1>
-          <p class="lead" data-i18n>Um acervo é um projeto-cérebro (ex.: Company, pessoal…). O Loro estrutura o que você fala/escreve em contextos.</p>
-          <label class="wfield"><span class="mono" data-i18n>nome do projeto</span>
-            <input id="brainNameInput" type="text" placeholder="ex.: Company, Pessoal" data-i18n-attrs="placeholder" />
-          </label>
-          <label class="wfield"><span class="mono" data-i18n>idioma</span>
-            <select id="wizLang">
-              <option value="pt" data-i18n>português</option>
-              <option value="en" data-i18n>english</option>
-            </select>
-          </label>
-          <label class="wfield"><span class="mono" data-i18n>modelo de uso</span>
-            <select id="wizTemplates"></select>
-          </label>
-          <p id="wizTemplateHint" class="hint tplhint"></p>
-          <label class="wfield"><span class="mono" data-i18n>onde gerar</span>
-            <button id="brainDirBtn" class="link mono dirbtn">…</button>
-          </label>
-          <label class="wfield"><span class="mono" data-i18n>contextos</span>
-            <input id="brainCtxInput" type="text"
-              placeholder="ex.: produto-a, plataforma, engenharia/frontend" data-i18n-attrs="placeholder" />
-          </label>
-          <label class="wtoggle"><input type="checkbox" id="brainGit" checked />
-            <span data-i18n>versionar com git (git init nesta pasta)</span></label>
-          <label class="wfield"><span class="mono" data-i18n>agente de IA (comando)</span>
-            <input id="brainAgentInput" type="text" placeholder="claude — ou outro CLI: gemini, ollama run llama3…" data-i18n-attrs="placeholder" />
-          </label>
-          <!-- div, not label: a label would re-dispatch any swatch click to its
-               first labelable control (the first swatch), resetting the pick -->
-          <div class="wfield"><span class="mono" data-i18n>cor do projeto</span>
-            <div id="wizColors" class="swatches"></div>
+          <div class="wizhead">
+            <img src="parrot.png" width="34" height="34" alt="" class="wizard-icon" />
+            <div>
+              <h1 id="wizTitle" data-i18n>Crie seu primeiro projeto</h1>
+              <p class="lead" data-i18n>Um projeto guarda tudo o que você grava e escreve — e vira o conhecimento do time. Fica na sua máquina.</p>
+            </div>
           </div>
-          <p class="hint"><span data-i18n>cada contexto vira uma pasta com</span> <span class="mono">context.md</span>
-            <span data-i18n>(a fonte da verdade) e</span> <span class="mono">CHANGELOG.md</span><span data-i18n>; a colaboração usa</span>
-            <span class="mono">.github/CODEOWNERS</span><span data-i18n>. Se já houver estrutura, ela é respeitada.</span></p>
-          <div class="cluster">
-            <button id="brainCreateBtn" class="primary" data-i18n>criar acervo</button>
+
+          <!-- dependências: UM botão, nunca um comando à vista -->
+          <div id="wizDeps" class="depbanner" hidden>
+            <span id="wizDepsMsg" class="depmsg" data-i18n>faltam algumas coisas para o Loro funcionar</span>
+            <button id="wizDepsRun" class="btn solid amber" data-i18n>Instalar agora</button>
+          </div>
+
+          <div class="wizcard">
+            <label class="wfield"><span class="mono" data-i18n>nome do projeto</span>
+              <input id="brainNameInput" type="text" placeholder="ex.: Empresa, Pessoal" data-i18n-attrs="placeholder" />
+            </label>
+            <label class="wfield"><span class="mono" data-i18n>como o time trabalha</span>
+              <select id="wizTemplates"></select>
+            </label>
+            <p id="wizTemplateHint" class="hint tplhint"></p>
+            <label class="wfield"><span class="mono" data-i18n>onde guardar</span>
+              <button id="brainDirBtn" class="link mono dirbtn">…</button>
+            </label>
+            <label class="wfield"><span class="mono" data-i18n>idioma</span>
+              <select id="wizLang">
+                <option value="pt" data-i18n>português</option>
+                <option value="en" data-i18n>english</option>
+              </select>
+            </label>
+            <!-- div, not label: a label would re-dispatch any swatch click to its
+                 first labelable control (the first swatch), resetting the pick -->
+            <div class="wfield"><span class="mono" data-i18n>cor do projeto</span>
+              <div id="wizColors" class="swatches"></div>
+            </div>
+          </div>
+
+          <details class="wizadv">
+            <summary data-i18n>Opções avançadas</summary>
+            <div class="wizcard">
+              <label class="wtoggle"><input type="checkbox" id="brainGit" checked />
+                <span data-i18n>guardar histórico de versões (git nesta pasta)</span></label>
+              <label class="wfield"><span class="mono" data-i18n>agente de IA (comando)</span>
+                <input id="brainAgentInput" type="text" placeholder="claude — ou outro CLI: gemini, ollama run llama3…" data-i18n-attrs="placeholder" />
+              </label>
+              <label class="wfield"><span class="mono" data-i18n>temas iniciais</span>
+                <input id="brainCtxInput" type="text"
+                  placeholder="ex.: produto, plataforma, engenharia/frontend" data-i18n-attrs="placeholder" />
+              </label>
+            </div>
+          </details>
+
+          <div class="wizfoot">
+            <button id="brainCreateBtn" class="btn solid" data-i18n>Criar projeto →</button>
             <button id="brainCancelBtn" class="link mono muted" hidden data-i18n>cancelar</button>
           </div>
           <p id="brainSetupErr" class="hint err" hidden></p>
         </section>
 
-        <!-- shell: árvore lateral + conteúdo -->
+        <!-- ============ CASCO: sidebar · conteúdo ============ -->
         <div id="brainShell" class="bshell" hidden>
           <aside class="bside">
-            <div id="acervoSwitch" class="switch">
-              <button id="acervoBtn" class="switchbtn">
-                <span class="swico">◆</span><span id="acervoName" class="swname">acervo</span><span class="swcaret">⌄</span>
-              </button>
-              <div id="acervoMenu" class="switchmenu" hidden></div>
+            <!-- busca no projeto (topo da sidebar, 1k) -->
+            <button id="sideSearch" class="sidesearch">
+              <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 10-.7.7l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0A4.5 4.5 0 1114 9.5 4.5 4.5 0 019.5 14z"/></svg>
+              <span data-i18n>buscar no projeto</span>
+              <span class="kbd mono">⌘K</span>
+            </button>
+
+            <div class="sidescroll">
+              <!-- IDEIAS (era: brainstorming) -->
+              <div class="bgroup amber"><button class="secttl" data-sect="ideas"><span class="seccaret">▾</span><span data-i18n>ideias</span></button><button id="addTemaBtn" class="gadd" title="Nova ideia" data-i18n-attrs="title">＋</button></div>
+              <div data-sectbody="ideas">
+                <input id="pessoalFilter" class="sidefilter" type="text" placeholder="buscar ideias…" data-i18n-attrs="placeholder" hidden>
+                <div id="navPessoal" class="btree pessoal"></div>
+              </div>
+
+              <!-- PARA ORGANIZAR (era: fila → contexto) -->
+              <div class="bgroup amber"><button class="secttl" data-sect="organize"><span class="seccaret">▾</span><span data-i18n>para organizar</span></button><span id="navQueueCount" class="cbadge" hidden>0</span></div>
+              <div data-sectbody="organize"><div id="navQueue" class="btree"></div></div>
+
+              <!-- CONHECIMENTO (era: contextos) -->
+              <div class="bgroup teal"><button class="secttl" data-sect="knowledge"><span class="seccaret">▾</span><span data-i18n>conhecimento</span></button><button id="addCtxBtn" class="gadd" title="Novo tema" data-i18n-attrs="title">＋</button></div>
+              <div data-sectbody="knowledge"><div id="navCtx" class="btree"></div></div>
+
+              <!-- habilidades customizadas: acessíveis, mas fora do caminho -->
+              <div id="toolsSection" class="toolsec" hidden>
+                <div class="bgroup"><button class="bgtoggle" id="toolsToggle" title="Recolher/expandir habilidades de IA" data-i18n-attrs="title"><span class="seccaret">▾</span> <span data-i18n>Habilidades de IA</span></button><button id="addToolBtn" class="gadd" title="Nova habilidade de IA" data-i18n-attrs="title">＋</button></div>
+                <div id="navTools" class="btree"></div>
+              </div>
+              <div id="navSources" class="btree srcs" hidden></div>
             </div>
 
-            <div id="navHome" class="bitem on" data-i18n>⌂ visão geral</div>
-
-            <!-- Fluxo sequencial (ADR-0013): Brainstorming → Fila → Contexto. A
-                 ordem dos grupos espelha os passos, para o usuário entender o caminho. -->
-            <!-- 1 · Brainstorming — mundo não versionado (âmbar) -->
-            <div class="bgroup pessoal"><span><span data-i18n>1 · brainstorming</span> <button class="ghelp" data-tip="Passo 1 — construa a ideia em reuniões e notas. Privado, não versionado. Selecione partes e envie para a fila." aria-label="O que é o brainstorming?" data-i18n-attrs="data-tip,aria-label">ⓘ</button></span><button id="addTemaBtn" class="gadd" title="Criar um novo brainstorming" data-i18n-attrs="title">＋</button></div>
-            <input id="pessoalFilter" class="sidefilter" type="text" placeholder="buscar brainstorming…" data-i18n-attrs="placeholder" hidden>
-            <div id="navPessoal" class="btree pessoal"></div>
-
-            <!-- 2 · Fila de geração de contexto -->
-            <div class="bgroup"><span><span data-i18n>2 · fila → contexto</span> <button class="ghelp" data-tip="Passo 2 — a fila de geração de contexto. Relatórios do brainstorming e arquivos enviados esperam aqui até você clicar em 'gerar contexto' (o Claude processa com /loro-context)." aria-label="O que é a fila?" data-i18n-attrs="data-tip,aria-label">ⓘ</button></span><span id="navQueueCount" class="pill" hidden>0</span></div>
-            <div id="navQueue" class="btree"></div>
-
-            <!-- 3 · Contextos versionados -->
-            <div class="bgroup"><span><span data-i18n>3 · contextos</span> <button class="ghelp" data-tip="Passo 3 — o conhecimento oficial do negócio: versionado, revisado (RFC = PR) e compartilhado com o time." aria-label="O que são contextos?" data-i18n-attrs="data-tip,aria-label">ⓘ</button></span><button id="addCtxBtn" class="gadd" title="Criar um novo contexto" data-i18n-attrs="title">＋</button></div>
-            <div id="navCtx" class="btree"></div>
-
-            <!-- Ferramentas (ADR-0005): skills customizadas do usuário — qualquer
-                 .md em .claude/commands/ que não seja um dos 7 built-ins. -->
-            <div class="bgroup"><span><button class="bgtoggle" id="toolsToggle" title="Recolher/expandir habilidades" data-i18n-attrs="title"><span class="seccaret">▾</span> <span class="nico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 4h5v8l-2.5-1.5L6 12V4z"/></svg></span> <span data-i18n>habilidades</span></button> <button class="ghelp" data-tip="Ações do agente de IA — as padrão (sincronizar, apresentação, artefato) você pode editar mas não excluir; as suas você cria do zero. Rode uma pelo menu ⋯ de um brainstorming/reunião ('executar habilidade')." aria-label="O que são as habilidades?" data-i18n-attrs="data-tip,aria-label">ⓘ</button></span><button id="addToolBtn" class="gadd" title="Nova habilidade" data-i18n-attrs="title">＋</button></div>
-            <div id="navTools" class="btree"></div>
-
-            <div class="bgroup"><span data-i18n>fontes</span></div>
-            <div id="navSources" class="btree"></div>
+            <!-- rodapé fixo: atalhos + [⚙ Configurações][▥] lado a lado -->
+            <div class="sidefoot">
+              <button id="footSkills" class="footrow">
+                <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 4h5v8l-2.5-1.5L6 12V4z"/></svg>
+                <span data-i18n>Habilidades de IA</span><span id="footSkillsN" class="mono n"></span>
+              </button>
+              <button id="footSources" class="footrow">
+                <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+                <span data-i18n>reuniões e notas</span><span id="footSourcesN" class="mono n"></span>
+              </button>
+              <button id="helpBtn" class="footrow" title="Manual de uso" data-i18n-attrs="title">
+                <span class="qm" aria-hidden="true">?</span><span data-i18n>Como funciona o Loro</span>
+              </button>
+              <div class="sidefoot-row">
+                <button id="cfgBtn" class="footcfg" title="Configurações" data-i18n-attrs="title">
+                  <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 00.12-.61l-1.92-3.32a.49.49 0 00-.59-.22l-2.39.96a7.03 7.03 0 00-1.62-.94l-.36-2.54a.48.48 0 00-.48-.41h-3.84a.48.48 0 00-.48.41l-.36 2.54c-.59.24-1.13.56-1.62.94l-2.39-.96a.49.49 0 00-.59.22L2.74 8.87a.49.49 0 00.12.61l2.03 1.58c-.05.3-.07.62-.07.94 0 .33.02.64.07.94l-2.03 1.58a.49.49 0 00-.12.61l1.92 3.32c.13.22.39.3.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.48-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.49.49 0 00-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1112 8.4a3.6 3.6 0 010 7.2z"/></svg>
+                  <span data-i18n="settings">Configurações</span>
+                </button>
+                <button id="sideToggle" class="footside" title="recolher barra lateral" data-i18n-attrs="title">
+                  <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h14c1.66 0 3 1.34 3 3v12c0 1.66-1.34 3-3 3H5c-1.66 0-3-1.34-3-3V6c0-1.66 1.34-3 3-3zm0 2c-.55 0-1 .45-1 1v12c0 .55.45 1 1 1h4V5H5zm6 0v14h8c.55 0 1-.45 1-1V6c0-.55-.45-1-1-1h-8z"/></svg>
+                </button>
+              </div>
+            </div>
           </aside>
+
+          <!-- sidebar recolhida (60px) -->
+          <aside class="bside-mini" id="sideMini" hidden>
+            <button class="minibtn" data-mini="rec" title="gravação" data-i18n-attrs="title" hidden>
+              <svg class="ic" viewBox="0 0 24 24"><path d="M12 14a3 3 0 003-3V5a3 3 0 10-6 0v6a3 3 0 003 3zm5-3a5 5 0 01-10 0H5a7 7 0 006 6.92V21h2v-3.08A7 7 0 0019 11h-2z"/></svg>
+            </button>
+            <span class="minisep" aria-hidden="true"></span>
+            <button class="minibtn amber" data-mini="ideas" title="ideias" data-i18n-attrs="title">
+              <svg class="ic" viewBox="0 0 24 24"><path d="M9 21c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-1H9v1zm3-19C8.14 2 5 5.14 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-2.26c1.81-1.27 3-3.36 3-5.74 0-3.86-3.14-7-7-7z"/></svg>
+            </button>
+            <button class="minibtn" data-mini="organize" title="para organizar" data-i18n-attrs="title">
+              <svg class="ic" viewBox="0 0 24 24"><path d="M20.54 5.23l-1.39-1.68C18.88 3.21 18.47 3 18 3H6c-.47 0-.88.21-1.16.55L3.46 5.23C3.17 5.57 3 6.02 3 6.5V19c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V6.5c0-.48-.17-.93-.46-1.27zM12 17.5L6.5 12H10v-2h4v2h3.5L12 17.5zM5.12 5l.81-1h12l.94 1H5.12z"/></svg>
+              <span id="miniQueueBadge" class="minibadge" hidden>0</span>
+            </button>
+            <button class="minibtn teal" data-mini="knowledge" title="conhecimento" data-i18n-attrs="title">
+              <svg class="ic" viewBox="0 0 24 24"><path d="M12 3L1 9l4 2.18v6L12 21l7-3.82v-6l2-1.09V17h2V9L12 3zm6.82 6L12 12.72 5.18 9 12 5.28 18.82 9zM17 15.99l-5 2.73-5-2.73v-3.72L12 15l5-2.73v3.72z"/></svg>
+            </button>
+            <button class="minibtn" data-mini="skills" title="Habilidades de IA" data-i18n-attrs="title">
+              <svg class="ic" viewBox="0 0 24 24"><path d="M18 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 4h5v8l-2.5-1.5L6 12V4z"/></svg>
+            </button>
+            <button class="minibtn bordered" data-mini="expand" title="expandir barra lateral" data-i18n-attrs="title">
+              <svg class="ic" viewBox="0 0 24 24"><path d="M5 3h14c1.66 0 3 1.34 3 3v12c0 1.66-1.34 3-3 3H5c-1.66 0-3-1.34-3-3V6c0-1.66 1.34-3 3-3zm0 2c-.55 0-1 .45-1 1v12c0 .55.45 1 1 1h4V5H5zm6 0v14h8c.55 0 1-.45 1-1V6c0-.55-.45-1-1-1h-8z"/></svg>
+            </button>
+            <button class="minibtn" data-mini="settings" title="Configurações" data-i18n-attrs="title">
+              <svg class="ic" viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 00.12-.61l-1.92-3.32a.49.49 0 00-.59-.22l-2.39.96a7.03 7.03 0 00-1.62-.94l-.36-2.54a.48.48 0 00-.48-.41h-3.84a.48.48 0 00-.48.41l-.36 2.54c-.59.24-1.13.56-1.62.94l-2.39-.96a.49.49 0 00-.59.22L2.74 8.87a.49.49 0 00.12.61l2.03 1.58c-.05.3-.07.62-.07.94 0 .33.02.64.07.94l-2.03 1.58a.49.49 0 00-.12.61l1.92 3.32c.13.22.39.3.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.48-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.49.49 0 00-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1112 8.4a3.6 3.6 0 010 7.2z"/></svg>
+            </button>
+          </aside>
+
           <div id="sideGrip" class="sidegrip" aria-hidden="true"></div>
 
           <section class="bmain" id="bMain">
-            <!-- faixa de abas (studio) — não rola; ADR-0008 -->
+            <!-- faixa de abas: só documentos abertos, nunca "Início" (ADR-0008) -->
             <nav id="wsTabs" class="wstabs" aria-label="abas abertas" data-i18n-attrs="aria-label"></nav>
-            <!-- corpo rolável: visão geral + documento aberto -->
+
             <div id="wsBody" class="wsbody">
-            <!-- visão geral -->
+            <!-- ======== DESTINOS (Início · Organizar · Conhecimento) ======== -->
             <div id="bHome">
-              <div id="setupBanner" class="setupbanner" hidden>
-                <span id="setupMsg" data-i18n>faltam dependências</span>
-                <button id="setupRun" class="abtn" data-i18n>configurar agora no terminal</button>
+              <div id="setupBanner" class="depbanner" hidden>
+                <span id="setupMsg" class="depmsg" data-i18n>faltam dependências</span>
+                <button id="setupRun" class="btn solid amber" data-i18n>Instalar agora</button>
               </div>
-              <div class="bhero">
-                <img src="parrot.png" width="46" height="46" alt="" class="bhero-icon" />
-                <div class="bhero-txt">
-                  <h1 data-i18n>acervo</h1>
-                  <p id="bSub" class="mono">—</p>
+
+              <!-- 1a · INÍCIO -->
+              <div id="destHome" class="dest-view home">
+                <div class="hgreet">
+                  <h1 data-i18n>O que você quer guardar hoje?</h1>
+                  <p data-i18n>O Loro transforma o que você fala e escreve em conhecimento do time.</p>
                 </div>
-                <span class="cluster">
-                  <button id="homeSkillBtn" class="abtn" title="Escolher e executar uma habilidade — perguntar ao acervo, sincronizar, apresentação, artefato…" data-i18n-attrs="title"><span class="nico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 4h5v8l-2.5-1.5L6 12V4z"/></svg></span> <span data-i18n>executar habilidade</span></button>
-                  <button id="branchBtn" class="pulse mono gitbtn" hidden title="Escolher ou criar a branch de trabalho" data-i18n-attrs="title"></button>
-                  <button id="gitBtn" class="pulse mono gitbtn" hidden data-i18n>versionar</button>
-                  <button id="proposeBtn" class="pulse mono gitbtn" hidden title="Publicar a mudança como um Pull Request (RFC) para revisão" data-i18n data-i18n-attrs="title">propor mudança</button>
-                  <button id="proposeHelp" class="ghelp" hidden data-tip="Publica a branch rfc/… atual e abre um Pull Request (a RFC): os donos do contexto revisam e o merge torna a mudança oficial. Antes, use 'versionar' para commitar. Requer git/gh configurados — o doctor valida." aria-label="O que é propor mudança?" data-i18n-attrs="data-tip,aria-label">ⓘ</button>
-                </span>
-              </div>
-
-              <!-- ADR-0013: o fluxo sequencial, sempre visível -->
-              <div class="stageflow" aria-label="fluxo brainstorming, fila, contexto" data-i18n-attrs="aria-label">
-                <div class="stage"><b data-i18n>Brainstorming</b><span data-i18n>construa a ideia: reuniões e notas</span></div>
-                <span class="stagearrow">→</span>
-                <div class="stage"><b data-i18n>Fila</b><span data-i18n>selecione partes → um relatório entra na fila</span></div>
-                <span class="stagearrow">→</span>
-                <div class="stage"><b data-i18n>Contexto</b><span data-i18n>gere o contexto versionado a partir da fila</span></div>
-              </div>
-
-              <div id="ghCard" class="ghcard" hidden>
-                <div class="ghrow">
-                  <span class="ghtitle mono" data-i18n>conexão GitHub</span>
-                  <span id="ghState" class="mono badge" data-i18n>local</span>
-                  <button id="ghCheck" class="mini act" title="Verificar o ambiente (git, gh, autenticação, repositório)" data-i18n data-i18n-attrs="title">verificar</button>
-                </div>
-                <ul id="ghChecks" class="ghchecks"></ul>
-                <div id="ghNotif" class="ghnotif mono" hidden></div>
-              </div>
-
-              <div class="stats">
-                <div class="stat"><b id="stInbox">0</b><span class="mono" data-i18n>na fila</span></div>
-                <div class="stat"><b id="stDone">0</b><span class="mono" data-i18n>processadas</span></div>
-                <div class="stat"><b id="stCtx">0</b><span class="mono" data-i18n>contextos</span></div>
-                <div class="stat"><b id="stSrc">0</b><span class="mono" data-i18n>fontes</span></div>
-              </div>
-
-              <div class="hgrid">
-                <div class="hcard qcard" id="queueCard">
-                  <h2 class="sect mono qhead">
-                    <span><span data-i18n>fila de geração de contexto</span> <button class="ghelp" data-tip="O que está aqui vira contexto quando você clicar em 'gerar contexto'. Envie relatórios do brainstorming, ou arraste arquivos. O Claude processa a fila com /loro-context." aria-label="Como funciona a fila?" data-i18n-attrs="data-tip,aria-label">ⓘ</button></span>
-                    <span id="bPulse" class="pulse mono">—</span>
-                  </h2>
-                  <div id="homeQueue"></div>
-                  <button id="brainImport" class="abtn ghost dropfull" title="Adicionar arquivos à fila de geração de contexto" data-i18n data-i18n-attrs="title">
-                    ＋ arraste arquivos aqui ou clique para adicionar à fila
+                <button id="heroRec" class="herocard">
+                  <span class="heroring" aria-hidden="true"><span class="herodisc"></span></span>
+                  <span class="herotxt">
+                    <b data-i18n>Gravar uma reunião ou conversa</b>
+                    <span data-i18n>Transcrita ao vivo no seu computador. Ao terminar, vira uma ideia do projeto.</span>
+                  </span>
+                  <span class="heroarrow" aria-hidden="true">→</span>
+                </button>
+                <div class="herogrid">
+                  <button id="heroNote" class="minicard">
+                    <span class="mc-t"><svg class="ic" viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h10l6-6V5c0-1.1-.9-2-2-2zm-5 14v-4h4l-4 4z"/></svg> <span data-i18n>Escrever uma nota</span></span>
+                    <span class="mc-s" data-i18n>um rascunho rápido</span>
                   </button>
-                  <label class="opt" title="Copia os anexos referenciados pelos itens processados para contextos/&lt;c&gt;/anexos/">
-                    <input type="checkbox" id="queueSaveAnexos" /> <span data-i18n>salvar anexos referenciados no contexto</span>
-                  </label>
-                  <div class="hfoot rowsplit">
-                    <select id="importCtx" class="mini-select">
-                      <option value="" data-i18n>contexto: automático</option>
-                    </select>
-                    <button id="queueGenCtx" class="abtn cta" title="Processa a fila com o Claude (/loro-context): cada item vira/atualiza um contexto versionado" data-i18n data-i18n-attrs="title">gerar contexto →</button>
-                  </div>
-                  <div class="hfoot qfoot">
-                    <button id="guideBtn" class="link mono muted" title="Instruções que o loop segue antes de processar a fila" data-i18n data-i18n-attrs="title">✎ instruções do loop</button>
-                  </div>
+                  <button id="heroFiles" class="minicard">
+                    <span class="mc-t"><svg class="ic" viewBox="0 0 24 24"><path d="M6 2c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6H6zm7 7V3.5L18.5 9H13z"/></svg> <span data-i18n>Trazer arquivos</span></span>
+                    <span class="mc-s" data-i18n>ou do Drive, Slack, Jira…</span>
+                  </button>
+                  <button id="heroAsk" class="minicard">
+                    <span class="mc-t teal"><svg class="ic" viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H5.2L4 17.2V4h16v12z"/></svg> <span data-i18n>Perguntar à IA</span></span>
+                    <span class="mc-s" data-i18n>usa o que o projeto já sabe</span>
+                  </button>
                 </div>
-                <div class="hcard">
-                  <h2 class="sect mono" data-i18n>contextos mais ativos</h2>
-                  <div id="homeBars"></div>
+                <div id="homePending" class="pendingbar" hidden>
+                  <b id="homePendingN">0</b>
+                  <span id="homePendingTxt"></span>
+                  <button id="homePendingGo" class="btn solid sm" data-i18n>Organizar agora →</button>
                 </div>
               </div>
 
-              <h2 class="sect mono" data-i18n>atividade do loop</h2>
-              <div id="brainActivity" class="feed"></div>
+              <!-- 1b · ORGANIZAR -->
+              <div id="destOrganize" class="dest-view" hidden>
+                <div class="viewhead">
+                  <h1 data-i18n>Organizar</h1>
+                  <p data-i18n>Escolha o que vale virar conhecimento. A IA lê, resume e propõe onde cada coisa entra — nada fica oficial sem a sua aprovação.</p>
+                </div>
+                <div class="orgopts">
+                  <select id="importCtx" class="mini-select">
+                    <option value="" data-i18n>destino: a IA decide</option>
+                  </select>
+                  <label class="opt inline"><input type="checkbox" id="queueSaveAnexos" /> <span data-i18n>guardar os anexos junto</span></label>
+                  <button id="guideBtn" class="link mono muted" data-i18n>ajustar instruções</button>
+                  <button id="brainImport" class="orgadd" data-i18n>＋ trazer arquivos</button>
+                </div>
+                <div id="orgList" class="orglist"></div>
+                <div class="orgfoot">
+                  <button id="queueGenCtx" class="btn solid" data-i18n>Transformar em conhecimento →</button>
+                  <span id="orgFootNote" class="orgnote"></span>
+                </div>
+              </div>
+
+              <!-- 1c · CONHECIMENTO -->
+              <div id="destKnowledge" class="dest-view" hidden>
+                <div id="ghNotifBar" class="notifbar" hidden>
+                  <span id="ghNotif" class="mono"></span>
+                  <button id="ghNotifClose" class="glyph" aria-label="Dispensar" data-i18n-attrs="aria-label">×</button>
+                </div>
+                <div class="viewhead">
+                  <h1 data-i18n>Conhecimento</h1>
+                  <p data-i18n>O que o time dá como certo, por tema. Cada um guarda seu histórico, então dá para ver o que mudou e por quê.</p>
+                </div>
+                <div id="knowGrid" class="knowgrid"></div>
+              </div>
             </div>
 
-            <!-- documento (visualizar / editar) -->
+            <!-- ======== 1d/1e · DOCUMENTO ======== -->
             <div id="bDocWrap" hidden>
-              <div class="dochead">
-                <span id="bCrumb" class="mono crumbpath"></span>
-                <span id="bBadge" class="mono badge ro"></span>
-                <span id="bGit" class="mono badge" hidden></span>
-                <span id="bPromoted" class="mono badge ok promoted" hidden></span>
-                <span id="bDocActs" class="cluster" hidden>
-                  <button id="bMoveDoc" class="mini act" title="mover para outro contexto ou projeto" data-i18n data-i18n-attrs="title">⇢ mover</button>
-                  <button id="bDelDoc" class="mini act danger" title="apagar da fila" data-i18n data-i18n-attrs="title">apagar</button>
-                </span>
-                <nav id="bModes" class="tabs small" hidden>
-                  <button id="bViewBtn" class="tab mono on" data-i18n>visualizar</button>
-                  <button id="bEditBtn" class="tab mono" data-i18n>editar</button>
-                </nav>
-              </div>
-              <!-- nota única de primeiro rascunho pessoal (ADR-0008/0009) -->
-              <div id="bDraftNote" class="draftnote" hidden>
-                <span data-i18n>rascunho pessoal — não é versionado; promova para um contexto para preservar</span>
-                <button id="bDraftClose" class="glyph" aria-label="Fechar" data-i18n-attrs="aria-label">×</button>
-              </div>
-              <!-- barra de busca no documento (Ctrl/⌘+F) -->
-              <div id="bFind" class="findbar" hidden>
-                <input id="bFindInput" type="text" placeholder="buscar no documento…" spellcheck="false" data-i18n-attrs="placeholder" />
-                <span id="bFindCount" class="mono">0/0</span>
-                <button id="bFindPrev" class="glyph" title="Anterior (Shift+Enter)" data-i18n-attrs="title">‹</button>
-                <button id="bFindNext" class="glyph" title="Próximo (Enter)" data-i18n-attrs="title">›</button>
-                <button id="bFindClose" class="glyph" title="Fechar (Esc)" data-i18n-attrs="title">×</button>
-              </div>
-              <div class="docbody">
-                <div class="docmain">
-                  <div id="brainDoc" class="doc reader"></div>
-                  <!-- barra de formatação markdown (ADR-0016); os botões são
-                       renderizados de LoroMdEdit.ACTIONS -->
-                  <div id="bEditBar" class="mdbar" hidden></div>
-                  <!-- editor fiel CodeMirror 6 (ADR-0008); um handle por aba, montado aqui -->
-                  <div id="bEditHost" class="edithost" hidden></div>
+              <article class="doccard">
+                <div class="dochead">
+                  <span id="bCrumb" class="mono crumbpath"></span>
+                  <span id="bBadge" class="mono badge ro"></span>
+                  <span id="bGit" class="mono badge" hidden></span>
+                  <span id="bPromoted" class="mono badge ok promoted" hidden></span>
+                  <span id="bProposal" class="pillamber mono" hidden data-i18n>proposta da IA — aguardando você</span>
+                  <span id="bDocActs" class="cluster" hidden>
+                    <button id="bMoveDoc" class="mini act" title="mover para outro tema ou projeto" data-i18n data-i18n-attrs="title">⇢ mover</button>
+                    <button id="bDelDoc" class="mini act danger" title="apagar" data-i18n data-i18n-attrs="title">apagar</button>
+                  </span>
+                  <nav id="bModes" class="tabs small" hidden>
+                    <button id="bViewBtn" class="tab mono on" data-i18n>visualizar</button>
+                    <button id="bEditBtn" class="tab mono" data-i18n>editar</button>
+                  </nav>
                 </div>
-                <!-- rail de ações do documento (ADR-0005): habilidade (dropdown + ▶),
-                     pedir à IA, versionar — o mesmo padrão em todo lugar onde essas
-                     ações existem (aqui, na reunião, e no cabeçalho do acervo). -->
-                <aside id="bDocRail" class="doc-rail" hidden></aside>
-              </div>
+                <div id="bDraftNote" class="draftnote" hidden>
+                  <span data-i18n>rascunho pessoal — não é versionado; junte a um conhecimento para preservar</span>
+                  <button id="bDraftClose" class="glyph" aria-label="Fechar" data-i18n-attrs="aria-label">×</button>
+                </div>
+                <!-- 1k · busca no documento (⌘F) -->
+                <div id="bFind" class="findbar" hidden>
+                  <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 10-.7.7l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0A4.5 4.5 0 1114 9.5 4.5 4.5 0 019.5 14z"/></svg>
+                  <input id="bFindInput" type="text" placeholder="buscar no documento…" spellcheck="false" data-i18n-attrs="placeholder" />
+                  <span id="bFindCount" class="mono">0/0</span>
+                  <button id="bFindPrev" class="glyph" title="Anterior (Shift+Enter)" data-i18n-attrs="title">‹</button>
+                  <button id="bFindNext" class="glyph" title="Próximo (Enter)" data-i18n-attrs="title">›</button>
+                  <button id="bFindClose" class="glyph" title="Fechar (Esc)" data-i18n-attrs="title">×</button>
+                </div>
+                <div class="docbody">
+                  <div class="docmain">
+                    <div id="brainDoc" class="doc reader"></div>
+                    <!-- ADR-0016: barra de formatação markdown (LoroMdEdit.ACTIONS) -->
+                    <div id="bEditBar" class="mdbar" hidden></div>
+                    <div id="bEditHost" class="edithost" hidden></div>
+                    <div id="bEditFoot" class="editfoot" hidden>
+                      <button id="bSaveVersion" class="btn solid" data-i18n>Salvar versão</button>
+                      <button id="bDiscardEdit" class="btn" data-i18n>Descartar mudanças</button>
+                      <span id="bEditNote" class="editnote mono"></span>
+                    </div>
+                  </div>
+                </div>
+                <!-- ações de aprovação da proposta (1d) -->
+                <div id="bApprove" class="approvebar" hidden>
+                  <button id="bApproveBtn" class="btn solid" data-i18n>Aprovar</button>
+                  <button id="bApproveEdit" class="btn" data-i18n>Editar</button>
+                  <button id="bApproveAsk" class="btn" data-i18n>✦ Pedir ajuste à IA</button>
+                </div>
+              </article>
+              <!-- rail legado (ADR-0005): mantido oculto; as ações vivem no painel -->
+              <aside id="bDocRail" class="doc-rail" hidden></aside>
             </div>
+
+            <!-- ======== 1f/1k · GRAVAÇÃO AO VIVO ======== -->
+            <section id="surface" class="recview" hidden>
+              <!-- 1k: fim da gravação -->
+              <div id="savebar" class="endbar" hidden>
+                <div class="endtxt">
+                  <b data-i18n>Reunião transcrita — guardar no projeto?</b>
+                  <span data-i18n>o áudio é apagado depois de transcrito</span>
+                </div>
+                <button id="saveBtn" class="btn solid sm" data-i18n>Salvar em ideias</button>
+                <button id="discardBtn" class="btn sm" data-i18n>Descartar</button>
+              </div>
+
+              <div class="recacts">
+                <button id="recMark" class="chip"><span aria-hidden="true">✎</span> <span data-i18n>Marcar momento</span></button>
+                <button id="recImage" class="chip"><span data-i18n>Anexar imagem</span></button>
+                <button id="recOverlay" class="chip"><span data-i18n>Legenda flutuante</span></button>
+                <select id="recSource" class="mini-select">
+                  <option value="mic" data-i18n>microfone</option>
+                  <option value="system" data-i18n>áudio do sistema</option>
+                  <option value="meeting" data-i18n>minha voz + áudio do sistema</option>
+                </select>
+              </div>
+
+              <div class="recscroll">
+                <div id="empty" class="empty">
+                  <img class="empty-parrot" src="parrot.png" width="56" height="56" alt="" aria-hidden="true" />
+                  <p data-i18n>A transcrição aparece aqui durante a gravação.</p>
+                </div>
+                <div id="doc" class="doc transcript annotatable" hidden></div>
+              </div>
+
+            </section>
             </div><!-- /wsBody -->
-            <!-- pill "novas linhas" da reunião ao vivo (ADR-0010) -->
+
+            <!-- rodapé de gravação: o MESMO para a gravação avulsa e para a
+                 reunião (um canvas só). Fica colado ao rodapé do conteúdo. -->
+            <div id="recFoot" class="recfoot" hidden>
+              <!-- os controles vêm ANTES do relógio; Encerrar tem o mesmo
+                   tratamento do Parar do cabeçalho (.recbtn) -->
+              <button id="recPause" class="btn sm" hidden>⏸ pausar</button>
+              <button id="recFinish" class="recbtn sm" hidden data-i18n>■ Encerrar reunião</button>
+              <span id="timer" class="mono timer">00:00</span>
+              <canvas id="wave" class="wave" width="640" height="26"></canvas>
+              <span class="mono recnote" data-i18n>mic ativo · a gravação continua se você trocar de aba</span>
+              <span id="privacy" class="privacypill mono" title="Modo sem armazenamento" data-i18n data-i18n-attrs="title">sem guardar áudio</span>
+              <button id="liveCollapse" class="glyph" aria-label="Recolher" data-i18n-attrs="aria-label" hidden>⌄</button>
+            </div>
+
+            <!-- terminal ancorado embaixo (alternável com o painel lateral) -->
+            <div id="termGrip" class="termgrip" aria-hidden="true" hidden></div>
+            <div id="termDock" class="termdock" hidden></div>
+
             <button id="mtgPill" class="mtgpill" hidden data-i18n>novas linhas ↓</button>
           </section>
         </div>
 
-        <!-- menu flutuante (mover para acervo/contexto) -->
+        <!-- menu flutuante (⋯ de pasta/arquivo, mover, contexto) -->
         <div id="bMenu" class="floatmenu" hidden></div>
 
-        <!-- editor (editar não-processado / prompt-guia) -->
+        <!-- editor modal (pendentes da fila / instruções do loop) -->
         <div id="editWrap" class="sheet-wrap" hidden>
           <div class="sheet editor">
             <div class="sheet-head">
               <span id="editTitle" class="mono sheet-title" data-i18n>editar</span>
               <button id="editClose" class="glyph" aria-label="Fechar" data-i18n-attrs="aria-label">×</button>
             </div>
-            <!-- ADR-0016: o modal usa o mesmo CM6 e a mesma barra da aba do
-                 Studio (era um textarea cru) -->
             <div id="editModalBar" class="mdbar"></div>
             <div id="editModalHost" class="edithost"></div>
             <div class="editbar">
-              <button id="editSave" class="primary" data-i18n>salvar</button>
+              <button id="editSave" class="btn solid" data-i18n>salvar</button>
               <button id="editCancel" class="link mono muted" data-i18n>cancelar</button>
             </div>
           </div>
         </div>
-        <!-- produção: promover para contexto · migrar acervo (ADR-0009) -->
+        <!-- juntar a um conhecimento · mover projeto de pasta (ADR-0009) -->
         <div id="pmWrap" class="sheet-wrap" hidden>
           <div class="sheet">
             <div class="sheet-head">
-              <span id="pmTitle" class="mono sheet-title" data-i18n>promover</span>
+              <span id="pmTitle" class="mono sheet-title" data-i18n>juntar a um conhecimento</span>
               <button id="pmClose" class="glyph" aria-label="Fechar" data-i18n-attrs="aria-label">×</button>
             </div>
             <div id="pmBody" class="pmbody"></div>
             <div class="editbar">
-              <button id="pmConfirm" class="primary" data-i18n>confirmar</button>
+              <button id="pmConfirm" class="btn solid" data-i18n>confirmar</button>
               <button id="pmCancel" class="link mono muted" data-i18n>cancelar</button>
             </div>
           </div>
         </div>
       </main>
 
-      <!-- painel ao vivo: sobe do player quando gravando / expandido -->
-      <section id="surface" class="livepanel" hidden>
-        <div class="livehead">
-          <span class="mono live-title" data-i18n>transcrição ao vivo</span>
-          <div id="savebar" class="cluster" hidden>
-            <button id="saveBtn" class="link mono strong" data-i18n>salvar no acervo</button>
-            <button id="discardBtn" class="link mono muted" data-i18n>descartar</button>
-          </div>
-          <button id="liveCollapse" class="glyph" aria-label="Recolher" data-i18n-attrs="aria-label">⌄</button>
-        </div>
-        <div class="livescroll">
-          <div id="empty" class="empty">
-            <img class="empty-parrot" src="parrot.png" width="56" height="56" alt="" aria-hidden="true" />
-            <p data-i18n>A transcrição aparece aqui durante a gravação.</p>
-          </div>
-          <div id="doc" class="doc" hidden></div>
-        </div>
-      </section>
+      <!-- alça de redimensionamento do painel direito -->
+      <div id="aiGrip" class="aigrip" aria-hidden="true" hidden></div>
 
-      <!-- terminal embutido (PTY): embaixo ou na lateral (o usuário escolhe) -->
+      <!-- ============ PAINEL DIREITO (330px) ============ -->
+      <aside id="aiPanel" class="aipanel" hidden>
+        <nav class="paneltabs" id="panelTabs">
+          <button class="ptab on" data-ptab="doc">
+            <svg class="ic" viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
+            <span data-i18n>Documento</span>
+          </button>
+          <button class="ptab" data-ptab="chat">
+            <svg class="ic" viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H5.2L4 17.2V4h16v12z"/></svg>
+            <span data-i18n>Chat</span>
+          </button>
+          <button class="ptab" data-ptab="term">
+            <svg class="ic" viewBox="0 0 24 24"><path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V8h16v10zM6.5 10l3 3-3 3L8 17l4-4-4-4-1.5 1zM13 16h5v-1.5h-5V16z"/></svg>
+            <span data-i18n>Terminal</span>
+          </button>
+        </nav>
+
+        <!-- Documento: ações · linha do tempo · time -->
+        <div id="panelDoc" class="panelpane">
+          <div id="pDocEmpty" class="pempty" hidden>
+            <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
+            <b data-i18n>Nenhum documento aberto</b>
+            <span data-i18n>abra um conhecimento ou uma reunião na barra lateral — as habilidades de IA, as versões e o envio para revisão aparecem aqui.</span>
+          </div>
+          <div id="pDocSecs">
+          <div class="psec">
+            <div class="phead" id="pActionsHead" data-i18n>COM ESTE DOCUMENTO</div>
+            <div id="pActions" class="pactions"></div>
+            <button id="pAllSkills" class="plink" data-i18n>todas as habilidades de IA ▸</button>
+          </div>
+          <div class="psep"></div>
+          <div class="psec">
+            <div class="phead" data-i18n>LINHA DO TEMPO</div>
+            <div id="pTimeline" class="ptimeline"></div>
+            <button id="pHistory" class="plink" data-i18n>ver histórico completo ▸</button>
+          </div>
+          <div class="psep"></div>
+          <div class="psec">
+            <div class="phead" data-i18n>TIME</div>
+            <button id="branchBtn" class="pbranch mono" hidden title="Escolher ou criar o rascunho de trabalho" data-i18n-attrs="title"></button>
+            <button id="proposeBtn" class="btn wide" hidden data-i18n>↗ Enviar para revisão do time</button>
+            <button id="gitBtn" class="btn wide" hidden data-i18n>Salvar versão</button>
+            <p class="pnote" data-i18n>cria um rascunho separado e abre um pedido de revisão no GitHub; quando o time aprova, vira oficial.</p>
+          </div>
+          </div>
+        </div>
+
+        <!-- Chat: faixa de estado · thread · composer com habilidades -->
+        <div id="panelChat" class="panelpane" hidden>
+          <div class="chatstate mono">
+            <span id="chatMode" class="chatpill" data-i18n>modo aberto</span>
+            <button id="chatReset" class="ulink" data-i18n>reiniciar</button>
+            <button id="chatModel" class="ulink right">sonnet · alto ⌄</button>
+          </div>
+          <div id="chatThread" class="chatthread"></div>
+          <div class="composer">
+            <div id="chatChips" class="chips"></div>
+            <div id="chatArmed" class="armed" hidden></div>
+            <div class="composerbox">
+              <textarea id="chatInput" rows="1" placeholder="instrução opcional — ou só envie…" data-i18n-attrs="placeholder"></textarea>
+              <button id="chatSend" class="sendbtn" aria-label="Enviar" data-i18n-attrs="aria-label">↑</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Terminal: ponto de montagem lateral -->
+        <div id="panelTerm" class="panelpane term" hidden></div>
+      </aside>
+
+      <!-- terminal embutido (PTY) — movido entre #panelTerm e #termDock -->
       <section id="termPanel" class="termpanel" hidden>
-        <div class="livehead">
-          <span class="mono live-title" data-i18n>terminal</span>
-          <button id="termClear" class="link mono muted" title="Reiniciar terminal" data-i18n data-i18n-attrs="title">reiniciar</button>
+        <div class="termstrip">
+          <span class="mono termname" id="termName">claude</span>
+          <button id="termClear" class="ulink mono" title="Reiniciar terminal" data-i18n data-i18n-attrs="title">reiniciar</button>
           <button id="termSide" class="glyph" title="Alternar embaixo / lateral" data-i18n-attrs="title">⇆</button>
-          <button id="termCollapse" class="glyph" aria-label="Recolher" data-i18n-attrs="aria-label">⌄</button>
         </div>
         <div id="termView" class="termview"></div>
+        <div class="termfoot mono">
+          <span id="termStatus"></span>
+          <button id="termStop" class="ulink danger" hidden data-i18n>■ parar</button>
+        </div>
       </section>
       </div><!-- /mainRow -->
 
-      <!-- player (dock inferior): gravar · timer · onda · captura -->
-      <footer class="player">
-        <button id="toggleBtn" class="rec" aria-label="Gravar / Parar" title="Gravar" data-i18n-attrs="title,aria-label">
-          <span class="rec-glyph"></span>
-        </button>
-        <span id="timer" class="mono timer">00:00</span>
-        <canvas id="wave" class="wave" width="640" height="36"></canvas>
-        <span id="privacy" class="mono badge" title="Modo sem armazenamento" data-i18n data-i18n-attrs="title">sem gravar</span>
-        <button id="termBtn" class="iconbtn" title="Terminal" aria-label="Terminal" data-i18n-attrs="title,aria-label">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V8h16v10zM6.5 10l3 3-3 3L8 17l4-4-4-4-1.5 1zM13 16h5v-1.5h-5V16z"/></svg>
-        </button>
-      </footer>
+      <!-- ============ 1g · CONFIGURAÇÕES (página) ============ -->
+      <div id="cfgWrap" class="cfgpage" hidden>
+        <header class="apphead">
+          <button id="cfgClose" class="backbtn" data-i18n>← voltar</button>
+          <span class="cfgtitle" data-i18n="settings">Configurações</span>
+          <span id="cfgSub" class="cfgsub"></span>
+          <span class="headright"><span id="cfgVersion" class="mono localtag">—</span></span>
+        </header>
+        <div class="cfgbody">
+          <nav id="cfgNav" class="cfgnav">
+            <button class="cfgnavbtn on" data-sec="proj" data-i18n>Projeto</button>
+            <button class="cfgnavbtn" data-sec="trans" data-i18n>Transcrição</button>
+            <button class="cfgnavbtn" data-sec="cap" data-i18n>Captura</button>
+            <button class="cfgnavbtn" data-sec="store" data-i18n="storage">Armazenamento</button>
+            <button class="cfgnavbtn" data-sec="ai" data-i18n>IA e terminal</button>
+            <button class="cfgnavbtn" data-sec="look" data-i18n>Aparência</button>
+            <button class="cfgnavbtn" data-sec="git" data-i18n>Versões e GitHub</button>
+          </nav>
+          <div id="cfgPop" class="cfgmain">
+            <p id="cfgSummary" class="cfgsummary mono">—</p>
 
-      <!-- configurações (folha) -->
-      <div id="cfgWrap" class="sheet-wrap" hidden>
-        <div id="cfgPop" class="sheet">
-          <div class="sheet-head">
-            <span class="mono sheet-title" data-i18n="settings">configurações</span>
-            <button id="cfgClose" class="glyph" aria-label="Fechar" data-i18n-attrs="aria-label">×</button>
+            <section class="cfgsec" data-sec="proj">
+              <h3 data-i18n="project">Projeto</h3>
+              <div class="cfgcard">
+                <div class="field"><span class="mono" data-i18n="active">ativo</span>
+                  <span id="cfgProj" class="mono dirinfo">—</span>
+                </div>
+                <div class="field"><span class="mono" data-i18n>pasta</span>
+                  <span id="acervoDir" class="mono dirinfo">—</span>
+                </div>
+                <label class="field"><span class="mono" data-i18n="uiLang">idioma da interface</span>
+                  <select id="uiLang">
+                    <option value="pt" data-i18n>português</option>
+                    <option value="en" data-i18n>english</option>
+                  </select>
+                </label>
+                <label class="opt"><input type="checkbox" id="cfgAutoContext" /> <span data-i18n>a IA pode criar e escolher o tema sozinha ao organizar</span></label>
+                <p class="hint" data-i18n>desligado: quando nada existente couber, a IA deixa o item em "para organizar" e pede o tema a você</p>
+              </div>
+            </section>
+
+            <section class="cfgsec" data-sec="trans">
+              <h3 data-i18n="transcription">Transcrição</h3>
+              <div class="cfgcard">
+                <div class="segrow" id="modeSeg">
+                  <button class="segbtn on" data-mode="live" data-i18n>ao vivo</button>
+                  <button class="segbtn" data-mode="file" data-i18n>gravar tudo, transcrever no final</button>
+                </div>
+                <select id="mode" hidden>
+                  <option value="live">ao vivo</option>
+                  <option value="file">gravar tudo e transcrever no final</option>
+                </select>
+                <label class="field"><span class="mono" data-i18n>fonte</span>
+                  <select id="source">
+                    <option value="mic" data-i18n>microfone</option>
+                    <option value="system" data-i18n>áudio do sistema</option>
+                    <option value="meeting" data-i18n>reunião · minha voz + áudio do sistema</option>
+                  </select>
+                </label>
+                <label class="field"><span class="mono" data-i18n>idioma</span>
+                  <select id="lang">
+                    <option value="pt" data-i18n>português</option>
+                    <option value="en" data-i18n>inglês</option>
+                    <option value="auto" data-i18n>automático</option>
+                  </select>
+                </label>
+                <label class="opt"><input type="checkbox" id="translate" /> <span data-i18n>traduzir para inglês</span></label>
+                <label class="opt"><input type="checkbox" id="optDiar" /> <span data-i18n>gravar áudio p/ separar quem falou</span></label>
+              </div>
+              <h3 data-i18n>Modelos</h3>
+              <div class="cfgcard">
+                <label class="field"><span class="mono" data-i18n>modelo</span>
+                  <select id="model">
+                    <option value="large-v3-turbo" data-i18n>large-v3-turbo · preciso</option>
+                    <option value="small" data-i18n>small · rápido</option>
+                  </select>
+                </label>
+                <div id="modelManager" class="modelmgr"></div>
+                <p class="hint" data-i18n>a transcrição roda 100% no seu computador — os modelos ficam em ~/.loro/models e são baixados sob demanda, verificados por SHA-256</p>
+              </div>
+            </section>
+
+            <section class="cfgsec" data-sec="cap">
+              <h3 data-i18n>Captura</h3>
+              <div class="cfgcard">
+                <label class="opt"><input type="checkbox" id="optScroll" checked /> <span data-i18n>auto-scroll</span></label>
+                <label class="opt"><input type="checkbox" id="optTop" /> <span data-i18n>sempre no topo</span></label>
+                <label class="opt"><input type="checkbox" id="optOverlay" /> <span data-i18n>modo legenda flutuante</span></label>
+                <label class="opt"><input type="checkbox" id="optEchoCancel" /> <span data-i18n>cancelar o eco do alto-falante</span></label>
+                <p class="hint" data-i18n>ligue se você ouve pela caixa e a transcrição confunde quem falou. O custo é real: o macOS troca o caminho de áudio da máquina e a sua voz sai mais baixa — com fone, deixe desligado.</p>
+                <button class="opt as-btn" id="clearBtn" data-i18n>limpar transcrição</button>
+              </div>
+            </section>
+
+            <section class="cfgsec" data-sec="store">
+              <h3 data-i18n="storage">Armazenamento</h3>
+              <div class="cfgcard">
+                <label class="opt"><input type="checkbox" id="autosave" /> <span data-i18n>salvar automaticamente ao parar</span></label>
+                <div class="field"><span class="mono" data-i18n>pasta</span>
+                  <button id="pickDir" class="link mono dirbtn" title="Escolher pasta de armazenamento" data-i18n-attrs="title">…</button>
+                </div>
+                <p class="hint"><span data-i18n>aponte para o</span> <span class="mono">inbox/</span> <span data-i18n>do projeto para a IA processar</span></p>
+              </div>
+            </section>
+
+            <section class="cfgsec" data-sec="ai">
+              <h3 data-i18n>IA e terminal</h3>
+              <div class="cfgcard">
+                <label class="field"><span class="mono" data-i18n>agente de IA (comando)</span>
+                  <input id="cfgAgentInput" type="text" placeholder="claude" data-i18n-attrs="placeholder" />
+                </label>
+                <div class="field"><span class="mono" data-i18n>onde as habilidades rodam</span>
+                  <div class="segrow" id="actionModeSeg">
+                    <button class="segbtn on" data-actionmode="chat" data-i18n>no chat</button>
+                    <button class="segbtn" data-actionmode="term" data-i18n>no terminal</button>
+                  </div>
+                </div>
+                <p class="hint" data-i18n>no chat a resposta fica na conversa; no terminal você acompanha o passo a passo e pode intervir</p>
+                <div class="field"><span class="mono" data-i18n>o que o chat pode fazer</span>
+                  <div class="segrow" id="chatPermSeg">
+                    <button class="segbtn on" data-chatperm="acceptEdits" data-i18n>ler e editar o projeto</button>
+                    <button class="segbtn" data-chatperm="bypassPermissions" data-i18n>tudo, sem perguntar</button>
+                  </div>
+                </div>
+                <p class="hint" data-i18n>o chat não tem como parar e perguntar no meio de uma ação. "ler e editar o projeto" já cobre analisar uma reunião e escrever notas; "tudo, sem perguntar" libera também os conectores externos (Slack, Drive…) e comandos fora da pasta do projeto</p>
+                <p class="hint" data-i18n>o agente roda no seu computador; o Loro só envia o que você pedir</p>
+              </div>
+            </section>
+
+            <section class="cfgsec" data-sec="look">
+              <h3 data-i18n>Aparência</h3>
+              <div class="cfgcard">
+                <div class="field"><span class="mono" data-i18n>tema visual</span>
+                  <div class="segrow" id="themeSeg">
+                    <button class="segbtn" data-theme="light" data-i18n>claro</button>
+                    <button class="segbtn" data-theme="dark" data-i18n>escuro</button>
+                    <button class="segbtn on" data-theme="system" data-i18n>sistema</button>
+                  </div>
+                </div>
+                <div class="field"><span class="mono" data-i18n="color">cor do projeto</span>
+                  <div id="projColors" class="swatches"></div>
+                </div>
+              </div>
+            </section>
+
+            <section class="cfgsec" data-sec="git">
+              <h3 data-i18n>Versões e GitHub</h3>
+              <div class="cfgcard">
+                <label class="opt"><input type="checkbox" id="optKeepVersions" checked /> <span data-i18n>guardar histórico de versões do conhecimento</span></label>
+                <label class="opt"><input type="checkbox" id="optVersionOnApprove" checked /> <span data-i18n>salvar versão ao aprovar</span></label>
+                <label class="opt"><input type="checkbox" id="optSendForReview" /> <span data-i18n>enviar mudanças para revisão do time</span></label>
+                <p class="hint" data-i18n>só o conhecimento ganha versões; ideias são rascunhos livres</p>
+              </div>
+              <div id="ghCard" class="cfgcard">
+                <div class="ghrow">
+                  <span class="ghtitle mono" data-i18n>ambiente</span>
+                  <span id="ghState" class="mono badge" data-i18n>local</span>
+                  <button id="ghCheck" class="btn sm" title="Verificar o ambiente (git, gh, autenticação, repositório)" data-i18n data-i18n-attrs="title">verificar</button>
+                </div>
+                <ul id="ghChecks" class="ghchecks"></ul>
+              </div>
+            </section>
           </div>
-
-          <p id="cfgSummary" class="cfgsummary mono">—</p>
-
-          <h3 class="sect mono" data-i18n="project">projeto</h3>
-          <div class="field"><span class="mono" data-i18n="active">ativo</span>
-            <span id="cfgProj" class="mono dirinfo">—</span>
-          </div>
-          <div class="field"><span class="mono" data-i18n="color">cor</span>
-            <div id="projColors" class="swatches"></div>
-          </div>
-          <label class="field"><span class="mono" data-i18n="uiLang">idioma da interface</span>
-            <select id="uiLang">
-              <option value="pt" data-i18n>português</option>
-              <option value="en" data-i18n>english</option>
-            </select>
-          </label>
-
-          <h3 class="sect mono" data-i18n="transcription">transcrição</h3>
-          <label class="field"><span class="mono" data-i18n>modo</span>
-            <select id="mode">
-              <option value="live" data-i18n>ao vivo</option>
-              <option value="file" data-i18n>gravar tudo e transcrever no final</option>
-            </select>
-          </label>
-          <p class="hint" data-i18n>"gravar tudo" grava o áudio inteiro e só transcreve ao parar (whisper-cli, sem VAD) — mais fiel, mas o texto só aparece no final</p>
-          <label class="field"><span class="mono" data-i18n>fonte</span>
-            <select id="source">
-              <option value="mic" data-i18n>microfone</option>
-              <option value="system" data-i18n>áudio do sistema</option>
-              <option value="meeting" data-i18n>reunião · minha voz + áudio do sistema</option>
-            </select>
-          </label>
-          <label class="field"><span class="mono" data-i18n>modelo</span>
-            <select id="model">
-              <option value="large-v3-turbo" data-i18n>large-v3-turbo · preciso</option>
-              <option value="small" data-i18n>small · rápido</option>
-            </select>
-          </label>
-          <div id="modelManager" class="modelmgr"></div>
-          <p class="hint" data-i18n>a transcrição roda 100% no seu computador — os modelos ficam em ~/.loro/models e são baixados sob demanda, verificados por SHA-256</p>
-          <label class="field"><span class="mono" data-i18n>idioma</span>
-            <select id="lang">
-              <option value="pt" data-i18n>português</option>
-              <option value="en" data-i18n>inglês</option>
-              <option value="auto" data-i18n>automático</option>
-            </select>
-          </label>
-          <label class="opt"><input type="checkbox" id="translate" /> <span data-i18n>traduzir para inglês</span></label>
-
-          <h3 class="sect mono" data-i18n>captura</h3>
-          <label class="opt"><input type="checkbox" id="optScroll" checked /> <span data-i18n>auto-scroll</span></label>
-          <label class="opt"><input type="checkbox" id="optTop" /> <span data-i18n>sempre no topo</span></label>
-          <label class="opt"><input type="checkbox" id="optOverlay" /> <span data-i18n>modo legenda flutuante</span></label>
-          <label class="opt"><input type="checkbox" id="optDiar" /> <span data-i18n>gravar áudio p/ diarizar</span></label>
-          <button class="opt as-btn" id="clearBtn" data-i18n>limpar transcrição</button>
-
-          <h3 class="sect mono" data-i18n="storage">armazenamento</h3>
-          <label class="opt"><input type="checkbox" id="autosave" /> <span data-i18n>salvar automaticamente ao parar</span></label>
-          <div class="field"><span class="mono" data-i18n>pasta</span>
-            <button id="pickDir" class="link mono dirbtn" title="Escolher pasta de armazenamento" data-i18n-attrs="title">…</button>
-          </div>
-          <p class="hint"><span data-i18n>aponte para o</span> <span class="mono">inbox/</span> <span data-i18n>do acervo para o loop processar</span></p>
-
-          <h3 class="sect mono" data-i18n="acervo">acervo</h3>
-          <div class="field"><span class="mono" data-i18n>pasta</span>
-            <span id="acervoDir" class="mono dirinfo">—</span>
-          </div>
-          <label class="opt"><input type="checkbox" id="cfgAutoContext" /> <span data-i18n>modo automático — o loop pode criar e atribuir contexto sozinho ao processar a fila</span></label>
-          <p class="hint" data-i18n>desligado: quando nada existente couber, o loop deixa o item na fila e pede para você atribuir o contexto</p>
-          <p class="hint"><span data-i18n>contextos regenerados pelo loop em</span> <span class="mono">contextos/&lt;c&gt;/index.html</span></p>
-
-          <p class="cfgver hint mono"><span data-i18n="versão">versão</span> <span id="cfgVersion">—</span></p>
         </div>
       </div>
 
       <div id="toast" class="toast" hidden></div>
 
-      <!-- paleta de comandos (⌘P arquivos · ⌘⇧P ou "›" comandos) — ADR-0008 -->
+      <!-- 1k · paleta de comandos (⌘K) -->
       <div id="cmdk" class="cmdk" hidden>
         <div class="cmdk-box">
-          <input id="cmdkInput" class="cmdk-input" type="text" spellcheck="false"
-            placeholder="buscar arquivo…  (digite › para comandos)" data-i18n-attrs="placeholder" />
+          <div class="cmdk-field">
+            <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 10-.7.7l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0A4.5 4.5 0 1114 9.5 4.5 4.5 0 019.5 14z"/></svg>
+            <input id="cmdkInput" class="cmdk-input" type="text" spellcheck="false"
+              placeholder="buscar ou executar…" data-i18n-attrs="placeholder" />
+            <span class="mono cmdk-esc" data-i18n>esc para fechar</span>
+          </div>
           <ul id="cmdkList" class="cmdk-list"></ul>
         </div>
       </div>
@@ -436,6 +712,7 @@
     <script src="presets.js"></script>
     <script src="modelui.js"></script>
     <script src="audio.js"></script>
+    <script src="shell.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

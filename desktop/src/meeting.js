@@ -161,6 +161,68 @@
       .trim();
   }
 
+  // ---- eco entre trilhas (mic × sistema) ------------------------------------
+  // A reunião tem DUAS captações independentes: o microfone (você) e o áudio do
+  // sistema (os outros). Quando o som sai por alto-falante, o microfone escuta
+  // de novo o que o sistema já gravou, e a MESMA fala é transcrita duas vezes —
+  // uma vez por trilha, com timecodes quase iguais e texto quase igual (o
+  // whisper nunca transcreve os dois sinais idêntico).
+  //
+  // Não dá para resolver isso comparando texto exato. Comparamos CONJUNTOS de
+  // palavras normalizadas e exigimos contenção alta: o trecho novo é eco quando
+  // quase tudo o que ele diz já foi dito pela OUTRA trilha, por perto no tempo.
+  function speechTokens(text) {
+    return String(text == null ? "" : text)
+      .toLowerCase()
+      .normalize("NFD").replace(/[\u0300-\u036f]/g, "")   // sem acento: "tô"/"to"
+      .replace(/[^a-z0-9\s]/g, " ")                        // sem pontuação
+      .split(/\s+/)
+      .filter(Boolean);
+  }
+  // Cobertura MÚTUA (0..1): o menor dos dois lados de "quanto de um está no
+  // outro". Medir só o menor conjunto contra o maior era um erro grave e da
+  // direção pior possível: um segmento curto de microfone ("eu acho que a gente
+  // pode fechar isso com o time") tem quase todas as suas palavras funcionais
+  // presentes numa janela de 18s de outro assunto — 0,91 de contenção — e a
+  // JANELA INTEIRA, com a fala de todo mundo, era descartada. Sob a ADR-0018 a
+  // transcrição ao vivo é a única saída da reunião e o áudio é purgado depois:
+  // o trecho some para sempre.
+  //
+  // Eco de verdade é simétrico — as duas trilhas ouviram a mesma coisa, então os
+  // dois conjuntos se cobrem. Tamanhos muito diferentes reprovam por construção,
+  // que é exatamente o caso "não são a mesma fala".
+  function tokenContainment(a, b) {
+    const A = new Set(a), B = new Set(b);
+    if (!A.size || !B.size) return 0;
+    let hits = 0;
+    A.forEach(function (w) { if (B.has(w)) hits++; });
+    return Math.min(hits / A.size, hits / B.size);
+  }
+  // Piso de tamanho: "tá bom", "sim, claro" repetem naturalmente numa conversa —
+  // descartar trechos curtos por semelhança apagaria fala legítima. Só trechos
+  // com substância entram no teste.
+  const ECHO_MIN_TOKENS = 8;
+  const ECHO_MIN_CONTAINMENT = 0.7;
+  // A janela de sistema é appendada com o tMs do INÍCIO dela, então o par pode
+  // ficar afastado por até uma janela inteira — a folga é isso, não chute.
+  const ECHO_WINDOW_MS = 20000;
+  // `recent` são os trechos já appendados: {tMs, source, tokens}. Devolve o que
+  // casou (para o log) ou null. Só compara com a trilha OPOSTA: a mesma trilha
+  // repetindo é fala repetida de verdade, não eco.
+  function echoOfOtherSource(chunk, recent) {
+    const c = chunk || {};
+    const mine = speechTokens(c.text);
+    if (mine.length < ECHO_MIN_TOKENS) return null;
+    const list = Array.isArray(recent) ? recent : [];
+    for (let i = list.length - 1; i >= 0; i--) {
+      const prev = list[i];
+      if (!prev || prev.source === c.source) continue;
+      if (Math.abs((prev.tMs || 0) - (c.tMs || 0)) > ECHO_WINDOW_MS) continue;
+      if (tokenContainment(mine, prev.tokens || []) >= ECHO_MIN_CONTAINMENT) return prev;
+    }
+    return null;
+  }
+
   // O que fazer com o buffer da transcrição AVULSA quando uma sessão termina.
   // Uma reunião tem a própria superfície (a aba reuniao.md, ADR-0010): o rodapé
   // avulso não participa dela, nem para salvar nem para aparecer. Decisão pura
@@ -218,6 +280,7 @@
     sanitizeSkillArg, meetingSkillCmd,
     stripMarker, acervoJoin, aiStatusLine, MARKER,
     isHallucination, filterHallucinations,
+    speechTokens, tokenContainment, echoOfOtherSource,
     meetingTitleFromManifest, meetingLabel,
   };
 });

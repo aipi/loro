@@ -1,13 +1,21 @@
-# ADR-0014 — Windows process tree via ToolHelp (agent readiness handshake)
+# ADR-0023 — Windows process tree via ToolHelp (agent readiness handshake)
 
 - **Status:** accepted (owner decision, 2026-07-31)
 
-> Numbering note: this was drafted as `0013` and renumbered. **"ADR-0013" is
-> already taken throughout the code** for the Brainstorming world and the
-> brainstorming → fila → contexto flow (60+ references, no file of its own), so a
-> reader following a bare "ADR-0013" comment would have landed here by mistake.
-> `0010` and `0022` are likewise referenced in code without files; `0014` is the
-> first number that is neither an existing file nor cited anywhere.
+> Numbering note: drafted as `0013`, renumbered to `0014`, now **`0023`**.
+>
+> `0013` was avoided because **"ADR-0013" is already taken throughout the code**
+> for the Brainstorming world and the brainstorming → fila → contexto flow (60+
+> references, no file of its own), so a reader following a bare "ADR-0013"
+> comment would have landed here by mistake — `Cargo.toml` still carries such a
+> comment, and it means *this* decision.
+>
+> `0014` then collided head-on with the fila ADR of 2026-08-03. Both files
+> claimed the number; the fila one owns every prose citation (ARCHITECTURE,
+> context.md, CLAUDE.md), so this file moved. **Correction (2026-08-11):** an
+> earlier draft of this note said this file "had no citation at all" — wrong.
+> `proc.rs` cited it, from the very commit that created both (`2800c16`); that
+> citation now points here.
 
 ## Context
 

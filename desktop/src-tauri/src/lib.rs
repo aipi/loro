@@ -28,6 +28,7 @@ mod templates;
 use templates::*;
 mod presets;
 use presets::*;
+mod chat;
 mod git;
 use git::*;
 mod acervo;
@@ -1527,6 +1528,23 @@ fn brain_set_auto_context(value: bool) -> Result<(), String> {
     write_acervo_settings(&PathBuf::from(&dir), value)
 }
 
+// Redesign 1g ("IA e terminal"): the AI agent command was only settable at
+// creation (brain_setup). Settings now edits it for the active acervo —
+// normalized so a blank value falls back to the default instead of breaking
+// the embedded terminal.
+#[tauri::command]
+fn brain_set_agent(agent: String) -> Result<(), String> {
+    let mut cfg = read_loro_config();
+    let dir = active_acervo(&cfg)
+        .map(|a| a.dir.clone())
+        .ok_or("acervo not configured")?;
+    let normalized = normalize_agent(&agent);
+    if let Some(a) = cfg.acervos.iter_mut().find(|a| a.dir == dir) {
+        a.agent = normalized;
+    }
+    write_loro_config(&cfg)
+}
+
 // ---- ADR-0003: acervo usage templates (presets) -----------------------------
 #[tauri::command]
 fn brain_list_templates(lang: Option<String>) -> Vec<TemplateInfo> {
@@ -1762,7 +1780,7 @@ fn whisper_setup_script() -> Result<String, String> {
 const GIT_FLOOR: (u32, u32) = (2, 20);
 const GH_FLOOR: (u32, u32) = (2, 0);
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 struct Check {
     ok: bool,
@@ -1771,7 +1789,7 @@ struct Check {
     fixable: bool,
 }
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 struct EnvDoctor {
     git: Check,
@@ -1786,8 +1804,20 @@ struct EnvDoctor {
 
 // Validate the git/gh environment. Never asks for or stores secrets: reads only
 // booleans, versions and the public login.
+//
+// ASSÍNCRONO de propósito: o corpo dispara `git --version`, `gh --version` e
+// `gh auth status` — e este último vai à REDE. Um comando síncrono do Tauri roda
+// na thread principal, então a janela inteira congelava enquanto o gh respondia
+// (era isso que fazia a ida e volta para Configurações parecer lenta). O trabalho
+// bloqueante vai para o pool; a thread da interface segue pintando.
 #[tauri::command]
-fn env_doctor() -> EnvDoctor {
+async fn env_doctor() -> EnvDoctor {
+    tauri::async_runtime::spawn_blocking(env_doctor_blocking)
+        .await
+        .unwrap_or_default()
+}
+
+fn env_doctor_blocking() -> EnvDoctor {
     let base = read_brain_config().map(|c| PathBuf::from(c.brain_dir));
 
     let gv = git_version();
@@ -3325,6 +3355,12 @@ fn term_open(app: AppHandle, state: State<AppState>, cols: u16, rows: u16) -> Re
         c
     };
     cmd.env("TERM", "xterm-256color");
+    // O terminal embutido roda o agente do usuário: ele não pode herdar os
+    // marcadores de sessão de OUTRO agente (proc::INHERITED_SESSION_MARKERS) —
+    // herdados, o agente se acha uma sessão-filha e desliga o próprio histórico.
+    for k in proc::INHERITED_SESSION_MARKERS {
+        cmd.env_remove(k);
+    }
     // ALWAYS open in the active acervo folder (to run the loop / skills right there)
     let mut in_acervo = false;
     if let Some(cfg) = read_brain_config() {
@@ -3713,6 +3749,12 @@ pub fn run() {
             brain_setup,
             brain_list_acervos,
             brain_set_auto_context,
+            brain_set_agent,
+            chat::chat_send,
+            chat::chat_cancel,
+            chat::chat_reset,
+            chat::chat_status,
+            chat::chat_handoff,
             brain_list_templates,
             brain_duplicate_template,
             brain_set_active,
@@ -3788,6 +3830,8 @@ pub fn run() {
             brain_promote,
             brain_meeting_start,
             brain_meeting_stop,
+            brain_meeting_pause,
+            brain_meeting_resume,
             brain_meeting_append,
             brain_meeting_write_artifact,
             brain_meeting_marker,

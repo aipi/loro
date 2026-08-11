@@ -32,7 +32,20 @@ const TRANSCRIPT_MARKER: &str = "<!-- loro:transcricao -->";
 
 // Marker kinds are the ONLY thing a marker stores (plus a timecode/ref) — never
 // transcript text (BR-8). Unknown kinds are rejected.
-const MARKER_TIPOS: [&str; 4] = ["duvida", "decisao", "investigacao", "pergunta"];
+//
+// ADR-0020 collapsed the four typed markers into ONE ("momento") in the UI, but
+// this list was never updated: `momento` was refused, so every "marcar momento"
+// answered "tipo de marcador inválido" and the feature was dead from the day the
+// redesign shipped. `momento` leads because it is the only kind still written;
+// the four legacy kinds stay accepted so a manifest recorded before the redesign
+// keeps validating.
+const MARKER_TIPOS: [&str; 5] = [
+    "momento",
+    "duvida",
+    "decisao",
+    "investigacao",
+    "pergunta",
+];
 
 // The `artefatos/` operational-memory folders (ADR-0010). An artifact kind must
 // be one of these, which also path-guards the write to a fixed subtree.
@@ -76,10 +89,27 @@ fn meeting_lock(id: &str) -> Arc<Mutex<()>> {
 
 // The syscap sidecar (ADR-0005 start_system_capture) writes into recordings_dir
 // and returns that path; we remember it per meeting so stop() can move the
-// finalized WAV into the meeting's audio/system.wav.
-fn syscap_pending() -> &'static Mutex<HashMap<String, PathBuf>> {
-    static PENDING: OnceLock<Mutex<HashMap<String, PathBuf>>> = OnceLock::new();
+// finalized WAV into the meeting's audio/.
+//
+// It is a LIST, not a single path: pausing stops the sidecar for real (nothing
+// is captured while paused — a pause that kept recording would be the lie this
+// feature exists to avoid), and resuming spawns a new one, which writes a new
+// file. The last entry is the live segment; every entry has to be moved at stop
+// so purge can clean it.
+fn syscap_pending() -> &'static Mutex<HashMap<String, Vec<PathBuf>>> {
+    static PENDING: OnceLock<Mutex<HashMap<String, Vec<PathBuf>>>> = OnceLock::new();
     PENDING.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+// Where a captured system segment lands inside the meeting: the first keeps the
+// historical name, the rest are numbered. Naming is what makes the segments
+// discoverable by purge (BR-8: the audio must be deletable).
+pub(crate) fn system_segment_name(i: usize) -> String {
+    if i == 0 {
+        "system.wav".into()
+    } else {
+        format!("system-{}.wav", i + 1)
+    }
 }
 
 // A meeting id is `<AAAA-MM-DD-HHMM>-<slug>` — only [a-z0-9-], so it can never be
@@ -721,7 +751,11 @@ pub fn brain_meeting_start(
     syscap_pending()
         .lock()
         .unwrap()
-        .insert(created.id.clone(), PathBuf::from(&sys_wav));
+        .insert(created.id.clone(), vec![PathBuf::from(&sys_wav)]);
+
+    // A reunião também é uma gravação: sem isto o ícone da bandeja não piscava
+    // durante uma reunião — só a gravação avulsa (que passa por `start`) o fazia.
+    crate::set_tray_recording(&state, true);
 
     let dir_rel = rel_of(&base, &created.dir);
     let tema_slug = sanitize_slug(&input.tema).unwrap_or_default();
@@ -776,12 +810,14 @@ pub fn brain_meeting_stop(
     // block the stop flow (the app froze when the live loop closed). We just move
     // the finalized system WAV into the meeting so purge can clean it, and mark the
     // meeting as transcribing.
-    let sys_dst = dir.join("audio").join("system.wav");
-    if let Some(src) = syscap_pending().lock().unwrap().remove(&input.id) {
-        if src.is_file() {
-            let _ = move_file(&src, &sys_dst);
+    if let Some(srcs) = syscap_pending().lock().unwrap().remove(&input.id) {
+        for (i, src) in srcs.iter().enumerate() {
+            if src.is_file() {
+                let _ = move_file(src, &dir.join("audio").join(system_segment_name(i)));
+            }
         }
     }
+    crate::set_tray_recording(&state, false);
 
     manifest.status = "transcribing".into();
     manifest.atualizado_em = now_iso();
@@ -905,6 +941,57 @@ pub fn brain_meeting_write_artifact(
 
     let _ = app.emit("pessoal-changed", serde_json::json!({ "rel": rel }));
     Ok(WriteArtifactOut { rel, id: art_id })
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MeetingPauseInput {
+    id: String,
+}
+
+// Pausar é PARAR de capturar — o sidecar morre e nada entra no disco enquanto
+// a pausa dura. A alternativa (seguir capturando e só esconder o texto) diria ao
+// usuário que a reunião parou enquanto ela continuava sendo gravada.
+//
+// O trecho que estava sendo escrito continua na lista: a última janela dele
+// ainda vai ser transcrita pelo frontend antes de a pausa valer.
+#[tauri::command]
+pub fn brain_meeting_pause(state: State<AppState>, input: MeetingPauseInput) -> Result<(), String> {
+    let base = acervo_base()?;
+    let lock = meeting_lock(&input.id);
+    let _guard = lock.lock().map_err(|_| "lock envenenado".to_string())?;
+    resolve_meeting_dir(&base, &input.id)?;
+    if !syscap_pending().lock().unwrap().contains_key(&input.id) {
+        return Err("err.meeting_not_recording".into());
+    }
+    crate::system_capture_stop(&state);
+    crate::set_tray_recording(&state, false);
+    Ok(())
+}
+
+// Continuar abre um NOVO trecho de captura. O relógio da reunião (dono do
+// frontend) desconta a pausa, e o novo trecho começa em `tailBase` — as duas
+// linhas do tempo (microfone e sistema) excluem a pausa do mesmo jeito, então
+// continuam alinhadas.
+#[tauri::command]
+pub fn brain_meeting_resume(
+    app: AppHandle,
+    state: State<AppState>,
+    input: MeetingPauseInput,
+) -> Result<(), String> {
+    let base = acervo_base()?;
+    let lock = meeting_lock(&input.id);
+    let _guard = lock.lock().map_err(|_| "lock envenenado".to_string())?;
+    resolve_meeting_dir(&base, &input.id)?;
+    let sys_wav = crate::system_capture_start(&app, &state)?;
+    syscap_pending()
+        .lock()
+        .unwrap()
+        .entry(input.id.clone())
+        .or_default()
+        .push(PathBuf::from(&sys_wav));
+    crate::set_tray_recording(&state, true);
+    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -1190,6 +1277,19 @@ fn purge_audio_core(dir: &Path) -> Result<Manifest, String> {
             std::fs::remove_file(&path).map_err(|e| e.to_string())?;
         }
     }
+    // pause/resume segments (system-2.wav, system-3.wav, …): audio is transient
+    // whatever its count — a resumed meeting must purge as clean as a plain one.
+    if let Ok(entries) = std::fs::read_dir(&audio_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            let transiente = (name.starts_with("system-") && name.ends_with(".wav"))
+                || name.starts_with(".tail.snapshot."); // carve interrompido
+            if transiente && entry.path().is_file() {
+                std::fs::remove_file(entry.path()).map_err(|e| e.to_string())?;
+            }
+        }
+    }
     let mut manifest = manifest_read(dir)?;
     manifest.audio.mic = None;
     manifest.audio.system = None;
@@ -1251,11 +1351,15 @@ pub fn brain_meeting_transcribe_tail(input: TranscribeTailInput) -> Result<Trans
 
     // The live source is the syscap sidecar's WAV while recording; after stop it
     // is the finalized audio/system.wav.
+    // The LIVE segment is the last one: after a pause/resume the earlier segments
+    // are already fully transcribed, and the frontend rebases its window offset
+    // to the new segment (`tailBase`), so reading anything but the last would
+    // replay audio that is already in the transcript.
     let src = syscap_pending()
         .lock()
         .unwrap()
         .get(&input.id)
-        .cloned()
+        .and_then(|v| v.last().cloned())
         .unwrap_or_else(|| dir.join("audio").join("system.wav"));
     let unchanged = TranscribeTail {
         text: String::new(),
@@ -1267,7 +1371,16 @@ pub fn brain_meeting_transcribe_tail(input: TranscribeTailInput) -> Result<Trans
 
     // Snapshot so a growing file cannot shift under the carve. Stays under
     // pessoal/ (quarantined) and is removed right after.
-    let snap = dir.join("audio").join(".tail.snapshot.wav");
+    // Nome ÚNICO por chamada: com um caminho fixo, duas janelas concorrentes
+    // (pausar logo depois de um tick, por exemplo) copiavam por cima uma da
+    // outra e a primeira a terminar apagava o arquivo debaixo da segunda.
+    let snap = dir.join("audio").join(format!(
+        ".tail.snapshot.{}.wav",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
     std::fs::copy(&src, &snap).map_err(|e| e.to_string())?;
     let end_ms = std::fs::read(&snap)
         .ok()
@@ -1732,6 +1845,38 @@ mod tests {
         assert!(audio_filename("../../etc/passwd").is_err());
         assert!(delete_audio_core(&c.dir, "../etc").is_err());
         assert!(audio_filename("system").is_ok() && audio_filename("completo").is_ok());
+    }
+
+    #[test]
+    fn the_marker_the_ui_actually_sends_is_accepted() {
+        // ADR-0020 deixou UM tipo na interface; a lista aqui ficou com os quatro
+        // antigos, então todo marcador era recusado. O teste amarra os dois lados.
+        assert!(valid_tipo("momento"), "'momento' é o único tipo que a UI envia");
+        for legado in ["duvida", "decisao", "investigacao", "pergunta"] {
+            assert!(valid_tipo(legado), "manifest anterior ao redesign tem {legado}");
+        }
+        assert!(!valid_tipo("qualquer"), "tipo desconhecido continua recusado");
+    }
+
+    #[test]
+    fn pause_resume_segments_are_named_and_purged() {
+        // Naming: the first segment keeps the historical name, so a meeting that
+        // never pauses is byte-identical to before this feature existed.
+        assert_eq!(system_segment_name(0), "system.wav");
+        assert_eq!(system_segment_name(1), "system-2.wav");
+        assert_eq!(system_segment_name(2), "system-3.wav");
+
+        // Purge: audio is transient whatever the segment count (owner decision
+        // 2026-07-27) — a resumed meeting purges as clean as a plain one.
+        let base = tmp("purge-segments");
+        let c = seed(&base);
+        let audio = c.dir.join("audio");
+        for f in ["system.wav", "system-2.wav", "system-3.wav", "mic.webm"] {
+            std::fs::write(audio.join(f), b"x").unwrap();
+        }
+        purge_audio_core(&c.dir).unwrap();
+        let left: Vec<_> = std::fs::read_dir(&audio).unwrap().flatten().collect();
+        assert!(left.is_empty(), "audio survived the purge: {left:?}");
     }
 
     #[test]

@@ -32,7 +32,7 @@ const el = {
   optDiar: $("optDiar"), clearBtn: $("clearBtn"),
   model: $("model"), lang: $("lang"), translate: $("translate"),
   autosave: $("autosave"), pickDir: $("pickDir"), source: $("source"), mode: $("mode"),
-  liveExpand: $("liveExpand"), liveCollapse: $("liveCollapse"), uiLang: $("uiLang"),
+  liveCollapse: $("liveCollapse"), uiLang: $("uiLang"),
   modelManager: $("modelManager"),
 };
 
@@ -72,17 +72,27 @@ function rerenderForLang() {
   try { refreshTabFromDisk(MANUAL_REL); } catch (_) {} // manual follows uiLang
 }
 
-// painel ao vivo (dock): abre/fecha; abre sozinho ao começar a gravar
+// A gravação é uma VISTA do corpo (redesign 1f), irmã dos destinos e do
+// documento — não mais um dock que sobe do rodapé. Abri-la esconde as outras.
 function setLivePanel(open) {
   el.surface.hidden = !open;
-  if (el.liveExpand) el.liveExpand.textContent = open ? "⌄" : "⌃";
-  if (open) requestAnimationFrame(() => resizeWave());
+  if (open) {
+    B.home.hidden = true;
+    B.docWrap.hidden = true;
+  } else if (B.docWrap.hidden) {
+    B.home.hidden = false;
+  }
+  paintRecordingChrome();
 }
 
 const state = {
   running: false, autoscroll: true, recordForDiarize: false, fileMode: false,
   meetingMode: false,
   lines: [], startTime: 0, timerId: null,
+  // pausa de reunião: o relógio desconta o tempo pausado (pausedMs acumulado;
+  // pauseStart marca a pausa corrente) — as duas linhas do tempo (mic e sistema)
+  // excluem a pausa igualmente, então continuam alinhadas.
+  paused: false, pausedMs: 0, pauseStart: 0,
 };
 
 // ADR-0010 — the meeting lifecycle (record-then-transcribe). Distinct from the
@@ -93,21 +103,48 @@ const meeting = {
   active: false, id: null, dir: null, livingRel: null, tema: null,
   phase: null, pendingLines: [], flushTimer: null,
   // ADR-0012 pseudo-stream: a best-effort tail-transcription interval fills the
-  // living surface WHILE recording. `tailFrom` is the next window offset (ms).
-  tailTimer: null, tailFrom: 0, tailBusy: false, tailStatus: "",
+  // living surface WHILE recording. `tailFrom` is the next window offset (ms)
+  // INTO THE CURRENT capture segment; `tailBase` is where that segment starts on
+  // the meeting timeline (resume opens a new WAV, so offsets restart at zero).
+  tailTimer: null, tailFrom: 0, tailBase: 0, tailBusy: false, tailStatus: "",
+  tailFlush: null,   // promessa do tick em voo (pausar/encerrar esperam por ela)
   // ADR-0012 model A: a rotating mic recorder — each ~N s segment is transcribed
   // and appended live, so the OPERATOR's speech shows in the stream (the system
   // tail above only covers the other participants). Audio is transient.
   previewRec: null, previewChunks: [], previewTimer: null,
+  // últimos trechos appendados (mic e sistema), para detectar o eco de uma
+  // trilha na outra quando o som sai por alto-falante (LM.echoOfOtherSource).
+  appended: [],
 };
 
 // ---- configurações persistidas (localStorage) ----
 const SETTINGS_KEY = "loro-settings";
 const DEFAULTS = {
   model: "large-v3-turbo", lang: "pt", translate: false,
-  autoscroll: true, autosave: false, saveDir: "", source: "mic", mode: "live", uiLang: "pt", termSide: false,
+  autoscroll: true, autosave: false, saveDir: "", source: "mic", mode: "live", uiLang: "pt", termSide: true,
   sideW: 0, // sidebar width in px; 0 = the default CSS clamp (ADR-0002 §6)
   welcomeSeen: false, // first-launch feature tour (reopen via palette)
+  // redesign (handoff §State Management): o cromo é estado persistido
+  theme: "system",            // claro | escuro | sistema
+  sidebarCollapsed: false,    // 250px ⇄ 60px
+  aiPanelOpen: true,          // painel direito (toggle ✦ IA)
+  aiPanelTab: "doc",          // doc | chat | term
+  panelW: 0,                  // largura do painel direito em px; 0 = padrão (330)
+  termH: 0,                   // altura da doca do terminal em px; 0 = padrão (34vh)
+  chatModel: "sonnet",        // modelo e esforço do chat (um controle só)
+  chatEffort: "alto",
+  // onde uma ação de IA roda: no chat (resposta na conversa) ou no terminal
+  actionMode: "chat",
+  // o que o chat pode fazer sem perguntar. Em modo -p o agente NÃO tem como
+  // perguntar, então "acceptEdits" é o mínimo para ele conseguir agir.
+  chatPermission: "acceptEdits",
+  // seções da lateral recolhidas (ideas | organize | knowledge)
+  sideClosed: [],
+  // Cancelamento de eco do microfone. Desligado por padrão: ligá-lo entrega o
+  // microfone ao processamento de voz do macOS, que abafa a saída da máquina
+  // inteira e achata a voz (ADR-0022 §24). Só faz sentido para quem ouve por
+  // alto-falante e precisa que o microfone NÃO escute os outros de volta.
+  micEchoCancel: false,
 };
 let settings = { ...DEFAULTS };
 function loadSettings() {
@@ -122,6 +159,7 @@ function applySettings() {
   el.lang.value = settings.lang;
   el.translate.checked = settings.translate;
   el.optScroll.checked = settings.autoscroll;
+  { const ec = $("optEchoCancel"); if (ec) ec.checked = !!settings.micEchoCancel; }
   el.autosave.checked = settings.autosave;
   el.source.value = settings.source;
   el.mode.value = settings.mode;
@@ -130,7 +168,25 @@ function applySettings() {
   el.pickDir.title = settings.saveDir || t("Escolher pasta de armazenamento");
   if (el.uiLang) el.uiLang.value = settings.uiLang;
   applySideWidth();
+  applyChrome();
   applyI18n();
+}
+
+// redesign: tema, barra lateral e painel direito são estado de interface
+// persistido — reaplicados juntos para o casco nunca ficar meio-aplicado.
+function applyChrome() {
+  const S = window.LoroShell;
+  if (!S) return;
+  applyPanelWidth();
+  applyTermHeight();
+  applySideSections();
+  paintActionMode();
+  S.setTheme(settings.theme);
+  S.setSidebarCollapsed(settings.sidebarCollapsed);
+  S.setPanelOpen(settings.aiPanelOpen);
+  S.setPanelTab(settings.aiPanelTab);
+  document.querySelectorAll("#modeSeg .segbtn").forEach((b) =>
+    b.classList.toggle("on", b.dataset.mode === settings.mode));
 }
 
 // ADR-0002 §6 — sidebar width: 0 keeps the CSS clamp default; any px value is
@@ -170,6 +226,78 @@ function applySideWidth() {
   grip.addEventListener("dblclick", () => { settings.sideW = 0; persistSettings(); applySideWidth(); });
 })();
 
+// ---- colunas laterais redimensionáveis (ADR-0021) ---------------------------
+// A árvore já era arrastável; o painel direito e a doca do terminal passam a
+// ser também. Um gesto só, um helper só: arrasta → aplica → persiste; duplo
+// clique volta ao padrão. Enquanto arrasta, o corpo ganha `.resizing` para que
+// o xterm e os canvas não engulam o ponteiro no meio do movimento.
+function wireGrip(grip, opts) {
+  if (!grip) return;
+  grip.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    grip.classList.add("dragging");
+    document.body.classList.add("resizing");
+    if (opts.vertical) document.body.classList.add("rowwise");
+    const onMove = (ev) => opts.onDrag(ev);
+    const onUp = () => {
+      grip.classList.remove("dragging");
+      document.body.classList.remove("resizing", "rowwise");
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      persistSettings();
+      if (opts.after) opts.after();
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  });
+  grip.addEventListener("dblclick", () => {
+    opts.reset();
+    persistSettings();
+    if (opts.after) opts.after();
+  });
+}
+
+// Painel direito: 0 = os 330px do design. O piso de 260px é o ponto em que a
+// linha das três abas (Documento·Chat·Terminal) ainda cabe sem quebrar.
+const PANEL_MIN = 260;
+function applyPanelWidth() {
+  const root = document.documentElement;
+  if (settings.panelW) root.style.setProperty("--panel-w", settings.panelW + "px");
+  else root.style.removeProperty("--panel-w");
+  const grip = $("aiGrip");
+  if (grip) grip.hidden = !settings.aiPanelOpen;
+}
+// Doca do terminal: só existe quando o terminal está embaixo (⇆).
+function applyTermHeight() {
+  const root = document.documentElement;
+  if (settings.termH) root.style.setProperty("--term-h", settings.termH + "px");
+  else root.style.removeProperty("--term-h");
+  const dock = $("termDock"), grip = $("termGrip");
+  if (grip) grip.hidden = !dock || dock.hidden;
+}
+wireGrip($("aiGrip"), {
+  onDrag: (ev) => {
+    const w = Math.round(Math.min(Math.max(window.innerWidth - ev.clientX, PANEL_MIN), window.innerWidth * 0.6));
+    settings.panelW = w;
+    applyPanelWidth();
+  },
+  reset: () => { settings.panelW = 0; applyPanelWidth(); },
+  after: () => requestAnimationFrame(fitTerm),
+});
+wireGrip($("termGrip"), {
+  vertical: true,
+  onDrag: (ev) => {
+    const dock = $("termDock");
+    if (!dock) return;
+    const bottom = dock.getBoundingClientRect().bottom;
+    settings.termH = Math.round(Math.min(Math.max(bottom - ev.clientY, 120), window.innerHeight * 0.75));
+    applyTermHeight();
+    fitTerm();
+  },
+  reset: () => { settings.termH = 0; applyTermHeight(); },
+  after: () => requestAnimationFrame(fitTerm),
+});
+
 // ---- render ----
 function render() {
   el.doc.innerHTML = state.lines.map((t) => `<p>${mdInline(esc(t))}</p>`).join("");
@@ -178,7 +306,10 @@ function render() {
   const has = state.lines.length > 0;
   el.doc.hidden = !has;
   el.empty.hidden = has;
-  if (state.autoscroll) el.surface.scrollTop = el.surface.scrollHeight;
+  // o rolador é a coluna da transcrição, não a vista inteira (o rodapé com a
+  // onda e o selo de privacidade é fixo — 1f)
+  const sc = el.surface.querySelector(".recscroll");
+  if (state.autoscroll && sc) sc.scrollTop = sc.scrollHeight;
 }
 function appendLine(text) { state.lines.push(text); render(); }
 
@@ -214,11 +345,18 @@ function fmt(s) {
   const m = Math.floor(s / 60), r = s % 60;
   return `${String(m).padStart(2, "0")}:${String(r).padStart(2, "0")}`;
 }
+// tempo gravado de fato: exclui as pausas; congela enquanto pausado
+function elapsedActiveMs() {
+  if (!state.startTime) return 0;
+  const now = state.paused ? state.pauseStart : Date.now();
+  return Math.max(0, now - state.startTime - state.pausedMs);
+}
 function startTimer() {
   state.startTime = Date.now();
+  state.paused = false; state.pausedMs = 0; state.pauseStart = 0;
   el.timer.textContent = "00:00";
   state.timerId = setInterval(() => {
-    el.timer.textContent = fmt(Math.floor((Date.now() - state.startTime) / 1000));
+    el.timer.textContent = fmt(Math.floor(elapsedActiveMs() / 1000));
   }, 1000);
 }
 function stopTimer() { clearInterval(state.timerId); state.timerId = null; }
@@ -290,19 +428,22 @@ async function startAudio(deviceLabel) {
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     clog("getUserMedia unavailable — no audio meter"); setMeter("off"); return;
   }
-  let constraints = { audio: true };
+  // LoroAudio.micConstraints: dispositivo CRU, sem o processamento de voz do
+  // sistema — ele derruba o volume da sua voz e abafa a saída da máquina toda
+  // (ver o comentário em audio.js), e a transcrição também quer o sinal cru.
+  let constraints = LoroAudio.micConstraints(null, settings.micEchoCancel);
   if (deviceLabel) {
     try {
       // os labels de enumerateDevices só aparecem após uma permissão de áudio:
       // fazemos um "priming" e paramos o stream antes de casar o dispositivo certo
       let devs = await navigator.mediaDevices.enumerateDevices();
       if (!devs.some((x) => x.kind === "audioinput" && x.label)) {
-        const prime = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const prime = await navigator.mediaDevices.getUserMedia(LoroAudio.micConstraints(null, settings.micEchoCancel));
         prime.getTracks().forEach((t) => t.stop());
         devs = await navigator.mediaDevices.enumerateDevices();
       }
       const d = devs.find((x) => x.kind === "audioinput" && new RegExp(deviceLabel, "i").test(x.label));
-      if (d && d.deviceId) constraints = { audio: { deviceId: { exact: d.deviceId } } };
+      if (d && d.deviceId) constraints = LoroAudio.micConstraints(d.deviceId, settings.micEchoCancel);
       else {
         clog("meter: input '" + deviceLabel + "' not found — no wave");
         setMeter("nosignal"); return;
@@ -501,6 +642,9 @@ async function startMeetingWith(choice) {
   meeting.active = true; meeting.id = res.id; meeting.dir = res.dir;
   meeting.livingRel = res.livingRel; meeting.tema = choice.tema;
   meeting.phase = "recording"; meeting.pendingLines = [];
+  meeting.appended = [];   // histórico de eco é POR reunião (antes dependia de o
+                           // relógio ler exatamente 0 — um tique de 1ms vazava a
+                           // reunião anterior para dentro da nova)
   state.meetingMode = true;
   await openDoc(res.livingRel, { preview: false }); // a aba é a superfície ao vivo
   // microfone via MediaRecorder (onda + audio/mic.webm); degrada p/ só-sistema se falhar
@@ -523,13 +667,24 @@ async function startMeetingWith(choice) {
 const MEETING_TAIL_MS = 18000;
 function startMeetingTail() {
   stopMeetingTail();
-  meeting.tailFrom = 0; meeting.tailBusy = false;
+  // tailBase: onde o segmento de captura corrente começa na linha do tempo da
+  // reunião — 0 no início; após um retomar, o tempo já gravado até a pausa.
+  meeting.tailFrom = 0; meeting.tailBase = meetingElapsedMs(); meeting.tailBusy = false;
   meeting.tailStatus = t("preview: iniciando…");
   meeting.tailTimer = setInterval(tickMeetingTail, MEETING_TAIL_MS);
 }
+// Para o intervalo. NÃO limpa `tailBusy`: existe um tick em voo, e zerar a
+// trava deixava o próximo disparar por cima dele — dois whisper carvando o MESMO
+// arquivo de snapshot, um apagando o do outro, e o `tailFrom` do vencedor
+// atrasado sobrescrevendo o do segmento novo (a transcrição de sistema morria em
+// silêncio pelo resto da reunião). Quem precisa do fim do tick usa `tailFlush`.
 function stopMeetingTail() {
   if (meeting.tailTimer) { clearInterval(meeting.tailTimer); meeting.tailTimer = null; }
-  meeting.tailBusy = false;
+}
+// Só rearma o intervalo, sem rebasear o offset — para voltar ao estado anterior
+// quando uma pausa falha (o WAV do backend continua o mesmo e continua crescendo).
+function resumeMeetingTailInterval() {
+  if (!meeting.tailTimer) meeting.tailTimer = setInterval(tickMeetingTail, MEETING_TAIL_MS);
 }
 
 // ADR-0012 model A: rotate a dedicated mic MediaRecorder (separate from the main
@@ -540,8 +695,10 @@ function blobToBytes(blob) {
   return blob.arrayBuffer().then((b) => Array.from(new Uint8Array(b)));
 }
 // ms elapsed since the meeting/recording started (the shared session clock).
+// Pauses are excluded: a mic segment recorded after a pause lands right where
+// the recording stopped, not where the wall clock would put it.
 function meetingElapsedMs() {
-  return state.startTime ? Math.max(0, Date.now() - state.startTime) : 0;
+  return elapsedActiveMs();
 }
 function spawnPreviewRec() {
   if (!audio.stream) return;
@@ -574,6 +731,21 @@ function stopMeetingPreview() {
   const rec = meeting.previewRec; meeting.previewRec = null;
   if (rec && rec.state !== "inactive") { try { rec.stop(); } catch (_) {} } // flush the last segment
 }
+// Ponto ÚNICO de anexação da transcrição ao vivo: as duas trilhas passam por
+// aqui, e é aqui que o eco de uma na outra é barrado. Devolve true se appendou.
+async function appendMeetingChunk(id, text, tMs, source) {
+  const eco = LM.echoOfOtherSource({ text: text, tMs: tMs || 0, source: source }, meeting.appended);
+  if (eco) {
+    // BR-8: o log conta O QUE aconteceu, nunca o que foi dito.
+    clog("meeting append: dropped cross-source echo (source=" + source + " prev=" + eco.source + ")");
+    return false;
+  }
+  await invoke("brain_meeting_append", { input: { id, chunk: text, tMs: tMs || 0, source } });
+  meeting.appended.push({ tMs: tMs || 0, source: source, tokens: LM.speechTokens(text) });
+  if (meeting.appended.length > 40) meeting.appended.shift();
+  return true;
+}
+
 async function onPreviewSegment(chunks, mime, tMs) {
   if (!chunks || !chunks.length || !meeting.id) return;
   const id = meeting.id;
@@ -584,7 +756,7 @@ async function onPreviewSegment(chunks, mime, tMs) {
     if (text.trim() && meeting.id === id) {
       // ADR-0013: the operator's mic segment, timecoded so it interleaves with the
       // system windows in chronological order.
-      try { await invoke("brain_meeting_append", { input: { id, chunk: text, tMs: tMs || 0, source: "mic" } }); setTailStatus(id, t("preview ao vivo ativo")); }
+      try { await appendMeetingChunk(id, text, tMs || 0, "mic"); setTailStatus(id, t("preview ao vivo ativo")); }
       catch (e) { clog("brain_meeting_append (mic) error: " + e); }
     } else {
       setTailStatus(id, t("preview: microfone sem fala substantiva ainda"));
@@ -594,12 +766,20 @@ async function onPreviewSegment(chunks, mime, tMs) {
     setTailStatus(id, t("preview indisponível") + ": " + tErr(String(e)));
   }
 }
-async function tickMeetingTail() {
+function tickMeetingTail() {
+  // A promessa fica publicada em `tailFlush` para que pausar/encerrar possam
+  // ESPERAR o tick em voo em vez de disparar um concorrente.
+  if (meeting.tailBusy) return meeting.tailFlush || Promise.resolve();
+  meeting.tailFlush = runMeetingTail();
+  return meeting.tailFlush;
+}
+async function runMeetingTail() {
   if (!meeting.active || meeting.phase !== "recording" || !meeting.id) return;
-  if (meeting.tailBusy) return; // never overlap a still-running window
   meeting.tailBusy = true;
   const id = meeting.id;
-  const winStart = meeting.tailFrom; // ADR-0013: this system window's start on the timeline
+  // ADR-0013: this system window's start on the MEETING timeline (segment base
+  // + offset into the segment's WAV — a resume restarts the WAV at zero).
+  const winStart = meeting.tailBase + meeting.tailFrom;
   try {
     const res = await invoke("brain_meeting_transcribe_tail", { input: { id, fromMs: meeting.tailFrom } });
     if (!res) { setTailStatus(id, t("preview: sem resposta do backend")); return; }
@@ -608,7 +788,7 @@ async function tickMeetingTail() {
     const text = LM.filterHallucinations(raw); // drop whisper silence-artifacts
     if (text.trim() && meeting.active && meeting.id === id) {
       // the other participants (system audio), timecoded by the window start.
-      try { await invoke("brain_meeting_append", { input: { id, chunk: text, tMs: winStart || 0, source: "system" } }); setTailStatus(id, t("preview ao vivo ativo")); }
+      try { await appendMeetingChunk(id, text, winStart || 0, "system"); setTailStatus(id, t("preview ao vivo ativo")); }
       catch (e) { clog("brain_meeting_append (tail) error: " + e); }
     } else if (raw.trim()) {
       // Houve áudio transcrito, mas só silêncio/ruído (alucinação de legenda) —
@@ -636,11 +816,83 @@ function setTailStatus(id, msg) {
 // Se o microfone falhou (sem recorder), conduzimos o encerramento diretamente.
 function stopMeeting() {
   clog("stop (meeting ADR-0010)");
+  if (state.paused) { state.pausedMs += Date.now() - state.pauseStart; state.paused = false; state.pauseStart = 0; }
   stopMeetingTail();     // encerra o preview de sistema
   stopMeetingPreview();  // encerra o preview de mic (faz o flush do último segmento)
   const hadRecorder = !!(audio.recorder && audio.recorder.state !== "inactive");
   onStopped();
   if (!hadRecorder) finalizeMeeting();
+}
+
+// Pausar PARA a captura de verdade — o sidecar morre e nada é gravado enquanto
+// dura a pausa (um pausar que continuasse capturando mentiria). Antes de parar,
+// a última janela de sistema e o segmento de mic corrente são despejados, para a
+// fala até o instante da pausa não se perder.
+let pausePending = false;
+async function pauseMeeting() {
+  if (!meeting.active || meeting.phase !== "recording" || state.paused || pausePending) return;
+  pausePending = true;
+  paintPauseBtn("pending");
+  try {
+    stopMeetingPreview();            // flush do segmento de mic corrente
+    stopMeetingTail();
+    // espera o tick em voo ANTES de pedir o seu: dois carves concorrentes
+    // disputam o mesmo snapshot e corrompem os dois lados
+    try { await meeting.tailFlush; } catch (_) {}
+    try { await tickMeetingTail(); } // última janela de sistema (best-effort)
+    catch (e) { clog("final tail before pause: " + e); }
+    await invoke("brain_meeting_pause", { input: { id: meeting.id } });
+    state.paused = true; state.pauseStart = Date.now();
+    if (audio.ctx) { try { audio.ctx.suspend(); } catch (_) {} } // congela a onda
+    setTailStatus(meeting.id, t("reunião pausada — nada está sendo gravado"));
+    toast(t("reunião pausada — nada está sendo gravado"));
+  } catch (e) {
+    clog("brain_meeting_pause error: " + e);
+    toast(t("não consegui pausar") + ": " + tErr(String(e)));
+    // Volta ao estado anterior SEM rebasear: toda falha do brain_meeting_pause
+    // acontece antes de parar a captura, então o WAV é o mesmo e segue crescendo.
+    // `startMeetingTail()` zeraria o offset e a reunião inteira seria transcrita
+    // e appendada de novo, ainda por cima carimbada na hora da falha.
+    resumeMeetingTailInterval(); startMeetingPreview();
+  } finally {
+    pausePending = false;
+    paintPauseBtn();
+  }
+}
+async function resumeMeeting() {
+  if (!meeting.active || !state.paused || pausePending) return;
+  pausePending = true;
+  paintPauseBtn("pending");
+  try {
+    await invoke("brain_meeting_resume", { input: { id: meeting.id } });
+    state.pausedMs += Date.now() - state.pauseStart;
+    state.paused = false; state.pauseStart = 0;
+    if (audio.ctx) { try { audio.ctx.resume(); } catch (_) {} }
+    startMeetingTail();    // rebase: tailFrom=0, tailBase=tempo já gravado
+    startMeetingPreview();
+    setTailStatus(meeting.id, t("preview ao vivo ativo"));
+  } catch (e) {
+    clog("brain_meeting_resume error: " + e);
+    toast(t("não consegui retomar") + ": " + tErr(String(e)));
+  } finally {
+    pausePending = false;
+    paintPauseBtn();
+  }
+}
+function paintPauseBtn(mode) {
+  const b = $("recPause");
+  if (!b) return;
+  b.disabled = mode === "pending";
+  b.classList.toggle("pending", mode === "pending");
+  b.textContent = state.paused ? "▶ " + t("retomar") : "⏸ " + t("pausar");
+  const foot = $("recFoot");
+  if (foot) {
+    foot.classList.toggle("paused", !!state.paused);
+    const note = foot.querySelector(".recnote");
+    if (note) note.textContent = state.paused
+      ? t("reunião pausada — nada está sendo gravado")
+      : t("mic ativo · a gravação continua se você trocar de aba");
+  }
 }
 
 // STOP (ADR-0012 modelo A): a transcrição JÁ foi montada ao vivo pelos segmentos
@@ -717,11 +969,17 @@ async function acervoFsPath(rel) {
   return LM.acervoJoin(base, rel);
 }
 
-// Marcadores PII-free (BR-8): tipo + timecode a partir do relógio da sessão.
-async function markMeeting(tipo) {
+// Marcadores PII-free (BR-8): timecode a partir do relógio da sessão.
+// ADR-0020 §2: um marcador ÚNICO ("momento") — escolher um tipo no meio de uma
+// reunião era fricção; o valor está em ancorar o instante, não em classificá-lo.
+const MARKER_TIPO = "momento";
+async function markMeeting() {
   if (!meeting.active || !meeting.id) { toast(t("nenhuma reunião em andamento")); return; }
-  const tMs = state.startTime ? Math.max(0, Date.now() - state.startTime) : 0;
-  try { await invoke("brain_meeting_marker", { input: { id: meeting.id, tipo, tMs } }); toast(t("marcado") + ": " + tipo); }
+  // relógio da reunião, que desconta as pausas — o mesmo que carimba os trechos
+  // de mic e as janelas de sistema. Com Date.now() cru o marcador caía adiante
+  // da fala pelo total pausado.
+  const tMs = elapsedActiveMs();
+  try { await invoke("brain_meeting_marker", { input: { id: meeting.id, tipo: MARKER_TIPO, tMs } }); toast(t("momento marcado")); }
   catch (e) { toast(tErr(String(e))); clog("brain_meeting_marker error: " + e); }
 }
 
@@ -742,7 +1000,7 @@ function askAcervo(ctx) {
   openModal(
     ctx ? t("Perguntar ao contexto") : t("Perguntar ao acervo"),
     scope +
-      `<p class="pmnote mono">${t("A resposta vem primeiro dos contextos (a base de conhecimento) e, se preciso, de conectores MCP. Roda no Claude do terminal.")}</p>` +
+      `<p class="pmnote mono">${t("A resposta vem primeiro do conhecimento do projeto e, se preciso, de fontes externas configuradas nas habilidades.")} ${esc(aiTargetHint())}</p>` +
       `<label class="wfield"><span class="mono">${t("pergunta")}</span>` +
       `<input id="askInput" type="text" placeholder="${t("ex.: qual a política de multas da frota?")}" spellcheck="false"></label>`,
     t("perguntar"),
@@ -750,8 +1008,8 @@ function askAcervo(ctx) {
       const q = (($("askInput") && $("askInput").value) || "").trim();
       const cmd = LoroBrainstorm.brainAskCmd(q, ctx);
       if (!cmd) { toast(t("digite uma pergunta")); return; }
-      termRunAgent(cmd);
-      toast(t("pergunta enviada ao agente do terminal — a resposta aparece abaixo"), 4000);
+      runAiCommand(cmd);
+      toast(aiTargetHint(), 4000);
     }
   );
   const inp = $("askInput"); if (inp) inp.focus();
@@ -765,7 +1023,7 @@ function offerAnalyse(dir) {
   toastAction(t("reunião encerrada — quer analisar agora?"), [
     { label: t("analisar"), run: () => {
         const cmd = LM.analyseOffer("analisar", dir);
-        if (cmd) termRunAgent(cmd);
+        if (cmd) runAiCommand(cmd);
       } },
     { label: t("agora não"), run: () => {} },
   ]);
@@ -790,6 +1048,7 @@ async function startFileSession() {
 }
 
 function onStarted() {
+  setRecPending(null);
   state.running = true;
   requestAnimationFrame(() => resizeWave());
   el.dot.classList.add("on");
@@ -800,6 +1059,7 @@ function onStarted() {
   startTimer();
 }
 function onStopped() {
+  setRecPending(null);
   if (!state.running) return;
   state.running = false;
   el.dot.classList.remove("on");
@@ -854,7 +1114,31 @@ function toggle() {
   const now = Date.now();
   if (now - lastToggle < 500) return;
   lastToggle = now;
-  state.running ? stopSession() : startRecordFlow();
+  const stopping = state.running;
+  setRecPending(stopping ? "stopping" : "starting");
+  Promise.resolve(stopping ? stopSession() : startRecordFlow())
+    // um fluxo que só ABRE um diálogo (escolher a ideia) volta sem gravar:
+    // o pendente sai assim que a promessa resolve e o estado real manda
+    .finally(() => { if (!state.running || stopping) setRecPending(null); });
+}
+
+// `null` | "starting" | "stopping". Só toca no cromo — quem decide se está
+// gravando continua sendo o backend (rec-state).
+let recPending = null;
+function setRecPending(kind) {
+  recPending = kind;
+  const label = $("recLabel");
+  el.toggle.classList.toggle("pending", !!kind);
+  el.toggle.disabled = !!kind;
+  if (label) {
+    label.textContent = kind === "starting" ? t("iniciando…")
+      : kind === "stopping" ? t("encerrando…")
+      : (state.running || meeting.active) ? t("Parar") : t("Gravar");
+  }
+  document.querySelectorAll("[data-mtgfinish]").forEach((b) => {
+    b.disabled = kind === "stopping";
+    b.classList.toggle("pending", kind === "stopping");
+  });
 }
 
 // ● never starts a loose recording (owner decision 2026-07-28): like every
@@ -891,6 +1175,10 @@ function clearDoc() { state.lines = []; render(); el.savebar.hidden = true; el.t
 const cfgWrap = $("cfgWrap"), cfgClose = $("cfgClose"), acervoDir = $("acervoDir");
 async function openCfg() {
   cfgWrap.hidden = false;
+  cfgEnvSeen = false; // os checks de rede rodam de novo nesta visita, quando a seção aparecer
+  document.querySelectorAll(".cfgsec").forEach((s) => (s.hidden = false));
+  $("cfgPop").scrollTop = 0;
+  markCfgNav("proj");
   try {
     const cfg = await invoke("brain_get_config");
     acervoDir.textContent = cfg ? cfg.brainDir : t("não configurado — crie um projeto");
@@ -909,8 +1197,49 @@ async function openCfg() {
   }
   // versão do app (para saber num relance se atualizou)
   try { const v = $("cfgVersion"); if (v) v.textContent = "v" + await invoke("app_version"); } catch (_) {}
+  // 1g "IA e terminal": o comando do agente é por projeto (ADR-0003)
+  try {
+    const cfg2 = await invoke("brain_get_config");
+    const ai = $("cfgAgentInput");
+    if (ai) ai.value = (cfg2 && cfg2.agent) || "";
+  } catch (_) {}
   refreshModelManager();
 }
+// Configurações são UMA página com rolagem (pedido do dono, 2026-08-11): tudo
+// visível, e a nav navega — clicar rola até a seção; rolar realça a seção na nav.
+let cfgEnvSeen = false; // os checks de ambiente vão à rede (gh auth): uma vez por visita
+function markCfgNav(sec) {
+  document.querySelectorAll("#cfgNav .cfgnavbtn").forEach((b) => b.classList.toggle("on", b.dataset.sec === sec));
+  if (sec === "git" && !cfgEnvSeen) { cfgEnvSeen = true; refreshEnv(true); }
+}
+function showCfgSection(sec) {
+  document.querySelectorAll(".cfgsec").forEach((s) => (s.hidden = false));
+  markCfgNav(sec);
+  const target = document.querySelector(`.cfgsec[data-sec="${sec}"]`);
+  if (target) {
+    cfgScrollQuiet = true; // o clique decide o realce; o spy não disputa durante a rolagem
+    target.scrollIntoView({ behavior: "smooth", block: "start" });
+    clearTimeout(cfgQuietTimer);
+    cfgQuietTimer = setTimeout(() => { cfgScrollQuiet = false; }, 600);
+  }
+}
+// scroll-spy: a seção ativa é a última cujo topo já passou pelo terço superior
+let cfgScrollQuiet = false;
+let cfgQuietTimer = 0;
+let cfgSpyRaf = 0;
+$("cfgPop").addEventListener("scroll", () => {
+  if (cfgScrollQuiet || cfgSpyRaf) return;
+  cfgSpyRaf = requestAnimationFrame(() => {
+    cfgSpyRaf = 0;
+    const pop = $("cfgPop");
+    const cut = pop.getBoundingClientRect().top + pop.clientHeight / 3;
+    let cur = null;
+    document.querySelectorAll(".cfgsec").forEach((s) => {
+      if (s.getBoundingClientRect().top <= cut) cur = s.dataset.sec;
+    });
+    if (cur) markCfgNav(cur);
+  });
+});
 function drawProjColors(cur) {
   renderSwatches($("projColors"), cur ? cur.color : "", async (hex) => {
     applyAccent(hex);
@@ -997,8 +1326,11 @@ function updateCfgLabel() {
   const m = el.model.value === "large-v3-turbo" ? "turbo" : "small";
   const src = { system: t("áudio do sistema"), meeting: t("reunião") }[el.source.value] || t("microfone");
   const modeLabel = el.mode.value === "file" ? t("gravar tudo") : t("ao vivo");
+  const line = `${el.lang.value} · ${m} · ${src} · ${modeLabel}`;
   const sum = $("cfgSummary");
-  if (sum) sum.textContent = `${el.lang.value} · ${m} · ${src} · ${modeLabel}`;
+  if (sum) sum.textContent = line;
+  const sub = $("cfgSub");
+  if (sub) sub.textContent = line;
   el.cfgBtn.title = `${t("Configurações")} — ${el.lang.value} · ${m} · ${modeLabel}`;
 }
 function updatePrivacy() {
@@ -1006,7 +1338,7 @@ function updatePrivacy() {
   delete el.privacy.dataset.meter;
   if (state.recordForDiarize || state.fileMode || state.meetingMode) { el.privacy.textContent = t("grava áudio"); el.privacy.classList.add("warn"); }
   else if (settings.autosave) { el.privacy.textContent = "auto-save"; }
-  else { el.privacy.textContent = t("sem gravar"); }
+  else { el.privacy.textContent = t("sem guardar áudio"); }
 }
 
 // ---- wiring ----
@@ -1028,6 +1360,13 @@ el.optScroll.addEventListener("change", (e) => {
 });
 el.optTop.addEventListener("change", (e) => { if (getWin) getWin().setAlwaysOnTop(e.target.checked); });
 el.optOverlay.addEventListener("change", (e) => invoke("toggle_overlay", { show: e.target.checked }));
+$("optEchoCancel").addEventListener("change", (e) => {
+  settings.micEchoCancel = e.target.checked;
+  persistSettings();
+  // vale na PRÓXIMA captura: trocar o modo de um stream vivo exigiria reabrir
+  // o microfone no meio da gravação, e uma gravação não pode piscar.
+  if (state.running || meeting.active) toast(t("vale na próxima gravação"));
+});
 el.optDiar.addEventListener("change", (e) => { state.recordForDiarize = e.target.checked; updatePrivacy(); });
 el.source.addEventListener("change", () => { settings.source = el.source.value; persistSettings(); updateCfgLabel(); });
 
@@ -1080,7 +1419,7 @@ const B = {
   gitBtn: $("gitBtn"), branchBtn: $("branchBtn"), proposeBtn: $("proposeBtn"), bMenu: $("bMenu"),
   ghCard: $("ghCard"), ghState: $("ghState"), ghChecks: $("ghChecks"),
   ghNotif: $("ghNotif"), ghCheck: $("ghCheck"),
-  navHome: $("navHome"), navQueue: $("navQueue"), navCtx: $("navCtx"),
+  navQueue: $("navQueue"), navCtx: $("navCtx"),
   navSources: $("navSources"), navPessoal: $("navPessoal"), queueCount: $("navQueueCount"),
   home: $("bHome"), docWrap: $("bDocWrap"), doc: $("brainDoc"),
   crumb: $("bCrumb"), badge: $("bBadge"), modes: $("bModes"),
@@ -1091,8 +1430,6 @@ const B = {
   cmdk: $("cmdk"), cmdkInput: $("cmdkInput"), cmdkList: $("cmdkList"),
   find: $("bFind"), findInput: $("bFindInput"), findCount: $("bFindCount"),
   findPrev: $("bFindPrev"), findNext: $("bFindNext"), findClose: $("bFindClose"),
-  stInbox: $("stInbox"), stDone: $("stDone"), stCtx: $("stCtx"), stSrc: $("stSrc"),
-  activity: $("brainActivity"),
   editWrap: $("editWrap"), editTitle: $("editTitle"),
   editModalBar: $("editModalBar"), editModalHost: $("editModalHost"),
   editSave: $("editSave"), editCancel: $("editCancel"), editClose: $("editClose"),
@@ -1182,12 +1519,12 @@ function showWelcome() {
   openModal(
     t("Bem-vindo ao Loro 🦜"),
     `<ul class="welcome">` +
-      li("Fluxo em três passos: Brainstorming → Fila → Contexto — junte ideias, eleja o que importa e gere conhecimento versionado.") +
-      li("● grava reuniões ou transcrições avulsas — 100% local; o áudio nunca sai da sua máquina.") +
-      li("Modelos de uso (vendas, engenharia, saúde…) moldam os contextos e as regras do acervo na criação.") +
-      li("O agente de IA é escolha sua por acervo: claude por padrão, ou qualquer CLI — inclusive modelos locais.") +
-      li("Analise reuniões, pergunte ao acervo ou a um contexto, e crie/evolua notas com IA (✦) direto da lateral.") +
-      li("⌘/Ctrl+Shift+P abre a paleta de comandos — e todo comando tem um atalho ⌘/Ctrl+⌥.") +
+      li("Três destinos no topo: Início · Organizar · Conhecimento — capture, deixe a IA propor, aprove o que vira oficial.") +
+      li("Gravar transcreve ao vivo, 100% local; o áudio nunca sai da sua máquina.") +
+      li("Modelos de uso (vendas, engenharia, saúde…) moldam os temas e as regras do projeto na criação.") +
+      li("O agente de IA é escolha sua por projeto: claude por padrão, ou qualquer CLI — inclusive modelos locais.") +
+      li("Ações de IA analisam reuniões, respondem sobre o projeto e evoluem notas — pelo painel ✦ IA ou pelo menu ⋯.") +
+      li("⌘/Ctrl+K abre a paleta — ela é a lista viva de tudo o que dá para fazer, com os atalhos ao lado.") +
     `</ul>` +
       `<p class="pmnote mono"><button id="welcomeManual" class="link mono strong">${t("abrir manual")}</button></p>`,
     t("começar"),
@@ -1211,7 +1548,6 @@ function initBrain() {
   }
   if (!settings.welcomeSeen) setTimeout(showWelcome, 600);
 }
-if (el.liveExpand) el.liveExpand.addEventListener("click", () => setLivePanel(el.surface.hidden));
 el.liveCollapse.addEventListener("click", () => setLivePanel(false));
 
 // ---- editor reutilizável (pendentes da fila / instruções do loop) ----
@@ -1249,11 +1585,6 @@ async function saveEditor() {
 }
 B.editSave.addEventListener("click", saveEditor);
 $("guideBtn").addEventListener("click", () => openGuideDoc());
-// ADR-0005 (owner request): the hero's "perguntar ao acervo" button became the
-// generic "executar habilidade" picker — perguntar ao acervo is one entry in
-// it (and stays on the palette, ⌘⌥Q). Unrestricted list: on the Visão Geral
-// there is no other dedicated UI to avoid duplicating.
-{ const hb = $("homeSkillBtn"); if (hb) hb.addEventListener("click", (e) => { e.stopPropagation(); openHabilidadeMenu(null, hb, true); }); }
 // ADR-0013: "gerar contexto" — the fila → contexto step. Injects /loro-context
 // into the terminal Claude (the /loro-context loop), which processes the whole
 // queue into versioned contexts. Same terminal-skill pattern as analisar/responder.
@@ -1279,8 +1610,8 @@ async function genContextNow() {
       }
     } catch (e) { clog("queueSaveAnexos guide write error: " + e); }
   }
-  termRunAgent(LoroBrainstorm.brainContextCmd());
-  toast(t("gerando contexto no agente do terminal — acompanhe abaixo"), 4000);
+  runAiCommand(LoroBrainstorm.brainContextCmd());
+  toast(t("transformando em conhecimento") + " — " + aiTargetHint(), 4000);
 }
 {
   const gen = $("queueGenCtx");
@@ -1322,6 +1653,8 @@ async function brainRefresh() {
   const showWizard = (!st.configured || creatingNew);
   B.setup.hidden = !showWizard;
   B.shell.hidden = showWizard;
+  // 1j: sem projeto não há destinos, nem o que gravar, nem documento no painel
+  document.getElementById("app").classList.toggle("firstrun", showWizard);
   renderSwitch();
   if (showWizard) return;
   renderHome(st);
@@ -1333,7 +1666,10 @@ async function brainRefresh() {
   invoke("brain_git_state").then((g) => {
     B.gitBtn.hidden = !g.available;
     if (g.available) {
-      B.gitBtn.textContent = g.repo ? (g.pending ? `${t("versionar")} (${g.pending})` : `${t("versionado")} ✓`) : t("iniciar git");
+      // vocabulário do redesign: "versionar" → "salvar versão"
+      B.gitBtn.textContent = g.repo
+        ? (g.pending ? `${t("Salvar versão")} (${g.pending})` : t("tudo salvo ✓"))
+        : t("começar a guardar versões");
       B.gitBtn.classList.toggle("warm", g.repo && g.pending > 0);
     }
     // ADR-0002 §2: the current branch is always visible; click to switch/create
@@ -1347,8 +1683,8 @@ async function brainRefresh() {
   refreshEnv();
   // seletor de contexto do envio (preserva escolha)
   const sel = $("importCtx"), chosen = sel.value;
-  sel.innerHTML = `<option value="">${t("contexto")}: ${t("automático")}</option>` +
-    st.contexts.map((c) => `<option value="${esc(c.name)}">${t("contexto")}: ${esc(c.name)}</option>`).join("");
+  sel.innerHTML = `<option value="">${t("destino: a IA decide")}</option>` +
+    st.contexts.map((c) => `<option value="${esc(c.name)}">${t("destino")}: ${esc(c.name)}</option>`).join("");
   sel.value = chosen && st.contexts.some((c) => c.name === chosen) ? chosen : "";
   // lateral: só re-renderiza quando os dados mudam (preserva expansões profundas)
   const sig = JSON.stringify([st.inbox.map((f) => f.name), st.contexts, st.reunioes.length, st.notas.length]);
@@ -1358,65 +1694,112 @@ async function brainRefresh() {
   markSel();
 }
 
-// ---- visão geral (home) ----
+// ---- os três destinos: Início · Organizar · Conhecimento --------------------
+// ADR-0020 §3–7: saem as 4 estatísticas, "contextos mais ativos", o feed do
+// loop, a faixa 1·2·3 e o ghCard. Cada destino tem UMA ação primária.
 function renderHome(st) {
-  B.stInbox.textContent = st.inbox.length;
-  B.stDone.textContent = st.processed;
-  B.stCtx.textContent = st.contexts.length;
-  B.stSrc.textContent = st.reunioes.length + st.notas.length;
-  // subtítulo (pasta) + frase-pulso
-  $("bSub").textContent = st.dir;
-  const lastAct = (st.activity || "").split("\n")[0].match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2})/);
   const n = st.inbox.length;
-  $("bPulse").textContent = n
-    ? `${n} ${n > 1 ? t("itens na fila") : t("item na fila")}`
-    : (lastAct ? `${t("em dia · último processamento")} ${lastAct[1].slice(5)}` : t("em dia — envie um relatório do brainstorming ou arquivos"));
-  $("bPulse").classList.toggle("warm", n > 0);
-  // card da fila: o CTA só chama quando HÁ o que processar; o card "acende"
-  // (borda quente) para o próximo passo ficar evidente sem ler nada.
-  const gen = $("queueGenCtx");
-  if (gen) {
-    gen.disabled = !n;
-    gen.title = n
-      ? t("Processa a fila com o Claude (/loro-context): cada item vira/atualiza um contexto versionado")
-      : t("a fila está vazia — selecione partes no brainstorming ou envie arquivos");
+  // badge de pendências na nav e na barra recolhida
+  for (const id of ["destQueueBadge", "miniQueueBadge"]) {
+    const b = $(id);
+    if (b) { b.textContent = n; b.hidden = !n; }
   }
-  const qc = $("queueCard");
-  if (qc) qc.classList.toggle("warm", n > 0);
-  // fila (top 4, acionável)
-  const q = $("homeQueue");
-  q.innerHTML = st.inbox.length
-    ? st.inbox.slice(0, 4).map((f) => {
-        const ed = /\.(md|txt)$/i.test(f.name);
-        return `<div class="qrow unsynced" title="${t("não sincronizado (aguardando o loop)")}"><span class="qname mono" ${ed ? `data-doc="inbox/${esc(f.name)}"` : ""}>${ed ? "✎ " : ""}${esc(f.name)}</span>
-          <button class="rowmenu" data-qmenu="${esc(f.name)}" title="${t("ações")}">⋯</button></div>`;
-      }).join("") + (st.inbox.length > 4 ? `<div class="bempty">+ ${st.inbox.length - 4} ${t("na lateral")}</div>` : "")
-    : `<div class="bempty">${t("vazia — selecione partes no brainstorming ou arraste arquivos abaixo")}</div>`;
-  q.querySelectorAll("[data-doc]").forEach((el2) => (el2.onclick = () => openDoc(el2.dataset.doc)));
-  q.querySelectorAll("[data-qmenu]").forEach((el2) => (el2.onclick = (e) => { e.stopPropagation(); openQueueMenu(el2, el2.dataset.qmenu); }));
-  // contextos mais ativos (barras)
-  const top = [...st.contexts].sort((a, b) => (b.entries + b.ideas) - (a.entries + a.ideas)).slice(0, 5);
-  const max = Math.max(1, ...top.map((c) => c.entries + c.ideas));
-  $("homeBars").innerHTML = top.some((c) => c.entries + c.ideas)
-    ? top.map((c) => `<div class="hbar" data-hctx="${esc(c.name)}">
-        <span class="hname mono">${esc(c.name)}</span>
-        <span class="htrack"><span class="hfill" style="width:${Math.round(((c.entries + c.ideas) / max) * 100)}%"></span></span>
-        <span class="hval mono">${c.entries}${c.ideas ? ` <i>+${c.ideas}🌱</i>` : ""}</span>
-      </div>`).join("")
-    : `<div class="bempty">${t("os guias crescem conforme o loop processa")}</div>`;
-  $("homeBars").querySelectorAll("[data-hctx]").forEach((el2) =>
-    (el2.onclick = () => openDoc(`contextos/${el2.dataset.hctx}/context.md`)));
-  // atividade como feed
-  const feed = (st.activity || "").split("\n").filter(Boolean);
-  B.activity.innerHTML = feed.length
-    ? feed.map((l) => {
-        const m = l.match(/^(\d{4}-\d{2}-\d{2} )?(\d{2}:\d{2})?\s*·?\s*(.*)$/);
-        const time = m && m[2] ? m[2] : "";
-        const txt = m ? m[3] : l;
-        return `<div class="fitem"><span class="fdot"></span><span class="ftime mono">${esc(time)}</span><span class="ftxt">${esc(txt)}</span></div>`;
-      }).join("")
-    : `<div class="bempty">${t("o loop ainda não rodou — use /loop 1h /loro-context no Claude Code")}</div>`;
+  renderDestHome(st, n);
+  renderDestOrganize(st, n);
+  renderDestKnowledge(st);
+  // rodapé da lateral: contagens funcionais (não decorativas)
+  const skills = $("footSkillsN"), srcs = $("footSourcesN");
+  if (skills) skills.textContent = lastToolFiles.length || "";
+  if (srcs) srcs.textContent = st.reunioes.length + st.notas.length || "";
 }
+
+// 1a — a porta de entrada é gravar; a faixa âmbar é o único chamado secundário.
+function renderDestHome(st, n) {
+  const bar = $("homePending");
+  if (!bar) return;
+  bar.hidden = !n;
+  if (!n) return;
+  $("homePendingN").textContent = n;
+  // nomes gerados pelo loop são longos demais para a faixa: o que importa é
+  // reconhecer a captura, não ler o caminho inteiro
+  const short = (s) => (s.length > 30 ? s.slice(0, 29) + "…" : s);
+  const names = st.inbox.slice(0, 2).map((f) => short(shortName(f.name))).join(t(" e "));
+  $("homePendingTxt").textContent = n > 1
+    ? `${t("capturas prontas para virar conhecimento do time")}${names ? " — " + names : ""}.`
+    : `${t("captura pronta para virar conhecimento do time")}${names ? " — " + names : ""}.`;
+}
+
+// 1b — a fila como lista de cards; a IA propõe, você aprova.
+function renderDestOrganize(st, n) {
+  const list = $("orgList");
+  if (!list) return;
+  list.innerHTML = n
+    ? st.inbox.map((f) => {
+        const ed = /\.(md|txt)$/i.test(f.name);
+        const dest = f.context ? `<i>${t("sugestão: conhecimento")} ${esc(f.context)}</i>` : t("a IA escolhe o destino");
+        // Sem caixa de seleção: ela não era lida por ninguém e o botão processava
+        // a fila INTEIRA. Desmarcar 4 de 5 itens e ver os 5 virarem conhecimento
+        // é o controle mentindo sobre o que vai acontecer com o material do
+        // usuário. Para tirar um item da fila existe o ⋯ da própria linha.
+        return `<div class="orgrow">
+            <span class="ocol">
+              <span class="oname" data-doc="inbox/${esc(f.name)}">${esc(shortName(f.name))}</span>
+              <span class="ometa">${bWhen(f.mtime)} · ${dest}</span>
+            </span>
+            <span class="oact">
+              ${ed ? `<button class="link mono" data-doc="inbox/${esc(f.name)}">${t("abrir")}</button>` : ""}
+              <button class="rowmenu" data-qmenu="${esc(f.name)}" title="${t("ações")}">⋯</button>
+            </span>
+          </div>`;
+      }).join("")
+    : `<div class="orgempty">${t("nada para organizar — grave uma reunião, escreva uma nota ou traga arquivos")}</div>`;
+  list.querySelectorAll("[data-doc]").forEach((el2) => (el2.onclick = (e) => { e.stopPropagation(); openDoc(el2.dataset.doc); }));
+  list.querySelectorAll("[data-qmenu]").forEach((el2) => (el2.onclick = (e) => { e.stopPropagation(); openQueueMenu(el2, el2.dataset.qmenu); }));
+
+  const gen = $("queueGenCtx");
+  if (gen) gen.disabled = !n;
+  const note = $("orgFootNote");
+  if (note) {
+    note.textContent = n
+      ? `${n} ${n > 1 ? t("itens na fila") : t("item na fila")} · ${t("a IA propõe, você aprova")}`
+      : t("nada na fila");
+  }
+  const gen2 = $("queueGenCtx");
+  if (gen2) gen2.title = n ? "" : t("não há nada para transformar ainda");
+}
+
+// 1c — só os temas oficiais. Sem logs, sem estatísticas (ADR-0020 §3–5).
+function renderDestKnowledge(st) {
+  const grid = $("knowGrid");
+  if (!grid) return;
+  grid.innerHTML = `<button class="knowadd" data-newctx>＋ ${t("Novo tema")}</button>` + st.contexts.map((c) => {
+    const prop = ctxDirty(c.name)
+      ? `<span class="kprop">${t("mudanças não salvas")}</span>` : "";
+    const desc = c.summary || c.description || t("o conhecimento oficial deste tema");
+    const srcs = (c.entries || 0) + (c.ideas || 0);
+    return `<div class="knowcard" data-kctx="${esc(c.name)}">
+        <span class="kt">${ico("context")} ${esc(c.name)}</span>
+        <span class="kd">${esc(desc)}</span>
+        <span class="kf">${srcs ? `${srcs} ${srcs > 1 ? t("fontes") : t("fonte")}` : t("ainda sem fontes")}${prop ? " " + prop : ""}<span class="kopen">${t("abrir")} →</span></span>
+        <button class="rowmenu" data-cmenu="${esc(c.name)}" data-isctx="1" title="${t("ações")}">⋯</button>
+      </div>`;
+  }).join("");
+  grid.querySelectorAll("[data-kctx]").forEach((el2) => (el2.onclick = (e) => {
+    if (e.target.closest("[data-cmenu]")) return;
+    openDoc(`contextos/${el2.dataset.kctx}/context.md`, { preview: false });
+  }));
+  grid.querySelectorAll("[data-cmenu]").forEach((el2) => (el2.onclick = (e) => {
+    e.stopPropagation(); openCtxMenu(el2, el2.dataset.cmenu, false);
+  }));
+  const add = grid.querySelector("[data-newctx]");
+  if (add) add.onclick = promptNewContext;
+}
+
+const bWhen = (ms) => {
+  if (!ms) return "";
+  try { return new Date(ms).toLocaleDateString(uiLocale(), { day: "2-digit", month: "short" }); }
+  catch (_) { return ""; }
+};
 
 // ---- ícones Material (SVG inline, monocromático via currentColor) ----
 const ICONS = {
@@ -1539,8 +1922,8 @@ function renderSidebar(st) {
           title="${ed ? t("não sincronizado — clique para editar") : t("não sincronizado (aguardando o loop)")}">${ico("file")}<span class="bn">${esc(f.name)}${bMeta(f.mtime, "inbox/" + f.name)}</span>
           <button class="rowmenu" data-qmenu="${esc(f.name)}" data-move="${esc(f.name)}" title="${t("ações")}">⋯</button></div>`;
       }).join("") +
-      `<div class="bitem addctx" data-genctx title="${t("Processa a fila com o Claude (/loro-context)")}">▶ ${t("gerar contexto")}</div>`
-    : `<div class="bempty">${t("vazia — envie um relatório ou arquivos para gerar contexto")}</div>`;
+      `<div class="bitem addctx" data-genctx>${t("Transformar em conhecimento")} →</div>`
+    : `<div class="bempty">${t("nada para organizar — grave uma reunião, escreva uma nota ou traga arquivos")}</div>`;
   // contextos como ÁRVORE: pastas/áreas agrupam; contextos reais abrem o guia.
   // Criação vive no ＋ do cabeçalho da seção (linhas cheias poluíam a árvore).
   B.navCtx.innerHTML =
@@ -1806,8 +2189,13 @@ function renderTemaNode(t) {
 // A selectable part row: a checkbox (data-bssel/data-bskind) + the open target.
 // A meeting row carries a ⋯ menu (renomear/apagar); files keep the plain ×.
 function bsPartRow(kind, openRel, selRel, label, title, indent, meetingId, meetingStatus, mopen, meetingNotas) {
+  // Uma reunião encerrada e SEM análise não tem o que expandir: a seta abria o
+  // vazio. No lugar dela, a ação que falta — gerar a análise.
+  const noNotes = meetingId && meetingStatus === "done" && !Number(meetingNotas || 0);
   const act = meetingId
-    ? `<button class="rowtoggle${mopen ? " open" : ""}" data-mtgtoggle="${esc(meetingId)}" title="${t("mostrar/ocultar as notas da reunião")}">▸</button>` +
+    ? (noNotes
+        ? `<button class="rowgen" data-mtganalyse="${esc(selRel)}" data-mtgid="${esc(meetingId)}" title="${t("a IA lê a transcrição e escreve a análise")}">✦ ${t("analisar")}</button>`
+        : `<button class="rowtoggle${mopen ? " open" : ""}" data-mtgtoggle="${esc(meetingId)}" title="${t("mostrar/ocultar as notas da reunião")}">▸</button>`) +
       `<button class="rowmenu" data-mtgmenu="${esc(selRel)}" data-mtgid="${esc(meetingId)}" data-mtgtitle="${esc(label)}" data-mtgstatus="${esc(meetingStatus || "")}" data-mtgnotas="${esc(String(meetingNotas || 0))}" title="${t("ações da reunião (analisar, perguntar, enviar para a fila…)")}">⋯</button>`
     : `<button class="rowmenu" data-artmenu="${esc(selRel)}" data-artlabel="${esc(label)}" title="${t("ações (renomear, apagar)")}">⋯</button>`;
   const icon = kind === "reuniao" ? "meeting" : kind === "nota" ? "note" : "file";
@@ -1974,6 +2362,17 @@ function wirePessoal() {
       bOpen.add(`bsfolder:${slug}:anexos`); loadTemaChildren(slug);
     });
   }));
+  B.navPessoal.querySelectorAll("[data-mtganalyse]").forEach((b) => (b.onclick = (e) => {
+    e.stopPropagation();
+    const dir = currentMeetingDir(b.dataset.mtganalyse);
+    const cmd = dir && LM.analyseOffer("analisar", dir);
+    if (cmd) { runAiCommand(cmd, t("analisar reunião")); scheduleActionRefresh(); }
+  }));
+  B.navPessoal.querySelectorAll("[data-mtganalyse]").forEach((b) => (b.onclick = (e) => {
+    e.stopPropagation();
+    // mesmo caminho do menu ⋯ (dirOverride explícito), já provado
+    runMeetingSkill("analyse", b.dataset.mtgid, null, b.dataset.mtganalyse);
+  }));
   B.navPessoal.querySelectorAll("[data-mtgtoggle]").forEach((el2) => (el2.onclick = async (e) => {
     e.stopPropagation();
     const id = el2.dataset.mtgtoggle, key = "mtg:" + id;
@@ -2103,10 +2502,15 @@ function wirePessoalDnd() {
 // ADR-0005: per-source copy for the /loro-sync modal. `required` gates
 // the identifier field before injecting the command — drive is the only
 // source where a blank identifier still means something (a broad search).
+// Fontes usadas só quando a habilidade não declara as suas (habilidade antiga
+// ou editada à mão sem argument-hint).
+const SYNC_FALLBACK_FONTES = ["drive", "slack", "jira", "confluence"];
+// Cópia por fonte conhecida. Uma fonte NOVA (acrescentada na habilidade) cai no
+// padrão genérico de syncCopy() em vez de sumir do seletor.
 const SYNC_TOOL_COPY = {
   drive: {
-    title: "Sincronizar reunião externa (Drive)",
-    desc: "busca uma nota do Gemini no Drive e traz o documento inteiro como anexo local, referenciado na nota.",
+    title: "Sincronizar do Drive",
+    desc: "traz o documento inteiro do Drive como anexo local, referenciado na nota.",
     field: "busca ou link (opcional)",
     placeholder: "ex.: nome da reunião, ou um link do Drive",
     required: false,
@@ -2138,9 +2542,20 @@ const SYNC_TOOL_COPY = {
 // sources. Without `slug` (Visão Geral entry point), the modal also asks
 // which brainstorming to target — with `slug` (the per-brainstorming button),
 // the target is already known.
+// Cópia da fonte: a conhecida quando existe, um padrão honesto quando é uma
+// fonte nova declarada na habilidade. Nunca "return" silencioso — uma fonte que
+// aparece no seletor tem de abrir alguma coisa.
+function syncCopy(fonte) {
+  return SYNC_TOOL_COPY[fonte] || {
+    title: `${t("Sincronizar de")} ${fonte}`,
+    desc: t("traz o item externo como anexo local, referenciado numa nota."),
+    field: t("identificador ou link"),
+    placeholder: t("ex.: um link, um canal, uma chave"),
+    required: true,
+  };
+}
 async function promptSyncTool(fonte, slug) {
-  const cfg = SYNC_TOOL_COPY[fonte];
-  if (!cfg) return;
+  const cfg = syncCopy(fonte);
   let temaField = "";
   if (!slug) {
     let temas = [];
@@ -2164,8 +2579,8 @@ async function promptSyncTool(fonte, slug) {
       if (cfg.required && !q) { toast(t("informe") + ": " + t(cfg.field)); return; }
       const cmd = LoroBrainstorm.syncCmd(fonte, alvo, q);
       if (!cmd) { toast(t("informe o tema")); return; }
-      termRunAgent(cmd);
-      toast(t("busca enviada ao agente do terminal"), 4000);
+      runAiCommand(cmd);
+      toast(aiTargetHint(), 4000);
     }
   );
   const inp = $("syncToolInput"); if (inp) inp.focus();
@@ -2192,8 +2607,7 @@ const TOOL_PICKER_EXCLUDE = new Set([
   // loro-slack only makes sense with an excerpt alvo, reached from the
   // selection popover (ADR-0007) — never from the generic file-level picker.
   "loro-slack.md",
-  // loro-digest targets the whole brainstorming and has its own ⋯ action
-  // ("atualizar índice") + the indice.md staleness banner (ADR-0011).
+  // ADR-0020 §1 revogou o ADR-0011: /loro-digest saiu da UI por inteiro.
   "loro-digest.md",
 ]);
 let toolsSig = "";
@@ -2208,13 +2622,19 @@ async function refreshTools() {
   // description cached per file (used as the hover tooltip everywhere — the
   // picker never renders every description inline, only on :hover/title).
   const withDesc = await Promise.all(files.map(async (f) => {
-    let desc = "";
+    let desc = "", fontes = [];
     try {
       const raw = await invoke("brain_read", { rel: f.path });
       const m = /description:\s*(.+)/.exec(raw);
       if (m) desc = m[1].trim();
+      // ADR-0005: a habilidade declara as fontes que aceita no seu argument-hint
+      // (`<fonte:drive|slack|…>`). Quem edita a habilidade para acrescentar uma
+      // fonte a vê no seletor — sem tocar no app.
+      const a = /argument-hint:\s*(.+)/.exec(raw);
+      const fm = a && /fonte:([a-z0-9|_-]+)/i.exec(a[1]);
+      if (fm) fontes = fm[1].split("|").map((x) => x.trim()).filter(Boolean);
     } catch (_) {}
-    return { ...f, builtin: TOOL_BUILTINS.has(f.name), desc };
+    return { ...f, builtin: TOOL_BUILTINS.has(f.name), desc, fontes };
   }));
   renderTools(withDesc);
 }
@@ -2232,6 +2652,8 @@ function toolRow(f) {
 let lastToolFiles = [];
 function renderTools(files) {
   lastToolFiles = files;
+  // as habilidades ficam sempre à vista no composer do chat (painel direito)
+  try { renderChatChips(); } catch (_) {}
   const nav = $("navTools");
   if (nav) {
     nav.innerHTML = files.length
@@ -2310,8 +2732,8 @@ async function promptUseTool(rel, alvoRel) {
     t("rodar"),
     () => {
       const args = (($("useToolInput") && $("useToolInput").value) || "").trim();
-      termRunAgent("/" + slug + (fixed ? " " + fixed : "") + (args ? " " + args : ""));
-      toast(t("comando enviado ao agente do terminal"), 4000);
+      runAiCommand("/" + slug + (fixed ? " " + fixed : "") + (args ? " " + args : ""));
+      toast(aiTargetHint(), 4000);
     }
   );
   const inp = $("useToolInput"); if (inp) inp.focus();
@@ -2327,8 +2749,8 @@ function promptToolAI(rel) {
       const p = (($("toolAiInput") && $("toolAiInput").value) || "").trim();
       const cmd = LoroBrainstorm.toolCmd(rel, p);
       if (!cmd) { toast(t("descreva o pedido")); return; }
-      termRunAgent(cmd);
-      toast(t("pedido enviado ao agente do terminal"), 4000);
+      runAiCommand(cmd);
+      toast(aiTargetHint(), 4000);
     }
   );
   const inp = $("toolAiInput"); if (inp) inp.focus();
@@ -2344,8 +2766,8 @@ function promptNewToolAI() {
       const d = (($("newToolInput") && $("newToolInput").value) || "").trim();
       const cmd = LoroBrainstorm.newToolCmd(d);
       if (!cmd) { toast(t("descreva a habilidade")); return; }
-      termRunAgent(cmd);
-      toast(t("pedido enviado ao agente do terminal — a habilidade aparece na lateral"), 4000);
+      runAiCommand(cmd);
+      toast(t("pedido enviado — a habilidade aparece na lateral"), 4000);
     }
   );
   const inp = $("newToolInput"); if (inp) inp.focus();
@@ -2414,7 +2836,6 @@ const TOOL_LABELS = {
   "loro-context.md": "gerar contexto",
   "loro-tool.md": "criar habilidade",
   "loro-slack.md": "perguntar no Slack",
-  "loro-digest.md": "atualizar índice",
 };
 // Relevance order for the dropdown/picker (ADR-0005, owner feedback): the most
 // context-relevant habilidades first, least last. On the meeting surface the
@@ -2447,7 +2868,7 @@ function habilidadeEntriesFrom(files, surface) {
   });
   for (const f of ordered) {
     if (f.name === "loro-sync.md") {
-      for (const fonte of ["drive", "slack", "jira", "confluence"]) {
+      for (const fonte of (f.fontes && f.fontes.length ? f.fontes : SYNC_FALLBACK_FONTES)) {
         entries.push({ kind: "sync", fonte, label: `${t("sincronizar")}: ${fonte}`, title: f.desc });
       }
     } else {
@@ -2471,35 +2892,6 @@ function runHabilidadeEntry(entry, alvoRel) {
   if (entry.kind === "sync") promptSyncTool(entry.fonte, alvoRel);
   else promptUseTool(entry.rel, alvoRel);
 }
-// The ONE habilidade control (ADR-0005, owner feedback): a card with the
-// dropdown (friendly names), the SELECTED entry's description always visible
-// below it (option-title hover is unreliable in webviews and hid what each
-// skill does), and an explicit "executar" button — used identically on the
-// doc rail and the meeting rail.
-function habilidadeCardHtml(p) {
-  return `<div class="rail-sec card">` +
-    `<div class="rail-head">${ico("skill")} ${t("habilidade")}</div>` +
-    `<select id="${p}Select" class="mini-select"></select>` +
-    `<p id="${p}Desc" class="rail-desc"></p>` +
-    `<button class="railbtn cta" id="${p}RunBtn">▶ ${t("executar")}</button>` +
-    `</div>`;
-}
-function wireHabilidadeCard(p, alvoRel, surface) {
-  const sel = $(p + "Select"), desc = $(p + "Desc"), btn = $(p + "RunBtn");
-  if (!sel) return;
-  const entries = allHabilidadeEntries(surface);
-  sel.innerHTML = entries.length
-    ? entries.map((e, i) => `<option value="${i}">${esc(e.label)}</option>`).join("")
-    : `<option value="">${t("nenhuma habilidade disponível")}</option>`;
-  const upd = () => { const e2 = entries[Number(sel.value)]; if (desc) desc.textContent = e2 ? e2.title : ""; };
-  sel.onchange = upd; upd();
-  if (btn) btn.onclick = () => {
-    const e2 = entries[Number(sel.value)];
-    const alvo = typeof alvoRel === "function" ? alvoRel() : alvoRel;
-    if (!e2 || !alvo) return;
-    runHabilidadeEntry(e2, alvo);
-  };
-}
 // `all` lifts the workflow-builtin exclusion — used where no dedicated UI
 // coexists (the Visão Geral hero button); alvoRel may be null there (each
 // habilidade then asks for/omits its own target).
@@ -2521,6 +2913,7 @@ function openHabilidadeMenu(alvoRel, anchor, all, surface) {
 // (destRel = brainstorming/<slug>/anexos) and a context (contextos/<c>/anexos);
 // `after` runs on success (re-open + reload the right tree).
 async function importAnexoFromComputer(destRel, after) {
+  if (!destRel) { toast(t("este documento não tem uma pasta de anexos")); return; }
   try {
     const n = await invoke("brain_import_files", { destRel });
     if (n > 0) {
@@ -2582,40 +2975,36 @@ function promptNewNota(slug, anchor) {
 
 // The ⋯ menu of a brainstorming — renomear / enviar tudo à fila / apagar. Mirrors
 // the contextos action menu so create/edit/delete feel identical across worlds.
+// Redesign 1b — a ordem do menu ⋯ é fixa e a mesma em toda pasta:
+// criar · agir · mover · destruir. ADR-0020 §1 removeu "atualizar índice
+// (resumão)": o digest saiu da UI junto com o /loro-digest.
 function openBsMenu(slug, anchor) {
   B.acervoMenu.hidden = true;
   B.bMenu.innerHTML =
     `<div class="fhead">${esc(slug)}</div>` +
+    `<div class="fitem2" data-newnote><span class="fn">${ico("note", "ac")} ${t("nova nota")}</span></div>` +
+    `<div class="fitem2" data-rec><span class="fn">${ico("meeting")} ${t("gravar reunião aqui")}</span></div>` +
+    `<div class="fitem2" data-attach><span class="fn">${ico("file")} ${t("anexar arquivo")}</span></div>` +
+    `<div class="fsep"></div>` +
     `<div class="fitem2 strong" data-ainote><span class="fn">✦ ${t("nota por IA…")}</span></div>` +
-    `<div class="fitem2" data-digest><span class="fn">${ico("note", "ac")} ${t("atualizar índice (resumão)")}</span></div>` +
     `<div class="fitem2" data-tools><span class="fn">${ico("skill")} ${t("executar habilidade…")}</span></div>` +
+    `<div class="fitem2" data-toqueue><span class="fn">→ ${t("enviar tudo para organizar")}</span></div>` +
     `<div class="fsep"></div>` +
     `<div class="fitem2" data-ren><span class="fn">${t("renomear")}</span></div>` +
-    `<div class="fitem2" data-toqueue><span class="fn">${t("enviar tudo → fila")}</span></div>` +
-    `<div class="fsep"></div>` +
     copyPathItemsHtml() +
     `<div class="fsep"></div>` +
-    `<div class="fitem2 danger" data-del><span class="fn">${t("apagar brainstorming")}</span></div>`;
+    `<div class="fitem2 danger" data-del><span class="fn">${t("excluir")}</span></div>`;
+  const row = anchor.closest(".bitem") || anchor;
+  B.bMenu.querySelector("[data-newnote]").onclick = () => { closeFloat(); promptNewNota(slug, row); };
+  B.bMenu.querySelector("[data-rec]").onclick = () => { closeFloat(); startMeetingFlow(slug); };
+  B.bMenu.querySelector("[data-attach]").onclick = () => { closeFloat(); importAnexoFromComputer(`brainstorming/${slug}/anexos`, () => { pessoalSig = ""; refreshPessoal(); }); };
   B.bMenu.querySelector("[data-ainote]").onclick = () => { closeFloat(); promptNoteAI(`brainstorming/${slug}/notas`, false); };
-  B.bMenu.querySelector("[data-digest]").onclick = () => { closeFloat(); runBrainstormDigest(slug); };
   B.bMenu.querySelector("[data-tools]").onclick = () => openHabilidadeMenu(`brainstorming/${slug}`, anchor);
   B.bMenu.querySelector("[data-ren]").onclick = () => { closeFloat(); promptRenameBs(slug); };
   B.bMenu.querySelector("[data-toqueue]").onclick = () => { closeFloat(); sendBrainstormAllToQueue(slug); };
   wireCopyPathItems(`brainstorming/${slug}`);
   B.bMenu.querySelector("[data-del]").onclick = () => { closeFloat(); delPessoal("brainstorming/" + slug, "tema"); };
-  const r = anchor.getBoundingClientRect();
-  B.bMenu.style.left = Math.max(10, r.left - 120) + "px";
-  B.bMenu.style.top = (r.bottom + 4) + "px";
-  B.bMenu.hidden = false;
-}
-
-// ADR-0011: (re)generate the brainstorming's indice.md digest via the terminal
-// agent (/loro-digest), showing the target first so the result is visible; the
-// indice.md staleness banner drives the nudge to run this when new material lands.
-function runBrainstormDigest(slug) {
-  openDoc(`brainstorming/${slug}/indice.md`, { preview: true });
-  termRunAgent(`/loro-digest brainstorming/${slug}`);
-  toast(t("gerando o índice — o resumão aparece no indice.md ao final"), 4000);
+  placeMenu(anchor);
 }
 
 // Rename via the shared modal — window.prompt is unreliable in the webview
@@ -2857,8 +3246,8 @@ function promptNoteAI(target, isFile) {
       const p = (($("noteAiInput") && $("noteAiInput").value) || "").trim();
       const cmd = LoroBrainstorm.noteCmd(target, p);
       if (!cmd) { toast(t("descreva o pedido")); return; }
-      termRunAgent(cmd);
-      toast(t("pedido enviado ao agente do terminal — a nota aparece na lateral"), 4000);
+      runAiCommand(cmd);
+      toast(t("pedido enviado — a nota aparece na lateral"), 4000);
     }
   );
   const inp = $("noteAiInput"); if (inp) inp.focus();
@@ -2990,32 +3379,39 @@ function isHomeActive() { const t = activeTab(); return !t || t.rel === HOME_REL
 function currentRel() { const t = activeTab(); return !t || t.rel === HOME_REL ? null : t.rel; }
 
 function markSel() {
-  B.navHome.classList.toggle("on", isHomeActive());
   const rel = currentRel();
   B.main.querySelectorAll("[data-doc]").forEach((el2) =>
     el2.classList.toggle("on", el2.dataset.doc === rel));
 }
 
-// ---- tab strip ----
+// ---- faixa de abas ----
+// Regra nº 2 do redesign: NÃO existe aba "Início" — abas são só documentos
+// abertos. A aba Home continua existindo em `ws` como o estado "nada aberto"
+// (é o alvo de openHome/showHome), mas nunca é desenhada; com uma faixa vazia
+// o CSS a esconde por inteiro e o conteúdo encosta no cabeçalho.
 function renderTabs() {
   const active = ws.activeId;
-  B.wsTabs.innerHTML = ws.tabs.map((tab) => {
-    const home = tab.rel === HOME_REL;
+  const docs = ws.tabs.filter((tab) => tab.rel !== HOME_REL);
+  B.wsTabs.innerHTML = docs.map((tab) => {
     const cls = ["wstab"];
     if (tab.kind === "context") cls.push("wstab--context");
     else if (tab.kind === "personal") cls.push("wstab--personal");
     if (tab.id === active) cls.push("on");
-    if (tab.preview) cls.push("preview");
-    if (home) cls.push("home");
-    const title = home ? t("visão geral") : esc(tab.title);
+    if (tab.preview) cls.push("preview");   // aba efêmera: itálico (ADR-0008)
+    const rec = meeting.active && meeting.livingRel === tab.rel;
+    const lead = rec ? `<span class="wsrecdot" aria-hidden="true"></span>` : ico(tabIcon(tab), tabIconTone(tab));
     const dot = tab.dirty ? `<span class="wsdot" title="${t("alterações não salvas")}">●</span>` : "";
-    const close = home ? "" : `<button class="wsclose" data-close="${tab.id}" title="${t("fechar")} (⌘/Ctrl+W)" aria-label="${t("fechar")}">×</button>`;
-    const glyph = home ? "⌂ " : "";
-    return `<div class="${cls.join(" ")}" data-tab="${tab.id}" draggable="${home ? "false" : "true"}"
-        title="${esc(tab.rel === HOME_REL ? t("visão geral") : tab.rel)}"><span class="wsn">${glyph}${title}</span>${dot}${close}</div>`;
-  }).join("");
+    // a aba de gravação mostra o timer e NÃO tem × (só para pelo botão Parar)
+    const time = rec ? `<span class="wstime">${esc(el.timer.textContent)}</span>` : "";
+    const close = rec ? "" : `<button class="wsclose" data-close="${tab.id}" title="${t("fechar")} (⌘/Ctrl+W)" aria-label="${t("fechar")}">×</button>`;
+    return `<div class="${cls.join(" ")}" data-tab="${tab.id}" draggable="true"
+        title="${esc(tab.rel)}">${lead}<span class="wsn">${esc(tab.title)}</span>${time}${dot}${close}</div>`;
+  }).join("") + (docs.length ? `<button class="tabadd" data-tabadd title="${t("abrir…")}">＋</button>` : "");
   wireTabs();
 }
+// ícone por tipo: conhecimento (teal) · ideia (âmbar) · outros neutros
+function tabIcon(tab) { return tab.kind === "context" ? "context" : tab.kind === "personal" ? "note" : "file"; }
+function tabIconTone(tab) { return tab.kind === "context" ? "ac" : tab.kind === "personal" ? "amber" : ""; }
 function wireTabs() {
   B.wsTabs.querySelectorAll("[data-tab]").forEach((elx) => {
     const id = elx.dataset.tab;
@@ -3032,6 +3428,8 @@ function wireTabs() {
   });
   B.wsTabs.querySelectorAll("[data-close]").forEach((b) =>
     (b.onclick = (e) => { e.stopPropagation(); closeTabById(b.dataset.close); }));
+  const add = B.wsTabs.querySelector("[data-tabadd]");
+  if (add) add.onclick = () => openPalette("file");
 }
 function activateTab(id) { ws = LoroWorkspace.setActive(ws, id); renderTabs(); renderActive(); }
 function reorderTab(dragId, overId) {
@@ -3082,7 +3480,27 @@ function closeTabsUnder(prefixOrRel, exact) {
   if (doomed.length) { renderTabs(); renderActive(); }
 }
 
-function showHome() { B.docWrap.hidden = true; B.home.hidden = false; B.wsBody.classList.remove("editing"); markSel(); }
+function showHome() {
+  B.docWrap.hidden = true;
+  el.surface.hidden = true;
+  B.home.hidden = false;
+  B.wsBody.classList.remove("editing");
+  clearPanelDoc();
+  markSel();
+}
+
+// Sem documento aberto a aba "Documento" do painel não tem sujeito: mostra a
+// razão em uma linha em vez de cabeçalhos vazios e um botão sem alvo.
+function clearPanelDoc() {
+  const empty = $("pDocEmpty"), secs = $("pDocSecs");
+  if (empty) empty.hidden = false;
+  if (secs) secs.hidden = true;
+}
+function showPanelDocSecs() {
+  const empty = $("pDocEmpty"), secs = $("pDocSecs");
+  if (empty) empty.hidden = true;
+  if (secs) secs.hidden = false;
+}
 function openHome() {
   const h = homeTab();
   if (h) { ws = LoroWorkspace.setActive(ws, h.id); renderTabs(); }
@@ -3098,7 +3516,6 @@ function setupWorkspace() {
   ws = LoroWorkspace.pin(ws, LoroWorkspace.activeTab(ws).id);
   renderTabs(); showHome();
 }
-B.navHome.addEventListener("click", openHome);
 
 function docBadge(p, isGuide) {
   if (isGuide) return [t("instruções do loop — aplicadas antes de processar"), "ok"];
@@ -3118,12 +3535,17 @@ function setDocGit(p, kind, isGuide) {
   else B.gitBadge.hidden = true;
 }
 
-const cmTheme = () => (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+// O tema do editor vem do TEMA DO APP (ADR-0020: `data-theme`, com "sistema"
+// resolvido no shell), não direto do sistema operacional. Lendo o SO, escolher
+// "escuro" num Mac claro deixava um cartão branco dentro de um app escuro — a
+// superfície de escrita era o único lugar que ignorava a escolha do usuário.
+const cmTheme = () => (window.LoroShell ? LoroShell.resolvedTheme() : "light");
 // read a document's raw text (guide-aware; falls back from context.md to guia.md)
 // ADR-0002 §7 — the user manual ships inside the app as a webview asset (one
 // file per language), opened as a read-only studio tab; no IPC involved.
 const MANUAL_REL = "loro://manual";
 async function readDoc(rel) {
+  if (rel === SCRATCH_REL) return "";   // rascunho: nasce em branco, não em disco
   if (rel === MANUAL_REL) {
     const r = await fetch(settings.uiLang === "en" ? "manual.en.md" : "manual.pt.md");
     return await r.text();
@@ -3213,6 +3635,8 @@ function maybeFirstEditNote(tab) {
 async function saveTab(id, value) {
   const tab = ws.tabs.find((t) => t.id === id);
   if (!tab) return;
+  // o rascunho ainda não tem casa: salvar é escolher onde ele vai morar
+  if (tab.rel === SCRATCH_REL) return promptSaveScratch(value);
   try {
     if (tab.rel === GUIDE_REL) await invoke("brain_write_guide", { content: value });
     else await invoke("brain_write", { rel: tab.rel, content: value });
@@ -3223,6 +3647,23 @@ async function saveTab(id, value) {
     sideSig = ""; brainRefresh();
   } catch (e) { toast(tErr(String(e))); clog("save doc error: " + e); }
 }
+// O bundle do CM6 não expõe troca de tema em editor montado, então a mudança
+// vale remontando. Só remontamos o que NÃO tem alteração pendente: perder
+// digitação para trocar de cor seria um preço absurdo — quem está com rascunho
+// aberto continua no tema anterior até salvar.
+if (window.LoroShell && LoroShell.onThemeChange) {
+  LoroShell.onThemeChange(() => {
+    let remontou = false;
+    cmById.forEach((h, id) => {
+      if (savedById.get(id) !== h.getValue()) return;   // rascunho: preserva
+      try { h.view.destroy(); } catch (_) {}
+      cmById.delete(id);
+      remontou = true;
+    });
+    if (remontou) renderActive();
+  });
+}
+
 function saveActive() {
   const t = activeTab();
   if (!t || t.rel === HOME_REL) return;
@@ -3292,38 +3733,6 @@ async function renderView(tab, stale) {
     : mdRender(body || fallback));
   wireDocLinks();
   if (annotatable) await decorateAnnotations(tab.rel, stale);
-  await maybeDigestBanner(tab, stale);
-}
-
-// ADR-0011: a subtle "N new items since the index" nudge atop a brainstorming's
-// indice.md, driving a re-run of /loro-digest. Compares the live material count
-// (meetings + notas + anexos) against the `digest_itens` the last digest stamped
-// (LoroBrainstorm.digestNotice). No-op — and no IPC — for any other document.
-async function maybeDigestBanner(tab, stale) {
-  const m = /^brainstorming\/([^/]+)\/indice\.md$/.exec(tab.rel);
-  if (!m) return;
-  const slug = m[1];
-  const fm = fmById.get(tab.id);
-  const stamped = fm ? fm.digest_itens : null;
-  let meetings = [], notas = [], anexos = [];
-  try { meetings = (await invoke("brain_list_meetings", { slug })) || []; } catch (_) {}
-  try { notas = ((await invoke("brain_list_dir", { rel: `brainstorming/${slug}/notas` })) || []).filter((f) => !f.dir); } catch (_) {}
-  try { anexos = ((await invoke("brain_list_dir", { rel: `brainstorming/${slug}/anexos` })) || []).filter((f) => !f.dir); } catch (_) {}
-  if (stale && stale()) return;
-  const notice = LoroBrainstorm.digestNotice(meetings.length + notas.length + anexos.length, stamped);
-  const old = B.doc.querySelector(".digest-banner");
-  if (old) old.remove();
-  if (!notice) return;
-  const msg = notice.kind === "gerar"
-    ? t("este brainstorming ainda não tem índice")
-    : `${notice.n} ${notice.n > 1 ? t("itens novos") : t("item novo")} ${t("desde o último índice")}`;
-  const banner = document.createElement("div");
-  banner.className = "digest-banner mono";
-  banner.innerHTML = `<span>${esc(msg)}</span>` +
-    `<button class="link" id="digestNowBtn" title="${t("Roda /loro-digest e reescreve o resumão do brainstorming")}">${t("atualizar índice")} →</button>`;
-  B.doc.insertAdjacentElement("afterbegin", banner);
-  const btn = $("digestNowBtn");
-  if (btn) btn.onclick = () => runBrainstormDigest(slug);
 }
 
 // ADR-0009: front-matter refs (+ audio) as a collapsible panel; each row is a
@@ -3417,33 +3826,30 @@ function paintMeetingSurface(id, raw, manifest, status, artefatos, rel, stale) {
   B.doc.innerHTML =
     `<div class="mtg-surface">` +
       `<div class="mtg-doc">${meetingStatusBar(status)}${preview}` +
-        (body.trim() ? `<div class="annotatable">${mdRender(body)}</div>` : emptyMsg) +
+        (body.trim() ? `<div class="annotatable transcript">${colorSpeakers(mdRender(body))}</div>` : emptyMsg) +
       `</div>` +
-      `<aside class="mtg-rail">${meetingRailHtml()}</aside>` +
     `</div>`;
   wireMeetingSurface(id);
   wireDocLinks();
   if (body.trim() && rel) decorateAnnotations(rel, stale);
 }
 
+
+// ADR-0013 grava `[mm:ss · você]` / `[mm:ss · sistema]` no markdown. No modo
+// visualizar isso era texto cinza igual ao resto: quem falou sumia. Aqui o selo
+// ganha a mesma cor que tem ao vivo (você = teal, os demais = âmbar).
+// Roda sobre HTML JÁ escapado por mdRender, então o casamento é seguro.
+function colorSpeakers(html) {
+  return html.replace(/\[(\d{1,2}:\d{2})\s*·\s*([^\]<]{1,24})\]/g, (m, ts, who) => {
+    const me = /^(voc[e\u00ea]|you|eu)$/i.test(who.trim());
+    return `<span class="mtg-src${me ? " me" : ""}">${ts} \u00b7 ${who}</span>`;
+  });
+}
+
 function meetingStatusBar(status) {
   const map = { recording: [t("gravando"), "rec"], transcribing: [t("transcrevendo…"), "warn"], done: [t("concluída"), "ok"] };
   const [txt, cls] = map[status] || [t("concluída"), "ok"];
   return `<div class="mtg-status ${cls}"><span class="mtg-statusdot"></span><span class="mono">${esc(txt)}</span></div>`;
-}
-
-// ADR-0005 (owner request): the meeting rail no longer lists fixed actions
-// (analisar/perguntar/enviar para a fila — all still reachable
-// from the meeting's ⋯ menu) — "o que fazer com esta reunião" is now a
-// single, UNRESTRICTED habilidade dropdown (every skill, including
-// analisar/perguntar's own /loro-analyse and /loro-question), so the rail
-// never hardcodes which actions exist. Options are populated in
-// wireMeetingSurface from the already-cached habilidade list; the bolt icon
-// keeps habilidades visually distinct everywhere else they appear.
-function meetingRailHtml() {
-  // Same habilidade card as the generic doc rail (habilidadeCardHtml) —
-  // "mesmo padrão em todo lugar" (owner request).
-  return habilidadeCardHtml("mtgSkill");
 }
 
 // ============================ anotações (ADR-0007) ============================
@@ -3681,8 +4087,8 @@ B.doc.addEventListener("mouseup", annotOnMouseUp);
 document.addEventListener("mousedown", (e) => { if (!_annotPop || _annotPop.hidden) return; if (!_annotPop.contains(e.target)) hideAnnotPop(); });
 B.wsBody.addEventListener("scroll", hideAnnotPop, { passive: true });
 
-function wireMeetingSurface(id) {
-  wireHabilidadeCard("mtgSkill", () => currentMeetingDir(id), "meeting");
+function wireMeetingSurface() {
+  // O controle da gravação vive no rodapé compartilhado (#recFoot), não aqui.
 }
 
 // Resolve the acervo-relative meeting dir for a skill run: the active living/
@@ -3705,8 +4111,8 @@ function runMeetingSkill(kind, id, question, dirOverride) {
   if (!dir) { toast(t("abra a reunião para analisar")); return; }
   const cmd = LM.meetingSkillCmd(kind, dir, question);
   if (!cmd) { toast(t("digite uma pergunta")); return; }
-  termRunAgent(cmd);
-  toast(kind === "question" ? t("pergunta enviada ao agente do terminal") : t("análise enviada ao agente do terminal"), 4000);
+  runAiCommand(cmd);
+  toast(kind === "question" ? t("pergunta enviada ao agente") : t("análise enviada ao agente"), 4000);
   // A skill write is async and IPC-free (no pessoal-changed event), so nudge a
   // couple of tree/surface refreshes to reveal the artefatos it produces.
   scheduleMeetingSkillRefresh(id);
@@ -3724,7 +4130,7 @@ function askMeetingQuestion(id, dirOverride) {
   if (!dir) { toast(t("abra a reunião para responder")); return; }
   openModal(
     t("Perguntar sobre a reunião"),
-    `<p class="pmnote mono">${t("a pergunta roda no Claude do terminal (ADR-0012); a resposta aparece lá e nas notas da reunião.")}</p>` +
+    `<p class="pmnote mono">${t("a pergunta roda no agente do projeto; a resposta fica também nas notas da reunião.")} ${esc(aiTargetHint())}</p>` +
       `<label class="wfield"><span class="mono">${t("pergunta")}</span>` +
       `<input id="mtgQuestion" type="text" placeholder="${t("ex.: quais decisões ficaram em aberto?")}" spellcheck="false"></label>`,
     t("perguntar"),
@@ -3892,10 +4298,13 @@ async function renderActive() {
   if (!tab || tab.rel === HOME_REL) { showHome(); return; }
   const isGuide = tab.rel === GUIDE_REL;
   B.home.hidden = true;
+  el.surface.hidden = true;   // abrir um documento sai da vista de gravação
   B.docWrap.hidden = false;
   $("bDraftNote").hidden = true;   // the first-edit note is one-time; reset per render
   closeFind();
-  B.crumb.textContent = isGuide ? t("instruções do loop") : tab.rel === MANUAL_REL ? t("manual de uso") : tab.rel;
+  B.crumb.textContent = isGuide ? t("instruções do loop")
+    : tab.rel === MANUAL_REL ? t("manual de uso")
+    : tab.rel === SCRATCH_REL ? t("nota nova — ainda não salva") : tab.rel;
   // permanent world badge (versionado / rascunho), else document-specific badge
   const world = LoroWorld.crumbBadge(tab.kind, settings.uiLang);
   const [label, cls] = world && !isGuide ? [world.label, world.cls] : docBadge(tab.rel, isGuide);
@@ -3904,8 +4313,8 @@ async function renderActive() {
   if (isGuide) $("bDocActs").hidden = true; else applyDocActions(tab.rel);
   // ADR-0005 (owner request): habilidade/pedir à IA/versionar live in the
   // doc's right-side rail, not the header — a meeting's living surface
-  // renders its own rail (paintMeetingSurface/meetingRailHtml) instead.
-  if (!LM.isLiving(tab.rel)) renderDocRail(tab, isGuide);
+  // renders its own surface (paintMeetingSurface) instead.
+  renderDocRail(tab, isGuide);
   // ADR-0010: a meeting living file (reuniao.md) is its own append-only surface —
   // transcript + artefatos rail + análise/consent; no free-form CM6 editing.
   if (LM.isLiving(tab.rel)) {
@@ -3919,7 +4328,8 @@ async function renderActive() {
     markSel();
     return;
   }
-  const textFile = isGuide || /\.(md|txt)$/i.test(tab.rel);
+  const scratch = tab.rel === SCRATCH_REL;
+  const textFile = isGuide || scratch || /\.(md|txt)$/i.test(tab.rel);
   B.modes.hidden = !textFile;
   B.viewBtn.classList.toggle("on", tab.mode !== "edit");
   B.editBtn2.classList.toggle("on", tab.mode === "edit");
@@ -3936,35 +4346,86 @@ async function renderActive() {
 // habilidade control is a dropdown + ▶ play button, never a menu) used on
 // the meeting surface and the acervo header. Each action shows only when it
 // actually applies to the open doc; the whole rail hides when none do.
+// Redesign 1d/1e: o trilho virou a aba "Documento" do painel direito —
+// "COM ESTE DOCUMENTO" (3 ações + todas), LINHA DO TEMPO e TIME. O elemento
+// #bDocRail continua no DOM (âncora histórica), mas nunca é desenhado.
 function renderDocRail(tab, isGuide) {
   const rail = $("bDocRail");
-  if (!rail) return;
+  if (rail) { rail.hidden = true; rail.innerHTML = ""; }
+  const acts = $("pActions");
+  if (!acts) return;
+  showPanelDocSecs();
   const isMd = tab.rel.endsWith(".md") && tab.rel !== MANUAL_REL;
-  // "pedir à IA": non-versioned markdown only (evolves a note in place) —
-  // same scope as before, just relocated.
-  const aiable = !isGuide && isMd && tab.rel.startsWith("brainstorming/");
-  // "habilidade": any markdown file except the loop guide/manual.
   const skillable = !isGuide && isMd;
-  // "versionar": viewing a context file — a shortcut into the same action
-  // as the acervo header's git button.
+  const aiable = !isGuide && isMd && tab.rel.startsWith("brainstorming/");
+  const editing = tab.mode === "edit";
+  const head = $("pActionsHead");
+  if (head) head.textContent = editing ? t("ENQUANTO EDITA") : t("COM ESTE DOCUMENTO");
+
+  // no modo editar o painel oferece o que serve à edição (handoff 1e)
+  const anexos = anexosDirFor(tab.rel);
+  if (editing) {
+    acts.innerHTML =
+      `<button class="pact" data-pact="ai">✦ ${t("Pedir mudança à IA")}</button>` +
+      (anexos ? `<button class="pact" data-pact="attach">${t("Anexar arquivo")}</button>` : "");
+  } else {
+    const top = skillable ? allHabilidadeEntries("doc").slice(0, 3) : [];
+    acts.innerHTML = top.map((e, i) =>
+        `<button class="pact" data-skill="${i}" title="${esc(e.title || "")}">${esc(e.label)}</button>`).join("") +
+      (aiable ? `<button class="pact" data-pact="ai">✦ ${t("Pedir mudança à IA")}</button>` : "");
+    if (!acts.innerHTML) acts.innerHTML = `<p class="pnote">${t("este documento não tem habilidades")}</p>`;
+    acts.querySelectorAll("[data-skill]").forEach((b) => (b.onclick = () =>
+      runHabilidadeEntry(top[Number(b.dataset.skill)], tab.rel)));
+  }
+  acts.querySelectorAll("[data-pact]").forEach((b) => (b.onclick = () => {
+    if (b.dataset.pact === "ai") promptNoteAI(tab.rel, true);
+    else if (anexos) importAnexoFromComputer(anexos, () => refreshTabFromDisk(tab.rel));
+  }));
+  const all = $("pAllSkills");
+  if (all) {
+    all.textContent = `${t("todas as habilidades de IA")} (${lastToolFiles.length}) ▸`;
+    all.onclick = (e) => { e.stopPropagation(); openHabilidadeMenu(tab.rel, all, true, "doc"); };
+  }
+  renderPanelTimeline(tab);
+  renderPanelTeam(tab, isGuide);
+}
+
+// Pasta de anexos do documento aberto — o destino de "Anexar arquivo" (1e).
+// O backend só aceita um `anexos/` sob brainstorming/ ou contextos/
+// (acervo::guarded_anexos_dir). Devolver "inbox" como último recurso fazia o
+// botão existir sem destino e falhar com err.invalid_anexos_dest na cara do
+// usuário; agora um documento sem anexos simplesmente não oferece o botão.
+function anexosDirFor(rel) {
+  // uma reunião tem os SEUS anexos, não os da ideia inteira
+  const mtg = /^(brainstorming\/[^/]+\/reunioes\/[^/]+)\//.exec(rel);
+  if (mtg) return `${mtg[1]}/anexos`;
+  const m = /^contextos\/([^/]+(?:\/[^/]+)*?)\//.exec(rel);
+  if (m) return `contextos/${m[1]}/anexos`;
+  const b = /^brainstorming\/([^/]+)\//.exec(rel);
+  if (b) return `brainstorming/${b[1]}/anexos`;
+  return null;
+}
+
+// LINHA DO TEMPO (1d): agora · última versão salva · histórico.
+function renderPanelTimeline(tab) {
+  const tl = $("pTimeline");
+  if (!tl) return;
+  const dirty = !!tab.dirty || !!gitFiles[tab.rel];
+  const rows = [];
+  if (dirty) rows.push({ cls: "now", label: t("mudanças não salvas"), meta: t("agora") });
+  rows.push({ cls: "saved", label: t("última versão salva"), meta: tab.kind === "context" ? t("no histórico do projeto") : t("rascunho — não versionado") });
+  tl.innerHTML = rows.map((r) =>
+    `<div class="tl ${r.cls}"><span class="tldot"></span><span>${esc(r.label)}<span class="tlmeta">${esc(r.meta)}</span></span></div>`).join("");
+  const hist = $("pHistory");
+  if (hist) hist.onclick = () => showTimeline(tab.rel);
+}
+
+// TIME (1d): rascunho de trabalho + enviar para revisão. Só faz sentido no
+// mundo versionado — no rascunho pessoal a seção some inteira.
+function renderPanelTeam(tab, isGuide) {
   const versionable = !isGuide && tab.kind === "context";
-  if (!aiable && !skillable && !versionable) { rail.hidden = true; rail.innerHTML = ""; return; }
-  rail.hidden = false;
-  // each action is its own bordered card: "pedir à IA" and "versionar" must
-  // never read as a continuation of the habilidade dropdown (owner feedback).
-  rail.innerHTML =
-    (skillable ? habilidadeCardHtml("railSkill") : "") +
-    (aiable ? `<div class="rail-sec card">` +
-      `<button class="railbtn" id="railAskAiBtn">✦ ${t("pedir à IA…")}</button>` +
-      `<p class="rail-desc">${t("aplica um pedido seu sobre este arquivo — evolui, não apaga.")}</p>` +
-    `</div>` : "") +
-    (versionable ? `<div class="rail-sec card">` +
-      `<button class="railbtn" id="railVersionarBtn">⎇ ${t("versionar")}</button>` +
-      `<p class="rail-desc">${t("commita as mudanças deste contexto numa branch rfc/… local.")}</p>` +
-    `</div>` : "");
-  if (skillable) wireHabilidadeCard("railSkill", tab.rel, "doc");
-  if (aiable) $("railAskAiBtn").onclick = () => promptNoteAI(tab.rel, true);
-  if (versionable) $("railVersionarBtn").onclick = promptVersionar;
+  const sec = $("proposeBtn") && $("proposeBtn").closest(".psec");
+  if (sec) sec.hidden = !versionable;
 }
 
 // ADR-0009: a persistent "promovido → <contexto>" badge, read from the source
@@ -4144,26 +4605,38 @@ async function openDoc(relPath, opts) {
 const IS_MAC = /mac/i.test(navigator.platform || "");
 const comboLabel = (c) =>
   c.combo || (c.code ? (IS_MAC ? "⌘⌥" : "Ctrl+Alt+") + c.code.replace(/^(Key|Digit)/, "") : "");
+// 1k — a paleta é a documentação viva dos atalhos: cada comando mostra o seu.
+// `group` é o cabeçalho sob o qual a linha aparece (ir para · gravar · criar ·
+// documento · fazer), na ordem em que os grupos são declarados aqui.
+const CMD_GROUPS = ["ir para", "gravar", "criar", "documento", "fazer"];
 const COMMANDS = [
-  { label: "ir para início", code: "KeyH", run: () => openHome() },
-  { label: "abrir manual", code: "KeyM", run: () => openDoc(MANUAL_REL, { preview: false }) },
-  { label: "apresentação do Loro", code: "KeyA", run: () => showWelcome() },
-  { label: "alternar visualizar/editar", combo: IS_MAC ? "⌘E" : "Ctrl+E", run: () => toggleActiveMode() },
-  { label: "fechar aba", combo: IS_MAC ? "⌘W" : "Ctrl+W", run: () => closeActiveTab() },
-  { label: "reabrir aba", code: "KeyT", run: () => reopenClosedTab() },
-  { label: "perguntar ao acervo", code: "KeyQ", run: () => askAcervo() },
-  { label: "novo contexto", code: "KeyC", run: () => promptNewContext() },
-  { label: "novo brainstorming", code: "KeyB", run: () => promptNewTema() },
-  { label: "novo caderno", code: "KeyK", run: () => promptNewNotebook() },
-  { label: "nova reunião", code: "KeyR", run: () => startMeetingFlow() },
-  { label: "encerrar reunião", code: "KeyX", run: () => { if (meeting.active) stopSession(); else toast(t("nenhuma reunião em andamento")); } },
-  { label: "marcar dúvida", code: "Digit1", run: () => markMeeting("duvida") },
-  { label: "marcar decisão", code: "Digit2", run: () => markMeeting("decisao") },
-  { label: "marcar investigação", code: "Digit3", run: () => markMeeting("investigacao") },
-  { label: "migrar acervo", code: "KeyG", run: () => runMigration() },
-  { label: "instruções do loop", code: "KeyI", run: () => openGuideDoc() },
-  { label: "versionar", code: "KeyV", run: () => B.gitBtn.click() },
-  { label: "propor mudança", code: "KeyP", run: () => B.proposeBtn.click() },
+  { group: "ir para", label: "Início", code: "KeyH", run: () => { openHome(); goDest("home"); } },
+  { group: "ir para", label: "Organizar", run: () => { openHome(); goDest("organize"); } },
+  { group: "ir para", label: "Conhecimento", run: () => { openHome(); goDest("knowledge"); } },
+  { group: "ir para", label: "Como funciona o Loro", run: () => openDoc(MANUAL_REL, { preview: false }) },
+  { group: "ir para", label: "Configurações", run: () => openCfg() },
+  { group: "ir para", label: "apresentação do Loro", code: "KeyA", run: () => showWelcome() },
+  { group: "ir para", label: "Trocar de projeto · mover projeto de pasta", code: "KeyG", run: () => runMigration() },
+
+  { group: "gravar", label: "Gravar", code: "KeyR", run: () => startMeetingFlow() },
+  { group: "gravar", label: "Encerrar gravação", combo: IS_MAC ? "⇧⌘R" : "Ctrl+Shift+R", run: () => { if (state.running || meeting.active) stopSession(); else toast(t("nenhuma gravação em andamento")); } },
+  { group: "gravar", label: "Marcar momento", code: "KeyM", run: () => markMeeting() },
+
+  { group: "criar", label: "Nova ideia", code: "KeyB", run: () => promptNewTema() },
+  { group: "criar", label: "Novo caderno de notas", code: "KeyK", run: () => promptNewNotebook() },
+  { group: "criar", label: "Novo tema", code: "KeyC", run: () => promptNewContext() },
+
+  { group: "documento", label: "Alternar visualizar/editar", combo: IS_MAC ? "⌘E" : "Ctrl+E", run: () => toggleActiveMode() },
+  { group: "documento", label: "Salvar versão", combo: IS_MAC ? "⌘S" : "Ctrl+S", run: () => B.gitBtn.click() },
+  { group: "documento", label: "Enviar para revisão do time", code: "KeyP", run: () => B.proposeBtn.click() },
+  { group: "documento", label: "Buscar no documento", combo: IS_MAC ? "⌘F" : "Ctrl+F", run: () => openFind() },
+  { group: "documento", label: "Fechar aba", combo: IS_MAC ? "⌘W" : "Ctrl+W", run: () => closeActiveTab() },
+  { group: "documento", label: "Reabrir aba", combo: IS_MAC ? "⇧⌘T" : "Ctrl+Shift+T", run: () => reopenClosedTab() },
+
+  { group: "fazer", label: "Executar habilidade…", run: () => openHabilidadeMenu(currentRel(), $("aiPanelBtn"), true, "doc") },
+  { group: "fazer", label: "Perguntar ao projeto", code: "KeyQ", run: () => askAcervo() },
+  { group: "fazer", label: "Transformar em conhecimento", run: () => genContextNow() },
+  { group: "fazer", label: "Ajustar instruções da IA", code: "KeyI", run: () => openGuideDoc() },
 ];
 let cmdkMode = "file";     // "file" | "command"
 let cmdkIndex = 0;         // highlighted row
@@ -4201,24 +4674,30 @@ function renderPalette() {
   const raw = B.cmdkInput.value;
   const isCmd = cmdkMode === "command" || raw.startsWith(">");
   const query = isCmd ? raw.replace(/^>\s*/, "") : raw;
-  if (isCmd) {
-    // COMMANDS holds pt msgids; translate at render time so a language switch applies
-    cmdkRows = LoroFuzzy.filter(query, COMMANDS, (c) => t(c.label))
-      .map((c) => ({ kind: "cmd", label: t(c.label), run: c.run, combo: comboLabel(c) }));
-  } else {
+  // ⌘K é uma paleta só (1k): arquivos E comandos na mesma lista, agrupados.
+  // O prefixo "›" continua funcionando para quem quer só comandos.
+  const cmdRows = LoroFuzzy.filter(query, COMMANDS, (c) => t(c.label))
+    .map((c) => ({ kind: "cmd", group: c.group, label: t(c.label), run: c.run, combo: comboLabel(c) }));
+  let fileRows = [];
+  if (!isCmd) {
     const src = query ? paletteIndex : mruRecents();
-    cmdkRows = LoroFuzzy.filter(query, src, (it) => it.rel)
-      .map((it) => ({ kind: "file", rel: it.rel, label: it.title || it.rel, sub: it.rel, world: it.kind }));
+    fileRows = LoroFuzzy.filter(query, src, (it) => it.rel)
+      .map((it) => ({ kind: "file", group: "abrir", rel: it.rel, label: it.title || it.rel, sub: it.rel, world: it.kind }));
   }
+  // as linhas são reordenadas por grupo ANTES de indexar, para que ↑/↓ sigam
+  // exatamente a ordem que se lê na tela
+  const order = isCmd ? CMD_GROUPS : ["abrir", ...CMD_GROUPS];
+  const pool = isCmd ? cmdRows : [...fileRows.slice(0, 8), ...cmdRows];
+  cmdkRows = order.flatMap((g) => pool.filter((r) => r.group === g));
   cmdkIndex = 0;
+  let lastGroup = null;
   B.cmdkList.innerHTML = cmdkRows.length
     ? cmdkRows.map((r, i) => {
-        const world = r.kind === "file" && r.world === "context" ? t("versionado")
-          : r.kind === "file" && r.world === "personal" ? t("rascunho") : "";
-        const badge = world ? `<span class="cmdk-w ${r.world}">${world}</span>` : "";
+        const head = r.group !== lastGroup ? `<li class="cmdk-group">${esc(t(r.group))}</li>` : "";
+        lastGroup = r.group;
         const sub = r.sub ? `<span class="cmdk-sub mono">${esc(r.sub)}</span>` : "";
         const kbd = r.combo ? `<span class="cmdk-k mono">${esc(r.combo)}</span>` : "";
-        return `<li class="cmdk-item${i === 0 ? " on" : ""}" data-i="${i}"><span class="cmdk-l">${esc(r.label)}</span>${sub}${badge}${kbd}</li>`;
+        return `${head}<li class="cmdk-item${i === 0 ? " on" : ""}" data-i="${i}"><span class="cmdk-l">${esc(r.label)}</span>${sub}${kbd}</li>`;
       }).join("")
     : `<li class="cmdk-empty mono">${t("nada encontrado")}</li>`;
   B.cmdkList.querySelectorAll("[data-i]").forEach((li) => {
@@ -4257,9 +4736,16 @@ window.addEventListener("keydown", (e) => {
   // keys we fully own are also stopped in the capture phase so they never reach
   // CM6 / other listeners and double-fire.
   const own = () => { e.preventDefault(); e.stopPropagation(); };
-  // palette + Esc win even when the terminal has focus
-  if (mod && !e.shiftKey && key === "p") { own(); openPalette("file"); return; }
+  // 1k: ⌘K é A paleta (arquivos + comandos). ⌘P/⌘⇧P continuam como atalhos
+  // herdados para quem já os tinha na mão.
+  if (mod && !e.shiftKey && (key === "k" || key === "p")) { own(); openPalette("file"); return; }
   if (mod && e.shiftKey && key === "p") { own(); openPalette("command"); return; }
+  // ⇧⌘R encerra a gravação (⌘R grava — via COMMANDS/⌘⌥R)
+  if (mod && e.shiftKey && key === "r") {
+    own();
+    if (state.running || meeting.active) stopSession(); else toast(t("nenhuma gravação em andamento"));
+    return;
+  }
   if (key === "escape") {
     if (paletteOpen()) { own(); closePalette(); return; }
     if (!B.find.hidden) { own(); closeFind(); return; }
@@ -4724,8 +5210,6 @@ async function refreshEnv(force) {
 function renderGhCard() {
   const d = envDoctor;
   B.proposeBtn.hidden = !(d && d.versioningEnabled);
-  // the (i) explaining "propor mudança" shows/hides with the button itself
-  { const ph = $("proposeHelp"); if (ph) ph.hidden = B.proposeBtn.hidden; }
   // opt-in: só mostra o card quando o usuário caminha p/ colaboração (gh instalado
   // ou já há um remoto). Sem isso, o fluxo segue 100% local, sem ruído.
   const heading = d && (d.gh.detail || d.remote.detail);
@@ -4755,18 +5239,24 @@ async function fixIdentity() {
 B.ghCheck.addEventListener("click", () => refreshEnv(true));
 
 // Notificações (colaboração): derivadas dos PRs abertos. Sem GitHub → oculto.
+// ADR-0020 §7: o ghCard saiu da home, MAS o aviso não some — realocado para o
+// topo de Conhecimento (1c) como uma faixa dispensável.
+let notifDismissed = false;
 async function refreshNotifications() {
-  if (!envDoctor || !envDoctor.versioningEnabled) { B.ghNotif.hidden = true; return; }
+  const bar = $("ghNotifBar");
+  const hide = () => { if (bar) bar.hidden = true; };
+  if (notifDismissed) return hide();
+  if (!envDoctor || !envDoctor.versioningEnabled) return hide();
   let n;
-  try { n = await invoke("brain_notifications"); } catch (_) { B.ghNotif.hidden = true; return; }
-  if (!n.connected) { B.ghNotif.hidden = true; return; }
+  try { n = await invoke("brain_notifications"); } catch (_) { return hide(); }
+  if (!n.connected) return hide();
   const parts = [];
   if (n.reviewRequestedToMe.length) parts.push(`⌛ ${n.reviewRequestedToMe.length} ${t("aguardam sua revisão")}`);
   if (n.awaitingApproval.length) parts.push(`${n.awaitingApproval.length} ${t("aguardando aprovação")}`);
   if (n.changesPending.length) parts.push(`${n.changesPending.length} ${t("com ajustes pedidos")}`);
   if (n.recentlyApproved.length) parts.push(`✓ ${n.recentlyApproved.length} ${t("aprovadas")}`);
-  B.ghNotif.hidden = parts.length === 0;
   B.ghNotif.textContent = parts.join(" · ");
+  if (bar) bar.hidden = parts.length === 0;
 }
 
 // Timeline: navegar versões do conhecimento sem expor commits/hashes/branches.
@@ -4825,11 +5315,24 @@ function openQueueMenu(anchorEl, name) {
 }
 
 // ---- menu de ações do contexto/pasta: renomear/mover, deletar ----
+// O menu é `position: fixed`, então quem o ancora perto de uma borda precisa
+// puxá-lo de volta para dentro da janela — abrir pelo chip do chat (canto
+// inferior direito do painel) cortava o menu na direita e embaixo.
 function placeMenu(anchor) {
   const r = anchor.getBoundingClientRect();
-  B.bMenu.style.left = Math.min(r.left, window.innerWidth - 250) + "px";
-  B.bMenu.style.top = r.bottom + 4 + "px";
   B.bMenu.hidden = false;
+  B.bMenu.style.left = "0px";
+  B.bMenu.style.top = "0px";
+  const m = B.bMenu.getBoundingClientRect();
+  const pad = 10;
+  const left = Math.max(pad, Math.min(r.left, window.innerWidth - m.width - pad));
+  // abaixo da âncora quando cabe; acima quando não cabe
+  const below = r.bottom + 4;
+  const top = below + m.height + pad <= window.innerHeight
+    ? below
+    : Math.max(pad, r.top - m.height - 4);
+  B.bMenu.style.left = left + "px";
+  B.bMenu.style.top = top + "px";
 }
 
 // áreas/pastas do projeto (prefixos-pai dos contextos existentes)
@@ -5031,7 +5534,19 @@ function promptNewContext() {
 let term = null, fit = null, termReady = false, termSize = { cols: 0, rows: 0 };
 function setTermPanel(open) {
   $("termPanel").hidden = !open;
-  if (open) { if (!term) initTerm(); requestAnimationFrame(fitTerm); if (term) term.focus(); }
+  const dock = $("termDock");
+  if (dock) dock.hidden = !!settings.termSide || !open;
+  applyTermHeight();
+  if (open) {
+    if (settings.termSide) {
+      settings.aiPanelOpen = true; LoroShell.setPanelOpen(true);
+      settings.aiPanelTab = "term"; LoroShell.setPanelTab("term");
+      persistSettings();
+    }
+    if (!term) initTerm();
+    requestAnimationFrame(fitTerm);
+    if (term) term.focus();
+  }
 }
 function fitTerm() {
   if (!fit || $("termPanel").hidden) return;
@@ -5050,13 +5565,12 @@ function fitTerm() {
 function initTerm() {
   const Term = window.Terminal, Fit = window.FitAddon && window.FitAddon.FitAddon;
   if (!Term) { toast(t("terminal indisponível")); clog("xterm missing"); return; }
-  const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+  // O terminal do redesign é escuro nos DOIS temas (handoff §painel direito):
+  // fundo #26231d, texto #d8d3c8, cursor âmbar.
   term = new Term({
-    fontFamily: "ui-monospace, SF Mono, Menlo, monospace", fontSize: 12.5,
+    fontFamily: "ui-monospace, SF Mono, Menlo, monospace", fontSize: 11.5,
     cursorBlink: true, scrollback: 4000,
-    theme: dark
-      ? { background: "#121719", foreground: "#ece9e2", cursor: "#2bc5b4" }
-      : { background: "#fbfaf6", foreground: "#201d18", cursor: "#0e8c86" },
+    theme: { background: "#26231d", foreground: "#d8d3c8", cursor: "#e6b13a", green: "#2fc7bf" },
   });
   if (Fit) { fit = new Fit(); term.loadAddon(fit); }
   term.open($("termView"));
@@ -5078,18 +5592,21 @@ async function restartTerm() {
 }
 listen("term-output", (e) => { if (term) term.write(e.payload); });
 listen("term-exit", () => { if (term) term.write(`\r\n\x1b[2m[${t("processo encerrado — 'reiniciar' para abrir de novo")}]\x1b[0m\r\n`); termReady = false; });
-$("termBtn").addEventListener("click", () => setTermPanel($("termPanel").hidden));
-$("termCollapse").addEventListener("click", () => setTermPanel(false));
 $("termClear").addEventListener("click", restartTerm);
 window.addEventListener("resize", fitTerm);
-// orientação: embaixo (padrão) ou lateral direita — escolha do usuário, persistida
+// Orientação: lateral (aba Terminal do painel direito, padrão do redesign) ou
+// embaixo, ancorado no rodapé da coluna de conteúdo. O ⇆ alterna; o MESMO
+// elemento #termPanel é movido entre os dois pontos de montagem.
 function applyTermLayout() {
   const side = !!settings.termSide;
-  $("mainRow").classList.toggle("side", side);
-  // o glifo aponta para onde o painel some (⌄ embaixo, › na lateral); o title
-  // do #termSide fica com o i18n estático, que já o gerencia por data-i18n-attrs
-  const col = $("termCollapse");
-  if (col) col.textContent = LoroWorkspace.termCollapseGlyph(side);
+  LoroShell.mountTerminal(side);
+  applyTermHeight();
+  if (side && !$("termPanel").hidden) {
+    settings.aiPanelOpen = true;
+    LoroShell.setPanelOpen(true);
+    settings.aiPanelTab = "term";
+    LoroShell.setPanelTab("term");
+  }
   requestAnimationFrame(fitTerm);
 }
 $("termSide").addEventListener("click", () => {
@@ -5318,6 +5835,639 @@ listen("transcribe-error", (e) => {
 if ($("mtgPill")) $("mtgPill").addEventListener("click", scrollMeetingBottom);
 B.wsBody.addEventListener("scroll", () => { if (nearBottom(B.wsBody)) hidePill(); });
 
+
+// ============================ casco do redesign ============================
+// Ligações dos controles novos (cabeçalho, destinos, barra lateral recolhível,
+// painel direito, gravação e configurações). A lógica de estado mora no
+// shell.js; aqui só o que precisa conhecer o acervo/IPC.
+
+// ---- destinos: Início · Organizar · Conhecimento ----------------------------
+function goDest(name) {
+  LoroShell.setDestination(name);
+  // um destino é sempre a Home do workspace — abas são só documentos abertos
+  if (!isHomeActive()) openHome(); else showHome();
+}
+document.querySelectorAll("#destNav .dest").forEach((b) =>
+  b.addEventListener("click", () => goDest(b.dataset.dest)));
+
+// ---- cabeçalho: Gravar · ✦ IA ----------------------------------------------
+// o botão ● do cabeçalho é o MESMO el.toggle de sempre (ligado mais acima)
+$("aiPanelBtn").addEventListener("click", () => {
+  settings.aiPanelOpen = !settings.aiPanelOpen;
+  persistSettings();
+  LoroShell.setPanelOpen(settings.aiPanelOpen);
+  applyPanelWidth();
+  if (settings.aiPanelOpen && settings.aiPanelTab === "term") requestAnimationFrame(fitTerm);
+});
+document.querySelectorAll("#panelTabs .ptab").forEach((b) => b.addEventListener("click", () => {
+  settings.aiPanelTab = LoroShell.setPanelTab(b.dataset.ptab);
+  persistSettings();
+  if (settings.aiPanelTab === "term") {
+    settings.termSide = true; LoroShell.mountTerminal(true);
+    setTermPanel(true);
+  }
+}));
+// pill "gravando · mm:ss" no cabeçalho: volta para a aba/vista da gravação
+$("headRec").addEventListener("click", () => {
+  if (meeting.active && meeting.livingRel) openDoc(meeting.livingRel, { preview: false });
+  else setLivePanel(true);
+});
+
+// ---- barra lateral: 250px ⇄ 60px (o alternador fica EMBAIXO, junto ao ⚙) ----
+function toggleSidebar(force) {
+  settings.sidebarCollapsed = force === undefined ? !settings.sidebarCollapsed : !!force;
+  persistSettings();
+  LoroShell.setSidebarCollapsed(settings.sidebarCollapsed);
+}
+$("sideToggle").addEventListener("click", () => toggleSidebar());
+document.querySelectorAll("#sideMini .minibtn").forEach((b) => b.addEventListener("click", () => {
+  const what = b.dataset.mini;
+  if (what === "expand") return toggleSidebar(false);
+  if (what === "settings") return openCfg();
+  if (what === "rec") return setLivePanel(true);
+  if (what === "skills") return openHabilidadeMenu(currentRel(), b, true, "doc");
+  toggleSidebar(false);
+  goDest(what === "ideas" ? "home" : what);
+}));
+$("sideSearch").addEventListener("click", () => openPalette("file"));
+
+// As três seções da lateral (ideias · para organizar · conhecimento) recolhem.
+// Com muitos temas a árvore vira um rolo infinito; recolher é como o usuário
+// escolhe o que quer ver. O estado é persistido.
+function applySideSections() {
+  const closed = new Set(settings.sideClosed || []);
+  document.querySelectorAll("[data-sect]").forEach((btn) => {
+    const off = closed.has(btn.dataset.sect);
+    btn.classList.toggle("closed", off);
+    const body = document.querySelector(`[data-sectbody="${btn.dataset.sect}"]`);
+    if (body) body.hidden = off;
+  });
+}
+document.querySelectorAll("[data-sect]").forEach((btn) => btn.addEventListener("click", () => {
+  const key = btn.dataset.sect;
+  const closed = new Set(settings.sideClosed || []);
+  if (closed.has(key)) closed.delete(key); else closed.add(key);
+  settings.sideClosed = [...closed];
+  persistSettings();
+  applySideSections();
+}));
+// as duas linhas do rodapé revelam árvores que ficam fora do caminho por
+// padrão — o CRUD das habilidades e a lista de reuniões/notas continuam ali
+$("footSkills").addEventListener("click", () => {
+  const s = $("toolsSection");
+  if (s) { s.hidden = !s.hidden; if (!s.hidden) s.scrollIntoView({ block: "nearest" }); }
+});
+$("footSources").addEventListener("click", () => {
+  const s = $("navSources");
+  if (s) { s.hidden = !s.hidden; if (!s.hidden) s.scrollIntoView({ block: "nearest" }); }
+});
+
+// ---- 1a · Início ------------------------------------------------------------
+$("heroRec").addEventListener("click", () => startRecordFlow());
+$("heroNote").addEventListener("click", () => openScratchNote());
+$("heroFiles").addEventListener("click", () => $("brainImport").click());
+$("heroAsk").addEventListener("click", () => openChatComposer());
+// Abrir o chat tem de ser perceptível mesmo quando o painel JÁ estava aberto na
+// aba certa — senão o clique parece não ter feito nada (era o caso do card
+// "Perguntar à IA"). O realce no composer é a confirmação.
+function openChatComposer() {
+  settings.aiPanelOpen = true; LoroShell.setPanelOpen(true);
+  settings.aiPanelTab = LoroShell.setPanelTab("chat");
+  persistSettings();
+  applyPanelWidth();
+  const box = document.querySelector(".composerbox");
+  const inp = $("chatInput");
+  if (box) { box.classList.remove("flash"); void box.offsetWidth; box.classList.add("flash"); }
+  if (inp) inp.focus();
+}
+
+// ---- nota nova: escreve primeiro, decide onde depois -----------------------
+// O cartão "Escrever uma nota" promete um rascunho rápido. Pedir a pasta ANTES
+// de existir texto inverte a ordem: a pessoa ainda não sabe onde aquilo mora.
+// A nota nasce como uma aba de rascunho (não existe em disco) e só ao salvar o
+// app pergunta onde guardar.
+const SCRATCH_REL = "loro://nova-nota";
+async function openScratchNote() {
+  await openDoc(SCRATCH_REL, { preview: false });
+  await setActiveMode("edit");
+}
+// Onde uma nota pode morar: as notas de uma ideia ou os anexos de um
+// conhecimento — as mesmas duas casas que o backend aceita.
+async function promptSaveScratch(text) {
+  let temas = [];
+  try { temas = (await invoke("brain_list_brainstorms")) || []; } catch (_) {}
+  const ctxs = (lastSt && lastSt.contexts) || [];
+  if (!temas.length && !ctxs.length) { toast(t("crie uma ideia ou um tema antes de salvar a nota")); return; }
+  const opts =
+    temas.map((b) => `<option value="bs:${esc(b.slug)}">${t("ideias")} · ${esc(b.nome)}</option>`).join("") +
+    ctxs.map((c) => `<option value="ctx:${esc(c.name)}">${t("conhecimento")} · ${esc(c.name)}</option>`).join("");
+  // o título é o começo do texto quando há um; senão a pessoa escreve
+  const guess = (text.split("\n").find((l) => l.trim()) || "").replace(/^#+\s*/, "").trim().slice(0, 60);
+  openModal(
+    t("Salvar nota"),
+    `<label class="wfield"><span class="mono">${t("título")}</span>` +
+      `<input id="scratchTitle" type="text" value="${esc(guess)}" placeholder="${t("título da nota")}" spellcheck="false"></label>` +
+    `<label class="wfield"><span class="mono">${t("onde guardar")}</span>` +
+      `<select id="scratchDest">${opts}</select></label>`,
+    t("salvar"),
+    async () => {
+      const titulo = (($("scratchTitle") && $("scratchTitle").value) || "").trim();
+      const dest = ($("scratchDest") && $("scratchDest").value) || "";
+      if (!titulo) { toast(t("informe um título")); return; }
+      try {
+        const rel = dest.startsWith("bs:")
+          ? await invoke("brain_new_notebook", { tema: dest.slice(3), titulo })
+          : await invoke("brain_new_note_in", { destRel: `contextos/${dest.slice(4)}/anexos`, titulo });
+        if (!rel) throw "err.note_not_created";
+        // o esqueleto criado pelo backend cede lugar ao que a pessoa escreveu
+        if (text.trim()) await invoke("brain_write", { rel, content: text });
+        closeTabsUnder(SCRATCH_REL, true);
+        openDoc(rel, { preview: false });
+        refreshAfterSkill();
+        toast(t("nota salva"));
+      } catch (e) { toast(tErr(String(e))); }
+    }
+  );
+  const inp = $("scratchTitle"); if (inp) { inp.focus(); inp.select(); }
+}
+$("homePendingGo").addEventListener("click", () => goDest("organize"));
+
+// ---- 1c · Conhecimento ------------------------------------------------------
+$("ghNotifClose").addEventListener("click", () => { notifDismissed = true; $("ghNotifBar").hidden = true; });
+
+// ---- 1d/1e · documento ------------------------------------------------------
+// "Aprovar" é o gesto humano obrigatório: nada da IA vira oficial sem ele.
+$("bApproveBtn").addEventListener("click", () => { $("bApprove").hidden = true; $("bProposal").hidden = true; B.gitBtn.click(); });
+$("bApproveEdit").addEventListener("click", () => setActiveMode("edit"));
+$("bApproveAsk").addEventListener("click", () => { const r = currentRel(); if (r) promptNoteAI(r, true); });
+$("bSaveVersion").addEventListener("click", () => { saveActive(); B.gitBtn.click(); });
+$("bDiscardEdit").addEventListener("click", async () => {
+  const tab = activeTab();
+  if (!tab) return;
+  await refreshTabFromDisk(tab.rel);
+  setActiveMode("view");
+  toast(t("mudanças descartadas"));
+});
+
+// ---- 1f · gravação ----------------------------------------------------------
+$("recFinish").addEventListener("click", () => {
+  setRecPending("stopping");
+  Promise.resolve(stopSession()).finally(() => {});
+});
+$("recPause").addEventListener("click", () => (state.paused ? resumeMeeting() : pauseMeeting()));
+$("recMark").addEventListener("click", () => markMeeting());
+$("recImage").addEventListener("click", () => {
+  // "inbox" NÃO é destino de anexo: guarded_anexos_dir exige brainstorming/ ou
+  // contextos/ terminando em /anexos e recusa o resto (err.invalid_anexos_dest).
+  // Fora de uma reunião não há pasta de anexos — o botão diz isso em vez de
+  // disparar um erro de backend.
+  if (!(meeting.active && meeting.dir)) { toast(t("anexar precisa de uma reunião aberta")); return; }
+  importAnexoFromComputer(meeting.dir + "/anexos", () => { pessoalSig = ""; refreshPessoal(); });
+});
+$("recOverlay").addEventListener("click", () => { el.optOverlay.checked = !el.optOverlay.checked; el.optOverlay.dispatchEvent(new Event("change")); });
+$("recSource").addEventListener("change", () => {
+  el.source.value = $("recSource").value;
+  el.source.dispatchEvent(new Event("change"));
+});
+
+// ---- 1g · configurações (página) -------------------------------------------
+document.querySelectorAll("#cfgNav .cfgnavbtn").forEach((b) =>
+  b.addEventListener("click", () => showCfgSection(b.dataset.sec)));
+document.querySelectorAll("#actionModeSeg .segbtn").forEach((b) => b.addEventListener("click", () => {
+  settings.actionMode = b.dataset.actionmode;
+  persistSettings();
+  paintActionMode();
+}));
+function paintActionMode() {
+  document.querySelectorAll("#actionModeSeg .segbtn").forEach((b) =>
+    b.classList.toggle("on", b.dataset.actionmode === settings.actionMode));
+  document.querySelectorAll("#chatPermSeg .segbtn").forEach((b) =>
+    b.classList.toggle("on", b.dataset.chatperm === settings.chatPermission));
+}
+document.querySelectorAll("#chatPermSeg .segbtn").forEach((b) => b.addEventListener("click", () => {
+  settings.chatPermission = b.dataset.chatperm;
+  persistSettings();
+  paintActionMode();
+}));
+document.querySelectorAll("#themeSeg .segbtn").forEach((b) => b.addEventListener("click", () => {
+  settings.theme = LoroShell.setTheme(b.dataset.theme);
+  persistSettings();
+}));
+document.querySelectorAll("#modeSeg .segbtn").forEach((b) => b.addEventListener("click", () => {
+  el.mode.value = b.dataset.mode;
+  el.mode.dispatchEvent(new Event("change"));
+  document.querySelectorAll("#modeSeg .segbtn").forEach((x) => x.classList.toggle("on", x === b));
+}));
+{
+  const ai = $("cfgAgentInput");
+  if (ai) ai.addEventListener("change", async () => {
+    try { await invoke("brain_set_agent", { agent: ai.value.trim() }); toast(t("agente atualizado")); }
+    catch (e) { toast(tErr(String(e))); }
+  });
+}
+
+
+// ---- despachante único das ações de IA (chat | terminal) --------------------
+// Toda habilidade, pergunta e análise passa por aqui. O destino é escolha do
+// usuário (Configurações → IA e terminal): no chat a resposta fica na conversa;
+// no terminal ele acompanha o passo a passo e pode intervir. Antes o destino era
+// sempre o terminal e o chat era um beco sem saída.
+// Uma frase só, derivada do destino escolhido — em vez de prometer "terminal"
+// em texto fixo espalhado por vários modais.
+function aiTargetHint() {
+  return settings.actionMode === "term"
+    ? t("a resposta aparece na aba Terminal")
+    : t("a resposta aparece no chat");
+}
+
+let chatLastPrompt = null;
+function runAiCommand(cmd, label) {
+  if (!cmd) return;
+  // recusar ANTES de empilhar a bolha: senão cada clique repetido deixava um
+  // pedido órfão na conversa seguido de um aviso de recusa
+  if (settings.actionMode !== "term" && chatBusy) { toast(tErr("err.chat_busy")); return; }
+  chatLastPrompt = cmd;
+  if (settings.actionMode === "term") return termRunAgent(cmd);
+  openChatComposer();
+  chatPush("chatmsg", esc(label || cmd));
+  chatTurn = null; chatBuf = "";
+  setChatBusy(true);
+  // MESMA normalização do caminho do terminal: um "/loro-…" só significa algo
+  // para o Claude. Para qualquer outro agente vira a instrução equivalente
+  // (LoroPresets.agentInvocation) — sem isto, com `ollama run llama3` toda ação
+  // de IA mandava a barra crua e o modelo respondia bobagem, em silêncio. E o
+  // agente é lido AGORA: trocá-lo em Configurações valia só no próximo boot.
+  currentChatAgent()
+    .then((agent) => invoke("chat_send", {
+      input: {
+        prompt: LoroPresets.agentInvocation(agent, cmd),
+        model: chatPrefs.model, effort: effortCli(chatPrefs.effort),
+        permission: settings.chatPermission, fresh: chatFresh,
+      },
+    }))
+    .then(() => { chatFresh = false; })
+    .catch((e) => chatSendFailed(e));
+}
+// O comando do agente é por acervo (ADR-0003) e editável em Configurações, então
+// não pode ser lido uma vez no boot: `chat_status` devolve o que vale agora.
+async function currentChatAgent() {
+  try {
+    const st = await invoke("chat_status");
+    if (st && st.agent) chatAgent = st.agent;
+  } catch (_) { /* sem backend: fica o último conhecido */ }
+  return chatAgent;
+}
+
+// ---- painel: Chat -----------------------------------------------------------
+// As habilidades ficam SEMPRE à vista (handoff §painel direito): uma linha de
+// chips arma a ação; enviar sem texto executa com a instrução padrão. O destino
+// é o agente do projeto — o mesmo que roda as habilidades no terminal.
+let chatArmed = null;
+function renderChatChips() {
+  const chips = $("chatChips");
+  if (!chips) return;
+  const top = allHabilidadeEntries("doc").slice(0, 3);
+  chips.innerHTML = top.map((e, i) => `<button class="chip" data-chip="${i}">${esc(e.label)}</button>`).join("") +
+    `<button class="chip" data-chipall>${t("todas")} (${lastToolFiles.length}) ▸</button>`;
+  chips.querySelectorAll("[data-chip]").forEach((b) => (b.onclick = () => armChat(top[Number(b.dataset.chip)])));
+  const all = chips.querySelector("[data-chipall]");
+  if (all) all.onclick = (e) => { e.stopPropagation(); openHabilidadeMenu(currentRel(), all, true, "doc"); };
+}
+function armChat(entry) {
+  chatArmed = entry || null;
+  const box = $("chatArmed");
+  if (!box) return;
+  box.hidden = !chatArmed;
+  if (!chatArmed) return;
+  box.innerHTML = `<span class="armedchip">${esc(chatArmed.label)}<button data-disarm aria-label="${t("desarmar")}">×</button></span>`;
+  box.querySelector("[data-disarm]").onclick = () => armChat(null);
+  const inp = $("chatInput"); if (inp) inp.focus();
+}
+function chatPush(cls, html) {
+  const th = $("chatThread");
+  if (!th) return;
+  const empty = th.querySelector(".chatempty");
+  if (empty) empty.remove();
+  const node = document.createElement("div");
+  node.className = cls;
+  node.innerHTML = html;
+  th.appendChild(node);
+  th.scrollTop = th.scrollHeight;
+}
+// Um turno = uma bolha do usuário + uma resposta que cresce por deltas.
+// `chatTurn` é a resposta viva; `chatBuf` acumula o markdown para re-renderizar
+// a cada delta (o agente escreve markdown, não texto puro).
+let chatTurn = null, chatBuf = "", chatBusy = false;
+
+function chatAnswerNode() {
+  if (chatTurn) return chatTurn;
+  const th = $("chatThread");
+  const empty = th.querySelector(".chatempty");
+  if (empty) empty.remove();
+  chatTurn = document.createElement("div");
+  chatTurn.className = "chatans";
+  // NÃO zere chatBuf aqui: o primeiro delta já escreveu nele antes de pedir o
+  // nó, e limpar aqui comia o começo de toda resposta. Quem zera é sendChat,
+  // que é onde um turno de fato começa.
+  th.appendChild(chatTurn);
+  return chatTurn;
+}
+function chatAtBottom() {
+  const th = $("chatThread");
+  return th.scrollHeight - th.scrollTop - th.clientHeight < 40;
+}
+function chatPaint() {
+  const stick = chatAtBottom();
+  chatAnswerNode().innerHTML = mdRender(chatBuf);
+  chatThinking(chatBusy);   // reancora o indicador no fim
+  if (stick) { const th = $("chatThread"); th.scrollTop = th.scrollHeight; }
+}
+function setChatBusy(on) {
+  chatBusy = on;
+  const send = $("chatSend");
+  send.textContent = on ? "■" : "↑";
+  send.classList.toggle("stop", on);
+  send.title = on ? t("parar") : t("Enviar");
+  $("chatInput").disabled = false;   // dá para escrever o próximo enquanto responde
+  chatThinking(on);
+}
+
+// Sinal de que ALGO está acontecendo. Sem ele o chat ficava mudo entre o envio
+// e o primeiro delta — que numa pergunta com busca leva dezenas de segundos, e
+// o usuário não tinha como saber se tinha travado.
+function chatThinking(on) {
+  const th = $("chatThread");
+  if (!th) return;
+  let node = th.querySelector(".chatthinking");
+  if (!on) { if (node) node.remove(); return; }
+  if (!node) {
+    node = document.createElement("div");
+    node.className = "chatthinking";
+    node.innerHTML = `<span class="dots"><i></i><i></i><i></i></span><span class="lbl">${esc(t("pensando…"))}</span>`;
+    th.appendChild(node);
+  }
+  th.appendChild(node);   // mantém o indicador SEMPRE no fim da conversa
+  th.scrollTop = th.scrollHeight;
+}
+// Cada ferramenta vira um passo EXPANSÍVEL: fechado mostra só o nome (a
+// conversa não vira um log); aberto mostra o que foi pedido e o que voltou.
+// Antes o passo era um chip mudo e o usuário não tinha como ver o que aconteceu.
+const chatSteps = new Map();   // tool_use id -> nó do passo
+function chatStep(tool) {
+  const th = $("chatThread");
+  if (!th) return;
+  const step = document.createElement("details");
+  step.className = "chatstep";
+  step.innerHTML =
+    `<summary><span class="dot"></span><span class="nm">${esc(tool.name || "?")}</span>` +
+    `<span class="st"></span></summary>` +
+    `<div class="io"><div class="lbl">${esc(t("pedido"))}</div><pre class="in">${esc(prettyJson(tool.input))}</pre></div>`;
+  th.appendChild(step);
+  if (tool.id) chatSteps.set(tool.id, step);
+  chatThinking(chatBusy);
+  th.scrollTop = th.scrollHeight;
+}
+// O input chega como JSON cru; indentado ele é legível, e se não for JSON
+// mostramos como veio em vez de esconder.
+function prettyJson(raw) {
+  if (!raw) return "";
+  try { return JSON.stringify(JSON.parse(raw), null, 2); } catch (_) { return String(raw); }
+}
+function chatStepResult(res) {
+  const step = res.id && chatSteps.get(res.id);
+  if (!step) return;
+  const st = step.querySelector(".st");
+  if (st) st.textContent = res.isError || res.permission ? "!" : "✓";
+  step.classList.toggle("failed", !!(res.isError || res.permission));
+  const io = step.querySelector(".io");
+  if (io && res.text) {
+    io.insertAdjacentHTML("beforeend",
+      `<div class="lbl">${esc(t("resposta"))}</div><pre class="out">${esc(res.text)}</pre>`);
+  }
+  // um passo que falhou já abre: é o que o usuário precisa ver
+  if (res.isError || res.permission) step.open = true;
+}
+
+// Esforço na língua da interface ⇄ nível do CLI. O usuário escolhe "alto",
+// o agente recebe "high".
+const EFFORT_LEVELS = [
+  { label: "baixo", cli: "low" }, { label: "médio", cli: "medium" },
+  { label: "alto", cli: "high" }, { label: "muito alto", cli: "xhigh" },
+  { label: "máx", cli: "max" },
+];
+const effortCli = (label) => (EFFORT_LEVELS.find((e) => e.label === label) || { cli: "high" }).cli;
+
+async function sendChat() {
+  if (chatBusy) return chatStop();
+  const inp = $("chatInput");
+  const text = (inp.value || "").trim();
+  if (!text && !chatArmed) return;
+  // Uma habilidade armada é um comando do agente; texto solto é uma pergunta
+  // ancorada no que o projeto já sabe (/loro-ask), como na paleta.
+  let prompt = text;
+  let shown = text;
+  if (chatArmed) {
+    shown = `${chatArmed.label}${text ? " — " + text : ""}`;
+    prompt = await chatSkillPrompt(chatArmed, text);
+  } else {
+    prompt = LoroBrainstorm.brainAskCmd(text, null) || text;
+  }
+  chatPush("chatmsg", esc(shown));
+  chatLastPrompt = prompt;
+  armChat(null);
+  inp.value = "";
+  chatTurn = null; chatBuf = "";
+  setChatBusy(true);
+  try {
+    await invoke("chat_send", {
+      input: {
+        prompt, model: chatPrefs.model, effort: effortCli(chatPrefs.effort),
+        permission: settings.chatPermission, fresh: chatFresh,
+      },
+    });
+    chatFresh = false;
+  } catch (e) {
+    chatSendFailed(e);
+  }
+}
+
+// Uma recusa (turno em andamento) não é uma resposta: era escrita DENTRO da
+// bolha da resposta corrente, o que embaralhava a conversa a cada clique
+// repetido. Recusa vira aviso; falha de verdade vira uma linha própria.
+// Recarrega o que uma habilidade pode ter escrito: as duas árvores e os filhos
+// já expandidos (reuniões e contextos), que são carregados sob demanda.
+function refreshAfterSkill() {
+  sideSig = ""; pessoalSig = "";
+  brainRefresh();
+  refreshPessoal().then(reloadOpenChildren).catch(reloadOpenChildren);
+  // uma skill pode terminar de escrever logo depois do turno
+  setTimeout(() => { pessoalSig = ""; refreshPessoal().then(reloadOpenChildren).catch(() => {}); }, 2500);
+}
+// Os filhos são carregados sob demanda e o rel de cada um vive no próprio nó
+// (data-mtgrel/data-temachild), então a fonte da verdade aqui é o DOM já
+// renderizado — não um mapa paralelo que poderia divergir.
+function reloadOpenChildren() {
+  B.navPessoal.querySelectorAll("[data-mtgchild]").forEach((n) => {
+    if (!n.hidden) fillMeetingChild(n.dataset.mtgchild, n.dataset.mtgrel);
+  });
+  B.navPessoal.querySelectorAll("[data-temachild]").forEach((n) => {
+    if (!n.hidden) loadTemaChildren(n.dataset.temachild);
+  });
+  for (const key of bOpen) {
+    const ctx = /^ctx:(.+)$/.exec(key);
+    if (ctx) loadCtxChildren(ctx[1]);
+  }
+}
+
+function chatSendFailed(e) {
+  const msg = String(e);
+  if (msg.startsWith("err.chat_busy")) { toast(tErr(msg)); return; }
+  setChatBusy(false);
+  chatTurn = null; chatBuf = "";
+  chatPush("chatfail", esc(t("não consegui falar com o agente") + ": " + tErr(msg)));
+}
+// O prompt de uma habilidade armada: a mesma invocação que o terminal usaria
+// (slash-command no Claude, instrução em texto nos demais agentes).
+async function chatSkillPrompt(entry, extra) {
+  const base = entry.kind === "sync"
+    ? `/loro-sync ${entry.fonte}`
+    : `/${(entry.rel || "").split("/").pop().replace(/\.md$/, "")}`;
+  const alvo = currentRel();
+  const line = [base, alvo, extra].filter(Boolean).join(" ");
+  return LoroPresets.agentInvocation(await currentChatAgent(), line);
+}
+function chatStop() { invoke("chat_cancel").catch(() => {}); }
+
+listen("chat-delta", (e) => { chatBuf += e.payload || ""; chatPaint(); });
+listen("chat-tool", (e) => {
+  // uma nova ferramenta encerra o parágrafo corrente: o texto que vier depois
+  // é uma nova fala, não a continuação da anterior
+  if (chatBuf.trim()) { chatTurn = null; chatBuf = ""; }
+  chatStep(e.payload || {});
+});
+listen("chat-tool-result", (e) => chatStepResult(e.payload || {}));
+listen("chat-done", (e) => {
+  const p = (e && e.payload) || {};
+  setChatBusy(false);
+  if (p.ok) {
+    // uma habilidade escreve arquivos NOVOS; as assinaturas de cache não os
+    // veem, e os filhos de cada reunião são carregados sob demanda. Forçar o
+    // recarregamento é o que evita ter de abrir e fechar as pastas na mão.
+    refreshAfterSkill();
+    return;
+  }
+  if (p.permission) return chatPermissionBlock();
+  chatBuf += (chatBuf ? "\n\n" : "") + (p.detail || tErr(p.error || "err.chat_agent_failed"));
+  chatPaint();
+});
+
+// ADR-0021: negação de permissão não é um erro seco — é uma escolha. O bloco
+// âmbar oferece liberar a pasta (e repetir) ou continuar no terminal, onde o
+// agente pode pedir permissão interativamente.
+function chatPermissionBlock() {
+  const th = $("chatThread");
+  const box = document.createElement("div");
+  box.className = "chatperm";
+  box.innerHTML =
+    `<b>${esc(t("o agente não teve permissão para concluir"))}</b>` +
+    `<span>${esc(t("nada foi alterado. o chat não consegue parar e perguntar no meio de uma ação — escolha o que ele pode fazer e peça de novo."))}</span>` +
+    `<span class="row"><button class="btn sm" data-perm>${esc(t("Liberar tudo e repetir"))}</button>` +
+    `<button class="btn sm" data-handoff>${esc(t("Continuar no terminal"))}</button></span>`;
+  th.appendChild(box);
+  th.scrollTop = th.scrollHeight;
+  // "liberar tudo" muda a POLÍTICA do chat (persistida) e repete o último
+  // pedido — antes o botão liberava a pasta, que nunca era o que faltava.
+  box.querySelector("[data-perm]").onclick = () => {
+    settings.chatPermission = "bypassPermissions";
+    persistSettings();
+    paintActionMode();
+    box.remove();
+    if (chatLastPrompt) runAiCommand(chatLastPrompt, t("repetindo com permissão total"));
+    else toast(t("permissão liberada — peça de novo"));
+  };
+  box.querySelector("[data-handoff]").onclick = async () => {
+    try {
+      const cmd = await invoke("chat_handoff");
+      settings.aiPanelTab = LoroShell.setPanelTab("term"); persistSettings();
+      setTermPanel(true);
+      termRun(cmd);
+      box.remove();
+    } catch (err) { toast(tErr(String(err))); }
+  };
+}
+
+$("chatSend").addEventListener("click", sendChat);
+$("chatInput").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); }
+});
+// o composer cresce com o texto até o teto do CSS
+$("chatInput").addEventListener("input", (e) => {
+  e.target.style.height = "auto";
+  e.target.style.height = Math.min(e.target.scrollHeight, 120) + "px";
+});
+let chatFresh = true, chatAgent = "claude";
+$("chatReset").addEventListener("click", async () => {
+  try { await invoke("chat_reset"); } catch (_) {}
+  chatFresh = true; chatTurn = null; chatBuf = ""; chatSteps.clear(); setChatBusy(false);
+  const th = $("chatThread");
+  if (th) th.innerHTML = `<p class="chatempty">${t("pergunte qualquer coisa — a resposta vem primeiro do que o projeto já sabe.")}</p>`;
+  armChat(null);
+});
+$("chatModel").addEventListener("click", (e) => {
+  e.stopPropagation();
+  // modelo e esforço num controle só (revisão do time, decisão 3)
+  B.acervoMenu.hidden = true;
+  B.bMenu.innerHTML = `<div class="fhead">${t("modelo")}</div>` +
+    ["sonnet", "opus", "haiku", "fable"].map((m) => `<div class="fitem2${m === chatPrefs.model ? " on" : ""}" data-model="${m}"><span class="fn">${m}</span></div>`).join("") +
+    `<div class="fsep"></div><div class="fhead">${t("esforço")}</div>` +
+    EFFORT_LEVELS.map((x) => `<div class="fitem2${x.label === chatPrefs.effort ? " on" : ""}" data-effort="${x.label}"><span class="fn">${t(x.label)}</span></div>`).join("");
+  B.bMenu.querySelectorAll("[data-model]").forEach((b) => (b.onclick = () => { closeFloat(); chatPrefs.model = b.dataset.model; persistChatPrefs(); }));
+  B.bMenu.querySelectorAll("[data-effort]").forEach((b) => (b.onclick = () => { closeFloat(); chatPrefs.effort = b.dataset.effort; persistChatPrefs(); }));
+  placeMenu($("chatModel"));
+});
+const chatPrefs = { model: "sonnet", effort: "alto" };
+function persistChatPrefs() {
+  settings.chatModel = chatPrefs.model; settings.chatEffort = chatPrefs.effort;
+  persistSettings(); paintChatPrefs();
+}
+function paintChatPrefs() { $("chatModel").textContent = `${chatPrefs.model} · ${chatPrefs.effort} ⌄`; }
+
+// ---- estado de gravação refletido no cabeçalho e nas abas -------------------
+// A gravação continua se o usuário trocar de aba: o pill do cabeçalho é o
+// caminho de volta, e o rótulo do ● vira "Parar".
+let recChromeWasOn = false;
+function paintRecordingChrome() {
+  const on = state.running || meeting.active;
+  // parado é o estado normal: sem gravação, um tick não toca no DOM
+  if (!on && !recChromeWasOn) return;
+  recChromeWasOn = on;
+  const label = $("recLabel");
+  if (label && !recPending) label.textContent = on ? t("Parar") : t("Gravar");
+  el.toggle.classList.toggle("recording", on);
+  const pill = $("headRec");
+  const away = on && el.surface.hidden && !(meeting.active && currentRel() === meeting.livingRel);
+  if (pill) {
+    pill.hidden = !away;
+    pill.textContent = state.paused
+      ? `⏸ ${t("pausada")} · ${el.timer.textContent}`
+      : `● ${t("gravando")} · ${el.timer.textContent}`;
+  }
+  const mini = document.querySelector('#sideMini .minibtn[data-mini="rec"]');
+  if (mini) mini.hidden = !on;
+  const foot = $("recFoot");
+  if (foot) foot.hidden = !on;
+  // pausar/encerrar a reunião a partir de onde ela está acontecendo
+  const fin = $("recFinish");
+  if (fin) fin.hidden = !meeting.active;
+  const pau = $("recPause");
+  if (pau) {
+    const showPause = meeting.active && (meeting.phase === "recording" || state.paused);
+    if (pau.hidden === showPause) { pau.hidden = !showPause; paintPauseBtn(); }
+  }
+  if (on) requestAnimationFrame(() => resizeWave());
+}
+setInterval(paintRecordingChrome, 1000);
+
 // ---- init ----
 loadSettings();
 applySettings();
@@ -5338,13 +6488,32 @@ applySettings();
   } catch (_) { /* no backend (tests/dev server): localStorage value stands */ }
 })();
 B.dirBtn.textContent = t("escolher pasta…");
+// o cabeçalho mostra a versão (o "100% local" vive no manual e no seletor de fonte)
+invoke("app_version").then((v) => { const n = $("appVersion"); if (n) n.textContent = "v" + v; }).catch(() => {});
 resizeWave();
 drawIdle();
 updateCfgLabel();
 updatePrivacy();
+// casco do redesign: destino inicial, seção de configurações e painel de chat
+LoroShell.setDestination("home");
+showCfgSection("proj");
+chatPrefs.model = settings.chatModel; chatPrefs.effort = settings.chatEffort;
+paintChatPrefs();
+// o chat sobrevive a um reload da janela: o turno roda no backend, então a
+// interface recupera o estado em vez de fingir que não há nada em andamento
+invoke("chat_status").then((st) => {
+  chatAgent = (st && st.agent) || "claude";
+  const pill = $("chatMode");
+  if (pill) { pill.textContent = chatAgent; pill.title = t("o agente configurado para este projeto"); }
+  chatFresh = !(st && st.hasSession);
+  if (st && st.running) setChatBusy(true);
+}).catch(() => {});
+$("chatThread").innerHTML = `<p class="chatempty">${t("pergunte qualquer coisa — a resposta vem primeiro do que o projeto já sabe.")}</p>`;
+paintRecordingChrome();
 setupWorkspace();   // ADR-0008: Home é a primeira aba fixa (não fechável)
 initBrain();   // acervo é a tela principal (sem abas)
 applyTermLayout();
+if (settings.aiPanelOpen && settings.aiPanelTab === "term") setTermPanel(true);
 checkSetup();
 clog("init ok · TAURI=[" + Object.keys(TAURI).join(",") + "] · gUM=" + !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia));
 

@@ -264,3 +264,63 @@ test("meetingQueueBlock declara o motivo quando não há análise", () => {
   assert.strictEqual(LM.meetingQueueBlock(1), null);
   assert.strictEqual(LM.meetingQueueBlock("3"), null);
 });
+
+// #53 — relatado em uso real: a MESMA fala aparecia duas vezes na transcrição,
+// uma como "você" e outra como "sistema", com ~1s de diferença. Com o som saindo
+// por alto-falante o microfone escuta de volta o que o áudio do sistema já
+// gravou. O texto nunca vem idêntico (são dois sinais), então o teste usa os
+// pares reais da captura que o dono enviou.
+const ECO_MIC = "Tô, tô gripadão, tô zoado. Mas assim, eu tô sofrendo um negócio que você falou muito, você falou muito, você não passou lá no buraco de ar, velho. A minha aplicaçãozinha pra fechar ela lá.";
+const ECO_SYS = "Tô gripadão, tô zoado, mas eu tô sofrendo um negócio que você falou muito, você falou muito, você vai passar lá no buraco de ar, velho, a minha aplicaçãozinha pra fechar ela lá.";
+
+test("o eco de uma trilha na outra é barrado (par real da captura)", () => {
+  const recent = [{ tMs: 18000, source: "mic", tokens: LM.speechTokens(ECO_MIC) }];
+  const eco = LM.echoOfOtherSource({ text: ECO_SYS, tMs: 19000, source: "system" }, recent);
+  assert.ok(eco, "não reconheceu o eco entre trilhas");
+  assert.strictEqual(eco.source, "mic");
+});
+
+test("fala diferente na outra trilha NÃO é barrada", () => {
+  const recent = [{ tMs: 18000, source: "mic", tokens: LM.speechTokens(ECO_MIC) }];
+  const outra = "Vamos fechar o orçamento da frota antes de sexta, então preciso dos números do fornecedor.";
+  assert.strictEqual(LM.echoOfOtherSource({ text: outra, tMs: 19000, source: "system" }, recent), null);
+});
+
+test("a mesma trilha repetindo é fala repetida, não eco", () => {
+  const recent = [{ tMs: 18000, source: "mic", tokens: LM.speechTokens(ECO_MIC) }];
+  assert.strictEqual(LM.echoOfOtherSource({ text: ECO_MIC, tMs: 19000, source: "mic" }, recent), null);
+});
+
+test("trecho curto nunca é barrado — 'tá bom' repete numa conversa de verdade", () => {
+  const recent = [{ tMs: 1000, source: "system", tokens: LM.speechTokens("tá bom, pode ser") }];
+  assert.strictEqual(LM.echoOfOtherSource({ text: "Tá bom, pode ser.", tMs: 1500, source: "mic" }, recent), null);
+});
+
+test("longe no tempo não é eco — a mesma frase dita de novo dez minutos depois", () => {
+  const recent = [{ tMs: 18000, source: "mic", tokens: LM.speechTokens(ECO_MIC) }];
+  assert.strictEqual(LM.echoOfOtherSource({ text: ECO_SYS, tMs: 618000, source: "system" }, recent), null);
+});
+
+test("speechTokens normaliza acento e pontuação (tô/to é a mesma palavra)", () => {
+  assert.deepStrictEqual(LM.speechTokens("Tô, sim!"), ["to", "sim"]);
+});
+
+// Esta asserção começou errada: media só o lado menor e dava 1 para "a b c"
+// dentro de "a b c d e f" — o mesmo defeito que fazia um segmento curto de
+// microfone derrubar uma janela inteira de sistema. Cobertura é MÚTUA.
+test("tokenContainment exige cobertura dos DOIS lados", () => {
+  const tk = LM.speechTokens;
+  assert.strictEqual(LM.tokenContainment(tk("a b c"), tk("a b c d e f")), 0.5);
+  assert.strictEqual(LM.tokenContainment(tk("a b c"), tk("a b c")), 1);
+});
+
+// O achado da revisão, com o cenário exato: uma frase curta de microfone cujas
+// palavras funcionais aparecem todas numa janela de 18s sobre OUTRO assunto.
+// Antes: 0,91 → a janela com a fala de todo mundo era descartada em silêncio.
+test("um trecho curto NÃO derruba uma janela longa de outro assunto", () => {
+  const curto = "Eu acho que a gente pode fechar isso com o time.";
+  const janela = "Então o fornecedor mandou a proposta ontem e eu acho que a gente pode discutir o prazo com o time de compras, porque isso trava tudo. A gente pode ver isso amanhã. O time de logística falou que com esse volume a rota fica cara.";
+  const recent = [{ tMs: 1000, source: "mic", tokens: LM.speechTokens(curto) }];
+  assert.strictEqual(LM.echoOfOtherSource({ text: janela, tMs: 5000, source: "system" }, recent), null,
+    "a janela de sistema seria descartada — a transcrição é a ÚNICA saída da reunião (ADR-0018)");
+});
