@@ -1,87 +1,118 @@
 <div align="center">
 
-<img src="docs/media/loro-cover.png" alt="Loro — Talk. It becomes context. Local ideas capture → a knowledge studio for your team. speech → brainstormings → queue → shared, versioned contexts → produce with AI. 100% local, 0 credentials, any AI agent. macOS · Windows · Linux." width="100%">
+<img src="docs/media/loro-cover.png" alt="Loro — Talk. It becomes context. Local speech capture → shared, versioned knowledge contexts → produce with AI. 100% local, 0 credentials, any AI agent." width="100%">
+
+# Loro 🦜
+
+**Talk. It becomes context.**
+
+A local, privacy-first knowledge studio: it transcribes your meetings and ideas
+entirely on your machine, and distills them into versioned knowledge that both
+people and AI agents can use as context.
+
+[![CI](https://github.com/aipi/loro/actions/workflows/ci.yml/badge.svg)](https://github.com/aipi/loro/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/aipi/loro)](https://github.com/aipi/loro/releases)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+![Platforms](https://img.shields.io/badge/platform-macOS%20%C2%B7%20Windows%20%C2%B7%20Linux-lightgrey)
+
+[Install](#install) · [How it works](#how-it-works) · [Documentation](#documentation) · [Contributing](#contributing)
+
 </div>
 
-# Loro 🦜 — Knowledge Studio
+---
 
-Loro is a **local, privacy-first desktop app** (Tauri v2) that turns what teams
-*say and gather* — meetings, brainstorms, thinking out loud, plus notes and
-files from tools you already use — into a trustworthy, versioned, per-domain
-knowledge base that both **people and AI** can use as context. Speech is
-transcribed **entirely on your machine** (whisper.cpp); nothing leaves the
-device unless you explicitly send it, and the app never holds a credential.
+## Why Loro
 
-Three parts work together:
+- **100% local transcription** — speech is transcribed on your machine with
+  whisper.cpp. Raw audio never leaves the device; meeting audio is deleted as
+  soon as it is transcribed.
+- **Zero credentials** — Loro never asks for, stores, or logs a credential.
+  Optional integrations (`git`, `gh`, your AI agent CLI) use your own ambient
+  accounts.
+- **Capture both sides of a meeting with no driver setup** — on macOS, meeting
+  mode uses ScreenCaptureKit: one Screen Recording permission, no virtual audio
+  driver, no admin rights.
+- **Knowledge, not piles of transcripts** — an agent loop distills meetings,
+  notes, and attached files into one `context.md` source of truth per topic,
+  versioned in Git and evolved by pull request — with Git hidden behind two
+  buttons ("Salvar versão" / "Enviar para revisão do time").
+- **Bring your own AI agent** — Loro wraps any AI agent CLI (`claude` by
+  default, including local models) in an embedded terminal, and turns its
+  skills into one-click actions. Nine ship built-in; you can author your own.
+- **Portable by design** — the result is a self-contained context harness any
+  agent or teammate can read. This repo documents itself in the same format.
 
-1. **A capture tool** — live transcription (mic, system audio, or both sides of
-   a video meeting), as a desktop app and a CLI (`loro.sh`). The app's **meeting**
-   mode captures both sides with *zero driver setup* (ScreenCaptureKit); the
-   CLI's `SOURCE=system` route instead needs the BlackHole loopback driver — see
-   [Capture modes](#capture-modes).
-2. **A Knowledge Studio** — a VS Code-like workspace built around three
-   destinations in the header: **Início · Organizar · Conhecimento**
-   (ADR-0020). Under *ideias* you gather **reuniões**, **notas** and **anexos**
-   (files you drop in, or pull from Drive/Slack/Jira/Confluence); you select
-   the **files** that matter and each one shows up under *para organizar*;
-   "transformar em conhecimento" runs an agent loop that distills them into
-   versioned *conhecimento* — one `context.md` source of truth per topic,
-   evolved by RFC = branch + Pull Request, with Git hidden behind two buttons
-   ("Salvar versão" / "Enviar para revisão do time"). The result is a portable
-   **context harness** any agent or teammate can read. On disk and in the ADRs
-   these are still `acervo`, `brainstorming/`, `inbox/` and `contextos/` — the
-   simplified names are the UI's, not the format's.
-3. **An AI-agent automation layer** — Loro wraps an AI agent CLI (`claude` by
-   default, any CLI — ADR-0003) in an embedded terminal and turns its skills,
-   called **habilidades**, into one-click UI instead of typed commands. They
-   run from a picker (friendly names, always-visible descriptions) on the
-   ✦ AI panel (its Chat tab keeps them one click away), a brainstorming/meeting
-   `⋯` menu, or the palette (`Cmd/Ctrl+K`). Nine ship built-in — the loop (`/loro-context`),
-   Q&A (`/loro-ask`), meeting AI (`/loro-analyse`/`/loro-question`), notes
-   (`/loro-note`), external sync (`/loro-sync` — brings a Drive doc, or a
-   Slack/Jira/Confluence summary, into a local anexo), generators
-   (`/loro-presentation`, `/loro-artifact`), and the skill authoring tool
-   (`/loro-tool`). You can author your own habilidade — describe it and let
-   the AI draft it, or import one you already have — and edit any built-in
-   (but not delete it). The capture tool and the knowledge base are what the
-   automations act on; this layer is how you reach them.
+## How it works
 
-> Docs: the brain domain `loro` (**`brain/contexts/loro/context.md`**, what/why —
-> this repo dogfoods its own model), **`docs/ARCHITECTURE.md`** (how),
-> **`docs/adr/`** (0001 is the consolidated baseline; 0002+ are incremental),
-> **`CLAUDE.md`** (how to work here). All docs and code are in English; the app
-> UI is pt-BR or English — chosen when you create an acervo and switchable in
-> Settings, with generated content following that language. An in-app user
-> manual (pt/en) opens from "Como funciona o Loro" in the sidebar footer.
-> The theme is light, dark or system (Settings → Aparência).
+```
+speech → brainstormings → queue → shared, versioned contexts → produce with AI
+```
 
-## What is a Loro context?
+1. **Capture** — live transcription of mic, system audio, or both sides of a
+   video meeting; as a desktop app (Tauri v2) and a CLI (`loro.sh`). See
+   [capture modes](#capture-modes).
+2. **Organize** — a VS Code-like workspace where you gather meetings, notes,
+   and attachments per brainstorming, and pick the files that matter.
+3. **Knowledge** — "transformar em conhecimento" runs an agent loop that files
+   material by topic and proposes changes to each topic's `context.md` source
+   of truth. Open questions live inline as *hotspots*; a person approves what
+   becomes truth.
 
-A **context** is Loro's unit of durable, shared knowledge — one `context.md`
-*source of truth* per domain, versioned in Git, that people and AI agents read
-alike. The philosophy behind it (from the product's own brain,
-`brain/contexts/loro/context.md`):
+The knowledge base (the **acervo**) lives in a folder you choose, separate from
+the app. Ideas are cheap; context is earned: a context is production knowledge,
+promoted after review — never a raw dump of everything said. The full product
+philosophy is in [`brain/contexts/loro/context.md`](brain/contexts/loro/context.md).
 
-- **Ideas are cheap; context is earned.** Brainstorming is constant and free;
-  a context is *production knowledge*, promoted only after debate and approval —
-  never a raw dump of everything said.
-- **Organized by archetypes, not org charts.** Product, business and
-  engineering converge on a shippable outcome; a domain is recursive
-  (subdomains are nested folders), built for groups and forming teams.
-- **One source of truth, evolved by RFC = Pull Request.** Each
-  `contextos/<domain>/` holds a single `context.md`, an append-only
-  `CHANGELOG.md`, and its own `anexos/`. Open questions live *inline* as
-  **hotspots** — the origin of the next change. Every change is a branch + PR
-  applied directly to the file; merging makes it the new truth. Git stays
-  hidden behind two buttons ("Versionar" / "Propor mudança").
-- **Self-contained & non-destructive.** Loro detects existing structure,
-  respects it, and fills only the gaps — it never overwrites your knowledge.
-- **The flow is always visible:** capture → *fila* (queue) → the loop
-  interprets and files material by domain → a person promotes proposals into
-  the source of truth. The result is a **portable context harness** any agent
-  or teammate can read — the same format Loro dogfoods to document itself.
+## Install
 
-## Requirements
+### macOS (Apple Silicon)
+
+```bash
+brew tap aipi/loro
+brew trust aipi/loro         # Homebrew 6+: trust this third-party tap, once per machine
+brew install --cask loro     # installs Loro.app + whisper-cpp + ffmpeg
+```
+
+**First launch:** open **Settings (⚙) → model** and download the model you want
+— `large-v3-turbo` (accurate) or `small` (fast). It is fetched to
+`~/.loro/models`, verified by SHA-256. Then you are ready to transcribe.
+
+> **Gatekeeper:** Loro is ad-hoc signed, not notarized, so macOS 15+ may claim
+> the app is *"damaged"* and offer to move it to the Trash. It is not damaged —
+> click **Cancel**, then clear the quarantine attribute once:
+> `xattr -dr com.apple.quarantine /Applications/Loro.app`
+
+<details>
+<summary><strong>macOS troubleshooting</strong> (Homebrew 6+, non-admin installs)</summary>
+
+| Error | Fix |
+|---|---|
+| `Refusing to load cask aipi/loro/loro from untrusted tap` | `brew trust aipi/loro` — Homebrew 6+ requires trusting a third-party tap once per machine |
+| `invalid option: --no-quarantine` | that flag was removed in Homebrew 6.x; install normally, then run the `xattr -dr …` above if Gatekeeper complains |
+| `… is not in the sudoers file` (install hangs on a password prompt) | you're a non-admin user and can't write `/Applications`; reinstall with `brew install --cask --appdir="$HOME/Applications" loro` |
+| macOS says the app is "damaged" / offers **Move to Trash** | click **Cancel** (the app is ad-hoc signed, not damaged), then `xattr -dr com.apple.quarantine <path-to>/Loro.app` |
+
+The unsigned `.dmg` is also attached to each
+[GitHub Release](https://github.com/aipi/loro/releases) for a manual install.
+
+</details>
+
+### Windows (10/11, x64)
+
+There is no prebuilt installer yet — you build from source once (about four
+commands), and the app itself installs the transcription engine from a banner
+on first run. Follow the **[Windows install guide](docs/install-windows.md)**.
+
+### From source (macOS/Linux)
+
+```bash
+git clone https://github.com/aipi/loro.git && cd loro
+./loro.sh setup     # install engine + download models to ~/.loro/models
+./loro.sh app       # run the desktop app (dev)
+```
+
+<details>
+<summary><strong>Requirements</strong> (what <code>loro.sh setup</code> checks and installs)</summary>
 
 | Component | Purpose | How |
 |---|---|---|
@@ -92,224 +123,74 @@ alike. The philosophy behind it (from the product's own brain,
 | **git** + **gh** | optional: knowledge versioning / remote collaboration | opt-in, validated by an in-app doctor |
 | **AI agent CLI** (`claude` by default) | optional: the agent loop and meeting AI skills | runs in the embedded terminal, user's own account; configurable per acervo (any CLI, including local models — ADR-0003) |
 
-Models are ggml files under `~/.loro/models` (configurable via `LORO_MODELS_DIR`).
-The desktop app **downloads the model you pick on first use** (Settings → model),
-verified by SHA-256 (ADR-0006) — no manual setup step needed.
+Models are ggml files under `~/.loro/models` (configurable via
+`LORO_MODELS_DIR`); the desktop app downloads the model you pick on first use,
+verified by SHA-256 (ADR-0006).
 
-## Install (macOS, Apple Silicon)
-
-```bash
-brew tap aipi/loro
-brew trust aipi/loro         # Homebrew 6+: trust this third-party tap
-brew install --cask loro     # installs Loro.app + whisper-cpp + ffmpeg
-```
-
-`brew trust` is required once per machine — Homebrew 6+ refuses to load casks
-from a non-official tap until you trust it. The cask pulls the engine
-(`whisper-cpp`, `ffmpeg`) automatically. The unsigned
-`.dmg` is also attached to each
-[GitHub Release](https://github.com/aipi/loro/releases) for a manual install.
-
-**No admin rights?** The cask installs into `/Applications`, which a non-admin
-user can't write to — `brew` then escalates to `sudo` and fails (`… is not in
-the sudoers file`), after hanging on a password prompt. Install into your own
-`~/Applications` instead:
-
-```bash
-brew install --cask --appdir="$HOME/Applications" loro
-```
-
-**Unsigned app (Gatekeeper).** Loro is **ad-hoc signed**, not signed with an
-Apple Developer ID and not notarized (ADR-0006, future work) — there is no
-verifiable publisher identity, so macOS 15+ may refuse to open it, often with a
-misleading **"Loro is damaged and can't be opened. You should move it to the
-Trash."** The app is **not** damaged, and its default button is destructive:
-click **Cancel**, never *Move to Trash*. Then clear the quarantine attribute
-once (adjust the path if you installed into `~/Applications`):
-
-```bash
-xattr -dr com.apple.quarantine /Applications/Loro.app
-```
-
-Then open Loro normally. (Homebrew 6+ removed the old `--no-quarantine` install
-flag, so this is the reliable path.)
-
-**First launch.** Open Loro, go to **Settings (⚙) → model**, and click
-**+ download** on the model you want — `large-v3-turbo` (accurate) or `small`
-(fast). It downloads on your machine with a progress bar, verified by SHA-256,
-into `~/.loro/models`. Then you are ready to transcribe.
-
-### Troubleshooting the install (Homebrew 6+)
-
-| Error | Fix |
-|---|---|
-| `Refusing to load cask aipi/loro/loro from untrusted tap` | `brew trust aipi/loro` — Homebrew 6+ requires trusting a third-party tap once per machine |
-| `invalid option: --no-quarantine` | that flag was removed in Homebrew 6.x; install normally, then run the `xattr -dr …` below if Gatekeeper complains |
-| `… is not in the sudoers file` (install hangs on a password prompt) | you're a non-admin user and can't write `/Applications`; reinstall with `brew install --cask --appdir="$HOME/Applications" loro` |
-| macOS says the app is "damaged" / offers **Move to Trash** | click **Cancel** (the app is ad-hoc signed, not damaged), then `xattr -dr com.apple.quarantine <path-to>/Loro.app` |
-
-## Install (Windows 10/11, x64)
-
-There is no Homebrew cask and no prebuilt installer yet, so on Windows you build
-Loro from source once. Everything runs in **PowerShell** — `loro.sh` and the
-`Makefile` need a POSIX shell and are not the Windows path.
-
-**1. Install the toolchain.** Rust and Node are needed to build the app; MSVC and
-CMake are needed later to build the transcription engine.
-
-```powershell
-winget install Rustlang.Rustup OpenJS.NodeJS Kitware.CMake Git.Git Gyan.FFmpeg
-```
-
-Visual Studio Build Tools with the **C++ workload** is also required (Rust uses
-the MSVC linker). If you don't have it:
-
-```powershell
-winget install Microsoft.VisualStudio.2022.BuildTools --override "--quiet --wait --norestart --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
-```
-
-**2. Build Loro.**
-
-```powershell
-git clone https://github.com/aipi/loro.git
-```
-
-```powershell
-cd loro\desktop; npm install; npm run tauri build
-```
-
-That produces an installer and a standalone binary under
-`desktop\src-tauri\target\release`:
-
-| Artifact | Path |
-|---|---|
-| MSI installer | `bundle\msi\Loro_<version>_x64_en-US.msi` |
-| NSIS setup | `bundle\nsis\Loro_<version>_x64-setup.exe` |
-| Standalone exe | `Loro.exe` |
-
-**3. Open Loro.** Run either installer, then launch **Loro** from the Start menu.
-To skip installing, run `Loro.exe` from the path above — it is the same app.
-
-To work on the code instead, `npm run tauri dev` compiles and opens the app with
-the dev reload loop. The first build takes a few minutes either way; later runs
-are incremental.
-
-**4. Install the transcription engine.** Loro opens with a banner reading
-*"faltam dependências"* and a **configurar agora no terminal** button. Click it —
-on Windows that runs a bundled PowerShell script in the embedded terminal which
-builds `whisper-stream` and `whisper-cli` from source with SDL2 and installs them
-into `%USERPROFILE%\.loro\bin`, where Loro looks for them (so your `PATH` is left
-alone).
-
-whisper.cpp publishes prebuilt Windows binaries for `whisper-cli` but **not** for
-`whisper-stream`, because live mode needs SDL2 — that is why this step compiles
-instead of downloading. It is idempotent: rerun it after a failure and it resumes.
-Restart Loro when it finishes so the engine is detected.
-
-**5. Download a model.** **Settings (⚙) → model → + download**, same as macOS —
-`large-v3-turbo` (accurate) or `small` (fast), verified by SHA-256 into
-`%USERPROFILE%\.loro\models`.
-
-### Windows notes
-
-| Topic | Detail |
-|---|---|
-| **The app is unsigned** | there is no code-signing certificate, so SmartScreen shows *"Windows protected your PC"* on first run of the installer. **More info → Run anyway**. |
-| **`failed to bundle project: Acesso negado (os error 5)`** | the cached NSIS toolchain extracted only partially (a giveaway is a `makensis.exe` of a few KB). Delete `%LOCALAPPDATA%\tauri\nsis-3.11` and rebuild; the MSI is unaffected and is produced before this step. |
-| **Meeting mode is macOS-only** | it captures both sides through a ScreenCaptureKit sidecar (ADR-0005), which is an Apple framework. On Windows the mode reports `err.syscap_not_found`; use **live** or **file** mode instead. |
-| **System audio** | Windows has no BlackHole. Loro matches your driver's own loopback device — "Mixagem estéreo" on a pt-BR install, "Stereo Mix" in English — which usually just needs enabling in the Sound panel's Recording tab. If your driver has none, install [VB-Cable](https://vb-audio.com/Cable/) and set it as the default output. The in-app flow walks through both (ADR-0012). |
-| **Data location** | `%USERPROFILE%\.loro` (models, logs, engine, config), resolved from `USERPROFILE`. Override with `LORO_HOME`. |
-| **`loro.sh` / `make`** | bash and POSIX-shell only. Use the PowerShell commands in [Development](#development) instead. |
-
-## Quick start (developing from source)
-
-macOS/Linux:
-
-```bash
-./loro.sh setup     # install engine + download models to ~/.loro/models
-./loro.sh app       # run the desktop app (dev)
-./loro.sh live      # or transcribe from the terminal (SOURCE=mic|system)
-./loro.sh test      # run the test suite (Rust + JS)
-./loro.sh doctor    # report the detected environment
-```
-
-Windows (PowerShell) — the app itself replaces the CLI here; use the setup banner
-for the engine and the ⚙ Settings for models:
-
-```powershell
-cd desktop; npm run tauri dev
-```
+</details>
 
 ## Capture modes
 
-- **Live** — `whisper-stream` (VAD) streams lines as you speak. `SOURCE=mic`
-  (default) needs no setup; `SOURCE=system` captures the computer's output through
-  a loopback capture device. On macOS that is the **BlackHole** driver
-  (`./loro.sh sysaudio-setup`), which **requires admin rights** to install; on
-  Windows it is the audio driver's own "Mixagem estéreo"/"Stereo Mix", which
-  usually only needs enabling, with VB-Cable as the fallback (ADR-0012).
-- **File** — record the whole session, transcribe it at once (`whisper-cli`,
-  more faithful than streaming).
-- **Meeting** (macOS only) — your voice + the computer's audio (Meet/Zoom both
-  sides) via a ScreenCaptureKit sidecar: one Screen Recording permission, **no
-  virtual audio driver and no admin** — so on a locked-down Mac this is the way to
-  capture both sides. The transcript accretes live into the meeting's notebook;
-  **audio is transient** — deleted once transcribed. ScreenCaptureKit is an Apple
-  framework, so on Windows this mode is unavailable — use live or file mode.
+| Mode | What it captures | Setup |
+|---|---|---|
+| **Live** | mic (`SOURCE=mic`) or system audio (`SOURCE=system`), streamed as you speak | mic: none · system: loopback driver — BlackHole on macOS (`./loro.sh sysaudio-setup`, needs admin), "Stereo Mix"/VB-Cable on Windows |
+| **File** | the whole session, recorded then transcribed at once — more faithful than streaming | none |
+| **Meeting** *(macOS only)* | your voice **and** the computer's audio — both sides of a Meet/Zoom call — via a ScreenCaptureKit sidecar | one Screen Recording permission; no virtual driver, no admin |
 
-## The knowledge base ("acervo")
-
-The acervo lives in a **user-chosen folder, separate from this codebase**
-(config in `~/.loro/config.json`). Domains are user-defined and recursive
-(subdomains as nested folders); each `contextos/<c>/` has a single `context.md`
-source of truth, an append-only `CHANGELOG.md`, and its own `anexos/` for
-attached files — open questions live inline as *hotspots*. Every brainstorming
-has exactly three folders, shown as such in the sidebar: **`reunioes/`** (every
-meeting is born there), **`notas/`**, and **`anexos/`** — fed by a habilidade
-(sincronizar, apresentação, artefato) or by importing a file from the computer.
-
-Skills run in the embedded terminal **local-first** (they read the local base
-before any external source). When you create an acervo you choose its
-**language** (pt-BR / English — the whole app follows), a **usage template**
-(ADR-0003) whose first option is **Automático** — the loop creates and assigns
-contexts on its own as it processes the fila (any other template = you define
-the contexts; switchable later in Settings) — and its own **AI agent CLI**.
-"Gerar contexto" has an opt-in checkbox to also copy the processed items'
-anexos into `contextos/<c>/anexos/`.
+In meeting mode the transcript accretes live into the meeting's notebook, and
+audio is transient — deleted once transcribed.
 
 ## Security & privacy
 
-- **BR-1** — inference is 100% local by default; raw audio never leaves the
-  machine under any circumstance. Anything external (the optional meeting-AI
-  skills) runs only on the user's explicit invocation, via their own agent.
-- **BR-8** — logs are structured and content-free: no transcript text, no PII.
-- **BR-9** — no credential is ever requested, stored or logged; `git`/`gh`/
-  `claude` use the user's own ambient credentials.
+Security is a premise, enforced by immutable business rules with test coverage:
 
-See `docs/adr/0001-baseline.md` §3 for the full posture.
+- **BR-1** — inference is 100% local by default; raw audio never leaves the
+  machine under any circumstance. Anything external runs only on your explicit
+  invocation, via your own agent.
+- **BR-8** — logs are structured and content-free: no transcript text, no PII.
+- **BR-9** — no credential is ever requested, stored or logged.
+
+See [`docs/adr/0001-baseline.md`](docs/adr/0001-baseline.md) §3 for the full
+posture, and [`SECURITY.md`](SECURITY.md) for reporting vulnerabilities.
+
+## Documentation
+
+| Document | What it covers |
+|---|---|
+| [`brain/contexts/loro/context.md`](brain/contexts/loro/context.md) | What the product is and why — the source of truth, in Loro's own format |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | How it is built: contexts, IPC contract, flows |
+| [`docs/adr/`](docs/adr/) | Technical decisions — `0001` is the consolidated baseline, `0002+` are incremental |
+| [`desktop/README.md`](desktop/README.md) | The desktop app's UI details |
+| In-app manual (pt/en) | "Como funciona o Loro", in the sidebar footer |
+
+The app UI is pt-BR or English — chosen when you create an acervo, switchable
+in Settings; generated content follows that language. All code and docs are in
+English.
 
 ## Development
 
-`make test` · `make lint` · `make build` · `make test-docker` (see `Makefile`).
+```bash
+./loro.sh test      # test suite (Rust + JS)
+./loro.sh doctor    # report the detected environment
+make test · make lint · make build · make test-docker
+```
 
-On Windows the `Makefile` recipes need a POSIX shell, so run the same checks
-directly in PowerShell:
+On Windows the `Makefile` needs a POSIX shell — run the same checks in
+PowerShell:
 
 ```powershell
 cd desktop\src-tauri; cargo test
-```
-
-```powershell
 cd desktop; node --test tests/*.test.js
+cargo clippy --manifest-path desktop/src-tauri/Cargo.toml -- -D warnings
 ```
 
-```powershell
-cargo clippy --manifest-path desktop/src-tauri/Cargo.toml -- -D warnings; cargo fmt --manifest-path desktop/src-tauri/Cargo.toml -- --check
-```
+## Contributing
 
-Contribution rules and the AI-agent workflow are in `CONTRIBUTING.md` and
-`CLAUDE.md`. The desktop app's UI details: `desktop/README.md`.
+Contributions are welcome — from humans and AI agents alike. Read
+[`CONTRIBUTING.md`](CONTRIBUTING.md) for the workflow (TDD, Conventional
+Commits, ADRs for non-trivial decisions) and [`CLAUDE.md`](CLAUDE.md) for how
+to work in this codebase.
 
 ## License
 
-Apache-2.0 — see [LICENSE](LICENSE).
+[Apache-2.0](LICENSE)
