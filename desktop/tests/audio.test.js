@@ -70,3 +70,48 @@ test("loopbackPattern é um regex válido em toda plataforma conhecida", () => {
     assert.doesNotThrow(() => new RegExp(loopbackPattern(os), "i"));
   }
 });
+
+// #53 — regressão relatada em uso real: durante a gravação a voz do usuário
+// chegava baixa do outro lado e o que ele ouvia ficava abafado. Causa: pedir o
+// microfone com `{ audio: true }` liga o processamento de voz do sistema (eco +
+// ganho automático + supressão de ruído), que no macOS troca o caminho de áudio
+// da máquina inteira. Loro é gravador, não app de chamada: pede o sinal cru.
+test("micConstraints desliga o processamento de voz do sistema", () => {
+  const { audio } = require("../src/audio.js").micConstraints();
+  assert.strictEqual(audio.echoCancellation, false);
+  assert.strictEqual(audio.autoGainControl, false);
+  assert.strictEqual(audio.noiseSuppression, false);
+});
+
+test("micConstraints preserva as três restrições ao fixar um dispositivo", () => {
+  const { audio } = require("../src/audio.js").micConstraints("abc123");
+  assert.deepStrictEqual(audio.deviceId, { exact: "abc123" });
+  // o caminho com deviceId é o do áudio do sistema (loopback) — foi ele que
+  // regrediu antes por ser montado à parte, então tem de carregar o mesmo cru
+  assert.strictEqual(audio.echoCancellation, false);
+  assert.strictEqual(audio.autoGainControl, false);
+  assert.strictEqual(audio.noiseSuppression, false);
+});
+
+test("nenhum getUserMedia do app pede `{ audio: true }` cru", () => {
+  const fs = require("fs"), path = require("path");
+  const src = fs.readFileSync(path.join(__dirname, "..", "src", "app.js"), "utf8");
+  const cruas = [...src.matchAll(/getUserMedia\(\s*\{[^}]*\}/g)].map((m) => m[0]);
+  assert.deepStrictEqual(cruas, [],
+    "getUserMedia com objeto literal volta a ligar o processamento de voz:\n  " + cruas.join("\n  "));
+});
+
+// #53 — quem ouve por alto-falante precisa poder religar o cancelamento de eco:
+// sem ele o microfone escuta os outros de volta. É escolha, não padrão, porque
+// ligá-lo entrega o áudio da máquina ao processamento de voz do sistema.
+test("micConstraints religa SÓ o cancelamento de eco quando pedido", () => {
+  const { micConstraints } = require("../src/audio.js");
+  const { audio } = micConstraints(null, true);
+  assert.strictEqual(audio.echoCancellation, true);
+  // os dois que achatam a voz continuam desligados — não é isso que protege
+  // contra o vazamento da caixa, e é isso que deixava o usuário baixo
+  assert.strictEqual(audio.autoGainControl, false);
+  assert.strictEqual(audio.noiseSuppression, false);
+  assert.strictEqual(micConstraints(null, false).audio.echoCancellation, false);
+  assert.strictEqual(micConstraints("dev1", true).audio.echoCancellation, true);
+});

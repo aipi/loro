@@ -12,11 +12,109 @@ one enters the queue as itself (one item per file — there is no consolidated
 report anymore); "generate context" asks the terminal Claude to distill the
 queue into `contextos/` — the official source of truth, versioned in git.
 
+## The screen, at a glance
+
+Every screen shares one anatomy:
+
+```
+HEADER 54px — [project ⌄] [Home · Organize · Knowledge] ··· [Record] [✦ AI]
+SIDEBAR      │ TABS (only when a document is open) │ PANEL 330px
+250px or 60px│ CONTENT                             │ Document · Chat · Terminal
+```
+
+- **The three destinations** live in the header: **Home** (what do you want to
+  keep today), **Organize** (what you captured that has not become knowledge
+  yet — the amber number is the count) and **Knowledge** (the team's official
+  topics).
+- **Record** is the red header button; while recording it becomes **Stop**, and
+  recording continues if you switch tabs — a `recording · mm:ss` pill in the
+  header takes you back.
+- **If you listen through speakers**, the mic hears the others back, and the
+  same sentence enters both tracks. Loro drops the copy by itself; if it still
+  mixes up who spoke, turn on **cancel speaker echo** in Settings → Capture —
+  at the cost, stated there, of your voice coming out quieter. With
+  headphones, leave it off.
+- **The recording footer** is the same for a loose recording and for a meeting:
+  clock, waveform and the privacy pill at the foot of the content. In a meeting
+  it also carries **⏸ pause / ▶ resume** and **■ End meeting**, left of the
+  clock. Pausing **really stops capture** — nothing is recorded until you
+  resume, the clock freezes and the menu-bar parrot stops blinking.
+- **✦ AI** shows or collapses the right-hand panel.
+- **Tabs are open documents only** — there is no "Home" tab. One click in the
+  tree opens a preview tab (italic); a double click pins it.
+- The **sidebar toggle** (250px ⇄ 60px) sits at the bottom, next to
+  **⚙ Settings**.
+- `Cmd/Ctrl+K` opens the **palette**: files and commands in one list, grouped
+  into *go to · record · create · document · do*, each with its shortcut on the
+  right. It is the living list of everything you can do.
+
+### The chat (✦ AI panel)
+
+The **Chat** tab talks to **your project's agent** — the same CLI that runs in the
+embedded terminal (Settings → AI and terminal). Nothing goes to a Loro API: the
+process is local and the account is yours.
+
+- Type your question and send (Enter; Shift+Enter for a new line). The answer
+  streams into the chat itself.
+- The **chips** above the field are the most-used AI skills. Clicking one arms
+  it; sending with no text runs it with its default instruction, and `×` unsets it.
+- The conversation **continues** from one question to the next. **restart** starts
+  over.
+- `sonnet · high ⌄` is a single control: pick the **model** and the **effort**
+  (how much the agent thinks before answering).
+- The ↑ becomes **■** while answering — click it to stop the turn.
+- If the agent needs **permission** to touch the folder, an amber block appears:
+  **Allow this folder** (for this conversation only) or **Continue in the
+  terminal**, where it can ask you step by step.
+
+- **Where AI skills run** is your choice: **Settings → AI and terminal**.
+  *In the chat*, the answer stays in the conversation; *in the terminal*, you
+  follow each step and can step in. It applies to everything — analysing a
+  meeting, asking the project, running an action from a ⋯ menu.
+- The three sidebar sections (**ideas**, **to organize**, **knowledge**)
+  **collapse**: click the heading. With many topics that is what keeps the tree
+  navigable.
+
+- **What the chat may do** is also your choice (**Settings → AI and terminal**).
+  The chat cannot stop and ask mid-action, so it ships able to act: *read and
+  edit the project* covers analysing a meeting and writing notes; *everything,
+  without asking* also allows external connectors (Slack, Drive…) and paths
+  outside the project folder.
+- Every step the agent took (a tool it used) **opens**: click it to see the
+  request and the response. A failed step opens on its own.
+
+### Adjusting the widths
+
+All three side columns are adjustable: **drag** the divider between the ideas
+sidebar and the content, between the content and the ✦ AI panel, or the top of
+the terminal when it is docked at the bottom. **Double-click** a divider to reset
+it. Your choice is remembered.
+
+### What things are called
+
+Loro speaks your language on screen and keeps the technical names on disk:
+
+| On screen | On disk / in the ADRs |
+|---|---|
+| project | acervo |
+| ideas | brainstorming |
+| to organize | fila (`inbox/`) |
+| knowledge | contextos |
+| AI skills | habilidades |
+| save version | versionar (commit) |
+| send for team review | propor mudança (RFC = PR) |
+| merge into a knowledge topic | promover |
+
+### Theme
+
+In **Settings → Appearance** you pick **light**, **dark** or **system**
+(follows macOS/Windows).
+
 ## First steps
 
 On first launch a **welcome modal** sums up the main features (flow,
 recording, templates, agent, AI and shortcuts) — reopen it anytime via the
-palette: `Cmd/Ctrl+Shift+P` → "Loro tour".
+palette: `Cmd/Ctrl+K` → "Loro tour".
 
 1. **Create the knowledge base** — on first launch the wizard asks for a name,
    the folder to generate into and the initial contexts (e.g. `product`,
@@ -66,7 +164,7 @@ palette: `Cmd/Ctrl+Shift+P` → "Loro tour".
   brainstorming (it becomes a meeting tied to the topic) or a "one-off
   transcription" (the text stays in the live panel to save/discard at the
   end). The global shortcut is `Cmd/Ctrl+Alt+Space`.
-- Every palette command (`Cmd/Ctrl+Shift+P`) has a `Cmd/Ctrl+Alt+<key>`
+- Every palette command (`Cmd/Ctrl+K`) has a `Cmd/Ctrl+Alt+<key>`
   shortcut, shown next to the command in the palette itself.
 - **Sources**: microphone, system audio (requires BlackHole — the app guides
   the install) or **meeting** (mic + system together; transcription happens at
@@ -76,11 +174,16 @@ palette: `Cmd/Ctrl+Shift+P` → "Loro tour".
 
 ## Brainstorming (the non-versioned world)
 
+- **Write a note** (on the Home screen) opens a **blank** markdown right away:
+  you write first and, on save, you pick the title and where the note lives — an
+  existing brainstorming topic or a context. Until you save, nothing is written
+  to disk.
+
 - The **＋** in the section header creates a brainstorming (a private space
   for a topic); the contexts section's **＋** creates a context.
 - Inside it (expand the brainstorming in the sidebar): each folder has its
   own creation action at the top — **notas** → **＋ new note**; **reuniões**
-  → **● record meeting** (also in the palette `Cmd/Ctrl+Shift+P` → "nova
+  → **● record meeting** (also in the palette `Cmd/Ctrl+K` → "nova
   reunião"); **anexos** → **⇄ sync** (brings from Drive/Slack/Jira/
   Confluence) and **＋ from computer** (opens the file picker and copies a
   `.pdf`/`.xlsx`/image you already have into the topic's anexos).
@@ -88,15 +191,6 @@ palette: `Cmd/Ctrl+Shift+P` → "Loro tour".
   request; **✦ ask the AI** (a note's/analysis' ⋯ menu **and the right-side
   rail of any open file**) applies a request to the existing content — the
   AI evolves it, never erases.
-- **Update index (digest)** (the brainstorming's ⋯ menu) runs the
-  `/loro-digest` habilidade: it reads **all** of the topic's material (the
-  meetings' analyses, notes and attachments) and (re)writes `indice.md` — the main
-  markdown — with an **overall summary**, the **key points & highlights**, an
-  **index** linking every material, and the **references** (the panel at the top
-  of the file). You trigger it and it rewrites the index from scratch (it never
-  reads the raw transcript or audio — only the analyses and notes). When new
-  material appears since the last index, `indice.md` shows a subtle banner at
-  the top ("N new items — update index") with a button to regenerate.
 - **⋯ menu on a meeting**: beyond rename and delete, **⇄ move to…** takes the whole
   meeting — transcript, analyses and generated material — into another
   brainstorming — available once the meeting has finished, like analysing and
@@ -142,8 +236,9 @@ palette: `Cmd/Ctrl+Shift+P` → "Loro tour".
   **habilidade dropdown** ("o que fazer com esta reunião") — pick any
   habilidade (including analyse/ask) and run it against the open meeting.
   Unrestricted: every habilidade shows up there, built-in and custom.
-- In a meeting: mark **questions/decisions/investigations** while people speak
-  (via the palette `Cmd/Ctrl+Shift+P` or the buttons); then run **analyse**
+- In a meeting: use **✎ Mark moment** (`Cmd/Ctrl+Alt+M`, or the button above the
+  transcript) to anchor the instant something important was said — one marker,
+  no kind to choose mid-sentence; then run **analyse**
   (⋯ menu) so Claude writes the analysis into `notas/`. When the recording ends
   the app opens the transcript and **offers** to analyse in one click — a
   suggestion, never a run, and it goes away if you ignore it.
@@ -242,6 +337,13 @@ are **versioned with it** (they flow through version/propose change
 normally).
 
 ## Queue → generate context
+
+- **Before anything goes in, Loro checks what the file carries.** If it looks
+  like a credential (API key, token, private key), the file **does not go in** —
+  the project is versioned and goes to git, and what is pushed cannot be taken
+  back. A national ID or a pasted transcript raises a warning instead: you read
+  it and decide. The warning names the rule and the line, never repeats what it
+  found.
 
 - Check the **files** of a brainstorming (a meeting → its analyses, notes,
   attachments) and **send to queue** — each file becomes its own queue

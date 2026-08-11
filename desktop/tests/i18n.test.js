@@ -161,3 +161,61 @@ test("os msgids novos da ADR-0018 têm par em inglês", () => {
     assert.ok(EN[m] && EN[m] !== m, `sem par em inglês: ${m}`);
   }
 });
+
+// #52 — o teste acima só varre app.js, mas METADE dos msgids vive no index.html
+// (`data-i18n` no texto, `data-i18n-attrs` em title/placeholder/aria-label). Eram
+// invisíveis para a suíte: passavam sem par e apareciam em português com a UI em
+// inglês. Este teste varre o HTML do mesmo jeito que o aplicador de i18n varre o
+// DOM — o msgid é o TEXTO do elemento (o valor de `data-i18n=` é ignorado por
+// ele, e portanto aqui também).
+test("todo msgid do index.html tem par em inglês", () => {
+  const html = fs.readFileSync(path.join(__dirname, "..", "src", "index.html"), "utf8");
+  const faltando = new Set();
+  // `data-i18n` e `data-i18n="chave"`: o aplicador IGNORA o valor e usa o texto
+  // do elemento nos dois casos, então os dois entram — excluir a forma com valor
+  // foi o furo que deixou "Armazenamento" passar sem par.
+  for (const m of html.matchAll(/<([a-z0-9]+)\b([^>]*\bdata-i18n\b(?!-)[^>]*)>([^<]*)</gi)) {
+    const txt = m[3].trim();
+    if (txt && !(txt in EN)) faltando.add(txt);
+  }
+  for (const m of html.matchAll(/<[^>]*\bdata-i18n-attrs="([^"]+)"[^>]*>/g)) {
+    for (const attr of m[1].split(",").map((x) => x.trim())) {
+      const v = new RegExp(attr + '="([^"]+)"').exec(m[0]);
+      if (v && !(v[1] in EN)) faltando.add(`${attr}: ${v[1]}`);
+    }
+  }
+  assert.deepStrictEqual([...faltando].sort(), [],
+    "msgids do index.html sem par em inglês:\n  " + [...faltando].sort().join("\n  "));
+});
+
+// O varredor acima só serve se casar com TODO `data-i18n` do arquivo: um
+// atributo que ele deixasse escapar viraria um falso "está tudo traduzido".
+test("o varredor do index.html não deixa nenhum data-i18n de fora", () => {
+  const html = fs.readFileSync(path.join(__dirname, "..", "src", "index.html"), "utf8");
+  // O total conta a forma NUA e a forma COM VALOR (`data-i18n="storage"`); o
+  // varredor tem de casar as duas. Contar o mesmo padrão dos dois lados deixaria
+  // o teste sempre verde — foi o que aconteceu, e "Armazenamento" passou.
+  const total = (html.match(/\bdata-i18n(?!-)/g) || []).length;
+  const casados = [...html.matchAll(/<([a-z0-9]+)\b([^>]*\bdata-i18n\b(?!-)[^>]*)>([^<]*)</gi)].length;
+  assert.ok(total > 100, `esperava dezenas de msgids no HTML, achei ${total}`);
+  assert.strictEqual(casados, total, `${total - casados} elementos data-i18n não foram varridos`);
+});
+
+// #53 (revisão) — o mapa EN é um objeto literal: uma chave repetida não é erro
+// de sintaxe, a última vence em silêncio. Foi assim que a Aparência sequestrou
+// "tema" (o termo do DOMÍNIO, um tema de brainstorming) e a UI em inglês passou
+// a pedir que o usuário escolhesse um "theme" onde queria dizer "topic". Os 235
+// testes seguiam verdes: todos perguntam se a chave existe, nenhum se existe
+// UMA vez. Este lê o arquivo como texto, porque em objeto já é tarde.
+test("nenhuma chave de tradução é declarada duas vezes", () => {
+  const src = fs.readFileSync(path.join(__dirname, "..", "src", "i18n.js"), "utf8");
+  const repetidas = [];
+  for (const bloco of src.split(/\n  \w+:\s*\{/).slice(1)) {
+    const vistas = new Map();
+    for (const m of bloco.matchAll(/^\s{4}"((?:[^"\\]|\\.)*)":/gm)) {
+      vistas.set(m[1], (vistas.get(m[1]) || 0) + 1);
+    }
+    for (const [k, n] of vistas) if (n > 1) repetidas.push(`${k} (${n}×)`);
+  }
+  assert.deepStrictEqual(repetidas, [], "chaves repetidas — a última vence sem avisar:\n  " + repetidas.join("\n  "));
+});

@@ -40,5 +40,35 @@
     return { capture: undefined };
   }
 
-  return { pickCaptureDevice, loopbackPattern };
+  // Restrições do getUserMedia. Loro é um GRAVADOR, não um app de chamada: pedir
+  // o microfone com os padrões do navegador (`{ audio: true }`) liga o
+  // processamento de voz do sistema — cancelamento de eco, ganho automático e
+  // supressão de ruído. No macOS isso muda o caminho de áudio da MÁQUINA
+  // INTEIRA, não só o do Loro: a unidade de voice-processing entra no lugar do
+  // caminho normal, o ganho automático achata a sua voz (quem ouve diz que você
+  // ficou baixo) e a saída passa a soar abafada — inclusive a do app de chamada,
+  // que já faz o próprio cancelamento e não precisa do nosso.
+  //
+  // O eco que o navegador cancelaria é o que o PRÓPRIO Loro toca, e o Loro não
+  // toca nada. O custo é medido; o benefício é zero. Então pedimos o dispositivo
+  // cru — que é também o que a transcrição quer: ganho automático bombeando e
+  // supressão de ruído comendo consoante pioram o reconhecimento.
+  const RAW_AUDIO = {
+    echoCancellation: false,
+    autoGainControl: false,
+    noiseSuppression: false,
+  };
+  // `echoCancel` é a escolha de quem ouve por ALTO-FALANTE: sem ela o microfone
+  // escuta os outros de volta pela caixa e a mesma fala entra nas duas trilhas —
+  // e aí nem o filtro de eco (LoroMeeting.echoOfOtherSource) consegue dizer com
+  // certeza quem falou, porque as duas cópias são igualmente plausíveis. Ligar
+  // custa o processamento de voz do sistema; por isso é escolha, não padrão.
+  // Ganho automático e supressão de ruído seguem SEMPRE desligados: são eles que
+  // achatam a voz, e nenhum dos dois protege contra o vazamento da caixa.
+  function micConstraints(deviceId, echoCancel) {
+    const base = { ...RAW_AUDIO, echoCancellation: !!echoCancel };
+    return { audio: deviceId ? { ...base, deviceId: { exact: deviceId } } : base };
+  }
+
+  return { pickCaptureDevice, loopbackPattern, micConstraints, RAW_AUDIO };
 });

@@ -32,7 +32,30 @@ pub fn gui_creation_flags() -> u32 {
     CREATE_NO_WINDOW
 }
 
-// A Command that never flashes a console window.
+// Session markers another agent leaves in the environment. Loro spawns the
+// user's agent CLI (embedded terminal and chat), and if Loro itself was started
+// from inside an agent session those markers are inherited: the CLI then
+// believes it is a *nested child* of that session and silently turns off its own
+// transcript ("Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION
+// marker"). Loro's agent is a session of its own, so the markers are stripped.
+//
+// This is a deny list, never a `CLAUDE_*` wildcard: real user configuration
+// travels under the same prefix (`CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_USE_BEDROCK`,
+// `CLAUDE_CODE_MAX_OUTPUT_TOKENS`…) and dropping it would break the agent the
+// user configured.
+pub const INHERITED_SESSION_MARKERS: &[&str] = &[
+    "CLAUDECODE",
+    "CLAUDE_CODE_CHILD_SESSION",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CODE_EXECPATH",
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_CODE_SSE_PORT",
+    "CLAUDE_EFFORT",
+    "CLAUDE_PID",
+];
+
+// A Command that never flashes a console window and never pretends to be the
+// child of somebody else's agent session.
 pub fn command(program: impl AsRef<OsStr>) -> Command {
     // `mut` is only needed on Windows, where the cfg block below sets the flag.
     #[allow(unused_mut)]
@@ -41,6 +64,9 @@ pub fn command(program: impl AsRef<OsStr>) -> Command {
     {
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(gui_creation_flags());
+    }
+    for k in INHERITED_SESSION_MARKERS {
+        cmd.env_remove(k);
     }
     cmd
 }
@@ -54,8 +80,51 @@ mod tests {
     fn gui_flags_are_create_no_window() {
         // 0x08000000 — the value is load-bearing: a wrong flag either shows the
         // window anyway or changes how the child is created. Measured effect on
-        // 30 console spawns: 82 console hosts without it, 20 with it (ADR-0014).
+        // 30 console spawns: 82 console hosts without it, 20 with it (ADR-0023,
+        // renumbered from 0014 — that number belongs to the fila decision).
         assert_eq!(gui_creation_flags(), 0x0800_0000);
+    }
+
+    #[test]
+    fn a_spawned_agent_does_not_inherit_another_agents_session() {
+        // The symptom this prevents is silent: the agent runs, but its transcript
+        // is never written because it thinks it is a nested child.
+        std::env::set_var("CLAUDE_CODE_CHILD_SESSION", "1");
+        let out = if cfg!(windows) {
+            command("cmd")
+                .args(["/C", "echo %CLAUDE_CODE_CHILD_SESSION%"])
+                .output()
+                .unwrap()
+        } else {
+            command("sh")
+                .args(["-c", "printf %s \"$CLAUDE_CODE_CHILD_SESSION\""])
+                .output()
+                .unwrap()
+        };
+        std::env::remove_var("CLAUDE_CODE_CHILD_SESSION");
+        let seen = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            seen.trim().is_empty() || seen.trim() == "%CLAUDE_CODE_CHILD_SESSION%",
+            "child still saw the marker: {seen:?}"
+        );
+    }
+
+    #[test]
+    fn stripping_markers_never_touches_user_configuration() {
+        // A `CLAUDE_*` wildcard would silently drop the agent the user configured.
+        for keep in [
+            "CLAUDE_CONFIG_DIR",
+            "CLAUDE_CODE_USE_BEDROCK",
+            "CLAUDE_CODE_USE_VERTEX",
+            "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+            "ANTHROPIC_API_KEY",
+            "ANTHROPIC_MODEL",
+        ] {
+            assert!(
+                !INHERITED_SESSION_MARKERS.contains(&keep),
+                "{keep} is configuration, not a session marker"
+            );
+        }
     }
 
     #[test]

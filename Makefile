@@ -11,7 +11,7 @@
 export PATH := $(HOME)/.cargo/bin:$(PATH)
 
 # Vanilla JS frontend files that must at least parse (node --check).
-JS_SRC := desktop/src/app.js desktop/src/overlay.js desktop/src/text.js desktop/src/audio.js desktop/src/mdedit.js
+JS_SRC := desktop/src/app.js desktop/src/shell.js desktop/src/overlay.js desktop/src/text.js desktop/src/audio.js desktop/src/mdedit.js
 
 .PHONY: help test test-rust test-js test-cli lint fmt build app test-docker syscap vendor-cm6 require-rust release
 
