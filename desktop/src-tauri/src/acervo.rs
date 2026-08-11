@@ -38,7 +38,7 @@ fn acervo_base() -> Result<PathBuf, String> {
 
 // Resolve an acervo-relative path to an existing file/dir, guarded to `base`
 // (canonicalize + starts_with). `base` must already be canonical.
-fn guarded_existing(base: &Path, rel: &str) -> Result<PathBuf, String> {
+pub(crate) fn guarded_existing(base: &Path, rel: &str) -> Result<PathBuf, String> {
     let p = base
         .join(rel)
         .canonicalize()

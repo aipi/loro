@@ -3,33 +3,77 @@
    (o fundo do ícone) no escuro. Mono nos rótulos, sans do sistema no texto.
    A ousadia mora num lugar só: a onda ganha cores de plumagem ao detectar fala. */
 
+/* ADR-0020 / redesign: o tema é ESCOLHIDO (claro · escuro · sistema) e escrito
+   como data-theme no <html> — "sistema" é resolvido em JS para light/dark, de
+   modo que o CSS só precisa conhecer os dois estados reais. Os tokens escuros
+   são QUENTES (#211e19), não o cinza-frio anterior. */
 :root {
+  color-scheme: light;
   /* papel e tinta (claro) */
   --paper: #fbfaf6;
   --panel: #ffffff;
+  --side: color-mix(in srgb, #ffffff 55%, #fbfaf6);
   --ink: #201d18;
+  --ink2: #3d3a34;
+  --ink3: #6f6b62;
   --muted: #97938a;
+  --ghost: #c9c5bc;
+  --line-strong: #e2ded5;
   --line: #e9e6de;
+  --line-soft: #efece5;
+  --line-dash: #d5d2ca;
   /* plumagem */
   --red: #e5484d;
+  --danger: #b04a4e;
   --yellow: #dd9c00;
+  --yellow-ink: #a87a08;
   --teal: #0e8c86;
+  --on-teal: #ffffff;
+  --on-solid: #ffffff;
   --live: var(--red);
+  /* terminal (mesma cor nos dois temas) */
+  --term-bg: #26231d;
+  --term-fg: #d8d3c8;
+  --term-dim: #8b8579;
+  --term-ok: #2fc7bf;
+  --term-cur: #e6b13a;
+  /* sombras */
+  --sh-card: 0 2px 10px rgba(32, 29, 24, .04);
+  --sh-card2: 0 2px 12px rgba(32, 29, 24, .05);
+  --sh-menu: 0 10px 30px rgba(32, 29, 24, .16);
+  --sh-modal: 0 20px 50px rgba(32, 29, 24, .25);
+  /* larguras fixas da anatomia */
+  --side-w-default: 250px;
+  --panel-w: 330px;
   /* tipografia */
   --mono: ui-monospace, "SF Mono", "Menlo", monospace;
   --sans: -apple-system, "Inter", system-ui, sans-serif;
 }
-@media (prefers-color-scheme: dark) {
-  :root {
-    --paper: #121719;
-    --panel: #1a2023;
-    --ink: #ece9e2;
-    --muted: #7d838a;
-    --line: #262d31;
-    --red: #ff5d62;
-    --yellow: #f7b500;
-    --teal: #2bc5b4;
-  }
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --paper: #211e19;
+  --panel: #2a2620;
+  --side: #26231d;
+  --ink: #f0ede5;
+  --ink2: #d8d3c8;
+  --ink3: #a29d92;
+  --muted: #8b8579;
+  --ghost: #5c574d;
+  --line-strong: #3a362e;
+  --line: #35312a;
+  --line-soft: #35312a;
+  --line-dash: #4a453b;
+  --red: #e5484d;
+  --danger: #e08488;
+  --yellow: #e6b13a;
+  --yellow-ink: #e6b13a;
+  --teal: #2fc7bf;
+  --on-teal: #211e19;
+  --on-solid: #211e19;
+  --sh-card: 0 4px 18px rgba(0, 0, 0, .3);
+  --sh-card2: 0 4px 18px rgba(0, 0, 0, .3);
+  --sh-menu: 0 10px 30px rgba(0, 0, 0, .45);
+  --sh-modal: 0 20px 50px rgba(0, 0, 0, .55);
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -1243,3 +1287,964 @@ body {
 .modelok { font-family: var(--mono); font-size: 10.5px; color: var(--teal); letter-spacing: .03em; }
 .modelprog { width: 120px; height: 6px; border-radius: 4px; background: var(--line); overflow: hidden; }
 .modelprog .bar { height: 100%; width: 0; background: var(--teal); transition: width .3s ease; }
+
+/* =====================================================================
+   REDESIGN — anatomia única (handoff "Loro — versão final", telas 1a–1k)
+   Header 54px → [sidebar 250/60 | abas + conteúdo | painel 330px].
+   Tudo abaixo vem DEPOIS das regras históricas de propósito: onde as duas
+   descrevem o mesmo elemento, a nova vence sem precisar de !important.
+   ===================================================================== */
+
+body { background: var(--paper); color: var(--ink); }
+#app { display: flex; flex-direction: column; height: 100vh; min-height: 0; }
+.ic { width: 14px; height: 14px; flex: none; fill: currentColor; }
+
+/* ---- botão base: uma ação primária por tela (só ela é "sólida") ---- */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+  font: 600 12.5px var(--sans); padding: 8px 16px; border-radius: 999px;
+  cursor: pointer; white-space: nowrap;
+}
+.btn:hover { border-color: var(--teal); color: var(--teal); }
+.btn.solid {
+  background: var(--accent, var(--teal)); border-color: transparent; color: var(--on-teal);
+  box-shadow: 0 2px 10px rgba(14, 140, 134, .25);
+}
+.btn.solid:hover { filter: brightness(1.06); color: var(--on-teal); }
+.btn.solid:disabled { background: color-mix(in srgb, var(--ink) 10%, transparent); color: var(--muted); box-shadow: none; cursor: not-allowed; }
+.btn.solid.amber { background: var(--yellow); color: var(--on-solid); box-shadow: none; }
+.btn.sm { padding: 7px 14px; font-size: 12px; }
+.btn.wide { width: 100%; }
+.ulink {
+  background: none; border: none; cursor: pointer; padding: 0;
+  font: inherit; color: var(--muted); text-decoration: underline;
+}
+.ulink:hover { color: var(--ink); }
+.ulink.danger { color: var(--danger); }
+.ulink.right { margin-left: auto; text-decoration: none; }
+.kbd { border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; font: 10px var(--mono); color: var(--muted); }
+
+/* ============ CABEÇALHO (54px) ============ */
+.apphead {
+  flex: none; display: flex; align-items: center; gap: 14px;
+  height: 54px; padding: 0 18px 0 14px;
+  border-bottom: 1px solid var(--line-soft); background: var(--paper);
+}
+.apphead .switch { position: relative; margin: 0; flex: none; }
+.projbtn {
+  display: inline-flex; align-items: center; gap: 10px;
+  background: none; border: none; cursor: pointer; color: var(--ink); padding: 4px 6px; border-radius: 9px;
+}
+.projbtn:hover { background: color-mix(in srgb, var(--ink) 5%, transparent); }
+.projlogo { border-radius: 8px; flex: none; }
+.projname { font: 650 14px var(--sans); max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.projbtn .swcaret { margin: 0; color: var(--muted); font-size: 11px; }
+.apphead .switchmenu { left: 6px; right: auto; min-width: 240px; top: calc(100% + 2px); }
+
+.destnav {
+  display: flex; gap: 2px; flex: none;
+  border: 1px solid var(--line); border-radius: 999px; padding: 3px; background: var(--panel);
+}
+.dest {
+  display: inline-flex; align-items: center; gap: 5px;
+  border: none; border-radius: 999px; padding: 6px 16px; cursor: pointer;
+  font: 600 12.5px var(--sans); color: var(--ink3); background: none;
+}
+.dest:hover { color: var(--ink); }
+.dest.on { background: var(--teal); color: #fff; }
+.dest[data-dest="home"].on { background: var(--ink); color: var(--paper); }
+.destbadge, .cbadge {
+  font: 600 10px var(--mono); color: #fff; background: var(--yellow);
+  border-radius: 999px; padding: 1px 6px; flex: none;
+}
+.headrec {
+  display: inline-flex; align-items: center; gap: 7px; cursor: pointer;
+  border: 1.5px solid var(--red); border-radius: 999px; padding: 5px 13px;
+  background: color-mix(in srgb, var(--red) 7%, transparent);
+  color: var(--red); font: 11px var(--mono); letter-spacing: .03em;
+}
+.headright { margin-left: auto; display: inline-flex; align-items: center; gap: 10px; flex: none; }
+.localtag { font: 11px var(--mono); color: var(--muted); letter-spacing: .02em; }
+@media (max-width: 900px) { .localtag { display: none; } }
+.recbtn {
+  display: inline-flex; align-items: center; gap: 8px;
+  border: none; background: var(--red); color: #fff; border-radius: 999px;
+  padding: 8px 18px; font: 600 13px var(--sans); cursor: pointer;
+  box-shadow: 0 2px 10px rgba(229, 72, 77, .3);
+}
+.recbtn:hover { filter: brightness(1.05); }
+.recbtn .rec-glyph { width: 10px; height: 10px; border-radius: 50%; background: #fff; transition: border-radius .15s, width .15s, height .15s; }
+.recbtn.recording { background: var(--ink); color: var(--paper); box-shadow: none; }
+.recbtn.recording .rec-glyph { width: 9px; height: 9px; border-radius: 2px; background: currentColor; }
+.aibtn {
+  display: inline-flex; align-items: center; gap: 6px;
+  border: 1px solid var(--line); background: var(--panel); color: var(--teal);
+  border-radius: 999px; padding: 6px 13px; font: 600 12px var(--sans); cursor: pointer;
+}
+.aibtn.on { background: color-mix(in srgb, var(--teal) 12%, transparent); border-color: color-mix(in srgb, var(--teal) 45%, transparent); }
+.apphead .dot { margin-left: 2px; }
+
+/* ============ LINHA PRINCIPAL ============ */
+.mainrow { flex: 1; min-height: 0; display: flex; flex-direction: row; }
+.bwrap { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+
+/* regra nº 1: a sidebar sobe até o header e a faixa de abas começa à direita dela */
+.bshell {
+  flex: 1; min-height: 0;
+  display: grid; grid-template-columns: var(--side-w, var(--side-w-default)) 5px minmax(0, 1fr);
+}
+.bshell.collapsed { grid-template-columns: 60px 0 minmax(0, 1fr); }
+.bshell.collapsed .sidegrip { display: none; }
+
+/* ---- sidebar expandida (250px) ---- */
+.bside {
+  display: flex; flex-direction: column; gap: 0; min-height: 0;
+  overflow: hidden; padding: 14px 12px 12px;
+  background: var(--side); border-right: 1px solid var(--line-soft);
+}
+.sidescroll { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+.sidesearch {
+  display: flex; align-items: center; gap: 8px; width: 100%; margin-bottom: 12px;
+  border: 1px solid var(--line); border-radius: 9px; background: var(--panel);
+  padding: 7px 9px; cursor: pointer; color: var(--muted); font: 12.5px var(--sans);
+}
+.sidesearch:hover { border-color: var(--teal); color: var(--ink); }
+.sidesearch > span:nth-child(2) { flex: 1; text-align: left; }
+.bgroup {
+  display: flex; align-items: center; justify-content: space-between; gap: 6px;
+  font: 600 11px var(--mono); letter-spacing: .09em; text-transform: uppercase;
+  color: var(--muted); margin: 12px 8px 4px;
+}
+.bgroup.amber > span:first-child, .bgroup.amber .bgtoggle { color: var(--yellow-ink); }
+.bgroup.teal > span:first-child { color: var(--teal); }
+.bgroup.pessoal > span:first-child { color: var(--yellow-ink); }
+.sidefoot {
+  flex: none; margin-top: auto; border-top: 1px solid var(--line-soft);
+  padding-top: 10px; display: flex; flex-direction: column; gap: 1px;
+}
+.footrow {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 6px 8px; border: none; background: none; border-radius: 7px;
+  font: 12.5px var(--sans); color: var(--ink3); cursor: pointer; text-align: left;
+}
+.footrow:hover { background: color-mix(in srgb, var(--ink) 5%, transparent); color: var(--ink); }
+.footrow .n { margin-left: auto; font: 10.5px var(--mono); color: var(--muted); }
+.footrow .qm { width: 14px; text-align: center; font: 600 13px var(--sans); color: var(--muted); }
+.sidefoot-row { display: flex; gap: 6px; margin-top: 6px; }
+.footcfg {
+  flex: 1; display: flex; align-items: center; gap: 8px;
+  padding: 8px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel);
+  font: 600 12.5px var(--sans); color: var(--ink); cursor: pointer;
+}
+.footcfg:hover, .footside:hover { border-color: var(--teal); color: var(--teal); }
+.footside {
+  flex: none; width: 36px; border: 1px solid var(--line); border-radius: 9px;
+  background: var(--panel); display: grid; place-items: center; cursor: pointer; color: var(--ink3);
+}
+.footside .ic, .footcfg .ic { width: 15px; height: 15px; }
+
+/* ---- sidebar recolhida (60px) ---- */
+.bside-mini {
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  padding: 12px 0; background: var(--side); border-right: 1px solid var(--line-soft);
+}
+.minibtn {
+  position: relative; width: 38px; height: 38px; border-radius: 10px;
+  border: 1px solid transparent; background: none; color: var(--ink3);
+  display: grid; place-items: center; cursor: pointer; flex: none;
+}
+.minibtn .ic { width: 17px; height: 17px; }
+.minibtn:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); color: var(--ink); }
+.minibtn.amber { color: var(--yellow-ink); }
+.minibtn.teal { color: var(--teal); }
+.minibtn.bordered { border-color: var(--line); background: var(--panel); }
+.minibtn[data-mini="rec"] { background: color-mix(in srgb, var(--red) 12%, transparent); color: var(--red); }
+.minibtn[data-mini="expand"] { margin-top: auto; }
+.minisep { width: 28px; height: 1px; background: var(--line); flex: none; }
+.minibadge {
+  position: absolute; top: -3px; right: -3px;
+  font: 600 9px var(--mono); color: #fff; background: var(--yellow);
+  border: 2px solid var(--paper); border-radius: 999px; padding: 0 4px;
+}
+.sidegrip { cursor: col-resize; background: var(--line); opacity: .35; }
+.sidegrip:hover, .sidegrip.dragging { opacity: 1; background: var(--accent, var(--teal)); }
+
+/* ---- faixa de abas: só documentos abertos (regra nº 2) ---- */
+.wstabs {
+  flex: none; display: flex; align-items: stretch; gap: 4px;
+  overflow-x: auto; overflow-y: hidden;
+  border-bottom: 1px solid var(--line-soft); background: transparent;
+  padding: 8px 16px 0;
+}
+.wstabs:empty { display: none; }
+.wstab {
+  display: flex; align-items: center; gap: 7px; max-width: 240px;
+  padding: 8px 14px; border: 1px solid transparent; border-bottom: none;
+  border-left: 1px solid transparent; border-radius: 9px 9px 0 0;
+  font: 600 12px var(--sans); color: var(--ink3); background: none; cursor: pointer; white-space: nowrap;
+}
+.wstab:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 4%, transparent); }
+.wstab.on {
+  border-color: var(--line); border-bottom: 1px solid var(--paper);
+  background: var(--paper); color: var(--ink); margin-bottom: -1px;
+}
+.wstab.preview .wsn { font-style: italic; }
+.wstab .wsclose { color: var(--ghost); font-size: 14px; opacity: 1; }
+.wstab--context { border-left-color: transparent; }
+.wstab .wstime { font: 10.5px var(--mono); color: var(--muted); }
+.wstab .wsrecdot { width: 8px; height: 8px; border-radius: 50%; background: var(--red); flex: none; }
+.wstabs .tabadd {
+  border: none; background: none; color: var(--muted); font-size: 14px;
+  cursor: pointer; padding: 0 8px; align-self: center;
+}
+.wstabs .tabadd:hover { color: var(--teal); }
+
+.bmain { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
+.wsbody { flex: 1; min-height: 0; overflow-y: auto; padding: 0; }
+
+/* ============ PAINEL DIREITO (330px) ============ */
+.aipanel {
+  flex: none; width: var(--panel-w); min-width: var(--panel-w);
+  display: flex; flex-direction: column; min-height: 0;
+  background: var(--panel); border-left: 1px solid var(--line-soft);
+}
+/* as três abas somam exatamente 330px — nada mais entra nesta linha */
+.paneltabs { flex: none; display: flex; gap: 2px; padding: 10px 14px 8px; }
+.ptab {
+  display: inline-flex; align-items: center; gap: 6px;
+  border: none; background: none; border-radius: 8px; padding: 7px 13px;
+  font: 600 12.5px var(--sans); color: var(--ink3); cursor: pointer;
+}
+.ptab .ic { width: 14px; height: 14px; }
+.ptab.on { background: color-mix(in srgb, var(--ink) 7%, transparent); color: var(--ink); }
+.panelpane { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 16px 18px; display: flex; flex-direction: column; gap: 12px; }
+.panelpane.term { padding: 0; overflow: hidden; }
+.psec { display: flex; flex-direction: column; gap: 8px; }
+.phead { font: 600 11px var(--mono); letter-spacing: .09em; text-transform: uppercase; color: var(--muted); }
+.psep { height: 1px; background: var(--line-soft); }
+.pactions { display: flex; flex-direction: column; gap: 6px; }
+.pact {
+  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+  border: 1px solid var(--line); border-radius: 9px; background: var(--paper);
+  padding: 9px 11px; font: 12.5px var(--sans); color: var(--ink); cursor: pointer;
+}
+.pact:hover { border-color: var(--teal); color: var(--teal); }
+.plink { align-self: flex-start; border: none; background: none; cursor: pointer; font: 600 11.5px var(--sans); color: var(--teal); padding: 2px 0; }
+.plink:hover { text-decoration: underline; }
+.ptimeline { display: flex; flex-direction: column; gap: 9px; }
+.tl { display: flex; align-items: flex-start; gap: 9px; font: 12.5px var(--sans); color: var(--ink2); }
+.tl .tldot { width: 8px; height: 8px; border-radius: 50%; background: var(--ghost); flex: none; margin-top: 4px; }
+.tl.now .tldot { background: var(--yellow); }
+.tl.saved .tldot { background: var(--teal); }
+.tl .tlmeta { display: block; font: 10.5px var(--mono); color: var(--muted); margin-top: 2px; }
+.pbranch {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  border: 1px solid var(--line); border-radius: 9px; background: var(--paper);
+  padding: 7px 10px; font: 11.5px var(--mono); color: var(--ink3); cursor: pointer;
+}
+.pbranch:hover { border-color: var(--teal); color: var(--teal); }
+.pnote { font: 11px/1.55 var(--sans); color: var(--muted); }
+
+/* ---- painel: chat ---- */
+.chatstate {
+  flex: none; display: flex; align-items: center; gap: 10px;
+  font: 10.5px var(--mono); color: var(--muted); white-space: nowrap; padding-bottom: 2px;
+}
+.chatpill { border: 1px solid var(--line); border-radius: 999px; padding: 2px 8px; }
+.chatthread { flex: 1; min-height: 80px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
+.chatmsg { align-self: flex-end; max-width: 90%; background: var(--paper); border: 1px solid var(--line); border-radius: 12px; padding: 8px 12px; font: 13px/1.5 var(--sans); color: var(--ink); }
+.chatans { font: 13px/1.6 var(--sans); color: var(--ink2); }
+.chatans .src { display: block; font: 11px var(--mono); color: var(--teal); margin-top: 4px; }
+.chatempty { font: 12px/1.6 var(--sans); color: var(--muted); }
+.composer { flex: none; display: flex; flex-direction: column; gap: 7px; }
+.chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.chip {
+  border: 1px solid var(--line); border-radius: 999px; background: var(--paper);
+  padding: 4px 10px; font: 11.5px var(--sans); color: var(--ink3); cursor: pointer; white-space: nowrap;
+}
+.chip:hover { border-color: var(--teal); color: var(--teal); }
+.armed { display: flex; }
+.armedchip {
+  display: inline-flex; align-items: center; gap: 6px;
+  border: 1px solid color-mix(in srgb, var(--teal) 40%, transparent);
+  background: color-mix(in srgb, var(--teal) 8%, transparent);
+  color: var(--teal); border-radius: 999px; padding: 4px 10px; font: 600 11.5px var(--sans);
+}
+.armedchip button { border: none; background: none; color: inherit; cursor: pointer; font-size: 13px; line-height: 1; }
+.composerbox {
+  display: flex; align-items: flex-end; gap: 8px;
+  border: 1px solid var(--line); border-radius: 12px; background: var(--paper); padding: 8px 8px 8px 12px;
+}
+.composerbox textarea {
+  flex: 1; border: none; background: none; outline: none; resize: none;
+  font: 13px/1.5 var(--sans); color: var(--ink); max-height: 120px;
+}
+.sendbtn {
+  flex: none; width: 34px; height: 34px; border-radius: 50%;
+  border: none; background: var(--accent, var(--teal)); color: var(--on-teal);
+  font-size: 15px; cursor: pointer;
+}
+.sendbtn:hover { filter: brightness(1.06); }
+
+/* ---- painel: terminal ---- */
+.termpanel { display: flex; flex-direction: column; min-height: 0; background: var(--term-bg); height: auto; border: none; }
+.panelpane.term > .termpanel { flex: 1; min-height: 0; }
+.termdock { flex: none; height: 34vh; min-height: 0; display: flex; border-top: 1px solid var(--line-soft); }
+.termdock > .termpanel { flex: 1; min-width: 0; }
+.termstrip {
+  flex: none; display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px; border-bottom: 1px solid rgba(255, 255, 255, .07);
+}
+.termname { color: var(--term-ok); font-size: 11px; letter-spacing: .04em; }
+.termstrip .ulink { color: var(--term-dim); font: 11px var(--mono); }
+.termstrip .ulink:hover { color: var(--term-fg); }
+.termstrip .glyph { color: var(--term-dim); margin-left: 0; }
+.termstrip .glyph:hover { color: var(--term-fg); }
+.termstrip #termSide { margin-left: auto; }
+.termview { flex: 1; min-height: 0; padding: 6px 8px; }
+.termview .xterm { height: 100%; }
+.termfoot {
+  flex: none; display: flex; align-items: center; gap: 10px;
+  padding: 6px 12px; font-size: 11px; color: var(--term-dim);
+  border-top: 1px solid rgba(255, 255, 255, .07);
+}
+.termfoot .ulink.danger { color: #b04a4e; margin-left: auto; }
+
+/* ============ 1a · INÍCIO ============ */
+.dest-view { padding: 34px 44px 28px; }
+.dest-view.home { display: flex; flex-direction: column; align-items: center; padding: 44px 36px 28px; }
+.dest-view.home > * { width: 620px; max-width: 100%; }
+.hgreet { display: flex; flex-direction: column; gap: 6px; margin-bottom: 28px; }
+.hgreet h1 { font: 650 26px var(--sans); color: var(--ink); }
+.hgreet p { font: 14px/1.6 var(--sans); color: var(--ink3); }
+.herocard {
+  display: flex; align-items: center; gap: 20px; text-align: left;
+  background: var(--panel); border: 1px solid var(--line-strong); border-radius: 16px;
+  padding: 24px 26px; cursor: pointer; box-shadow: var(--sh-card); margin-bottom: 16px;
+}
+.herocard:hover { border-color: color-mix(in srgb, var(--red) 40%, var(--line-strong)); }
+.heroring { flex: none; width: 64px; height: 64px; border-radius: 50%; border: 2px solid var(--red); display: grid; place-items: center; }
+.herodisc { width: 22px; height: 22px; border-radius: 50%; background: var(--red); }
+.herotxt { display: flex; flex-direction: column; gap: 3px; }
+.herotxt b { font: 600 17px var(--sans); color: var(--ink); }
+.herotxt span { font: 13px/1.5 var(--sans); color: var(--ink3); }
+.heroarrow { margin-left: auto; font-size: 16px; color: var(--ghost); }
+.herogrid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-bottom: 28px; }
+.minicard {
+  display: flex; flex-direction: column; gap: 5px; text-align: left;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+  padding: 14px 16px; cursor: pointer;
+}
+.minicard:hover { border-color: var(--teal); }
+.mc-t { display: flex; align-items: center; gap: 7px; font: 600 13.5px var(--sans); color: var(--ink); }
+.mc-t.teal { color: var(--teal); }
+.mc-s { font: 11.5px var(--sans); color: var(--muted); }
+.pendingbar {
+  display: flex; align-items: center; gap: 14px;
+  background: color-mix(in srgb, var(--yellow) 8%, var(--panel));
+  border: 1px solid color-mix(in srgb, var(--yellow) 35%, var(--line));
+  border-radius: 12px; padding: 14px 18px;
+}
+.pendingbar > b { font: 600 20px var(--sans); color: var(--yellow-ink); }
+.pendingbar > span { flex: 1; font: 13px/1.5 var(--sans); color: var(--ink2); }
+
+/* ============ 1b · ORGANIZAR ============ */
+.viewhead { max-width: 720px; display: flex; flex-direction: column; gap: 5px; margin-bottom: 22px; }
+.viewhead h1 { font: 650 21px var(--sans); color: var(--ink); }
+.viewhead p { font: 13.5px/1.6 var(--sans); color: var(--ink3); }
+.orglist {
+  max-width: 720px; background: var(--panel); border: 1px solid var(--line);
+  border-radius: 14px; padding: 4px 18px; margin-bottom: 18px;
+}
+.orgrow { display: flex; align-items: center; gap: 12px; padding: 15px 0; border-bottom: 1px solid var(--line-soft); }
+.orgrow:last-child { border-bottom: none; }
+.orgrow input[type="checkbox"] { accent-color: var(--teal); flex: none; margin: 0; }
+.orgrow .oname { font: 600 14px var(--sans); color: var(--ink); cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.orgrow .ometa { font: 11.5px var(--mono); color: var(--muted); }
+.orgrow .ometa i { font-style: normal; color: var(--teal); }
+.orgrow .ocol { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+.orgrow .oact { margin-left: auto; display: flex; align-items: center; gap: 8px; flex: none; }
+.orgempty { padding: 22px 0; font: 13px var(--sans); color: var(--muted); }
+.orgfoot { max-width: 720px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.orgnote { font: 12.5px var(--sans); color: var(--ink3); }
+.orgopts { max-width: 720px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-top: 12px; }
+.opt.inline { padding: 0; font-size: 12.5px; }
+.opt.inline:hover { background: none; }
+.dropzone {
+  display: block; width: 100%; max-width: 720px; margin-top: 18px;
+  border: 1.5px dashed var(--line-dash); border-radius: 12px; background: none;
+  padding: 16px; font: 12.5px var(--sans); color: var(--muted); cursor: pointer; text-align: center;
+}
+.dropzone:hover { border-color: var(--teal); color: var(--teal); }
+#app.dropping .dropzone { border-color: var(--teal); color: var(--teal); background: color-mix(in srgb, var(--teal) 8%, transparent); }
+
+/* ============ 1c · CONHECIMENTO ============ */
+.notifbar {
+  display: flex; align-items: center; gap: 12px; max-width: 720px; margin-bottom: 18px;
+  border: 1px solid color-mix(in srgb, var(--teal) 35%, var(--line));
+  background: color-mix(in srgb, var(--teal) 6%, transparent);
+  border-radius: 10px; padding: 9px 12px; font-size: 12px;
+}
+.notifbar > span { flex: 1; color: var(--ink2); font-size: 11.5px; }
+.knowgrid { max-width: 760px; display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+@media (max-width: 1050px) { .knowgrid { grid-template-columns: 1fr; } }
+.knowcard {
+  position: relative; display: flex; flex-direction: column; gap: 8px;
+  border: 1px solid var(--line); border-left: 3px solid var(--teal); border-radius: 12px;
+  background: var(--panel); padding: 16px 18px; cursor: pointer; text-align: left;
+}
+.knowcard:hover { box-shadow: var(--sh-card); }
+.knowcard .kt { display: flex; align-items: center; gap: 8px; font: 600 14px var(--sans); color: var(--ink); padding-right: 24px; }
+.knowcard .kt .ic { color: var(--teal); }
+.knowcard .kd { font: 12.5px/1.55 var(--sans); color: var(--ink3); }
+.knowcard .kf { display: flex; align-items: center; gap: 10px; font: 10.5px var(--mono); color: var(--muted); margin-top: auto; }
+.knowcard .kopen { margin-left: auto; font: 600 11.5px var(--sans); color: var(--teal); }
+.knowcard .kprop {
+  font: 600 10px var(--mono); color: var(--yellow-ink);
+  border: 1px solid color-mix(in srgb, var(--yellow) 45%, transparent);
+  background: color-mix(in srgb, var(--yellow) 8%, transparent);
+  border-radius: 999px; padding: 1px 7px;
+}
+.knowcard .rowmenu { position: absolute; top: 12px; right: 10px; }
+.knowadd {
+  display: grid; place-items: center; gap: 4px; min-height: 96px;
+  border: 1.5px dashed var(--line-dash); border-radius: 12px; background: none;
+  color: var(--muted); font: 600 12.5px var(--sans); cursor: pointer;
+}
+.knowadd:hover { border-color: var(--teal); color: var(--teal); }
+
+/* ============ 1d / 1e · DOCUMENTO ============ */
+#bDocWrap { padding: 26px 34px 32px; display: flex; gap: 22px; align-items: flex-start; }
+.doccard {
+  flex: 1; min-width: 0; max-width: 700px; margin: 0 auto;
+  background: var(--panel); border: 1px solid var(--line-strong); border-radius: 16px;
+  padding: 26px 30px; box-shadow: var(--sh-card2);
+}
+.dochead { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+.crumbpath { font: 11px var(--mono); color: var(--muted); }
+.pillamber {
+  font: 600 10px var(--mono); color: var(--yellow-ink); text-transform: lowercase;
+  border: 1px solid color-mix(in srgb, var(--yellow) 45%, transparent);
+  background: color-mix(in srgb, var(--yellow) 8%, transparent);
+  border-radius: 999px; padding: 3px 9px;
+}
+.doccard .tabs.small { margin-left: auto; border-color: var(--line); }
+.doccard .tabs.small .tab.on { background: var(--ink); color: var(--paper); box-shadow: none; }
+.doc.reader { max-width: none; margin: 0; font: 14.5px/1.7 var(--sans); color: var(--ink2); }
+.doc.reader h1 { font: 650 23px var(--sans); color: var(--ink); margin: .2em 0 .5em; }
+.doc.reader h2 { font: 650 16px var(--sans); color: var(--ink); border: none; margin: 1.3em 0 .4em; }
+.approvebar { display: flex; align-items: center; gap: 10px; margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--line-soft); }
+.editfoot { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
+.editfoot .btn { flex: none; white-space: nowrap; }
+.editnote { flex: 1; font: 11px var(--mono); color: var(--muted); }
+
+/* barra markdown + editor: um card contínuo (1e) */
+.mdbar { border-radius: 10px 10px 0 0; border-bottom: none; margin-bottom: 0; background: var(--panel); }
+.mdbar button { font: 600 12.5px var(--mono); color: var(--ink3); }
+.edithost { border-radius: 0 0 10px 10px; background: var(--panel); }
+/* Editar usa o MESMO cartão centralizado do visualizar (pedido do dono,
+   2026-08-11 — "padrão geral"): a moldura não muda quando o modo muda, só o
+   conteúdo. O cartão vira coluna flex para o editor encher a altura. */
+#wsBody.editing { padding: 0; overflow: hidden; }
+#wsBody.editing #bDocWrap { display: flex; flex-direction: column; height: 100%; min-height: 0; padding: 20px 34px 24px; }
+#wsBody.editing .doccard { display: flex; flex-direction: column; flex: 1; min-height: 0; width: 100%; max-width: 700px; margin: 0 auto; padding: 20px 30px 18px; }
+#wsBody.editing .docbody { flex: 1; min-height: 0; }
+#wsBody.editing .mdbar { flex: none; margin: 0; }
+#wsBody.editing .edithost { flex: 1; min-height: 0; border: 1px solid var(--line); border-top: none; border-radius: 0 0 10px 10px; background: var(--panel); }
+#wsBody.editing .findbar { margin: 0 0 8px; }
+
+/* busca no documento (1k) */
+.findbar { border-radius: 999px; padding: 8px 14px; background: var(--panel); border-color: var(--line); gap: 8px; }
+.findbar .ic { color: var(--muted); }
+.doc mark.hl { background: color-mix(in srgb, var(--yellow) 18%, transparent); }
+.doc mark.hl.cur { background: color-mix(in srgb, var(--yellow) 35%, transparent); color: inherit; }
+
+/* ============ 1f · GRAVAÇÃO AO VIVO ============ */
+.recview { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.endbar {
+  flex: none; display: flex; align-items: center; gap: 14px; margin: 18px 34px 0;
+  border: 1px solid color-mix(in srgb, var(--yellow) 40%, var(--line));
+  background: color-mix(in srgb, var(--yellow) 8%, var(--panel));
+  border-radius: 12px; padding: 13px 18px;
+}
+.endtxt { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.endtxt b { font: 600 13.5px var(--sans); color: var(--ink); }
+.endtxt span { font: 11.5px var(--mono); color: var(--muted); }
+.recacts { flex: none; display: flex; align-items: center; gap: 8px; padding: 18px 34px 12px; flex-wrap: wrap; }
+.recacts .mini-select { margin-left: auto; }
+.recscroll { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 34px 20px; }
+.doc.transcript { max-width: 620px; margin: 0 auto; font: 15px/1.75 var(--sans); color: var(--ink2); }
+.doc.transcript .spk { font: 600 11px var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--teal); }
+.doc.transcript p.partial { opacity: .55; }
+.recfoot {
+  flex: none; display: flex; align-items: center; gap: 14px;
+  padding: 10px 34px; border-top: 1px solid var(--line-soft); background: var(--panel);
+}
+.recfoot .timer { font-variant-numeric: tabular-nums; color: var(--ink3); font-size: 12px; }
+.recfoot .wave { flex: 1; min-width: 40px; height: 26px; display: block; }
+.recnote { font-size: 11px; color: var(--muted); white-space: nowrap; }
+@media (max-width: 1150px) { .recnote { display: none; } }
+.privacypill {
+  display: inline-flex; align-items: center; gap: 6px; flex: none;
+  border: 1px solid color-mix(in srgb, var(--teal) 40%, transparent);
+  color: var(--teal); background: color-mix(in srgb, var(--teal) 7%, transparent);
+  border-radius: 999px; padding: 4px 11px; font-size: 11px;
+}
+.privacypill.warn {
+  border-color: color-mix(in srgb, var(--yellow) 50%, transparent);
+  color: var(--yellow-ink); background: color-mix(in srgb, var(--yellow) 9%, transparent);
+}
+
+/* ============ 1g · CONFIGURAÇÕES (página) ============ */
+.cfgpage { position: fixed; inset: 0; z-index: 45; display: flex; flex-direction: column; background: var(--paper); }
+.backbtn { border: none; background: none; cursor: pointer; font: 600 13px var(--sans); color: var(--ink3); padding: 6px 8px; border-radius: 8px; }
+.backbtn:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 5%, transparent); }
+.cfgtitle { font: 650 15px var(--sans); color: var(--ink); }
+.cfgbody { flex: 1; min-height: 0; display: flex; }
+.cfgnav {
+  flex: none; width: 230px; padding: 18px 12px; display: flex; flex-direction: column; gap: 2px;
+  border-right: 1px solid var(--line-soft); background: var(--side); overflow-y: auto;
+}
+.cfgnavbtn {
+  text-align: left; border: none; background: none; cursor: pointer;
+  padding: 8px 12px; border-radius: 8px; font: 13px var(--sans); color: var(--ink3);
+}
+.cfgnavbtn:hover { background: color-mix(in srgb, var(--ink) 5%, transparent); color: var(--ink); }
+.cfgnavbtn.on { background: color-mix(in srgb, var(--teal) 10%, transparent); color: var(--teal); font-weight: 600; }
+.cfgmain { flex: 1; min-width: 0; overflow-y: auto; padding: 26px 34px 40px; }
+.cfgsec { max-width: 620px; }
+.cfgsec h3 { font: 650 19px var(--sans); color: var(--ink); margin: 0 0 12px; }
+.cfgsec h3 ~ h3 { margin-top: 26px; }
+.cfgcard {
+  border: 1px solid var(--line); border-radius: 14px; background: var(--panel);
+  padding: 20px 22px; display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px;
+}
+.cfgcard .field { border: none; background: none; margin: 0; padding: 0; }
+.cfgcard .field > .mono:first-child { width: 150px; flex: none; }
+.cfgcard .opt { padding: 2px 0; }
+.cfgcard .opt:hover { background: none; }
+.cfgcard .hint { margin: 0; }
+.cfgcard input[type="text"] {
+  flex: 1; border: 1px solid var(--line); border-radius: 8px; background: var(--paper);
+  color: var(--ink); font: 13px var(--sans); padding: 6px 10px; outline: none;
+}
+.segrow { display: inline-flex; gap: 2px; border: 1px solid var(--line); border-radius: 999px; padding: 3px; background: var(--paper); }
+.segbtn { border: none; background: none; border-radius: 999px; padding: 5px 13px; font: 600 12px var(--sans); color: var(--ink3); cursor: pointer; white-space: nowrap; }
+.segbtn.on { background: var(--ink); color: var(--paper); }
+.ghrow { display: flex; align-items: center; gap: 10px; }
+.ghchk.on > span:first-child { color: var(--teal); }
+.modelrow { background: var(--paper); }
+.modelrow.installed { background: color-mix(in srgb, var(--teal) 5%, var(--paper)); border-color: color-mix(in srgb, var(--teal) 30%, var(--line)); }
+
+/* ============ 1j · PRIMEIRO USO ============ */
+.wizard { max-width: 560px; margin: 0 auto; padding: 40px 24px 40px; text-align: left; align-items: stretch; gap: 18px; overflow-y: auto; }
+.wizhead { display: flex; align-items: flex-start; gap: 14px; }
+.wizhead h1 { font: 650 22px var(--sans); color: var(--ink); }
+.wizard .lead { font: 13.5px/1.6 var(--sans); color: var(--ink3); margin-top: 4px; }
+.wizard-icon { border-radius: 9px; flex: none; box-shadow: none; }
+.wizcard { border: 1px solid var(--line); border-radius: 14px; background: var(--panel); padding: 8px 18px; display: flex; flex-direction: column; }
+.wizcard .wfield { border: none; border-bottom: 1px solid var(--line-soft); border-radius: 0; background: none; padding: 12px 0; }
+.wizcard > *:last-child { border-bottom: none; }
+.wizcard .wfield > span { width: 150px; }
+.wizadv > summary { cursor: pointer; font: 600 12.5px var(--sans); color: var(--ink3); padding: 4px 0; }
+.wizadv > summary:hover { color: var(--ink); }
+.wizadv .wizcard { margin-top: 10px; padding: 14px 18px; }
+.wizfoot { display: flex; align-items: center; gap: 14px; }
+.depbanner {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  border: 1px solid color-mix(in srgb, var(--yellow) 45%, transparent);
+  background: color-mix(in srgb, var(--yellow) 8%, transparent);
+  border-radius: 12px; padding: 13px 16px;
+}
+.depmsg { flex: 1; font: 13px/1.5 var(--sans); color: var(--ink2); }
+#setupBanner { margin: 22px 34px 0; }
+.tplhint { margin: -6px 0 8px 150px; }
+
+/* ============ 1k · PALETA DE COMANDOS (⌘K) ============ */
+.cmdk-box { width: min(520px, calc(100vw - 40px)); border-radius: 14px; box-shadow: var(--sh-modal); }
+.cmdk-field { display: flex; align-items: center; gap: 10px; padding: 0 14px; border-bottom: 1px solid var(--line); }
+.cmdk-field .ic { color: var(--muted); }
+.cmdk-input { border-bottom: none; padding: 14px 0; }
+.cmdk-esc { flex: none; font-size: 10px; color: var(--ghost); }
+.cmdk-group { font: 600 10px var(--mono); letter-spacing: .09em; text-transform: uppercase; color: var(--muted); padding: 10px 10px 4px; }
+.cmdk-item.on { background: color-mix(in srgb, var(--teal) 8%, transparent); }
+.cmdk-k { color: var(--ghost); border: none; font-size: 10px; }
+
+/* ============ ajustes finos nos componentes herdados ============ */
+.bitem { font-size: 13px; padding: 7px 8px; border-radius: 7px; }
+.bitem.file { font-family: var(--sans); font-size: 12.5px; color: var(--ink); }
+.bitem .bmeta { display: none; }
+.bside.wide .bmeta { display: block; }
+.bempty { font: 11.5px var(--sans); color: var(--muted); padding: 4px 10px 8px; }
+.bchild { margin-left: 15px; border-left: 1px solid var(--line); padding-left: 4px; }
+.bchild .bchild { margin-left: 14px; }
+/* ADR-0020: ⋯ substitui o número em toda pasta e arquivo; contagens só onde são funcionais */
+.rowmenu { border: none; background: none; width: 20px; height: 20px; font: 600 13px var(--mono); color: var(--muted); }
+.rowmenu:hover { color: var(--ink); border: none; background: color-mix(in srgb, var(--ink) 7%, transparent); }
+.btree .pill { display: none; }
+.bitem.addctx { border-radius: 8px; font-family: var(--sans); font-size: 11.5px; }
+.badge { border-radius: 999px; font-size: 10px; }
+.mini-select {
+  font: 11px var(--mono); color: var(--ink3); background: var(--panel);
+  border: 1px solid var(--line); border-radius: 999px; padding: 5px 10px;
+}
+.floatmenu { width: 196px; min-width: 196px; max-width: 196px; border-color: var(--line-dash); border-radius: 10px; box-shadow: var(--sh-menu); padding: 5px; }
+.fitem2 { padding: 7px 9px; border-radius: 7px; font-size: 12.5px; }
+.fsep { border-top: 1px solid var(--line-soft); margin: 4px 6px; }
+.switchmenu { border-radius: 10px; box-shadow: var(--sh-menu); }
+.sheet { border-radius: 14px; box-shadow: var(--sh-modal); }
+.sheet-wrap { background: color-mix(in srgb, var(--ink) 18%, transparent); }
+.toast { position: fixed; bottom: 26px; }
+.mtgpill { bottom: 60px; }
+.tabs { border-color: var(--line); background: var(--paper); }
+.tab.on { background: var(--ink); color: var(--paper); box-shadow: none; }
+.hint { font: 11px/1.5 var(--mono); color: var(--muted); }
+.draftnote { border-radius: 10px; }
+.wave { display: block; }
+.mtg-surface { display: block; }
+.mtg-rail { display: none; }
+
+/* ADR-0020 §8: nenhum tooltip explicativo ⓘ sobrevive ao redesign */
+.ghelp { display: none; }
+
+/* 1f: o rótulo do falante distingue o operador dos demais canais */
+.doc.transcript .spk { color: var(--yellow-ink); }
+.doc.transcript .spk.spk--me { color: var(--teal); }
+/* aba de ideia (mundo não versionado) usa o âmbar também no ícone */
+.nico.amber { color: var(--yellow-ink); }
+
+/* Janela de referência do redesign: 1280 × 830 (laptop). Abaixo disso a
+   anatomia cede na ordem em que dói menos — o painel de 330px some antes de a
+   barra lateral apertar, e a coluna de conteúdo nunca fica menor que ~400px. */
+@media (max-width: 1040px) {
+  .aipanel { display: none; }
+}
+@media (max-width: 900px) {
+  .bshell { grid-template-columns: minmax(0, min(var(--side-w, var(--side-w-default)), 34vw)) 5px minmax(0, 1fr); }
+  .dest { padding: 6px 11px; }
+  .herogrid { grid-template-columns: 1fr; }
+  .dest-view { padding: 26px 22px 24px; }
+  .recacts, .recscroll, .recfoot, .endbar { padding-left: 22px; padding-right: 22px; }
+  .endbar { margin-left: 22px; margin-right: 22px; }
+  #bDocWrap { padding: 20px 22px 26px; }
+}
+
+/* ---- alças de redimensionamento das colunas laterais ----
+   A árvore de arquivos já tinha a sua (#sideGrip). O painel direito e a doca do
+   terminal ganham as suas: a mesma affordance (cursor de redimensionar, faixa
+   que acende ao passar o mouse), o mesmo gesto, a mesma persistência. */
+.aigrip {
+  flex: none; width: 5px; cursor: col-resize;
+  background: var(--line); opacity: .35;
+}
+.aigrip:hover, .aigrip.dragging { opacity: 1; background: var(--accent, var(--teal)); }
+.termgrip {
+  flex: none; height: 5px; cursor: row-resize;
+  background: var(--line); opacity: .35;
+}
+.termgrip:hover, .termgrip.dragging { opacity: 1; background: var(--accent, var(--teal)); }
+/* enquanto arrasta, nada mais captura o ponteiro (iframes/canvas/xterm) */
+body.resizing { cursor: col-resize; user-select: none; }
+body.resizing.rowwise { cursor: row-resize; }
+body.resizing #mainRow * { pointer-events: none; }
+.termdock { height: var(--term-h, 34vh); }
+
+/* ---- chat: resposta, passos e o bloco de permissão (ADR-0021) ---- */
+.chatans { font: 13px/1.6 var(--sans); color: var(--ink2); }
+.chatans > *:first-child { margin-top: 0; }
+.chatans h1, .chatans h2, .chatans h3 { font: 650 13.5px var(--sans); color: var(--ink); margin: .9em 0 .3em; border: none; }
+.chatans ul, .chatans ol { margin: .3em 0 .6em 1.1em; }
+.chatans pre { font-size: 11px; padding: 8px 10px; margin: .5em 0; }
+.chatans code { font-size: 11.5px; }
+.chatans p { margin: 0 0 .5em; }
+.chatperm {
+  display: flex; flex-direction: column; gap: 6px;
+  border: 1px solid color-mix(in srgb, var(--yellow) 45%, transparent);
+  background: color-mix(in srgb, var(--yellow) 8%, transparent);
+  border-radius: 12px; padding: 12px 14px;
+}
+.chatperm b { font: 600 12.5px var(--sans); color: var(--ink); }
+.chatperm span { font: 11.5px/1.5 var(--sans); color: var(--ink3); }
+.chatperm .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+.sendbtn.stop { background: var(--ink); color: var(--paper); }
+.composerbox textarea:disabled { opacity: .6; }
+
+/* =====================================================================
+   Ajustes da revisão de uso (2026-08-11) — alinhamento, sinais de estado
+   e as affordances que faltavam. Cada bloco resolve um item relatado.
+   ===================================================================== */
+
+/* ---- 1g/1j: os campos precisam de UMA coluna, não de larguras por linha ----
+   O rótulo tinha largura fixa em uns lugares e não em outros, e os controles
+   caíam onde davam. Agora todo `.field`/`.wfield` é a mesma grade de duas
+   colunas, e o controle sempre encosta à direita. */
+.cfgcard .field, .wizcard .wfield {
+  display: grid; grid-template-columns: 170px minmax(0, 1fr);
+  align-items: center; gap: 12px; width: 100%;
+}
+.cfgcard .field > .mono:first-child,
+.wizcard .wfield > span:first-child {
+  width: auto; justify-self: start; align-self: center; line-height: 1.3;
+}
+.cfgcard .field > *:last-child, .wizcard .wfield > *:last-child { justify-self: stretch; min-width: 0; }
+.cfgcard .field select, .wizcard .wfield select,
+.cfgcard .field input[type="text"], .wizcard .wfield input {
+  width: 100%; max-width: none; justify-self: stretch;
+  font: 13px var(--sans); color: var(--ink);
+  background: var(--paper); border: 1px solid var(--line);
+  border-radius: 8px; padding: 7px 10px; outline: none;
+}
+.cfgcard .field select:focus, .wizcard .wfield select:focus,
+.cfgcard .field input:focus, .wizcard .wfield input:focus { border-color: var(--teal); }
+/* controles que não são campo de texto não devem esticar */
+.cfgcard .field .segrow, .cfgcard .field .swatches,
+.wizcard .wfield .swatches { justify-self: start; }
+.cfgcard .field .dirinfo, .wizcard .wfield .dirbtn {
+  justify-self: stretch; text-align: left; direction: ltr;
+  border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px;
+  background: var(--paper); font: 12px var(--mono); color: var(--ink3);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cfgcard .opt, .wizcard .wtoggle {
+  display: flex; align-items: flex-start; gap: 9px;
+  font: 13px/1.45 var(--sans); color: var(--ink);
+}
+.cfgcard .opt input, .wizcard .wtoggle input { margin-top: 2px; flex: none; }
+.cfgcard .hint, .wizard .hint { margin-left: 0; }
+.tplhint { margin: -4px 0 6px 182px; }
+@media (max-width: 1080px) {
+  .cfgcard .field, .wizcard .wfield { grid-template-columns: 1fr; gap: 5px; }
+  .tplhint { margin-left: 0; }
+}
+.cfgsummary { margin: 0 0 14px; }
+.cfgsec h3 { margin-top: 0; }
+
+/* ---- 1j: o wizard é uma coluna só; nada de campo escapando do card ---- */
+.wizard { align-items: stretch; }
+.wizcard { padding: 6px 18px; }
+.wizcard > *:last-child { border-bottom: none; }
+.wizfoot { margin-top: 4px; }
+.wizhead h1 { line-height: 1.25; }
+
+/* ---- lateral: seções recolhíveis ---- */
+.bgroup .secttl {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: none; border: none; padding: 0; cursor: pointer;
+  font: inherit; color: inherit; letter-spacing: inherit; text-transform: inherit;
+}
+.bgroup .secttl .seccaret { font-size: 10px; transition: transform .12s ease; }
+.bgroup .secttl.closed .seccaret { transform: rotate(-90deg); }
+.bgroup .secttl:hover { color: var(--ink); }
+
+/* ---- chat: sinal de que está trabalhando + passos discretos ---- */
+.chatthinking { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
+.chatthinking .lbl { font: 11.5px var(--mono); color: var(--muted); }
+.chatthinking .dots { display: inline-flex; gap: 3px; }
+.chatthinking .dots i {
+  width: 5px; height: 5px; border-radius: 50%; background: var(--teal);
+  animation: chatblink 1.1s ease-in-out infinite;
+}
+.chatthinking .dots i:nth-child(2) { animation-delay: .18s; }
+.chatthinking .dots i:nth-child(3) { animation-delay: .36s; }
+@keyframes chatblink { 0%, 80%, 100% { opacity: .25; } 40% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .chatthinking .dots i { animation: none; opacity: .7; } }
+/* o realce que confirma "abri o chat para você" */
+.composerbox.flash { animation: composerflash .9s ease; }
+@keyframes composerflash {
+  0% { border-color: var(--teal); box-shadow: 0 0 0 3px color-mix(in srgb, var(--teal) 22%, transparent); }
+  100% { border-color: var(--line); box-shadow: none; }
+}
+
+/* ---- painel Documento: estado vazio único ---- */
+.pempty {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 6px;
+  padding: 18px 2px;
+}
+.pempty .ic { width: 20px; height: 20px; color: var(--ghost); }
+.pempty b { font: 600 13px var(--sans); color: var(--ink); }
+.pempty span { font: 12px/1.55 var(--sans); color: var(--muted); }
+
+/* ---- 1b: as opções sobem para junto do CTA; nada abaixo dele ---- */
+.orgopts { margin: 0 0 14px; }
+.orgfoot { align-items: center; }
+.orgadd {
+  margin-left: auto; border: 1.5px dashed var(--line-dash); border-radius: 999px;
+  background: none; padding: 7px 14px; font: 12.5px var(--sans);
+  color: var(--muted); cursor: pointer; white-space: nowrap;
+}
+.orgadd:hover { border-color: var(--teal); color: var(--teal); }
+#app.dropping .orgadd { border-color: var(--teal); color: var(--teal); background: color-mix(in srgb, var(--teal) 8%, transparent); }
+
+/* ---- reunião: a gravação tem relógio e um jeito de encerrar ali mesmo ---- */
+.mtgrec {
+  display: flex; align-items: center; gap: 12px; margin-bottom: 14px;
+  border: 1px solid color-mix(in srgb, var(--red) 35%, var(--line));
+  background: color-mix(in srgb, var(--red) 7%, transparent);
+  border-radius: 12px; padding: 10px 14px;
+}
+.mtgrec-dot {
+  width: 10px; height: 10px; border-radius: 50%; background: var(--red); flex: none;
+  animation: mtgpulse 1.4s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) { .mtgrec-dot { animation: none; } }
+.mtgrec-time { font-size: 14px; color: var(--ink); font-variant-numeric: tabular-nums; }
+.mtgrec-lbl { flex: 1; font: 12px var(--sans); color: var(--ink3); }
+.mtgrec .btn { flex: none; }
+
+/* ---- quem falou tem cor também no modo visualizar ---- */
+.doc .mtg-src {
+  font: 600 11px var(--mono); letter-spacing: .04em;
+  color: var(--yellow-ink); background: color-mix(in srgb, var(--yellow) 12%, transparent);
+  border-radius: 5px; padding: 1px 6px; margin-right: 6px; white-space: nowrap;
+}
+.doc .mtg-src.me { color: var(--teal); background: color-mix(in srgb, var(--teal) 12%, transparent); }
+.doc.reader.transcript p, .annotatable.transcript p { margin: 0 0 .55em; }
+
+/* ---- reunião sem análise: a ação que falta, no lugar da seta vazia ---- */
+.rowgen {
+  flex: none; margin-left: 6px; white-space: nowrap;
+  border: 1px solid color-mix(in srgb, var(--teal) 45%, transparent);
+  background: color-mix(in srgb, var(--teal) 8%, transparent);
+  color: var(--teal); border-radius: 999px; padding: 2px 9px;
+  font: 600 10.5px var(--sans); cursor: pointer;
+}
+.rowgen:hover { background: color-mix(in srgb, var(--teal) 16%, transparent); }
+
+/* o terminal perdeu o ×: quem governa a visibilidade é a aba ✦ IA */
+.termstrip #termSide { margin-left: auto; }
+
+/* um segmentado solto no card não é campo: não estica */
+.cfgcard > .segrow { justify-self: start; width: max-content; align-self: flex-start; }
+/* o resumo é legenda do título, não uma linha órfã acima dele */
+.cfgpage .cfgsummary { display: none; }
+.apphead .cfgsub { font: 11px var(--mono); color: var(--muted); margin-left: 2px; }
+/* 1j: no primeiro uso não existe projeto — nav, gravar e painel não têm assunto */
+#app.firstrun .destnav,
+#app.firstrun .recbtn,
+#app.firstrun #aiPanelBtn,
+#app.firstrun #aiPanel,
+#app.firstrun #aiGrip { display: none; }
+#app.firstrun .apphead .projbtn { pointer-events: none; }
+.wizard { padding-top: 34px; }
+
+/* Os modais (perguntar, sincronizar, mover…) usam .wfield fora do assistente:
+   o rótulo tinha 78px fixos e quebrava em três linhas. Mesma grade de duas
+   colunas do resto, com a coluna do rótulo dimensionada pelo conteúdo. */
+.sheet .wfield {
+  display: grid; grid-template-columns: minmax(90px, auto) minmax(0, 1fr);
+  align-items: center; gap: 12px;
+}
+.sheet .wfield > span:first-child { width: auto; line-height: 1.35; }
+.sheet .wfield input, .sheet .wfield select, .sheet .wfield textarea { width: 100%; min-width: 0; }
+.sheet .wfield:has(textarea) { align-items: start; }
+
+/* Gravar/Parar sobem processos (whisper, captura de tela) e podem levar
+   segundos. O estado pendente responde no mesmo frame — sem ele o botão parece
+   morto e o clique se repete. */
+.recbtn.pending { opacity: .75; cursor: progress; }
+.recbtn.pending .rec-glyph { animation: recpend .9s ease-in-out infinite; }
+@keyframes recpend { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+.btn.pending { opacity: .7; cursor: progress; }
+@media (prefers-reduced-motion: reduce) { .recbtn.pending .rec-glyph { animation: none; } }
+
+/* Um passo do agente é expansível: fechado mostra só o nome (a conversa não
+   vira log), aberto mostra o que foi pedido e o que voltou. */
+details.chatstep {
+  display: block; align-self: stretch; flex: none; padding: 0; min-height: 0;
+  border: 1px solid var(--line); border-radius: 10px;
+  background: var(--paper); overflow: hidden;
+}
+details.chatstep > summary {
+  display: flex; align-items: center; gap: 7px; cursor: pointer;
+  padding: 5px 10px; font: 11px var(--mono); color: var(--ink3);
+  list-style: none;
+}
+details.chatstep > summary::-webkit-details-marker { display: none; }
+details.chatstep > summary::after {
+  content: "▸"; margin-left: auto; font-size: 9px; color: var(--ghost);
+  transition: transform .12s ease;
+}
+details.chatstep[open] > summary::after { transform: rotate(90deg); }
+details.chatstep > summary:hover { color: var(--ink); }
+details.chatstep .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--teal); flex: none; }
+details.chatstep .nm { font-weight: 600; }
+details.chatstep .st { color: var(--teal); font-size: 10px; }
+details.chatstep.failed { border-color: color-mix(in srgb, var(--yellow) 45%, transparent); }
+details.chatstep.failed .dot, details.chatstep.failed .st { background: var(--yellow); color: var(--yellow-ink); }
+details.chatstep .io { border-top: 1px solid var(--line); padding: 8px 10px; display: grid; gap: 4px; }
+details.chatstep .lbl {
+  font: 600 9.5px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted);
+}
+details.chatstep pre {
+  margin: 0; max-height: 220px; overflow: auto; white-space: pre-wrap; word-break: break-word;
+  font: 11px/1.5 var(--mono); color: var(--ink2);
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
+  border: none; border-radius: 6px; padding: 7px 9px;
+}
+
+/* O menu flutuante nasce ancorado num botão que pode estar colado na borda
+   direita ou perto do rodapé (o chip "todas (11)" do chat é o caso): sem
+   limitar às bordas da janela ele saía cortado. */
+.floatmenu { max-height: min(60vh, 420px); overflow-y: auto; }
+
+/* O rodapé de gravação é uma linha que precisa CABER na coluna de conteúdo —
+   que encolhe quando o painel ✦ IA está aberto. Sem isso os itens da direita
+   (o selo de privacidade e o "encerrar") transbordavam para fora da coluna e
+   ficavam invisíveis. A ordem do sacrifício é deliberada: a frase explicativa
+   encolhe primeiro, depois a onda; relógio, selo e botão nunca. */
+.recfoot { min-width: 0; overflow: hidden; }
+.recfoot .timer, .recfoot .privacypill, .recfoot .btn { flex: none; }
+.recfoot .recnote {
+  flex: 0 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.recfoot .wave { flex: 1 1 60px; min-width: 0; }
+/* numa coluna estreita a frase some inteira antes de espremer os controles */
+@container (max-width: 640px) { .recfoot .recnote { display: none; } }
+.bmain { container-type: inline-size; }
+
+/* Os três destinos ficam no CENTRO da janela, não colados no seletor de
+   projeto: a pílula é o eixo do cabeçalho. Posição absoluta porque os blocos
+   da esquerda (projeto) e da direita (versão/gravar/IA) têm larguras que mudam
+   com o conteúdo — centralizar por flex deixaria a pílula oscilando. Numa
+   janela estreita ela volta ao fluxo, antes de colidir com os dois lados. */
+.apphead { position: relative; }
+.destnav { position: absolute; left: 50%; transform: translateX(-50%); }
+@media (max-width: 1080px) {
+  .destnav { position: static; transform: none; }
+}
+
+/* O modo edição ocupa a coluna inteira (ADR-0008). `#bDocWrap` alinha os filhos
+   a `flex-start` para a leitura (cartão de 700px centralizado); ao editar isso
+   fazia o cartão encolher até o tamanho do conteúdo — o editor aparecia numa
+   faixa estreita à esquerda, com o resto da coluna vazio. */
+#wsBody.editing #bDocWrap { align-items: stretch; gap: 0; }
+
+/* pausar/encerrar vivem à ESQUERDA do relógio; o Encerrar é o mesmo botão
+   vermelho do Parar do cabeçalho, só que compacto (.recbtn.sm) */
+.recbtn.sm { padding: 5px 13px; font-size: 12px; }
+.recfoot .btn.sm, .recfoot .recbtn.sm { flex: none; }
+.recfoot .btn.pending, .recfoot .recbtn.pending { opacity: .6; pointer-events: none; }
+/* pausada: o vermelho do rodapé dá lugar a um estado neutro e explícito */
+.recfoot.paused .wave { opacity: .35; }
+.recfoot.paused .timer { color: var(--muted); }
+
+/* Configurações em UMA página: as seções se separam por régua e têm margem de
+   rolagem para o título não colar no topo quando a nav navega até elas. */
+.cfgsec { scroll-margin-top: 14px; }
+.cfgsec + .cfgsec { border-top: 1px solid var(--line-soft); margin-top: 30px; padding-top: 26px; }
+
+/* ADR-0024 · triagem de entrada: o que cada arquivo carrega, antes de entrar */
+.intakehead { margin: 0 0 8px; font: 600 12.5px var(--sans); }
+.intakehead.block { color: var(--red); }
+.intakehead.warn { color: var(--yellow-ink); }
+.intakerow {
+  display: flex; flex-direction: column; gap: 3px;
+  border-left: 3px solid var(--line); padding: 8px 0 8px 11px; margin-bottom: 8px;
+}
+.intakerow.block { border-left-color: var(--red); }
+.intakerow.warn { border-left-color: var(--yellow); }
+.intakerow b { font: 600 13px var(--sans); color: var(--ink); }
+.intakerow span { font: 12px/1.5 var(--sans); color: var(--ink3); }
+.intakerow i { font: 11px var(--mono); color: var(--muted); font-style: normal; }

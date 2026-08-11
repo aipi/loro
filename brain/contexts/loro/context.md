@@ -103,10 +103,13 @@ the model: ideas live here, inline, not as separate files.)
 > meeting is queued as those analyses, and a legacy `relatorio.md` is deleted on
 > the first listing (an explicit derogation from the non-destructive premise,
 > owner 2026-08-07). A meeting nobody analysed has nothing to send, and says so.
-> Audio is transient (deleted after transcription). Meeting AI (`/loro-analyse`,
-> `/loro-question`) runs as a terminal-Claude skill, LOCAL-FIRST (reads the context
-> before any external/MCP source). Direct promotion (`brain_promote`) is retired
-> from the primary path. Recorded in ADR-0001 §6–§9, ADR-0014, ADR-0018.
+> Audio is transient (deleted after transcription), and a meeting can be PAUSED —
+> pausing stops the capture for real, so nothing is recorded until it resumes
+> (ADR-0022 §19). Meeting AI (`/loro-analyse`, `/loro-question`) runs as an agent
+> skill, LOCAL-FIRST (reads the context before any external/MCP source); WHERE it
+> runs — the in-app chat or the embedded terminal — is the user's choice
+> (ADR-0022 §3), and either way it is the user's own agent CLI on this machine. Direct promotion (`brain_promote`) is retired
+> from the primary path. Recorded in ADR-0001 §6–§9, ADR-0014, ADR-0018, ADR-0022.
 
 > [!HOTSPOT] H-2 — Usage templates (presets) & per-acervo agent — vertical skill catalog pending
 > The wizard now offers usage templates (generico, vendas, engenharia, produto,

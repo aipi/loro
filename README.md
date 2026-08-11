@@ -19,22 +19,24 @@ Three parts work together:
    mode captures both sides with *zero driver setup* (ScreenCaptureKit); the
    CLI's `SOURCE=system` route instead needs the BlackHole loopback driver — see
    [Capture modes](#capture-modes).
-2. **A Knowledge Studio** — a VS Code-like workspace where material flows
-   through one explicit path: **Brainstorming → Fila → Contexto**. In a
-   *brainstorming* you gather **reuniões**, **notas** and **anexos** (files you
-   drop in, or pull from Drive/Slack/Jira/Confluence); you select the **files**
-   that matter and each one enters the *fila* as its own item; "gerar contexto" runs an
-   agent loop that distills the queue into versioned *contextos* — one
-   `context.md` source of truth per domain, evolved by RFC = branch + Pull
-   Request, with Git hidden behind two buttons ("Versionar" / "Propor
-   mudança"). The result is a portable **context harness** any agent or
-   teammate can read.
+2. **A Knowledge Studio** — a VS Code-like workspace built around three
+   destinations in the header: **Início · Organizar · Conhecimento**
+   (ADR-0020). Under *ideias* you gather **reuniões**, **notas** and **anexos**
+   (files you drop in, or pull from Drive/Slack/Jira/Confluence); you select
+   the **files** that matter and each one shows up under *para organizar*;
+   "transformar em conhecimento" runs an agent loop that distills them into
+   versioned *conhecimento* — one `context.md` source of truth per topic,
+   evolved by RFC = branch + Pull Request, with Git hidden behind two buttons
+   ("Salvar versão" / "Enviar para revisão do time"). The result is a portable
+   **context harness** any agent or teammate can read. On disk and in the ADRs
+   these are still `acervo`, `brainstorming/`, `inbox/` and `contextos/` — the
+   simplified names are the UI's, not the format's.
 3. **An AI-agent automation layer** — Loro wraps an AI agent CLI (`claude` by
    default, any CLI — ADR-0003) in an embedded terminal and turns its skills,
    called **habilidades**, into one-click UI instead of typed commands. They
    run from a picker (friendly names, always-visible descriptions) on the
-   Visão Geral, a brainstorming/meeting `⋯` menu, or the right-side actions
-   rail of any open file. Nine ship built-in — the loop (`/loro-context`),
+   ✦ AI panel (its Chat tab keeps them one click away), a brainstorming/meeting
+   `⋯` menu, or the palette (`Cmd/Ctrl+K`). Nine ship built-in — the loop (`/loro-context`),
    Q&A (`/loro-ask`), meeting AI (`/loro-analyse`/`/loro-question`), notes
    (`/loro-note`), external sync (`/loro-sync` — brings a Drive doc, or a
    Slack/Jira/Confluence summary, into a local anexo), generators
@@ -50,7 +52,8 @@ Three parts work together:
 > **`CLAUDE.md`** (how to work here). All docs and code are in English; the app
 > UI is pt-BR or English — chosen when you create an acervo and switchable in
 > Settings, with generated content following that language. An in-app user
-> manual (pt/en) opens from the `?` button.
+> manual (pt/en) opens from "Como funciona o Loro" in the sidebar footer.
+> The theme is light, dark or system (Settings → Aparência).
 
 ## What is a Loro context?
 

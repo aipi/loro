@@ -16,8 +16,9 @@ processes captured transcripts into a knowledge base on disk.
 ```
 +---------------------- Loro.app (Tauri) ----------------------+
 |  WebView (frontend)              Rust core (backend)         |
-|  index.html / app.js  <--IPC-->  commands + events           |
-|  (pt-BR UI, canvas wave)         spawn(whisper-stream)        |
+|  index.html / shell.js /         commands + events           |
+|  app.js               <--IPC-->  spawn(whisper-stream)       |
+|  (pt-BR UI, canvas wave)                                     |
 +------------------------------|-------------------------------+
                                | stdout lines
                         whisper-cli / whisper-stream   (system dependency)
@@ -115,6 +116,12 @@ OS/serde errors may still pass through and are shown untranslated.
 | `brain_new_note_in` | `destRel, titulo` | rel | create a living-front-matter note inside an `anexos/` folder (context counterpart of `brain_new_notebook`, ADR-0005) |
 | `brain_delete_inbox` | `name` | `()` | delete an unprocessed queue item |
 | `brain_set_auto_context` | `value: bool` | `()` | post-creation toggle (Settings) for autoContext — global config + local `.loro/settings.json` (ADR-0005 §3) |
+| `brain_set_agent` | `agent` | `()` | post-creation edit (Settings → IA e terminal) of the active acervo's AI agent command; blank falls back to the default (ADR-0020) |
+| `chat_send` | `{prompt, model, effort, permission, fresh}` | `()` | one chat turn: runs the acervo's agent non-interactively in the acervo dir with an explicit `--permission-mode` (print mode cannot ask, so without one every write is denied); streams `chat-delta`/`chat-tool`/`chat-tool-result` and ends with `chat-done` (ADR-0021) |
+| `chat_cancel` | — | `()` | kill the running turn |
+| `chat_reset` | — | `()` | drop the session id — the next turn starts a new conversation |
+| `chat_status` | — | `{running,hasSession,agent}` | lets the UI recover its state after a window reload |
+| `chat_handoff` | — | `"<agent> --resume <id>"` | the line that resumes this conversation in the embedded terminal, where the agent CAN ask interactively (ADR-0021) |
 | `brain_new_tool` / `brain_delete_tool` | `nome, conteudo` / `rel` | rel / `()` | create (imported skill content) or delete a custom habilidade — any `.claude/commands/*.md` outside the 11 built-in skills (ADR-0005) |
 | `brain_annotations_get` | `rel` | `{doc, anotacoes[]}` | read a document's annotation sidecar `<doc>.anotacoes.json` (empty if none); highlights/comments anchored by text-quote (ADR-0007) |
 | `brain_annotation_add` | `rel, anotacao` | id | add a highlight/comment; returns the assigned stable `an_…` id (ADR-0007) |
@@ -130,6 +137,9 @@ Brainstorming world + the fila → contexto flow (ADR-0001 §7):
 | `brain_list_meetings` | `slug` | `[{id,rel,titulo,status,notas}]` | a brainstorming's meetings, newest first, labelled by manifest `titulo`; `notas` counts how many of the meeting's `notas/` the fila would accept (0 = nothing to send, ADR-0018) |
 | `brain_meeting_finish` | `id` | `{rel}` | close a meeting: `status: "done"`, nothing authored; returns the `reuniao.md` rel the UI opens (ADR-0018 — replaces `brain_meeting_build_notebook`) |
 | `brain_meeting_rename` | `{id, titulo}` | `()` | rename a meeting (manifest + heading; the folder id stays stable) |
+| `brain_triage_files` | `rels[]` | `[{rel, findings[]}]` | read-only: what these files carry before they enter the acervo — `{severity, rule, line, count}`, NEVER the matched text (BR-8 binds the detector itself). A meeting expands to its `notas/*` through the same owner as the send path (ADR-0024) |
+| `brain_meeting_pause` | `id` | `()` / err | stop the capture sidecar mid-meeting: NOTHING is recorded while paused. The segment already written stays in the pending list so its last window can still be transcribed (ADR-0022 §19) |
+| `brain_meeting_resume` | `id` | `()` / err | open a NEW capture segment (`system-2.wav`, …). The frontend rebases its tail offset (`tailBase`) and the clock discounts the pause, so both timelines stay aligned (ADR-0022 §19) |
 | `brain_rename_brainstorm` | `slug, nome` | `{slug, rel}` | rename a brainstorming (folder + meta) |
 | `brain_set_brainstorm_category` | `{slug, categoria?}` | `()` | set/clear the UI grouping category |
 | `brain_brainstorm_delete` | `{rel}` | `()` | delete a brainstorming item (guarded to `brainstorming/`) |
@@ -282,14 +292,28 @@ All technical decisions are consolidated in the single **`docs/adr/0001-baseline
 | Studio shell | multi-tab workspace, command palette, vendored CM6 IIFE | ADR-0001 §6 |
 | Knowledge flow | Brainstorming → Fila → Contexto (`/loro-context`) | ADR-0001 §7 |
 | Meetings | living file + analyses in `notas/`, transient audio | ADR-0001 §8, ADR-0018 |
-| Meeting AI | terminal-Claude skills, local-first | ADR-0001 §9 |
+| Meeting AI | agent skills, local-first; WHERE they run is the user's choice (chat or terminal) since ADR-0022 §3 | ADR-0001 §9, ADR-0022 |
 | Doc language | English | ADR-0001 |
 | External-source sync | `/loro-sync <fonte>` (drive/slack/jira/confluence) → local anexo + ref, ambient terminal-agent connector | ADR-0005 |
 | Habilidades (built-in + custom) | any `.claude/commands/*.md`; 11 built-ins, editable-not-deletable; `/loro-tool` (AI-drafted) or direct import for custom ones | ADR-0005 |
-| Brainstorming digest | `/loro-digest brainstorming/<slug>` (re)writes the topic's `indice.md` (summary + key points + linked material index + `refs:`); manual/re-runnable with an `indice.md` staleness nudge (`digest_itens`) | ADR-0011 |
 | Annotation layer | select a passage in any markdown → grifar/comentar + excerpt-scoped habilidade (perguntar/analisar/Slack); highlights/comments in a co-located `<doc>.anotacoes.json` sidecar anchored by text-quote; alvo `acervo://<rel>#<annot-id>`; outbound `/loro-slack` via the agent's connector | ADR-0007 |
 | `autoContext` | per-acervo `.loro/settings.json` gate on the loop creating a brand-new context; toggle in wizard + Settings | ADR-0005 |
 | Terminal launch/status | `active_agent()` used for auto-launch (not hardcoded); `justLaunched` grace window avoids retyping into a live session | ADR-0005 |
 | Distribution | Homebrew Cask (`brew install --cask loro`) with `whisper-cpp`+`ffmpeg` as formula deps; tap `aipi/homebrew-loro` bumped by release CI | ADR-0006 |
 | First-run models | not bundled; downloaded on demand over HTTPS, verified by pinned SHA-256, atomic install into `~/.loro/models`; a model is only used when whole | ADR-0006 |
+| UI anatomy | one shell everywhere: header 54px (project · nav pill · Record · ✦ AI) → sidebar 250/60px │ document tabs │ right panel 330px (Documento·Chat·Terminal); three destinations replace the numbered flow, no Home tab, no `ⓘ` tooltips | ADR-0020 |
+| Theme | `data-theme` on `<html>`, preference `light\|dark\|system` resolved in JS; warm dark tokens (`#211e19`) | ADR-0020 |
+| UI vocabulary | projeto · ideias · para organizar · conhecimento · **habilidades de IA** · salvar versão · enviar para revisão do time (internal terms unchanged in code/IPC/disk) | ADR-0020, renamed from "ações de IA" by ADR-0022 §7 |
+| Brainstorming digest | **its UI is removed** — the ⋯ entry, the picker entry and the `indice.md` staleness nudge are gone; existing `indice.md` files stay as ordinary documents. The `/loro-digest` skill itself still ships as a built-in (listed in Habilidades de IA, runnable from chat/terminal) — what was revoked is the dedicated flow, not the skill | ADR-0020 (revokes ADR-0011) |
+| Meeting markers | a single "momento" marker (`⌘⌥M`); the three typed markers and `⌘⌥1/2/3` are retired | ADR-0020 |
+| Chat | runs the acervo's own agent CLI non-interactively (`-p --output-format stream-json`), multi-turn via `--resume`; no API call, no new credential (BR-1/BR-9). Print mode cannot ask for permission, so `--permission-mode` is always passed and is the user's choice (`acceptEdits` default \| `bypassPermissions`); a denial is detected on the `tool_result` and offers *liberar tudo e repetir* or hand-off to the terminal | ADR-0021 + amendment |
+| Resizable panes | file tree, right panel and terminal dock all drag-to-resize and double-click-to-reset, persisted (`sideW`/`panelW`/`termH`) | ADR-0002 §6, ADR-0021 |
+| AI action target | user choice (Settings → IA e terminal): **chat** or **terminal**; a single `runAiCommand()` dispatches every habilidade, question and analysis | ADR-0022 |
+| Intake triage | content is inspected BEFORE entering the fila: a vendor-prefixed credential **blocks** (BR-9 — the acervo is versioned, so the door is one-way and re-checked in the backend), a CPF or a pasted transcript **warns** and the user decides. Closes the BR-8 hole where `is_queueable` judged by file NAME, so a transcript pasted into any other file walked in. Rules are narrow on purpose; the other three doors (`brain_import_files`, `/loro-sync`, AI notes) are not covered yet | ADR-0024 |
+| Meeting pause/resume | pausing kills the capture sidecar (nothing reaches disk while paused); resuming opens a new segment. Audio stays a LIST of segments (`system.wav`, `system-2.wav`, …) that `purge_audio_core` sweeps whole; the clock excludes pauses and the system tail rebases (`tailBase` + `tailFrom`) so mic and system stay interleaved | ADR-0022 §19 |
+| Recording indicator | the tray parrot blinks for a MEETING too, and stops while paused — `set_tray_recording` used to be called only by the loose-recording `start`/`stop` | ADR-0022 §21 |
+| Spawned-agent environment | `proc::INHERITED_SESSION_MARKERS` is stripped from every child (and from the PTY): a Loro started inside another agent's session used to hand that session's markers to its own agent, which then disabled its transcript. A deny list, never a `CLAUDE_*` wildcard — user configuration shares the prefix | ADR-0022 §18 |
+| Settings page | ONE scrolling page: every section visible, the nav scrolls to a section and a scroll-spy tracks it; the network check (`gh auth status`) still runs once per visit, when its section is first reached | ADR-0022 §22 |
+| Document frame | the frame does not change with the mode: edit mode uses the SAME centered 700px card as view mode, the editor filling its height | ADR-0022 §23 |
+| Blocking probes | `env_doctor` runs on the blocking pool (`spawn_blocking`) and only re-runs when the Versions/GitHub section is opened — as a sync command it froze the window on `gh auth status` | ADR-0022 |
 | Edit-mode formatting | markdown-aware bar (not WYSIWYG): pure `LoroMdEdit.apply(doc, anchor, head, action)` → CM6 `{changes, selection}`; `⌘B`/`⌘I`/`⌘K` captured off the editor DOM; same bar + CM6 in the Studio tab and the modal editor | ADR-0016 |

@@ -9,9 +9,13 @@
     return String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
   }
 
-  // live-transcript inline formatting: speaker label + bold + italic + code
+  // live-transcript inline formatting: speaker label + bold + italic + code.
+  // Redesign 1f: o operador ("você") e os demais canais são cores diferentes —
+  // `.spk--me` carrega essa distinção; a classe base segue idêntica.
+  const ME = /^(?:\*\*)?(voc[eê]|you|eu|me)\s*:/i;
   function mdInline(s) {
-    s = s.replace(/^((?:\*\*)?[A-ZÁ-Ú][\wÀ-ÿ ]{0,24}(?:_\d+)?:(?:\*\*)?)/, '<span class="spk">$1</span>');
+    s = s.replace(/^((?:\*\*)?[A-ZÁ-Ú][\wÀ-ÿ ]{0,24}(?:_\d+)?:(?:\*\*)?)/,
+      (m) => `<span class="spk${ME.test(m) ? " spk--me" : ""}">${m}</span>`);
     s = s.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
     s = s.replace(/(^|\s)_([^_\n]+)_(?=$|[\s.,;:!?)])/g, "$1<em>$2</em>");
     s = s.replace(/`(.+?)`/g, "<code>$1</code>");
