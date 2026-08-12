@@ -67,13 +67,26 @@
             <label class="wfield"><span class="mono" data-i18n>nome do projeto</span>
               <input id="brainNameInput" type="text" placeholder="ex.: Empresa, Pessoal" data-i18n-attrs="placeholder" />
             </label>
+            <!-- modelo + temas formam uma seçãozinha (dono, 2026-08-11): o
+                 modelo sugere os temas, então eles moram lado a lado e cada
+                 um explica o que faz -->
             <label class="wfield"><span class="mono" data-i18n>como o time trabalha</span>
               <select id="wizTemplates"></select>
             </label>
             <p id="wizTemplateHint" class="hint tplhint"></p>
+            <label class="wfield"><span class="mono" data-i18n>temas iniciais</span>
+              <input id="brainCtxInput" type="text"
+                placeholder="ex.: produto, plataforma, engenharia/frontend" data-i18n-attrs="placeholder" />
+            </label>
+            <p class="hint tplhint" data-i18n>os temas são as pastas de conhecimento do projeto: tudo o que você gravar e escrever será organizado dentro deles. separe por vírgula.</p>
             <label class="wfield"><span class="mono" data-i18n>onde guardar</span>
               <button id="brainDirBtn" class="link mono dirbtn">…</button>
             </label>
+            <!-- o ⓘ é exceção deliberada à ADR-0020 (dono, 2026-08-11): abre
+                 por CLIQUE um detalhe que não cabe no hint, nunca por hover -->
+            <p class="hint tplhint"><span data-i18n>o projeto é esta pasta: arquivos de texto (Markdown) na sua máquina — nada vai para a nuvem.</span>
+              <button id="wizDirInfo" class="infoi" type="button" aria-expanded="false" title="o que fica nesta pasta" data-i18n-attrs="title">ⓘ</button></p>
+            <p id="wizDirInfoBody" class="hint tplhint" hidden data-i18n>dentro dela: inbox/ (a fila do que chega), contextos/ (o conhecimento por tema), reunioes/ e notas/ (as fontes) e processed/ (o que já foi organizado). dá para versionar com git e abrir com qualquer editor.</p>
             <label class="wfield"><span class="mono" data-i18n>idioma</span>
               <select id="wizLang">
                 <option value="pt" data-i18n>português</option>
@@ -85,22 +98,13 @@
             <div class="wfield"><span class="mono" data-i18n>cor do projeto</span>
               <div id="wizColors" class="swatches"></div>
             </div>
+            <!-- sem "Opções avançadas" (dono, 2026-08-11): tudo à vista -->
+            <label class="wfield"><span class="mono" data-i18n>agente de IA (comando)</span>
+              <input id="brainAgentInput" type="text" placeholder="claude — ou outro CLI: gemini, ollama run llama3…" data-i18n-attrs="placeholder" />
+            </label>
+            <label class="wtoggle"><input type="checkbox" id="brainGit" checked />
+              <span data-i18n>guardar histórico de versões (git nesta pasta)</span></label>
           </div>
-
-          <details class="wizadv">
-            <summary data-i18n>Opções avançadas</summary>
-            <div class="wizcard">
-              <label class="wtoggle"><input type="checkbox" id="brainGit" checked />
-                <span data-i18n>guardar histórico de versões (git nesta pasta)</span></label>
-              <label class="wfield"><span class="mono" data-i18n>agente de IA (comando)</span>
-                <input id="brainAgentInput" type="text" placeholder="claude — ou outro CLI: gemini, ollama run llama3…" data-i18n-attrs="placeholder" />
-              </label>
-              <label class="wfield"><span class="mono" data-i18n>temas iniciais</span>
-                <input id="brainCtxInput" type="text"
-                  placeholder="ex.: produto, plataforma, engenharia/frontend" data-i18n-attrs="placeholder" />
-              </label>
-            </div>
-          </details>
 
           <div class="wizfoot">
             <button id="brainCreateBtn" class="btn solid" data-i18n>Criar projeto →</button>

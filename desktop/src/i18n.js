@@ -1054,9 +1054,15 @@
     "como o time trabalha": "how the team works",
     "onde guardar": "where to keep it",
     "cor do projeto": "project color",
-    "Opções avançadas": "Advanced options",
     "guardar histórico de versões (git nesta pasta)": "keep a version history (git in this folder)",
     "temas iniciais": "initial topics",
+    "os temas são as pastas de conhecimento do projeto: tudo o que você gravar e escrever será organizado dentro deles. separe por vírgula.":
+      "topics are the project's knowledge folders: everything you record and write gets organized into them. comma-separated.",
+    "o projeto é esta pasta: arquivos de texto (Markdown) na sua máquina — nada vai para a nuvem.":
+      "the project is this folder: plain-text (Markdown) files on your machine — nothing goes to the cloud.",
+    "o que fica nesta pasta": "what lives in this folder",
+    "dentro dela: inbox/ (a fila do que chega), contextos/ (o conhecimento por tema), reunioes/ e notas/ (as fontes) e processed/ (o que já foi organizado). dá para versionar com git e abrir com qualquer editor.":
+      "inside it: inbox/ (the queue of what arrives), contextos/ (knowledge by topic), reunioes/ and notas/ (the sources) and processed/ (what has already been organized). you can version it with git and open it with any editor.",
     "Criar projeto →": "Create project →",
     // 1k — paleta de comandos
     "buscar ou executar…": "search or run…",

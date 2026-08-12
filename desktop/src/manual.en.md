@@ -116,10 +116,12 @@ On first launch a **welcome modal** sums up the main features (flow,
 recording, templates, agent, AI and shortcuts) — reopen it anytime via the
 palette: `Cmd/Ctrl+K` → "Loro tour".
 
-1. **Create the knowledge base** — on first launch the wizard asks for a name,
-   the folder to generate into and the initial contexts (e.g. `product`,
-   `engineering`). Check "version with git" to enable the review flow
-   (recommended).
+1. **Create the knowledge base** — on first launch the wizard shows every
+   field at once (nothing hides behind "advanced options"): name, usage
+   template with the initial topics right next to it (e.g. `product`,
+   `engineering`), folder (the default one comes pre-filled; the ⓘ details
+   what will be stored in it), language, color and the AI agent. Leave "keep
+   a version history" checked to enable the review flow (recommended).
 2. **Usage template** — the first option is **Automatic** (default): the loop
    creates and assigns contexts on its own when it processes the queue, so
    you don't need to define contexts now (you can turn it off later in

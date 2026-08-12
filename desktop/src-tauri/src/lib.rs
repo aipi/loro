@@ -1113,6 +1113,14 @@ fn default_brain_dir() -> PathBuf {
     user_home().join("Documents/Loro")
 }
 
+// The wizard shows the folder that WILL be used when none is picked — the
+// same fallback brain_setup applies to an empty dir (all data visible up
+// front, ADR-0022 §30).
+#[tauri::command]
+fn default_acervo_dir() -> String {
+    default_brain_dir().display().to_string()
+}
+
 // ============================ brain (acervo) ==================================
 // The brain is generic: contexts are defined by the user in Loro's setup.
 // Global config in ~/.loro/config.json (also read by the /brain command).
@@ -3788,6 +3796,7 @@ pub fn run() {
             selftest_enabled,
             pick_folder,
             default_save_dir,
+            default_acervo_dir,
             auto_save,
             list_capture_devices,
             ui_get_lang,
@@ -3917,6 +3926,17 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ADR-0022 §30 — the wizard shows the folder that will actually be used
+    // when none is picked; it must be the very fallback brain_setup applies.
+    #[test]
+    fn default_acervo_dir_matches_brain_setup_fallback() {
+        assert_eq!(
+            default_acervo_dir(),
+            default_brain_dir().display().to_string()
+        );
+        assert!(default_acervo_dir().ends_with("Documents/Loro"));
+    }
 
     // ADR-0002 §4 — the terminal/Claude readiness handshake asks the OS whether
     // a `claude` process lives under the PTY shell, instead of guessing from
