@@ -485,3 +485,70 @@ literal that its own assertion contained, so it passed no matter what. It only
 surfaced because I tried to make it fail. The needles are composed at runtime
 now, and the failure is demonstrated, not assumed — the same flaw the code review
 found in the `index.html` i18n test earlier the same day.
+
+## Follow-up (2026-08-11, eighth round) — the first-run wizard was never prepared
+
+### 29. The wizard has TWO entry paths; only one prepared the form
+
+Reported in real use: on a fresh installation the wizard's "como o time
+trabalha" select was **completely empty** (no "automático", no templates) and
+the "cor do projeto" row had **no swatches at all**. Creating still worked —
+the JS state behind the form defaults to automático — but the two dead controls
+made the screen read as broken, on the single screen every new user meets first.
+
+The root: `openNewAcervo()` (the "novo projeto" menu item) reset the fields,
+loaded the templates and drew the palette — but on first run the wizard is
+shown by `brainRefresh()` (`st.configured == false`), which never did any of
+that. The two paths had diverged since the picker was added (ADR-0003); every
+field added to the wizard since then existed only on the second path.
+
+The fix is structural, not a patch on the symptom: one `resetWizardFields()`
+is the only way to prepare the form, and **both** entry paths call it.
+`brainRefresh` guards it with a `wizInited` flag that clears when the wizard
+hides — the refresh polls every 10s, and re-preparing on every tick would wipe
+whatever the user had already typed. A `wizard.test.js` locks the structure:
+the preparer exists, both paths use it, and the poll guard is present.
+
+Two small wizard repairs rode along, both found while reproducing: switching
+the acervo language inside "Novo projeto (acervo)" let `applyI18n` overwrite
+the title back to "Crie seu primeiro projeto" (the static HTML msgid), and the
+template names stayed in the previous language because the handler only
+redrew the cached list instead of re-fetching it from the backend, which
+localises them.
+
+### 30. The wizard tells the whole truth (owner round, 2026-08-11)
+
+The owner reviewed the repaired wizard live and asked for more than parity:
+"garantir que TODOS os dados apareçam". Five decisions, all in the wizard:
+
+- **No more "Opções avançadas".** The `<details>` hid the git toggle, the AI
+  agent and the initial topics behind a click on the single screen every new
+  user must get through. All fields show at once; the git toggle keeps the
+  field-column alignment.
+- **Topics live next to the usage template** ("quase como numa seção"): the
+  template SUGGESTS the topics, so the two rows are adjacent, and each carries
+  a hint explaining what it does.
+- **The folder field shows the folder that will actually be used.** A new
+  read-only command `default_acervo_dir` exposes the exact fallback
+  `brain_setup` applies to an empty dir; "escolher pasta…" only appears if the
+  backend call fails. A short always-visible hint says the project IS the
+  folder (plain Markdown, nothing to the cloud); the detailed list of what
+  lives inside sits behind a **click-toggled ⓘ** — a deliberate, recorded
+  exception to ADR-0020's tooltip removal (it is a disclosure, not a hover
+  tooltip; `aria-expanded` carries the state).
+- **The accent previews the wizard's own color.** `renderSwitch` (the 10s
+  poll) reapplied the ACTIVE acervo's accent over the preview — with the teal
+  swatch selected the create button stayed blue. With the wizard visible the
+  accent now follows `wizColor`.
+- **Two specificity bugs, one lesson.** `.tplhint { margin-left: 182px }`
+  (one class) lost to `.wizard .hint { margin-left: 0 }` (two classes) — the
+  hint fell under the label column. And `.wizard { padding-top: 34px }` lost
+  to `.bwrap .wizard { padding: 0 … }` — the wizard's top breathing room was
+  silently zero. Both now live in rules that win their cascade, and
+  `wizard.test.js` forbids a naked `.tplhint` rule from coming back.
+
+One repair rode along: the welcome modal's "abrir manual" did nothing on first
+run — the manual opens as a studio tab, and the studio shell is hidden behind
+the wizard. `openManual()` is now the single entry point: with the shell
+visible it opens the tab; without it, the manual renders in a read-only modal
+(the content already ships as a webview asset, so no IPC is involved).

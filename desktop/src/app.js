@@ -1378,7 +1378,7 @@ function updatePrivacy() {
 // ---- wiring ----
 el.toggle.addEventListener("click", toggle);
 el.cfgBtn.addEventListener("click", openCfg);
-if ($("helpBtn")) $("helpBtn").addEventListener("click", () => openDoc(MANUAL_REL, { preview: false }));
+if ($("helpBtn")) $("helpBtn").addEventListener("click", () => openManual());
 if (el.uiLang) el.uiLang.addEventListener("change", async (e) => {
   settings.uiLang = e.target.value; persistSettings();
   try { settings.uiLang = await invoke("ui_set_lang", { lang: e.target.value }); } catch (_) {}
@@ -1565,7 +1565,7 @@ function showWelcome() {
     () => {}
   );
   const m = $("welcomeManual");
-  if (m) m.onclick = () => { closeModal(); openDoc(MANUAL_REL, { preview: false }); };
+  if (m) m.onclick = () => { closeModal(); openManual(); };
   settings.welcomeSeen = true; persistSettings();
 }
 
@@ -1685,6 +1685,17 @@ async function brainRefresh() {
   lastSt = st;
   // se não há acervo configurado E não estamos criando um novo → wizard
   const showWizard = (!st.configured || creatingNew);
+  // primeiro uso: o wizard aparece por aqui, sem passar por openNewAcervo — os
+  // campos precisam do mesmo preparo (senão o seletor de modelos e as cores
+  // ficam vazios numa instalação nova). wizInited trava o preparo por exibição:
+  // este refresh roda a cada 10s e não pode apagar o que o usuário digitou.
+  if (showWizard && !wizInited) {
+    B.wizTitle.textContent = t("Crie seu primeiro projeto");
+    B.cancelBtn.hidden = true;
+    resetWizardFields();
+    B.nameInput.focus();
+  }
+  if (!showWizard) wizInited = false;
   B.setup.hidden = !showWizard;
   B.shell.hidden = showWizard;
   // 1j: sem projeto não há destinos, nem o que gravar, nem documento no painel
@@ -3648,6 +3659,17 @@ async function readDoc(rel) {
   }
 }
 
+// O manual precisa abrir mesmo SEM projeto (primeiro uso): a aba do manual
+// vive no shell, que o wizard esconde — o clique "funcionava" numa tela
+// invisível. Sem shell, o manual abre num modal de leitura.
+async function openManual() {
+  if (!B.shell.hidden) return openDoc(MANUAL_REL, { preview: false });
+  try {
+    const txt = await readDoc(MANUAL_REL);
+    openModal(t("Como funciona o Loro"), `<div class="manualmodal">${mdRender(txt)}</div>`, null, null);
+  } catch (e) { toast(tErr(String(e))); clog("openManual error: " + e); }
+}
+
 // ---- barra de formatação markdown (ADR-0016) --------------------------------
 // Markdown-aware, não WYSIWYG: o botão aplica ao buffer CM6 a edição mínima que
 // LoroMdEdit devolve, então o arquivo em disco continua sendo markdown escrito
@@ -4703,7 +4725,7 @@ const COMMANDS = [
   { group: "ir para", label: "Início", code: "KeyH", run: () => { openHome(); goDest("home"); } },
   { group: "ir para", label: "Organizar", run: () => { openHome(); goDest("organize"); } },
   { group: "ir para", label: "Conhecimento", run: () => { openHome(); goDest("knowledge"); } },
-  { group: "ir para", label: "Como funciona o Loro", run: () => openDoc(MANUAL_REL, { preview: false }) },
+  { group: "ir para", label: "Como funciona o Loro", run: () => openManual() },
   { group: "ir para", label: "Configurações", run: () => openCfg() },
   { group: "ir para", label: "apresentação do Loro", code: "KeyA", run: () => showWelcome() },
   { group: "ir para", label: "Trocar de projeto · mover projeto de pasta", code: "KeyG", run: () => runMigration() },
@@ -4864,7 +4886,9 @@ window.addEventListener("keydown", (e) => {
 function renderSwitch() {
   const cur = acervos.find((a) => a.id === activeAcervo);
   B.acervoName.textContent = cur ? cur.name : t("acervo");
-  applyAccent(cur ? cur.color : "");
+  // com o wizard à vista o accent é o preview da cor escolhida nele — sem o
+  // desvio, este poll (10s) revertia o preview para a cor do acervo ativo
+  applyAccent(!B.setup.hidden ? wizColor : (cur ? cur.color : ""));
 }
 B.acervoBtn.addEventListener("click", (e) => {
   e.stopPropagation();
@@ -4916,10 +4940,21 @@ function openConfirmRemoveAcervo(anchor, id) {
   B.bMenu.hidden = false;
 }
 
-function openNewAcervo() {
-  creatingNew = true;
-  B.wizTitle.textContent = t("Novo projeto (acervo)");
-  B.nameInput.value = ""; B.ctxInput.value = ""; brainDir = ""; B.dirBtn.textContent = "…";
+// Preparo único dos campos do wizard, usado pelos DOIS caminhos de entrada:
+// openNewAcervo (menu "novo projeto") e o primeiro uso via brainRefresh. Só o
+// primeiro caminho preparava — numa instalação nova o seletor "como o time
+// trabalha" e a paleta de cores ficavam vazios.
+let wizInited = false, wizDefaultDir = "";
+function resetWizardFields() {
+  wizInited = true;
+  B.nameInput.value = ""; B.ctxInput.value = ""; brainDir = "";
+  // a pasta padrão REAL aparece antes de qualquer escolha — é a mesma para a
+  // qual o brain_setup cai quando o campo fica vazio (nada de "…" mudo)
+  B.dirBtn.textContent = wizDefaultDir || t("escolher pasta…");
+  invoke("default_acervo_dir").then((d) => {
+    wizDefaultDir = d || "";
+    if (!brainDir && wizDefaultDir) B.dirBtn.textContent = wizDefaultDir;
+  }).catch(() => {});
   B.gitInput.checked = true;
   B.agentInput.value = "claude";
   // language starts at the current UI language; changing it in the wizard
@@ -4927,9 +4962,31 @@ function openNewAcervo() {
   if (B.wizLang) B.wizLang.value = settings.uiLang;
   // default to automático (the previous checkbox defaulted on) — ADR-0005
   wizColor = ""; wizTemplate = AUTO_TEMPLATE_ID; wizCtxDirty = false;
+  B.setupErr.hidden = true;
+  // o detalhe do ⓘ de "onde guardar" volta recolhido a cada abertura
+  const dirInfo = $("wizDirInfo"), dirBody = $("wizDirInfoBody");
+  if (dirBody) dirBody.hidden = true;
+  if (dirInfo) dirInfo.setAttribute("aria-expanded", "false");
+  // o accent pré-visualiza a cor selecionada NO wizard (teal padrão) — sem
+  // isto o botão "Criar projeto" ficava com a cor do acervo ativo
+  applyAccent(wizColor);
   drawWizColors();
   loadWizTemplates();
-  B.cancelBtn.hidden = false; B.setupErr.hidden = true;
+}
+// ⓘ de "onde guardar" (exceção deliberada à ADR-0020): clique abre/fecha o
+// detalhe do que mora na pasta — nunca hover
+{
+  const i = $("wizDirInfo"), body = $("wizDirInfoBody");
+  if (i && body) i.addEventListener("click", () => {
+    body.hidden = !body.hidden;
+    i.setAttribute("aria-expanded", String(!body.hidden));
+  });
+}
+function openNewAcervo() {
+  creatingNew = true;
+  B.wizTitle.textContent = t("Novo projeto (acervo)");
+  resetWizardFields();
+  B.cancelBtn.hidden = false;
   B.setup.hidden = false; B.shell.hidden = true;
   B.nameInput.focus();
 }
@@ -5006,7 +5063,12 @@ if (B.wizLang) B.wizLang.addEventListener("change", async (e) => {
   try { settings.uiLang = await invoke("ui_set_lang", { lang: e.target.value }); } catch (_) {}
   if (el.uiLang) el.uiLang.value = settings.uiLang;
   applyI18n(); rerenderForLang();
-  drawWizTemplates();
+  // o applyI18n acima re-traduz o título estático a partir do HTML ("Crie seu
+  // primeiro projeto") — se estamos no fluxo "novo projeto", repõe o certo
+  if (creatingNew) B.wizTitle.textContent = t("Novo projeto (acervo)");
+  if (!brainDir) B.dirBtn.textContent = wizDefaultDir || t("escolher pasta…");
+  // os nomes dos modelos vêm do backend já localizados: re-busca, não só redesenha
+  loadWizTemplates();
 });
 
 // setup / criar acervo
