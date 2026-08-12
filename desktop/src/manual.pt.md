@@ -115,9 +115,12 @@ Na primeira abertura, um **modal de boas-vindas** resume as principais
 funcionalidades (fluxo, gravação, modelos, agente, IA e atalhos) — reabra
 quando quiser pela paleta: `Cmd/Ctrl+K` → "apresentação do Loro".
 
-1. **Criar o acervo** — na primeira abertura, o assistente pede um nome, a
-   pasta onde gerar e os contextos iniciais (ex.: `produto`, `engenharia`).
-   Marque "versionar com git" para habilitar o fluxo de revisão (recomendado).
+1. **Criar o acervo** — na primeira abertura, o assistente mostra todos os
+   campos de uma vez (nada fica atrás de "opções avançadas"): nome, modelo de
+   uso com os temas iniciais logo ao lado (ex.: `produto`, `engenharia`),
+   pasta (a padrão já aparece preenchida; o ⓘ detalha o que será guardado
+   nela), idioma, cor e o agente de IA. Deixe "guardar histórico de versões"
+   marcado para habilitar o fluxo de revisão (recomendado).
 2. **Modelo de uso** — a primeira opção é **Automático** (padrão): o loop
    cria e atribui contexto sozinho ao processar a fila, então você não
    precisa definir contextos agora (dá para desligar depois em
