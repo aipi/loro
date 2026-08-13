@@ -13,11 +13,12 @@
       <!-- ============ CABEÇALHO (54px) ============
            Anatomia única do redesign: [logo+projeto ⌄] [nav pill] ··· [Gravar][✦ IA].
            Gravar vem SEMPRE antes de ✦ IA; ✦ IA é o toggle do painel direito. -->
-      <header class="apphead">
+      <header class="apphead" id="appHead">
         <div id="acervoSwitch" class="switch">
-          <button id="acervoBtn" class="projbtn" title="Trocar de projeto" data-i18n-attrs="title">
+          <button id="acervoBtn" class="projbtn" title="Trocar de projeto" data-i18n-attrs="title"
+            aria-haspopup="true" aria-expanded="false">
             <img src="parrot.png" width="28" height="28" alt="" class="projlogo" />
-            <span id="acervoName" class="projname">acervo</span>
+            <span id="acervoName" class="projname" data-i18n-dyn>projeto</span>
             <span class="swcaret" aria-hidden="true">⌄</span>
           </button>
           <div id="acervoMenu" class="switchmenu" hidden></div>
@@ -34,11 +35,15 @@
 
         <div class="headright">
           <span id="appVersion" class="localtag mono" title="tudo roda 100% no seu computador" data-i18n-attrs="title">—</span>
-          <button id="toggleBtn" class="recbtn" title="Gravar" aria-label="Gravar / Parar" data-i18n-attrs="title,aria-label">
+          <!-- R4 · nem title nem aria-label fixos: os dois nomeavam duas ações opostas
+               ("Gravar / Parar") e nunca mudavam. paintRecControl() é o dono do que o
+               controle diz — rótulo visível, nome acessível e tooltip, da mesma fonte. -->
+          <button id="toggleBtn" class="recbtn">
             <span class="rec-glyph" aria-hidden="true"></span>
-            <span id="recLabel" data-i18n>Gravar</span>
+            <span id="recLabel" data-i18n-dyn>Gravar</span>
           </button>
-          <button id="aiPanelBtn" class="aibtn" title="mostrar / recolher painel de IA" data-i18n-attrs="title">
+          <button id="aiPanelBtn" class="aibtn" title="mostrar / recolher painel de IA" data-i18n-attrs="title"
+            aria-expanded="false" aria-controls="aiPanel">
             <span aria-hidden="true">✦</span> <span data-i18n>IA</span>
           </button>
           <span id="dot" class="dot" aria-hidden="true"></span>
@@ -57,10 +62,14 @@
             </div>
           </div>
 
-          <!-- dependências: UM botão, nunca um comando à vista -->
+          <!-- F21 · o que falta para a transcrição funcionar, dito no primeiro uso.
+               Aqui NÃO há botão de instalar: o instalador roda no terminal
+               embutido, que vive no casco — e o wizard esconde o casco. Um
+               "Instalar agora" nesta faixa seria um controle sem ação (era
+               exatamente o que estava no HTML, sem nenhum handler). O texto é
+               escrito por paintSetupBanner e diz onde se resolve. -->
           <div id="wizDeps" class="depbanner" hidden>
-            <span id="wizDepsMsg" class="depmsg" data-i18n>faltam algumas coisas para o Loro funcionar</span>
-            <button id="wizDepsRun" class="btn solid amber" data-i18n>Instalar agora</button>
+            <span id="wizDepsMsg" class="depmsg" data-i18n-dyn>faltam algumas coisas para o Loro funcionar</span>
           </div>
 
           <div class="wizcard">
@@ -79,14 +88,25 @@
                 placeholder="ex.: produto, plataforma, engenharia/frontend" data-i18n-attrs="placeholder" />
             </label>
             <p class="hint tplhint" data-i18n>os temas são as pastas de conhecimento do projeto: tudo o que você gravar e escrever será organizado dentro deles. separe por vírgula.</p>
+            <!-- "onde guardar" é um CAMPO, não só um botão de picker: era o único
+                 jeito de preencher um campo obrigatório do primeiro uso, e ele só
+                 existia atrás do diálogo do sistema — sem teclado, sem colar um
+                 caminho que você já sabe, e sem nenhuma verificação automatizável.
+                 O picker fica ao lado, como conveniência. -->
             <label class="wfield"><span class="mono" data-i18n>onde guardar</span>
-              <button id="brainDirBtn" class="link mono dirbtn">…</button>
+              <input id="brainDirInput" type="text" spellcheck="false" autocapitalize="off"
+                autocorrect="off" aria-describedby="brainDirNote" />
             </label>
             <!-- o ⓘ é exceção deliberada à ADR-0020 (dono, 2026-08-11): abre
                  por CLIQUE um detalhe que não cabe no hint, nunca por hover -->
-            <p class="hint tplhint"><span data-i18n>o projeto é esta pasta: arquivos de texto (Markdown) na sua máquina — nada vai para a nuvem.</span>
-              <button id="wizDirInfo" class="infoi" type="button" aria-expanded="false" title="o que fica nesta pasta" data-i18n-attrs="title">ⓘ</button></p>
-            <p id="wizDirInfoBody" class="hint tplhint" hidden data-i18n>dentro dela: inbox/ (a fila do que chega), contextos/ (o conhecimento por tema), reunioes/ e notas/ (as fontes) e processed/ (o que já foi organizado). dá para versionar com git e abrir com qualquer editor.</p>
+            <p class="hint tplhint"><span data-i18n>o projeto é esta pasta: arquivos de texto (Markdown) na sua máquina — nada vai para a nuvem. digite o caminho ou escolha a pasta:</span>
+              <button id="brainDirBtn" class="link mono" type="button" data-i18n>escolher pasta…</button>
+              <button id="wizDirInfo" class="infoi" type="button" aria-expanded="false" aria-controls="wizDirInfoBody" title="o que fica nesta pasta" data-i18n-attrs="title">ⓘ</button></p>
+            <!-- o que o caminho digitado vai fazer, dito ANTES de criar: a pasta
+                 pode não existir ainda (o backend a cria) e uma pasta que já é
+                 outro projeto é recusada na porta (ADR-0024) -->
+            <p id="brainDirNote" class="hint tplhint" aria-live="polite" hidden></p>
+            <p id="wizDirInfoBody" class="hint tplhint" hidden data-i18n>dentro dela: inbox/ (o que chega para organizar), contextos/ (o conhecimento por tema), reunioes/ e notas/ (as fontes) e processed/ (o que já foi organizado). o histórico de versões fica no git e qualquer editor abre os arquivos.</p>
             <label class="wfield"><span class="mono" data-i18n>idioma</span>
               <select id="wizLang">
                 <option value="pt" data-i18n>português</option>
@@ -110,7 +130,7 @@
             <button id="brainCreateBtn" class="btn solid" data-i18n>Criar projeto →</button>
             <button id="brainCancelBtn" class="link mono muted" hidden data-i18n>cancelar</button>
           </div>
-          <p id="brainSetupErr" class="hint err" hidden></p>
+          <p id="brainSetupErr" class="hint err" role="alert" hidden></p>
         </section>
 
         <!-- ============ CASCO: sidebar · conteúdo ============ -->
@@ -125,23 +145,23 @@
 
             <div class="sidescroll">
               <!-- IDEIAS (era: brainstorming) -->
-              <div class="bgroup amber"><button class="secttl" data-sect="ideas"><span class="seccaret">▾</span><span data-i18n>ideias</span></button><button id="addTemaBtn" class="gadd" title="Nova ideia" data-i18n-attrs="title">＋</button></div>
+              <div class="bgroup amber"><button class="secttl" data-sect="ideas" aria-expanded="true"><span class="seccaret">▾</span><span data-i18n>ideias</span></button><button id="addTemaBtn" class="gadd" aria-label="Nova ideia" title="Nova ideia" data-i18n-attrs="aria-label,title">＋</button></div>
               <div data-sectbody="ideas">
                 <input id="pessoalFilter" class="sidefilter" type="text" placeholder="buscar ideias…" data-i18n-attrs="placeholder" hidden>
                 <div id="navPessoal" class="btree pessoal"></div>
               </div>
 
               <!-- PARA ORGANIZAR (era: fila → contexto) -->
-              <div class="bgroup amber"><button class="secttl" data-sect="organize"><span class="seccaret">▾</span><span data-i18n>para organizar</span></button><span id="navQueueCount" class="cbadge" hidden>0</span></div>
+              <div class="bgroup amber"><button class="secttl" data-sect="organize" aria-expanded="true"><span class="seccaret">▾</span><span data-i18n>para organizar</span></button><span id="navQueueCount" class="cbadge" hidden>0</span></div>
               <div data-sectbody="organize"><div id="navQueue" class="btree"></div></div>
 
               <!-- CONHECIMENTO (era: contextos) -->
-              <div class="bgroup teal"><button class="secttl" data-sect="knowledge"><span class="seccaret">▾</span><span data-i18n>conhecimento</span></button><button id="addCtxBtn" class="gadd" title="Novo tema" data-i18n-attrs="title">＋</button></div>
+              <div class="bgroup teal"><button class="secttl" data-sect="knowledge" aria-expanded="true"><span class="seccaret">▾</span><span data-i18n>conhecimento</span></button><button id="addCtxBtn" class="gadd" aria-label="Novo tema" title="Novo tema" data-i18n-attrs="aria-label,title">＋</button></div>
               <div data-sectbody="knowledge"><div id="navCtx" class="btree"></div></div>
 
               <!-- habilidades customizadas: acessíveis, mas fora do caminho -->
               <div id="toolsSection" class="toolsec" hidden>
-                <div class="bgroup"><button class="bgtoggle" id="toolsToggle" title="Recolher/expandir habilidades de IA" data-i18n-attrs="title"><span class="seccaret">▾</span> <span data-i18n>Habilidades de IA</span></button><button id="addToolBtn" class="gadd" title="Nova habilidade de IA" data-i18n-attrs="title">＋</button></div>
+                <div class="bgroup"><button class="bgtoggle" id="toolsToggle" title="Recolher/expandir habilidades de IA" data-i18n-attrs="title" aria-expanded="true" aria-controls="navTools"><span class="seccaret">▾</span> <span data-i18n>Habilidades de IA</span></button><button id="addToolBtn" class="gadd" aria-label="Nova habilidade de IA" title="Nova habilidade de IA" data-i18n-attrs="aria-label,title">＋</button></div>
                 <div id="navTools" class="btree"></div>
               </div>
               <div id="navSources" class="btree srcs" hidden></div>
@@ -165,7 +185,15 @@
                   <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 00.12-.61l-1.92-3.32a.49.49 0 00-.59-.22l-2.39.96a7.03 7.03 0 00-1.62-.94l-.36-2.54a.48.48 0 00-.48-.41h-3.84a.48.48 0 00-.48.41l-.36 2.54c-.59.24-1.13.56-1.62.94l-2.39-.96a.49.49 0 00-.59.22L2.74 8.87a.49.49 0 00.12.61l2.03 1.58c-.05.3-.07.62-.07.94 0 .33.02.64.07.94l-2.03 1.58a.49.49 0 00-.12.61l1.92 3.32c.13.22.39.3.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.48-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.49.49 0 00-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1112 8.4a3.6 3.6 0 010 7.2z"/></svg>
                   <span data-i18n="settings">Configurações</span>
                 </button>
-                <button id="sideToggle" class="footside" title="recolher barra lateral" data-i18n-attrs="title">
+                <!-- o ícone é aria-hidden e o botão não tem texto: sem aria-label
+                     o nome acessível dependia do `title`, que nunca mudava —
+                     "recolher" mesmo com a lateral já recolhida. Quem escreve os
+                     dois é paintSideToggle, COM o estado (WCAG 4.1.2) — e por
+                     isso eles ficam fora do applyI18n, que devolveria o valor do
+                     boot por cima (mesmo remédio do selo de privacidade, F25). -->
+                <button id="sideToggle" class="footside" title="recolher barra lateral"
+                  aria-label="recolher barra lateral"
+                  aria-expanded="true" aria-controls="brainShell">
                   <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h14c1.66 0 3 1.34 3 3v12c0 1.66-1.34 3-3 3H5c-1.66 0-3-1.34-3-3V6c0-1.66 1.34-3 3-3zm0 2c-.55 0-1 .45-1 1v12c0 .55.45 1 1 1h4V5H5zm6 0v14h8c.55 0 1-.45 1-1V6c0-.55-.45-1-1-1h-8z"/></svg>
                 </button>
               </div>
@@ -203,14 +231,18 @@
 
           <section class="bmain" id="bMain">
             <!-- faixa de abas: só documentos abertos, nunca "Início" (ADR-0008) -->
-            <nav id="wsTabs" class="wstabs" aria-label="abas abertas" data-i18n-attrs="aria-label"></nav>
+            <nav id="wsTabs" class="wstabs" role="tablist" aria-label="abas abertas" data-i18n-attrs="aria-label"></nav>
 
             <div id="wsBody" class="wsbody">
             <!-- ======== DESTINOS (Início · Organizar · Conhecimento) ======== -->
             <div id="bHome">
               <div id="setupBanner" class="depbanner" hidden>
-                <span id="setupMsg" class="depmsg" data-i18n>faltam dependências</span>
+                <!-- o texto é escrito por paintSetupBanner (a lista do que falta
+                     entra nele): sob o aplicador de idioma ele era reduzido de
+                     volta a "faltam dependências", sem dizer O QUE falta -->
+                <span id="setupMsg" class="depmsg" data-i18n-dyn>faltam dependências</span>
                 <button id="setupRun" class="btn solid amber" data-i18n>Instalar agora</button>
+                <button id="setupCheck" class="btn" title="Verificar de novo se as dependências já estão instaladas" data-i18n data-i18n-attrs="title">verificar de novo</button>
               </div>
 
               <!-- 1a · INÍCIO -->
@@ -255,7 +287,8 @@
                   <p data-i18n>Escolha o que vale virar conhecimento. A IA lê, resume e propõe onde cada coisa entra — nada fica oficial sem a sua aprovação.</p>
                 </div>
                 <div class="orgopts">
-                  <select id="importCtx" class="mini-select">
+                  <select id="importCtx" class="mini-select"
+                    aria-label="destino do que for organizado" data-i18n-attrs="aria-label">
                     <option value="" data-i18n>destino: a IA decide</option>
                   </select>
                   <label class="opt inline"><input type="checkbox" id="queueSaveAnexos" /> <span data-i18n>guardar os anexos junto</span></label>
@@ -271,9 +304,12 @@
 
               <!-- 1c · CONHECIMENTO -->
               <div id="destKnowledge" class="dest-view" hidden>
-                <div id="ghNotifBar" class="notifbar" hidden>
+                <!-- N5 · a faixa só virava hidden=false: quem não a vê nunca soube
+                     que há mudanças esperando revisão (WCAG 4.1.2) -->
+                <div id="ghNotifBar" class="notifbar" role="status" aria-live="polite" hidden>
                   <span id="ghNotif" class="mono"></span>
-                  <button id="ghNotifClose" class="glyph" aria-label="Dispensar" data-i18n-attrs="aria-label">×</button>
+                  <button id="ghNotifOpen" class="mini act" data-i18n>ver revisões</button>
+                  <button id="ghNotifClose" class="glyph" aria-label="Dispensar este aviso" data-i18n-attrs="aria-label">×</button>
                 </div>
                 <div class="viewhead">
                   <h1 data-i18n>Conhecimento</h1>
@@ -287,9 +323,10 @@
             <div id="bDocWrap" hidden>
               <article class="doccard">
                 <div class="dochead">
-                  <span id="bCrumb" class="mono crumbpath"></span>
+                  <h1 id="bCrumb" class="mono crumbpath"></h1>
                   <span id="bBadge" class="mono badge ro"></span>
-                  <span id="bGit" class="mono badge" hidden></span>
+                  <!-- o selo ABRE o histórico do documento: é controle, não texto -->
+                  <span id="bGit" class="mono badge" role="button" tabindex="0" hidden></span>
                   <span id="bPromoted" class="mono badge ok promoted" hidden></span>
                   <span id="bProposal" class="pillamber mono" hidden data-i18n>proposta da IA — aguardando você</span>
                   <span id="bDocActs" class="cluster" hidden>
@@ -297,8 +334,8 @@
                     <button id="bDelDoc" class="mini act danger" title="apagar" data-i18n data-i18n-attrs="title">apagar</button>
                   </span>
                   <nav id="bModes" class="tabs small" hidden>
-                    <button id="bViewBtn" class="tab mono on" data-i18n>visualizar</button>
-                    <button id="bEditBtn" class="tab mono" data-i18n>editar</button>
+                    <button id="bViewBtn" class="tab mono on" aria-pressed="true" data-i18n>visualizar</button>
+                    <button id="bEditBtn" class="tab mono" aria-pressed="false" data-i18n>editar</button>
                   </nav>
                 </div>
                 <div id="bDraftNote" class="draftnote" hidden>
@@ -341,20 +378,37 @@
             <!-- ======== 1f/1k · GRAVAÇÃO AO VIVO ======== -->
             <section id="surface" class="recview" hidden>
               <!-- 1k: fim da gravação -->
+              <!-- ADR-0025: "Salvar em ideias" guarda no PROJETO (nota de uma
+                   ideia). Exportar é a ação que fala com o diálogo do sistema. -->
               <div id="savebar" class="endbar" hidden>
                 <div class="endtxt">
-                  <b data-i18n>Reunião transcrita — guardar no projeto?</b>
-                  <span data-i18n>o áudio é apagado depois de transcrito</span>
+                  <b data-i18n>Transcrição pronta — guardar no projeto?</b>
+                  <span data-i18n>vira uma nota da ideia escolhida — o áudio é apagado depois de transcrito</span>
+                  <!-- DESIGN.md §1: o preço está na cópia. Descartar apaga a
+                       única cópia da transcrição desta sessão. -->
+                  <span data-i18n>descartar apaga a transcrição — não pode ser desfeito</span>
                 </div>
-                <button id="saveBtn" class="btn solid sm" data-i18n>Salvar em ideias</button>
-                <button id="discardBtn" class="btn sm" data-i18n>Descartar</button>
+                <!-- R20 · os três botões são UM grupo: soltos, cada um era um item
+                     flex independente e a coluna do texto era a única coisa que
+                     encolhia — com o painel de IA aberto a frase que diz o preço
+                     ("descartar apaga a transcrição") caía para ~70px de largura,
+                     doze linhas de uma palavra. Juntos, eles descem inteiros para a
+                     linha de baixo e a frase fica legível (DESIGN.md §2.9/§7). -->
+                <div class="endacts">
+                  <button id="saveBtn" class="btn solid sm" data-i18n>Salvar em ideias</button>
+                  <button id="exportBtn" class="btn sm" data-i18n>Exportar arquivo…</button>
+                  <button id="discardBtn" class="btn sm" data-i18n>Descartar</button>
+                </div>
               </div>
 
               <div class="recacts">
-                <button id="recMark" class="chip"><span aria-hidden="true">✎</span> <span data-i18n>Marcar momento</span></button>
-                <button id="recImage" class="chip"><span data-i18n>Anexar imagem</span></button>
+                <!-- C27: marcador e anexo pertencem a uma REUNIÃO (paintRecordingChrome os
+                     mostra enquanto ela existe); numa transcrição avulsa só recusavam -->
+                <button id="recMark" class="chip" hidden><span aria-hidden="true">✎</span> <span data-i18n>Marcar momento</span></button>
+                <button id="recImage" class="chip" hidden><span data-i18n>Anexar imagem</span></button>
                 <button id="recOverlay" class="chip"><span data-i18n>Legenda flutuante</span></button>
-                <select id="recSource" class="mini-select">
+                <select id="recSource" class="mini-select"
+                  aria-label="fonte de áudio" data-i18n-attrs="aria-label">
                   <option value="mic" data-i18n>microfone</option>
                   <option value="system" data-i18n>áudio do sistema</option>
                   <option value="meeting" data-i18n>minha voz + áudio do sistema</option>
@@ -382,7 +436,10 @@
               <span id="timer" class="mono timer">00:00</span>
               <canvas id="wave" class="wave" width="640" height="26"></canvas>
               <span class="mono recnote" data-i18n>mic ativo · a gravação continua se você trocar de aba</span>
-              <span id="privacy" class="privacypill mono" title="Modo sem armazenamento" data-i18n data-i18n-attrs="title">sem guardar áudio</span>
+              <!-- BR-8 · o selo é escrito por updatePrivacy (texto E tooltip):
+                   sob o aplicador de idioma, trocar de idioma gravando o
+                   devolvia a "sem guardar áudio" com o vermelho .warn aplicado -->
+              <span id="privacy" class="privacypill mono" title="Modo sem armazenamento" data-i18n-dyn>sem guardar áudio</span>
               <button id="liveCollapse" class="glyph" aria-label="Recolher" data-i18n-attrs="aria-label" hidden>⌄</button>
             </div>
 
@@ -398,7 +455,7 @@
         <div id="bMenu" class="floatmenu" hidden></div>
 
         <!-- editor modal (pendentes da fila / instruções do loop) -->
-        <div id="editWrap" class="sheet-wrap" hidden>
+        <div id="editWrap" class="sheet-wrap" role="dialog" aria-modal="true" aria-labelledby="editTitle" hidden>
           <div class="sheet editor">
             <div class="sheet-head">
               <span id="editTitle" class="mono sheet-title" data-i18n>editar</span>
@@ -413,15 +470,16 @@
           </div>
         </div>
         <!-- juntar a um conhecimento · mover projeto de pasta (ADR-0009) -->
-        <div id="pmWrap" class="sheet-wrap" hidden>
+        <div id="pmWrap" class="sheet-wrap" role="dialog" aria-modal="true" aria-labelledby="pmTitle" hidden>
           <div class="sheet">
             <div class="sheet-head">
-              <span id="pmTitle" class="mono sheet-title" data-i18n>juntar a um conhecimento</span>
+              <!-- título e rótulo do confirmar são SEMPRE escritos por openModal -->
+              <span id="pmTitle" class="mono sheet-title" data-i18n-dyn>juntar a um conhecimento</span>
               <button id="pmClose" class="glyph" aria-label="Fechar" data-i18n-attrs="aria-label">×</button>
             </div>
             <div id="pmBody" class="pmbody"></div>
             <div class="editbar">
-              <button id="pmConfirm" class="btn solid" data-i18n>confirmar</button>
+              <button id="pmConfirm" class="btn solid" data-i18n-dyn>confirmar</button>
               <button id="pmCancel" class="link mono muted" data-i18n>cancelar</button>
             </div>
           </div>
@@ -433,55 +491,64 @@
 
       <!-- ============ PAINEL DIREITO (330px) ============ -->
       <aside id="aiPanel" class="aipanel" hidden>
-        <nav class="paneltabs" id="panelTabs">
-          <button class="ptab on" data-ptab="doc">
+        <nav class="paneltabs" id="panelTabs" role="tablist" aria-label="painel de IA" data-i18n-attrs="aria-label">
+          <button class="ptab on" data-ptab="doc" id="ptabDoc" role="tab" aria-selected="true" aria-controls="panelDoc">
             <svg class="ic" viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
             <span data-i18n>Documento</span>
           </button>
-          <button class="ptab" data-ptab="chat">
+          <button class="ptab" data-ptab="chat" id="ptabChat" role="tab" aria-selected="false" aria-controls="panelChat">
             <svg class="ic" viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H5.2L4 17.2V4h16v12z"/></svg>
             <span data-i18n>Chat</span>
           </button>
-          <button class="ptab" data-ptab="term">
+          <button class="ptab" data-ptab="term" id="ptabTerm" role="tab" aria-selected="false" aria-controls="panelTerm">
             <svg class="ic" viewBox="0 0 24 24"><path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V8h16v10zM6.5 10l3 3-3 3L8 17l4-4-4-4-1.5 1zM13 16h5v-1.5h-5V16z"/></svg>
             <span data-i18n>Terminal</span>
           </button>
         </nav>
 
         <!-- Documento: ações · linha do tempo · time -->
-        <div id="panelDoc" class="panelpane">
+        <div id="panelDoc" class="panelpane" role="tabpanel" aria-labelledby="ptabDoc">
           <div id="pDocEmpty" class="pempty" hidden>
             <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
-            <b data-i18n>Nenhum documento aberto</b>
-            <span data-i18n>abra um conhecimento ou uma reunião na barra lateral — as habilidades de IA, as versões e o envio para revisão aparecem aqui.</span>
+            <!-- C30: a frase depende de haver abas abertas — quem escreve é
+                 clearPanelDoc (panelDocEmptyCopy), por isso data-i18n-dyn -->
+            <b id="pDocEmptyTitle" data-i18n-dyn>Nenhum documento aberto</b>
+            <span id="pDocEmptyHint" data-i18n-dyn>abra um conhecimento ou uma reunião na barra lateral — as habilidades de IA, as versões e o envio para revisão aparecem aqui.</span>
           </div>
           <div id="pDocSecs">
           <div class="psec">
-            <div class="phead" id="pActionsHead" data-i18n>COM ESTE DOCUMENTO</div>
+            <h2 class="phead" id="pActionsHead" data-i18n>COM ESTE DOCUMENTO</h2>
             <div id="pActions" class="pactions"></div>
             <button id="pAllSkills" class="plink" data-i18n>todas as habilidades de IA ▸</button>
           </div>
           <div class="psep"></div>
           <div class="psec">
-            <div class="phead" data-i18n>LINHA DO TEMPO</div>
+            <h2 class="phead" data-i18n>LINHA DO TEMPO</h2>
             <div id="pTimeline" class="ptimeline"></div>
             <button id="pHistory" class="plink" data-i18n>ver histórico completo ▸</button>
           </div>
           <div class="psep"></div>
           <div class="psec">
-            <div class="phead" data-i18n>TIME</div>
+            <h2 class="phead" data-i18n>TIME</h2>
             <button id="branchBtn" class="pbranch mono" hidden title="Escolher ou criar o rascunho de trabalho" data-i18n-attrs="title"></button>
             <button id="proposeBtn" class="btn wide" hidden data-i18n>↗ Enviar para revisão do time</button>
-            <button id="gitBtn" class="btn wide" hidden data-i18n>Salvar versão</button>
-            <p class="pnote" data-i18n>cria um rascunho separado e abre um pedido de revisão no GitHub; quando o time aprova, vira oficial.</p>
+            <button id="gitBtn" class="btn wide" hidden data-i18n>Salvar versão do projeto</button>
+            <!-- N5 · a outra metade do fluxo (o que espera a SUA revisão) só tinha
+                 porta num toast que expira e numa faixa dispensável -->
+            <button id="pReviewsBtn" class="plink" hidden data-i18n>Ver revisões do time</button>
+            <!-- a nota acompanha o estado real do versionamento (renderPanelTeamNote) -->
+            <p id="pTeamNote" class="pnote" data-i18n-dyn>a versão guarda o projeto inteiro num rascunho separado e abre um pedido de revisão no GitHub; quando o time aprova, vira oficial.</p>
+            <button id="pTeamFix" class="plink" hidden data-i18n-dyn>conectar o GitHub em Configurações</button>
           </div>
           </div>
         </div>
 
         <!-- Chat: faixa de estado · thread · composer com habilidades -->
-        <div id="panelChat" class="panelpane" hidden>
+        <div id="panelChat" class="panelpane" role="tabpanel" aria-labelledby="ptabChat" hidden>
           <div class="chatstate mono">
-            <span id="chatMode" class="chatpill" data-i18n>modo aberto</span>
+            <!-- C28: o pill nomeia o agente do projeto (paintChatMode) — sob o
+                 aplicador de idioma ele voltava ao rótulo do boot a cada troca -->
+            <span id="chatMode" class="chatpill" data-i18n-dyn>—</span>
             <button id="chatReset" class="ulink" data-i18n>reiniciar</button>
             <button id="chatModel" class="ulink right">sonnet · alto ⌄</button>
           </div>
@@ -497,7 +564,7 @@
         </div>
 
         <!-- Terminal: ponto de montagem lateral -->
-        <div id="panelTerm" class="panelpane term" hidden></div>
+        <div id="panelTerm" class="panelpane term" role="tabpanel" aria-labelledby="ptabTerm" hidden></div>
       </aside>
 
       <!-- terminal embutido (PTY) — movido entre #panelTerm e #termDock -->
@@ -505,21 +572,27 @@
         <div class="termstrip">
           <span class="mono termname" id="termName">claude</span>
           <button id="termClear" class="ulink mono" title="Reiniciar terminal" data-i18n data-i18n-attrs="title">reiniciar</button>
-          <button id="termSide" class="glyph" title="Alternar embaixo / lateral" data-i18n-attrs="title">⇆</button>
+          <!-- o nome/tooltip são escritos por paintTermSideBtn (dizem o ESTADO):
+               um data-i18n-attrs aqui os devolveria ao rótulo estático -->
+          <button id="termSide" class="glyph" title="mover o terminal para baixo">⇆</button>
+          <!-- na doca de baixo a aba do painel não controla o terminal: sem esta
+               saída ele fica preso ocupando a coluna de conteúdo (N11) -->
+          <button id="termHide" class="glyph" hidden aria-label="Fechar o terminal" title="Fechar o terminal" data-i18n-attrs="aria-label,title">×</button>
         </div>
+        <!-- N13 · a footer strip (#termStatus + "■ parar") used to sit here that
+             nobody wrote and nobody ever revealed: no frontend code touched it, so
+             it spent 13px and a hairline saying nothing and offered a control that
+             could not be reached. A terminal's truth lives in its own buffer,
+             where the app already writes it ("[processo encerrado — 'reiniciar' …]"). -->
         <div id="termView" class="termview"></div>
-        <div class="termfoot mono">
-          <span id="termStatus"></span>
-          <button id="termStop" class="ulink danger" hidden data-i18n>■ parar</button>
-        </div>
       </section>
       </div><!-- /mainRow -->
 
       <!-- ============ 1g · CONFIGURAÇÕES (página) ============ -->
-      <div id="cfgWrap" class="cfgpage" hidden>
+      <div id="cfgWrap" class="cfgpage" role="dialog" aria-modal="true" aria-labelledby="cfgTitle" hidden>
         <header class="apphead">
           <button id="cfgClose" class="backbtn" data-i18n>← voltar</button>
-          <span class="cfgtitle" data-i18n="settings">Configurações</span>
+          <h2 class="cfgtitle" id="cfgTitle" data-i18n="settings">Configurações</h2>
           <span id="cfgSub" class="cfgsub"></span>
           <span class="headright"><span id="cfgVersion" class="mono localtag">—</span></span>
         </header>
@@ -552,14 +625,15 @@
                   </select>
                 </label>
                 <label class="opt"><input type="checkbox" id="cfgAutoContext" /> <span data-i18n>a IA pode criar e escolher o tema sozinha ao organizar</span></label>
-                <p class="hint" data-i18n>desligado: quando nada existente couber, a IA deixa o item em "para organizar" e pede o tema a você</p>
+                <!-- C29: a dica descreve o estado do interruptor acima (paintAutoContextHint) -->
+                <p id="cfgAutoContextHint" class="hint" data-i18n-dyn>desligado: quando nada existente couber, a IA deixa o item em "para organizar" e pede o tema a você</p>
               </div>
             </section>
 
             <section class="cfgsec" data-sec="trans">
               <h3 data-i18n="transcription">Transcrição</h3>
               <div class="cfgcard">
-                <div class="segrow" id="modeSeg">
+                <div class="segrow" id="modeSeg" role="group" aria-label="modo de transcrição" data-i18n-attrs="aria-label">
                   <button class="segbtn on" data-mode="live" data-i18n>ao vivo</button>
                   <button class="segbtn" data-mode="file" data-i18n>gravar tudo, transcrever no final</button>
                 </div>
@@ -626,15 +700,15 @@
                 <label class="field"><span class="mono" data-i18n>agente de IA (comando)</span>
                   <input id="cfgAgentInput" type="text" placeholder="claude" data-i18n-attrs="placeholder" />
                 </label>
-                <div class="field"><span class="mono" data-i18n>onde as habilidades rodam</span>
-                  <div class="segrow" id="actionModeSeg">
+                <div class="field"><span class="mono" id="lblActionMode" data-i18n>onde as habilidades rodam</span>
+                  <div class="segrow" id="actionModeSeg" role="group" aria-labelledby="lblActionMode">
                     <button class="segbtn on" data-actionmode="chat" data-i18n>no chat</button>
                     <button class="segbtn" data-actionmode="term" data-i18n>no terminal</button>
                   </div>
                 </div>
                 <p class="hint" data-i18n>no chat a resposta fica na conversa; no terminal você acompanha o passo a passo e pode intervir</p>
-                <div class="field"><span class="mono" data-i18n>o que o chat pode fazer</span>
-                  <div class="segrow" id="chatPermSeg">
+                <div class="field"><span class="mono" id="lblChatPerm" data-i18n>o que o chat pode fazer</span>
+                  <div class="segrow" id="chatPermSeg" role="group" aria-labelledby="lblChatPerm">
                     <button class="segbtn on" data-chatperm="acceptEdits" data-i18n>ler e editar o projeto</button>
                     <button class="segbtn" data-chatperm="bypassPermissions" data-i18n>tudo, sem perguntar</button>
                   </div>
@@ -647,8 +721,8 @@
             <section class="cfgsec" data-sec="look">
               <h3 data-i18n>Aparência</h3>
               <div class="cfgcard">
-                <div class="field"><span class="mono" data-i18n>tema visual</span>
-                  <div class="segrow" id="themeSeg">
+                <div class="field"><span class="mono" id="lblTheme" data-i18n>tema visual</span>
+                  <div class="segrow" id="themeSeg" role="group" aria-labelledby="lblTheme">
                     <button class="segbtn" data-theme="light" data-i18n>claro</button>
                     <button class="segbtn" data-theme="dark" data-i18n>escuro</button>
                     <button class="segbtn on" data-theme="system" data-i18n>sistema</button>
@@ -663,15 +737,20 @@
             <section class="cfgsec" data-sec="git">
               <h3 data-i18n>Versões e GitHub</h3>
               <div class="cfgcard">
-                <label class="opt"><input type="checkbox" id="optKeepVersions" checked /> <span data-i18n>guardar histórico de versões do conhecimento</span></label>
-                <label class="opt"><input type="checkbox" id="optVersionOnApprove" checked /> <span data-i18n>salvar versão ao aprovar</span></label>
-                <label class="opt"><input type="checkbox" id="optSendForReview" /> <span data-i18n>enviar mudanças para revisão do time</span></label>
+                <!-- As três caixas que viviam aqui (guardar histórico · salvar
+                     versão ao aprovar · enviar para revisão) não eram lidas por
+                     nenhuma linha de código, e duas vinham marcadas: relatavam
+                     um estado que ninguém impunha. DESIGN.md §1 — um controle
+                     que não faz nada sai da tela. O que essas caixas prometiam
+                     já existe onde acontece: "Salvar versão" e "Enviar para
+                     revisão do time" no painel do documento. -->
                 <p class="hint" data-i18n>só o conhecimento ganha versões; ideias são rascunhos livres</p>
               </div>
               <div id="ghCard" class="cfgcard">
                 <div class="ghrow">
                   <span class="ghtitle mono" data-i18n>ambiente</span>
-                  <span id="ghState" class="mono badge" data-i18n>local</span>
+                  <!-- escrito por renderGhCard (conectado · @conta / local) -->
+                  <span id="ghState" class="mono badge" data-i18n-dyn>local</span>
                   <button id="ghCheck" class="btn sm" title="Verificar o ambiente (git, gh, autenticação, repositório)" data-i18n data-i18n-attrs="title">verificar</button>
                 </div>
                 <ul id="ghChecks" class="ghchecks"></ul>
@@ -681,18 +760,23 @@
         </div>
       </div>
 
-      <div id="toast" class="toast" hidden></div>
+      <div id="toast" class="toast" role="status" aria-live="polite" aria-atomic="true" hidden></div>
+      <!-- região viva única do app: lida por leitor de tela, invisível na tela -->
+      <span id="srLive" role="status" aria-live="polite" aria-atomic="true"
+        style="position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap"></span>
 
       <!-- 1k · paleta de comandos (⌘K) -->
-      <div id="cmdk" class="cmdk" hidden>
+      <div id="cmdk" class="cmdk" role="dialog" aria-modal="true" aria-label="buscar ou executar" data-i18n-attrs="aria-label" hidden>
         <div class="cmdk-box">
           <div class="cmdk-field">
             <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 10-.7.7l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0A4.5 4.5 0 1114 9.5 4.5 4.5 0 019.5 14z"/></svg>
             <input id="cmdkInput" class="cmdk-input" type="text" spellcheck="false"
-              placeholder="buscar ou executar…" data-i18n-attrs="placeholder" />
+              role="combobox" aria-expanded="true" aria-controls="cmdkList" aria-autocomplete="list"
+              aria-label="buscar ou executar"
+              placeholder="buscar ou executar…" data-i18n-attrs="placeholder,aria-label" />
             <span class="mono cmdk-esc" data-i18n>esc para fechar</span>
           </div>
-          <ul id="cmdkList" class="cmdk-list"></ul>
+          <ul id="cmdkList" class="cmdk-list" role="listbox" aria-label="resultados" data-i18n-attrs="aria-label"></ul>
         </div>
       </div>
     </div>

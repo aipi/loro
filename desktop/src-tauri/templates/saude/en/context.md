@@ -1,6 +1,6 @@
 # {{CONTEXT}} — context
 
-_Official source of truth for this context (business-readable markdown). It evolves via RFC (branch + PR) reviewed by the context owners._
+_Official source of truth for this topic (business-readable markdown). Every change is sent for the team's review before it becomes official._
 
 > **Warning:** never record identifiable patient data here — health data is
 > sensitive and the medical record lives in the official EHR.

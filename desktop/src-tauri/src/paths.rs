@@ -171,6 +171,19 @@ pub fn ffmpeg_not_found_err() -> String {
     format!("err.ffmpeg_not_found:{hint}")
 }
 
+// N20 — a folder the user typed can refuse everything the project needs to be
+// written into it, and `io::Error::to_string()` is not a message the product wrote
+// (ADR-0001 §10): "Not a directory (os error 20)" reaches a pt-BR screen, says
+// nothing about what is wrong and offers no next step. Every write that lands
+// INSIDE a project folder answers with one of these stable codes instead, so the
+// sentence the user reads is owned by the UI and exists in both languages.
+pub fn folder_write_error(err: &std::io::Error) -> String {
+    match err.kind() {
+        std::io::ErrorKind::PermissionDenied => "err.acervo_dir_not_writable".to_string(),
+        _ => "err.acervo_dir_unusable".to_string(),
+    }
+}
+
 // find an executable (PATH + known locations) — same search the engine uses
 pub fn which(name: &str) -> Option<String> {
     engine_search_dirs()
@@ -240,6 +253,34 @@ mod tests {
         } else {
             assert!(hint.contains("brew"));
         }
+    }
+
+    // N20 — the wizard's folder field is typeable, so the OS is the one that says
+    // no. Whatever it says, the user must read a sentence the product wrote: the
+    // mapper never forwards the io message, and it tells "no permission" apart
+    // from the rest because those are two different next steps.
+    #[test]
+    fn a_folder_failure_becomes_a_code_the_ui_translates() {
+        use std::io::{Error, ErrorKind};
+        assert_eq!(
+            folder_write_error(&Error::new(
+                ErrorKind::PermissionDenied,
+                "Permission denied"
+            )),
+            "err.acervo_dir_not_writable"
+        );
+        for kind in [
+            ErrorKind::NotADirectory,
+            ErrorKind::NotFound,
+            ErrorKind::Other,
+        ] {
+            let code = folder_write_error(&Error::new(kind, "Not a directory (os error 20)"));
+            assert_eq!(code, "err.acervo_dir_unusable", "{kind:?}");
+        }
+        // no io text ever survives into what the user reads
+        let raw = folder_write_error(&Error::new(ErrorKind::Other, "os error 20"));
+        assert!(raw.starts_with("err."), "{raw}");
+        assert!(!raw.contains("os error"), "{raw}");
     }
 
     #[test]

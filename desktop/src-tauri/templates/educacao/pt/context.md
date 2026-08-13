@@ -1,6 +1,6 @@
 # {{CONTEXT}} — contexto
 
-_Fonte oficial da verdade deste contexto (markdown, legível para negócio). Evolui por RFC (branch + PR) revisada pelos donos do contexto._
+_Fonte oficial da verdade deste tema (markdown, legível para negócio). Toda mudança é enviada para revisão do time antes de virar oficial._
 
 ## 1 · Visão geral
 
