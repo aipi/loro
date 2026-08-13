@@ -543,6 +543,19 @@ fn insert_timed_block(content: &str, t_ms: u64, src: Option<&str>, text: &str) -
     out
 }
 
+// A whole window's utterances in ONE pass, with the same ordering guarantee as
+// insert_timed_block (which it reuses — the pure insert is the tested one). Since
+// ADR-0025 a window carries every utterance whisper timed inside it, so appending
+// them one by one would rewrite reuniao.md ~10 times per 18s and repaint the
+// living surface ~10 times with it.
+fn insert_timed_blocks(content: &str, blocks: &[(u64, Option<&str>, String)]) -> String {
+    blocks
+        .iter()
+        .fold(content.to_string(), |acc, (t_ms, src, text)| {
+            insert_timed_block(&acc, *t_ms, *src, text)
+        })
+}
+
 fn valid_tipo(tipo: &str) -> bool {
     MARKER_TIPOS.contains(&tipo)
 }
@@ -702,6 +715,12 @@ pub struct MeetingStart {
     id: String,
     dir: String,
     living_rel: String,
+    // ADR-0025: the meeting's t=0, taken right before the capture is spawned. Both
+    // tracks convert to it, so they finally share one clock. It is NOT the WAV's
+    // t=0 (that is the sidecar's anchor, reported per segment): on a silent machine
+    // the first sample can lag arbitrarily, and anchoring the MEETING there would
+    // push the mic's own timestamps negative.
+    started_epoch_ms: u64,
 }
 
 // Create the meeting home + manifest(recording) + reuniao.md and start the
@@ -734,6 +753,7 @@ pub fn brain_meeting_start(
 
     // ADR-0005 sidecar: fails fast on a Screen Recording denial — clean up the
     // just-scaffolded meeting so a denial leaves no orphan on disk.
+    let started_epoch_ms = crate::epoch_millis() as u64;
     let sys_wav = match crate::system_capture_start(&app, &state) {
         Ok(p) => p,
         Err(e) => {
@@ -760,6 +780,7 @@ pub fn brain_meeting_start(
         id: created.id,
         dir: dir_rel,
         living_rel: created.living_rel,
+        started_epoch_ms,
     })
 }
 
@@ -809,6 +830,7 @@ pub fn brain_meeting_stop(
             if src.is_file() {
                 let _ = move_file(src, &dir.join("audio").join(system_segment_name(i)));
             }
+            crate::syscap_anchor_forget(src); // the segment's clock ends with it
         }
     }
     crate::set_tray_recording(&state, false);
@@ -865,6 +887,62 @@ pub fn brain_meeting_append(app: AppHandle, input: MeetingAppendInput) -> Result
 
     let living_rel = format!("{}/reuniao.md", rel_of(&base, &dir));
     let bytes = input.chunk.len();
+    let _ = app.emit(
+        "meeting-appended",
+        serde_json::json!({ "meetingRel": living_rel, "bytes": bytes }),
+    );
+    Ok(())
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TimedBlockInput {
+    t_ms: u64,
+    #[serde(default)]
+    source: Option<String>,
+    chunk: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MeetingAppendTimedInput {
+    id: String,
+    blocks: Vec<TimedBlockInput>,
+}
+
+// ADR-0025: a transcription window is a LIST of timed utterances, not one block.
+// This is the batch sibling of brain_meeting_append — one read, one write, one
+// manifest bump, one `meeting-appended` for the whole window, so the live surface
+// repaints once instead of once per utterance.
+#[tauri::command]
+pub fn brain_meeting_append_timed(
+    app: AppHandle,
+    input: MeetingAppendTimedInput,
+) -> Result<(), String> {
+    if input.blocks.is_empty() {
+        return Ok(());
+    }
+    let base = acervo_base()?;
+    let lock = meeting_lock(&input.id);
+    let _guard = lock.lock().map_err(|_| "lock envenenado".to_string())?;
+    let dir = resolve_meeting_dir(&base, &input.id)?;
+
+    let living = dir.join("reuniao.md");
+    let content = std::fs::read_to_string(&living).map_err(|e| e.to_string())?;
+    let blocks: Vec<(u64, Option<&str>, String)> = input
+        .blocks
+        .iter()
+        .map(|b| (b.t_ms, b.source.as_deref(), b.chunk.clone()))
+        .collect();
+    let updated = insert_timed_blocks(&content, &blocks);
+    std::fs::write(&living, &updated).map_err(|e| e.to_string())?;
+
+    let mut manifest = manifest_read(&dir)?;
+    manifest.atualizado_em = now_iso();
+    manifest_write(&dir, &manifest)?;
+
+    let living_rel = format!("{}/reuniao.md", rel_of(&base, &dir));
+    let bytes: usize = input.blocks.iter().map(|b| b.chunk.len()).sum();
     let _ = app.emit(
         "meeting-appended",
         serde_json::json!({ "meetingRel": living_rel, "bytes": bytes }),
@@ -1324,8 +1402,16 @@ pub struct TranscribeTailInput {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TranscribeTail {
-    text: String,
+    // ADR-0025: every utterance whisper timed inside the window, each with its own
+    // offset INTO THE CURRENT CAPTURE SEGMENT's WAV. It used to be one joined blob
+    // stamped with the window's start, so only the first utterance of each 18s
+    // window had a true time.
+    segments: Vec<crate::SpokenSegment>,
     next_ms: u64,
+    // The WAV's t=0 as an absolute epoch, so the frontend can place these offsets
+    // on the meeting clock instead of estimating. `None` until the sidecar reports
+    // it (silent machine) or with an older sidecar binary — the caller degrades.
+    anchor_epoch_ms: Option<u64>,
 }
 
 // BEST-EFFORT live preview of the system-audio tail (ADR-0012 promoted the
@@ -1370,9 +1456,14 @@ fn transcribe_tail_blocking(input: TranscribeTailInput) -> Result<TranscribeTail
         .get(&input.id)
         .and_then(|v| v.last().cloned())
         .unwrap_or_else(|| dir.join("audio").join("system.wav"));
+    // The anchor travels with EVERY answer, empty ones included: the frontend needs
+    // it to place this segment on the meeting clock, and it may only have been
+    // reported after the meeting started.
+    let anchor_epoch_ms = crate::syscap_anchor_of(&src);
     let unchanged = TranscribeTail {
-        text: String::new(),
+        segments: Vec::new(),
         next_ms: input.from_ms,
+        anchor_epoch_ms,
     };
     if !src.is_file() {
         return Ok(unchanged);
@@ -1425,9 +1516,20 @@ fn transcribe_tail_blocking(input: TranscribeTailInput) -> Result<TranscribeTail
         Some(end_ms),
     );
     let _ = std::fs::remove_file(&snap);
+    // The window was carved with an input seek, so whisper's times restart at zero:
+    // shift them back to offsets into the segment's WAV (ADR-0025).
+    let segments = segments?
+        .into_iter()
+        .map(|s| crate::SpokenSegment {
+            t_ms: s.t_ms + input.from_ms,
+            end_ms: s.end_ms + input.from_ms,
+            text: s.text,
+        })
+        .collect();
     Ok(TranscribeTail {
-        text: segments?.join(" "),
+        segments,
         next_ms: end_ms,
+        anchor_epoch_ms,
     })
 }
 
@@ -1439,8 +1541,11 @@ pub struct TranscribeSegmentInput {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TranscribeSegment {
-    text: String,
+    // ADR-0025: each utterance with its offset INTO THIS mic segment (the webm is
+    // carved whole, so the times are already relative to the segment's start).
+    segments: Vec<crate::SpokenSegment>,
 }
 
 // ADR-0012 pseudo-stream (model A — the live preview IS the transcript): the
@@ -1464,7 +1569,7 @@ fn transcribe_segment_blocking(input: TranscribeSegmentInput) -> Result<Transcri
     let dir = resolve_meeting_dir(&base, &input.id)?;
     if input.data.is_empty() {
         return Ok(TranscribeSegment {
-            text: String::new(),
+            segments: Vec::new(),
         });
     }
     let manifest = manifest_read(&dir)?;
@@ -1497,7 +1602,7 @@ fn transcribe_segment_blocking(input: TranscribeSegmentInput) -> Result<Transcri
     );
     let _ = std::fs::remove_file(&seg);
     Ok(TranscribeSegment {
-        text: segments?.join(" "),
+        segments: segments?,
     })
 }
 
@@ -1630,6 +1735,38 @@ mod tests {
         let d = append_below_marker(&c, "nota do skill");
         let body2 = d.split(TRANSCRIPT_MARKER).nth(1).unwrap();
         assert!(body2.rfind("nota do skill").unwrap() > body2.find("participante fala").unwrap());
+    }
+
+    // ADR-0025: a window is no longer ONE block — it is every utterance whisper
+    // timed inside it. Writing them one call at a time would mean ~10 rewrites of
+    // reuniao.md and ~10 repaints per 18s window, so the batch inserts them all in
+    // one pass, chronologically, over the already-tested pure insert.
+    #[test]
+    fn insert_timed_blocks_places_a_whole_window_in_one_pass() {
+        let header = living_header("i", "t", "T", "2026-07-27T00:00:00Z");
+        // a mic block is already written at 6s; a system window arrives with three
+        // utterances that straddle it
+        let with_mic = insert_timed_block(&header, 6_000, Some("mic"), "operador responde");
+        let out = insert_timed_blocks(
+            &with_mic,
+            &[
+                (2_000, Some("system"), "participante pergunta".to_string()),
+                (9_000, Some("system"), "participante conclui".to_string()),
+                (4_500, Some("system"), "participante emenda".to_string()),
+            ],
+        );
+        let body = out.split(TRANSCRIPT_MARKER).nth(1).unwrap();
+        let i = |s: &str| body.find(s).unwrap();
+        assert!(i("participante pergunta") < i("participante emenda"));
+        assert!(i("participante emenda") < i("operador responde"));
+        assert!(i("operador responde") < i("participante conclui"));
+        // one marker, and every block kept its own label and sort key
+        assert_eq!(out.matches(TRANSCRIPT_MARKER).count(), 1);
+        assert!(body.contains("[00:02 · sistema]"));
+        assert!(body.contains("[00:06 · você]"));
+        assert!(body.contains("<!-- loro:t=9000 -->"));
+        // empty batch is a no-op, not a corruption
+        assert_eq!(insert_timed_blocks(&with_mic, &[]), with_mic);
     }
 
     #[test]

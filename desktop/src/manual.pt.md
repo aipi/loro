@@ -34,6 +34,10 @@ BARRA LATERAL │ ABAS (só quando há documento aberto) │ PAINEL 330px
   cópia sozinho; se ainda assim ele confundir quem falou, ligue **cancelar o
   eco do alto-falante** em Configurações → Captura — com o custo, declarado
   ali, de a sua voz sair mais baixa. Com fone, deixe desligado.
+- **Cada fala entra com o seu próprio horário**, nas duas trilhas, contado desde
+  o instante em que a gravação começou de verdade. Numa reunião a captura do
+  áudio do sistema começa antes de a tela aparecer, então o relógio pode abrir
+  com alguns segundos já corridos — é o tempo que já está gravado, não um erro.
 - **O rodapé de gravação** é o mesmo para a gravação avulsa e para a reunião:
   relógio, onda do áudio e o selo de privacidade no pé do conteúdo. Numa reunião
   ele ganha **⏸ pausar / ▶ retomar** e **■ Encerrar reunião**, à esquerda do

@@ -356,6 +356,53 @@ test("sobreposição parcial é sinalizada, não descartada", () => {
   assert.ok(LM.partialCrossTalk(novo, recent), "mas o vazamento tem de ser percebido");
 });
 
+// ADR-0025 — as duas trilhas carimbavam a mesma fala com tempos diferentes. A
+// captura de sistema começa antes de a interface se pintar (poll de TCC de 1,2s +
+// espera do microfone de até 6s + openDoc), e o sistema era carimbado pelo offset
+// dentro do WAV enquanto o microfone era carimbado pelo relógio da reunião. Estas
+// funções puras são o único lugar que converte, e as duas convergem por
+// construção — não por coincidência de constantes.
+test("as duas trilhas dão o MESMO tempo para a mesma fala", () => {
+  const origem = 1_700_000_000_000;      // t=0 da reunião (spawn da captura)
+  const primeiraAmostra = origem + 300;  // o WAV nasce 300ms depois
+  // uma fala que acontece 10s depois do t=0 da reunião:
+  //   no WAV ela está em 9.700ms (o WAV começou 300ms depois)
+  //   no microfone ela está a 4.000ms de um segmento que abriu em origem+6.000
+  const pelaSistema = LM.sysBlockMs(primeiraAmostra, 9_700, origem, 0);
+  const peloMic = LM.micBlockMs(origem + 6_000, 4_000, origem, 0);
+  assert.strictEqual(pelaSistema, 10_000);
+  assert.strictEqual(peloMic, 10_000);
+});
+
+test("sem âncora o sistema não some — cai no offset cru e segue", () => {
+  const origem = 1_700_000_000_000;
+  // sidecar antigo (sem a linha de âncora) ou primeira amostra ainda não relatada
+  assert.strictEqual(LM.sysBlockMs(null, 9_700, origem, 0), 9_700);
+  assert.strictEqual(LM.sysBlockMs(undefined, 5_000, origem, 1_000), 5_000);
+});
+
+test("retomar reancora e desconta a pausa das duas trilhas igualmente", () => {
+  const origem = 1_700_000_000_000;
+  // gravou 30s, ficou 20s pausada, retomou: o novo WAV nasce 50s depois do t=0,
+  // mas na linha do tempo da reunião ele começa em 30s — a pausa não é tempo
+  // gravado (ADR-0022 §19).
+  const pausada = 20_000;
+  assert.strictEqual(LM.sysBlockMs(origem + 50_000, 0, origem, pausada), 30_000);
+  assert.strictEqual(LM.sysBlockMs(origem + 50_000, 4_000, origem, pausada), 34_000);
+  assert.strictEqual(LM.micBlockMs(origem + 50_000, 4_000, origem, pausada), 34_000);
+});
+
+test("tempo nunca é negativo — um bloco antes do t=0 vai para o zero", () => {
+  const origem = 1_700_000_000_000;
+  // relógios de parede não são monotônicos: um ajuste de NTP durante a reunião
+  // não pode produzir um timecode negativo (o sort key é u64 no backend)
+  assert.strictEqual(LM.sysBlockMs(origem - 5_000, 0, origem, 0), 0);
+  assert.strictEqual(LM.micBlockMs(origem - 5_000, 0, origem, 0), 0);
+  // Sem origem não há o que derivar: devolver o epoch cru daria um timecode de
+  // décadas. Degrada para o offset dentro do segmento — pequeno e inofensivo.
+  assert.strictEqual(LM.micBlockMs(origem + 1_000, 500, null, 0), 500);
+});
+
 test("fala sem relação nenhuma não é sinalizada como vazamento", () => {
   const recent = [{ tMs: 0, source: "system", tokens: LM.speechTokens("Vamos fechar o orçamento da frota antes de sexta com o fornecedor novo.") }];
   const novo = { tMs: 1000, source: "mic", tokens: LM.speechTokens("Preciso revisar o contrato de manutenção da filial de Recife amanhã cedo.") };

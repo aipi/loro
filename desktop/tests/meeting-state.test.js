@@ -167,11 +167,55 @@ test("B4 — longe no tempo é conversa, não eco", () => {
 });
 
 test("B4 — o ponto único de anexação consulta o duplicado exato", () => {
-  const body = fnBody("appendMeetingChunk");
+  const body = fnBody("appendMeetingSpeech");
   assert.match(body, /crossTrackDuplicate\(/);
   const dup = body.indexOf("crossTrackDuplicate(");
   const push = body.indexOf("meeting.appended.push");
   assert.ok(dup < push, "o teste vem antes do registro, como o do eco");
+  // ADR-0022 §26: e nada pode se intercalar entre os dois. Foi um `await` nesse
+  // vão que deixou o filtro inerte — as duas cópias testavam contra uma lista que
+  // ainda não tinha a outra, as duas passavam, e o log ficou com zero descartes.
+  // Os comentários saem antes: o vão FALA de await, e é código que importa.
+  const semComentario = body.slice(dup, push).replace(/\/\/[^\n]*/g, "");
+  assert.ok(!/\bawait\b/.test(semComentario),
+    "um await entre o teste e o registro deixa o filtro cego de novo");
+});
+
+// ============================================================ ADR-0025
+// As duas trilhas carimbavam a mesma fala com tempos diferentes: a captura de
+// sistema começa antes de a interface se pintar, e cada trilha usava seu próprio
+// relógio. Estes testes prendem a origem única e o uso dela nas DUAS trilhas —
+// a defasagem era invisível no código porque nada afirmava a convergência.
+test("ADR-0025 — o relógio da reunião começa onde a gravação começou", () => {
+  const body = fnBody("startTimer");
+  assert.match(body, /state\.startTime = originEpoch \|\|/,
+    "com a origem no passado, começar em Date.now() perderia o que já foi gravado");
+  // e a origem vem do backend, não de um palpite do frontend
+  assert.match(fnBody("startMeetingWith"), /meeting\.originEpoch = res\.startedEpochMs/);
+  // o cromo não pode afirmar 00:00 quando o relógio real já passou disso
+  assert.ok(!fnBody("startTimer").includes('paintElapsed("00:00")'));
+});
+
+test("ADR-0025 — as duas trilhas convertem pela MESMA linha do tempo", () => {
+  assert.match(fnBody("onPreviewSegment"), /LM\.micBlockMs\(segStartEpoch, s\.tMs, meeting\.originEpoch/);
+  assert.match(fnBody("runMeetingTail"), /LM\.sysBlockMs\(meeting\.sysAnchor, s\.tMs, meeting\.originEpoch/);
+  // a estimativa antiga não pode sobreviver em nenhum canto do arquivo
+  assert.ok(!APP.includes("tailBase"), "tailBase era a estimativa errada");
+  // e a âncora é a do sidecar, recebida a cada resposta (pode chegar atrasada)
+  assert.match(fnBody("runMeetingTail"), /res\.anchorEpochMs != null/);
+  // até ela chegar, a âncora é uma ESTIMATIVA do início deste segmento. Com ela
+  // em null o offset cru valeria, e num retomar a janela cairia antes da pausa.
+  assert.match(fnBody("startMeetingTail"), /meeting\.sysAnchor = Date\.now\(\)/);
+});
+
+test("ADR-0025 — encerrar despeja a última janela de sistema antes de parar", () => {
+  const body = fnBody("finalizeMeeting");
+  const tick = body.indexOf("tickMeetingTail()");
+  const stop = body.indexOf('invoke("brain_meeting_stop"');
+  assert.ok(tick > -1, "sem o tique final, até 18s da fala dos outros se perdiam");
+  assert.ok(tick < stop, "depois do stop o WAV já foi movido e o tail não tem fonte");
+  // e espera o tique em voo antes de pedir o seu (dois carves no mesmo snapshot)
+  assert.ok(body.indexOf("meeting.tailFlush") < tick);
 });
 
 // ============================================================ R19

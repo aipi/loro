@@ -34,6 +34,10 @@ SIDEBAR      │ TABS (only when a document is open) │ PANEL 330px
   mixes up who spoke, turn on **cancel speaker echo** in Settings → Capture —
   at the cost, stated there, of your voice coming out quieter. With
   headphones, leave it off.
+- **Every utterance lands at its own time**, on both tracks, counted from the
+  moment recording actually began. In a meeting the system-audio capture starts
+  before the screen appears, so the clock may open with a few seconds already
+  run — that is time already recorded, not a glitch.
 - **The recording footer** is the same for a loose recording and for a meeting:
   clock, waveform and the privacy pill at the foot of the content. In a meeting
   it also carries **⏸ pause / ▶ resume** and **■ End meeting**, left of the

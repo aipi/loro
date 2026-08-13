@@ -171,6 +171,43 @@
       .trim();
   }
 
+  // ---- a linha do tempo compartilhada (ADR-0025) ----------------------------
+  // A reunião tem UM t=0: o instante, em epoch, imediatamente anterior ao spawn da
+  // captura de sistema. Todo bloco de transcrição — das duas trilhas — é convertido
+  // para ele aqui, e só aqui.
+  //
+  // Antes cada trilha tinha o seu relógio. A captura de sistema começa antes de a
+  // interface se pintar (poll de TCC de 1,2s + espera do microfone de até 6s +
+  // openDoc), e o sistema era carimbado pelo offset dentro do WAV enquanto o
+  // microfone era carimbado por `state.startTime`. A defasagem era de ~1s no caso
+  // comum e de até ~7s na primeira reunião — e reaparecia a cada retomar.
+  //
+  // A pausa não é tempo gravado (ADR-0022 §19), então ela é descontada nas duas
+  // trilhas do mesmo jeito: `segPausedMs` é o total pausado quando o segmento
+  // começou.
+  // Uma âncora desconhecida degrada para o offset dentro do segmento: aproximado
+  // como era antes, nunca quebrado. Devolver o epoch cru daria um timecode de
+  // décadas — o estado não pode mentir (DESIGN.md §1).
+  function blockMs(segStartEpoch, offsetMs, originEpoch, segPausedMs) {
+    var off = Math.max(0, Number(offsetMs || 0));
+    if (segStartEpoch == null || originEpoch == null) return off;
+    var base = Number(segStartEpoch) - Number(originEpoch) - Number(segPausedMs || 0);
+    // Relógio de parede não é monotônico: um ajuste do sistema no meio da reunião
+    // não pode produzir timecode negativo (a chave de ordenação é u64 no backend).
+    return Math.max(0, base + off);
+  }
+  // Uma fala da trilha de sistema: `anchorEpochMs` é o t=0 do WAV corrente, dito
+  // pelo próprio sidecar (a primeira amostra que ele escreveu), e `offsetMs` é o
+  // offset da fala dentro desse WAV.
+  function sysBlockMs(anchorEpochMs, offsetMs, originEpoch, segPausedMs) {
+    return blockMs(anchorEpochMs, offsetMs, originEpoch, segPausedMs);
+  }
+  // Uma fala do microfone: `segStartEpoch` é quando o segmento começou a gravar e
+  // `offsetMs` é o offset da fala dentro dele.
+  function micBlockMs(segStartEpoch, offsetMs, originEpoch, segPausedMs) {
+    return blockMs(segStartEpoch, offsetMs, originEpoch, segPausedMs);
+  }
+
   // ---- eco entre trilhas (mic × sistema) ------------------------------------
   // A reunião tem DUAS captações independentes: o microfone (você) e o áudio do
   // sistema (os outros). Quando o som sai por alto-falante, o microfone escuta
@@ -312,6 +349,7 @@
     stripMarker, transcriptText, acervoJoin, aiStatusLine, MARKER,
     isHallucination, filterHallucinations,
     speechTokens, tokenContainment, echoOfOtherSource, partialCrossTalk,
+    sysBlockMs, micBlockMs,
     meetingTitleFromManifest, meetingLabel,
   };
 });
