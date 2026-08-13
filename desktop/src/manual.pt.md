@@ -30,10 +30,14 @@ BARRA LATERAL │ ABAS (só quando há documento aberto) │ PAINEL 330px
   e a gravação continua se você trocar de aba — um selo `gravando · mm:ss`
   aparece no cabeçalho e leva de volta.
 - **Se você ouve por alto-falante**, o microfone escuta de volta o que os
-  outros falam, e a mesma frase entra nas duas trilhas. O Loro descarta a
-  cópia sozinho; se ainda assim ele confundir quem falou, ligue **cancelar o
-  eco do alto-falante** em Configurações → Captura — com o custo, declarado
-  ali, de a sua voz sair mais baixa. Com fone, deixe desligado.
+  outros falam, e a mesma frase chega nas duas trilhas. O Loro descarta a cópia
+  sozinho, e sempre a do **microfone**: o som vaza da caixa para o microfone, e
+  nunca no sentido contrário, então a fala dos outros nunca é rotulada como sua.
+  Para isso ele espera alguns segundos a trilha do sistema antes de escrever a
+  sua fala — é por isso que o seu texto às vezes aparece um pouco depois. Se
+  quiser matar o vazamento na origem, ligue **cancelar o eco do alto-falante**
+  em Configurações → Captura, com o custo, declarado ali, de a sua voz sair mais
+  baixa. Com fone, deixe desligado.
 - **Cada fala entra com o seu próprio horário**, nas duas trilhas, contado desde
   o instante em que a gravação começou de verdade. Numa reunião a captura do
   áudio do sistema começa antes de a tela aparecer, então o relógio pode abrir

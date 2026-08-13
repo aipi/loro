@@ -208,6 +208,61 @@
     return blockMs(segStartEpoch, offsetMs, originEpoch, segPausedMs);
   }
 
+  // ---- o dono da junção (ADR-0025) ------------------------------------------
+  // Antes as duas trilhas eram dois appendadores INDEPENDENTES competindo pelo
+  // mesmo arquivo, e era a corrida entre eles que decidia o rótulo. Agora existe um
+  // dono: a trilha de sistema escreve na hora (ela nunca é descartada, não tem o
+  // que esperar) e a fala do microfone só é resolvida quando a trilha de sistema
+  // cobriu o mesmo intervalo. Isso não é artifício — é o que qualquer junção faz:
+  // só emite um intervalo quando tem os dois lados dele.
+  //
+  // Puro e sem estado global: recebe o prazo e o agendador, então o teste controla
+  // o tempo em vez de esperar por ele.
+  function coverageGate() {
+    let covered = 0, closed = false;
+    const waiters = [];
+    function flush() {
+      for (let i = waiters.length - 1; i >= 0; i--) {
+        const w = waiters[i];
+        if (closed || covered >= w.untilMs) { waiters.splice(i, 1); w.ready(); }
+      }
+    }
+    return {
+      coveredMs: function () { return covered; },
+      isClosed: function () { return closed; },
+      // a trilha de sistema chegou até aqui (silêncio também cobre: uma janela sem
+      // fala prova que aquele intervalo foi ouvido e não tinha eco nenhum)
+      advance: function (ms) {
+        const n = Number(ms);
+        if (isFinite(n) && n > covered) covered = n;
+        flush();
+      },
+      close: function () { closed = true; flush(); },   // pausar/encerrar
+      reopen: function () { closed = false; },          // retomar
+      // Resolve com "ready" quando a cobertura chegou (ou o portão fechou) e com
+      // "deadline" quando venceu o prazo. Quem chama REGISTRA a diferença: uma
+      // liberação por prazo é o caso patológico, e um sistema que degrada em
+      // silêncio é como o filtro de eco ficou inerte por duas versões.
+      wait: function (untilMs, deadlineMs, schedule) {
+        if (closed || covered >= untilMs) return Promise.resolve("ready");
+        return new Promise(function (resolve) {
+          let settled = false;
+          const w = { untilMs: untilMs, ready: null };
+          function finish(how) {
+            if (settled) return;
+            settled = true;
+            const i = waiters.indexOf(w);
+            if (i >= 0) waiters.splice(i, 1);
+            resolve(how);
+          }
+          w.ready = function () { finish("ready"); };
+          waiters.push(w);
+          (schedule || setTimeout)(function () { finish("deadline"); }, deadlineMs);
+        });
+      },
+    };
+  }
+
   // ---- eco entre trilhas (mic × sistema) ------------------------------------
   // A reunião tem DUAS captações independentes: o microfone (você) e o áudio do
   // sistema (os outros). Quando o som sai por alto-falante, o microfone escuta
@@ -245,27 +300,98 @@
     A.forEach(function (w) { if (B.has(w)) hits++; });
     return Math.min(hits / A.size, hits / B.size);
   }
-  // Piso de tamanho: "tá bom", "sim, claro" repetem naturalmente numa conversa —
-  // descartar trechos curtos por semelhança apagaria fala legítima. Só trechos
-  // com substância entram no teste.
-  const ECHO_MIN_TOKENS = 8;
-  const ECHO_MIN_CONTAINMENT = 0.7;
-  // A janela de sistema é appendada com o tMs do INÍCIO dela, então o par pode
-  // ficar afastado por até uma janela inteira — a folga é isso, não chute.
-  const ECHO_WINDOW_MS = 20000;
-  // `recent` são os trechos já appendados: {tMs, source, tokens}. Devolve o que
-  // casou (para o log) ou null. Só compara com a trilha OPOSTA: a mesma trilha
-  // repetindo é fala repetida de verdade, não eco.
-  function echoOfOtherSource(chunk, recent) {
+  // Cobertura por CORRIDAS de palavras: que fração de `mine` está dentro de
+  // sequências CONTÍGUAS de `minRun`+ palavras que também aparecem contíguas em
+  // `other`. É a medida que separa eco de coincidência, porque o eco reproduz a
+  // MESMA sequência de palavras (os dois sinais são a mesma fala), enquanto uma
+  // coincidência de palavras funcionais não produz corrida longa.
+  function longestRunAt(mine, i, other) {
+    let best = 0;
+    for (let j = 0; j < other.length; j++) {
+      if (other[j] !== mine[i]) continue;
+      let k = 0;
+      while (i + k < mine.length && j + k < other.length && mine[i + k] === other[j + k]) k++;
+      if (k > best) best = k;
+    }
+    return best;
+  }
+  function leakCoverage(mine, other, minRun) {
+    const A = mine || [], B = other || [];
+    if (!A.length || !B.length) return 0;
+    const min = minRun == null ? LEAK_MIN_RUN : minRun;
+    let covered = 0, i = 0;
+    while (i < A.length) {
+      const run = longestRunAt(A, i, B);
+      if (run >= min) { covered += run; i += run; }
+      else i++;
+    }
+    return covered / A.length;
+  }
+
+  // Os limiares, MEDIDOS nas capturas reais do dono (o método da ADR-0022 §25):
+  //
+  //   par de eco real         corridas≥4: 0,89 e 0,94    mútua: 0,89 e 0,92
+  //   duplicata exata curta   corridas≥4: 1,00           mútua: 1,00
+  //   vazamento + fala própria corridas≥4: 0,44          mútua: 0,65
+  //   COINCIDÊNCIA            corridas≥4: 0,55          mútua: 0,31
+  //   fala sem relação        corridas≥4: 0,00          mútua: 0,07
+  //
+  // A corrida mínima é 4 e não 3 por medida, não por gosto: com 3, a coincidência
+  // sobe para 0,82 e uma fala legítima do usuário seria apagada. Com 4 o vão real
+  // aparece — 0,55 contra 0,89 — e o corte fica no meio dele.
+  const LEAK_MIN_RUN = 4;
+  const LEAK_MIN_COVERAGE = 0.75;
+  // Eco é SIMÉTRICO: as duas trilhas ouviram a mesma coisa, então os dois
+  // conjuntos se cobrem. A coincidência é assimétrica por construção (0,31), e é
+  // esta segunda medida que a mata. Duas medidas concordando, cada uma com seu
+  // vão medido, é mais forte do que qualquer uma sozinha.
+  const LEAK_MIN_SYMMETRY = 0.5;
+  // A ÚNICA constante aqui que não sai de um vão medido, e por isso conservadora:
+  // fisicamente o vazamento chega ao microfone em milissegundos, mas o whisper
+  // segmenta dois sinais diferentes (um limpo, um vazado pelo ar) com fronteiras
+  // que não coincidem exatamente. Uma captura real de duas trilhas COM timestamps
+  // permitiria apertá-la; até lá, folga generosa. Substitui a janela de 20s do
+  // desenho anterior, que só existia porque a janela inteira era carimbada no
+  // início dela.
+  const LEAK_SLACK_MS = 1500;
+
+  function spanEnd(c) {
+    return (c.endMs == null ? c.tMs : c.endMs) || 0;
+  }
+  // Os dois trechos aconteceram no MESMO pedaço da reunião? Com o timestamp por
+  // fala (ADR-0025) isto é uma pergunta real; antes, com blocos de 18s carimbados
+  // no início, não era.
+  function spansOverlap(a, b) {
+    return (a.tMs || 0) - LEAK_SLACK_MS <= spanEnd(b)
+      && (b.tMs || 0) - LEAK_SLACK_MS <= spanEnd(a);
+  }
+
+  // O vazamento é FÍSICO e tem um sentido só: o som sai do alto-falante e entra
+  // no microfone. O caminho inverso não existe — o sidecar exclui o áudio do
+  // próprio Loro (`excludesCurrentProcessAudio`) e o microfone não é saída de
+  // sistema. Então só uma fala de MICROFONE pode ser descartada como eco, e a
+  // fala de sistema nunca é descartada por causa do microfone.
+  //
+  // É isto que tira o rótulo do sorteio. Antes o descarte era simétrico e caía em
+  // quem chegasse em SEGUNDO lugar, numa corrida entre dois `invoke` disparados no
+  // mesmo instante: sistema primeiro e a sua voz virava "sistema"; microfone
+  // primeiro e a fala do outro virava "você". Um mecanismo, os dois sintomas.
+  //
+  // `recent` são as falas já appendadas: {tMs, endMs, source, tokens}. Devolve a
+  // que casou (para o log) ou null.
+  function micLeakOfSystem(chunk, recent) {
     const c = chunk || {};
-    const mine = speechTokens(c.text);
-    if (mine.length < ECHO_MIN_TOKENS) return null;
+    if (c.source !== "mic") return null;
+    const mine = c.tokens || [];
+    if (!mine.length) return null;
     const list = Array.isArray(recent) ? recent : [];
     for (let i = list.length - 1; i >= 0; i--) {
       const prev = list[i];
-      if (!prev || prev.source === c.source) continue;
-      if (Math.abs((prev.tMs || 0) - (c.tMs || 0)) > ECHO_WINDOW_MS) continue;
-      if (tokenContainment(mine, prev.tokens || []) >= ECHO_MIN_CONTAINMENT) return prev;
+      if (!prev || prev === chunk || prev.source !== "system") continue;
+      if (!spansOverlap(c, prev)) continue;
+      const other = prev.tokens || [];
+      if (leakCoverage(mine, other) >= LEAK_MIN_COVERAGE
+        && tokenContainment(mine, other) >= LEAK_MIN_SYMMETRY) return prev;
     }
     return null;
   }
@@ -279,14 +405,14 @@
   function partialCrossTalk(chunk, recent) {
     const c = chunk || {};
     const mine = c.tokens || [];
-    if (mine.length < ECHO_MIN_TOKENS) return false;
+    if (!mine.length) return false;
     const list = Array.isArray(recent) ? recent : [];
     for (let i = list.length - 1; i >= 0; i--) {
       const prev = list[i];
       if (!prev || prev === chunk || prev.source === c.source) continue;
-      if (Math.abs((prev.tMs || 0) - (c.tMs || 0)) > ECHO_WINDOW_MS) continue;
-      const overlap = tokenContainment(mine, prev.tokens || []);
-      if (overlap >= PARTIAL_MIN && overlap < ECHO_MIN_CONTAINMENT) return true;
+      if (!spansOverlap(c, prev)) continue;
+      const overlap = leakCoverage(mine, prev.tokens || []);
+      if (overlap >= PARTIAL_MIN && overlap < LEAK_MIN_COVERAGE) return true;
     }
     return false;
   }
@@ -348,8 +474,8 @@
     sanitizeSkillArg, meetingSkillCmd,
     stripMarker, transcriptText, acervoJoin, aiStatusLine, MARKER,
     isHallucination, filterHallucinations,
-    speechTokens, tokenContainment, echoOfOtherSource, partialCrossTalk,
-    sysBlockMs, micBlockMs,
+    speechTokens, tokenContainment, leakCoverage, micLeakOfSystem, partialCrossTalk,
+    sysBlockMs, micBlockMs, coverageGate,
     meetingTitleFromManifest, meetingLabel,
   };
 });

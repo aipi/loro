@@ -115,14 +115,72 @@ previous segment's end. Under ADR-0018 speech is never dropped over a timecode.
 
 ### Attribution follows physics, not the race
 
-Only a **mic** chunk may be dropped as leakage; a system window is never dropped
-because of the mic. *(Implemented in the second half of this work — see Status
-below.)*
+Only a **mic** utterance may be dropped as leakage. A system utterance is never
+dropped because of the mic — that is the invariant, and a test states it directly.
+
+The measure is **coverage by contiguous word runs**: what fraction of the mic
+utterance sits inside runs of 4+ words that also appear contiguously in the system
+utterance. Echo reproduces the same word *sequence* (both tracks carry the same
+speech); coincidental overlap of function words does not produce long runs. It is
+required together with **mutual containment** (echo is symmetric — both sides
+cover each other) and with the two utterances **overlapping in time**, which only
+became a real question once each utterance carried its own timestamp.
+
+Because the drop is now directional, the old 8-token floor and the separate
+`crossTrackDuplicate` mechanism are gone: one rule covers both the long real pair
+and the 4-word duplicate at the same instant. There are fewer mechanisms than
+before, not more.
 
 ### One owner of the join
 
-The two tracks stop being two appenders racing for the same file. *(Same, second
-half.)*
+The two tracks stop being two appenders racing for the same file. The system track
+writes immediately — it is the one that is never dropped, so it has nothing to wait
+for. The mic's utterances are only resolved once the system track has been heard up
+to the end of that mic segment, which is what makes the resolution *decided* rather
+than raced. Ceiling: one tick; past it, the speech goes in as-is, because under
+ADR-0018 a possibly-duplicated line is far better than a lost one, and the expiry
+is **logged** (a mechanism that degrades silently is exactly how the echo filter
+stayed inert for two versions).
+
+Both sides of the join are on the **same clock** (`Date.now()`): the tail publishes
+the wall instant its snapshot was taken, and a mic segment carries the wall instant
+it ended. Comparing WAV-derived meeting time against wall time would have worked at
+first and then loosened on its own — the two 18s intervals drift relative to each
+other over a long meeting, and nothing in the code would have said so.
+
+## Amendment (2026-08-13) — the measurement rejected the first design
+
+The thresholds were chosen the way ADR-0022 §25 chose its own: by measuring the
+owner's real captures, which live in the test suite. Measured on the pairs, with a
+minimum run of 4 words:
+
+| case (real capture) | runs ≥3 | runs ≥4 | mutual |
+|---|---|---|---|
+| echo pair §25 | 0.89 | **0.89** | 0.89 |
+| echo pair §26 | 0.94 | **0.94** | 0.92 |
+| exact short duplicate | 1.00 | **1.00** | 1.00 |
+| leak + own speech | 0.51 | **0.44** | 0.65 |
+| **coincidence** (short phrase × unrelated window) | **0.82** | **0.55** | 0.31 |
+| unrelated speech | 0.00 | **0.00** | 0.07 |
+
+Two things in the planned design were **wrong**, and the measurement is what said
+so — before any of it became behavior:
+
+1. A minimum run of 3 with a 0.60 cut would have **dropped legitimate speech**: the
+   coincidence case scores 0.82 there. At a minimum run of 4 it falls to 0.55, real
+   echo stays at 0.89+, and the cut sits at 0.75, inside a measured gap.
+2. Mutual containment was going to be **deleted** as a crutch. It is in fact the
+   measure that kills the coincidence case (0.31 against 0.89 for real echo), which
+   is the one place runs are weakest. Both are required now — two independent
+   measures, each with its own measured gap, is stronger than either alone.
+
+One constant is **not** derived from a gap, and is marked as such in the code:
+`LEAK_SLACK_MS` (1500ms), the slack on the time-overlap test. Physically the leak
+reaches the mic in milliseconds, but whisper segments two different signals (one
+clean, one through the air) with boundaries that do not coincide exactly. A real
+two-track capture *with* timestamps would let it be tightened; until then the slack
+is generous on purpose. It replaces the previous 20s window, which only existed
+because a whole window used to be stamped at its start.
 
 ## Consequences
 
@@ -130,8 +188,8 @@ half.)*
   window did.
 - The interleaving between the tracks is real, so `reuniao.md` finally reads in
   conversation order.
-- The mutual-containment crutch in the echo filter and the separate
-  `crossTrackDuplicate` mechanism become removable once attribution is directional
+- The 8-token floor and the separate `crossTrackDuplicate` mechanism are **gone**:
+  once attribution is directional and each utterance is timed, one rule covers both
   — fewer mechanisms than before, not more.
 - `brain_meeting_transcribe_tail` and `brain_meeting_transcribe_segment` changed
   shape (`text` → `segments`). The frontend is their only consumer.
@@ -159,14 +217,27 @@ half.)*
 
 ## Status of the two halves
 
-This ADR covers work delivered in two PRs, because the halves have different
-natures and each stands on its own:
+Delivered in two PRs, because the halves have different natures and each stands on
+its own:
 
-1. **One clock, each utterance at its own time** (this document as accepted):
-   invariants 1 and 2, plus the stop-time system flush. No change to the
-   attribution rule — it is still first-arrival — so this half is verifiable
-   without provoking any leakage.
-2. **Physics decides the label**: invariants 3 and 4, with the thresholds
-   calibrated against the owner's real captures the way ADR-0022 §25 did (0.92 echo
-   vs 0.13 unrelated; the cut sits in the gap, not at a guess). Recorded as an
-   amendment to this ADR when it lands.
+1. **One clock, each utterance at its own time** — invariants 1 and 2, plus the
+   stop-time system flush. No change to the attribution rule, so this half is
+   verifiable without provoking any leakage.
+2. **Physics decides the label** — invariants 3 and 4, with the thresholds measured
+   rather than guessed (see the amendment above).
+
+## What the tests hold
+
+- The **invariant** directly: a system utterance is never dropped because of the
+  mic, not even when the pair matches and the mic landed first.
+- The **measured gap** itself, not just the threshold: real echo ≥ 0.85,
+  coincidence ≤ 0.60, and a gap of at least 0.25 between them. A future
+  recalibration cannot slide to a pretty number without evidence.
+- The two tracks yield the **same** time for the same utterance — the test that
+  reproduces today's skew.
+- The join: the gate releases on coverage, on close (pause/stop) and on the
+  ceiling; both sides of it are on one clock; the wait happens **before** the
+  leakage test, and nothing awaits between that test and the record (ADR-0022 §26).
+- The anchor's cross-language contract (Swift prints what Rust reads), because a
+  mismatch would degrade silently.
+- The final system flush happens **before** `brain_meeting_stop`.

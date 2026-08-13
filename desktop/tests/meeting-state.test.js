@@ -136,40 +136,20 @@ test("B3 — a oferta é ligada ao mesmo caminho de análise das habilidades", (
 });
 
 // ============================================================ B4
-// Saída real de uma reunião gravada agora: "[00:00 · sistema] A CIDADE NO
-// BRASIL" seguido de "[00:00 · você] A CIDADE NO BRASIL". O filtro de eco
-// (ADR-0022 §22) exige 8 tokens de substância antes de comparar, então nenhuma
-// fala curta era comparada — e a MESMA linha, no MESMO timecode, nas DUAS
-// trilhas, passava duas vezes.
-test("B4 — a mesma linha nas duas trilhas no mesmo timecode é uma só", () => {
-  const dup = loadFn("crossTrackDuplicate", ["DUP_WINDOW_MS"]);
-  const antes = [{ tMs: 0, source: "system", tokens: ["a", "cidade", "no", "brasil"] }];
-  const agora = { tMs: 0, source: "mic", tokens: ["a", "cidade", "no", "brasil"] };
-  assert.ok(dup(agora, antes), "curta ou não, é a mesma fala ouvida duas vezes");
-});
-
-test("B4 — a mesma trilha repetindo é fala repetida de verdade", () => {
-  const dup = loadFn("crossTrackDuplicate", ["DUP_WINDOW_MS"]);
-  const antes = [{ tMs: 0, source: "mic", tokens: ["tá", "bom"] }];
-  assert.ok(!dup({ tMs: 0, source: "mic", tokens: ["tá", "bom"] }, antes));
-});
-
-test("B4 — textos diferentes na mesma janela continuam passando", () => {
-  const dup = loadFn("crossTrackDuplicate", ["DUP_WINDOW_MS"]);
-  const antes = [{ tMs: 0, source: "system", tokens: ["a", "cidade", "no", "brasil"] }];
-  assert.ok(!dup({ tMs: 0, source: "mic", tokens: ["a", "cidade", "no", "chile"] }, antes));
-});
-
-test("B4 — longe no tempo é conversa, não eco", () => {
-  const dup = loadFn("crossTrackDuplicate", ["DUP_WINDOW_MS"]);
-  const antes = [{ tMs: 0, source: "system", tokens: ["tá", "bom"] }];
-  assert.ok(!dup({ tMs: 60000, source: "mic", tokens: ["tá", "bom"] }, antes));
-});
-
-test("B4 — o ponto único de anexação consulta o duplicado exato", () => {
+// Saída real de uma reunião: "[00:00 · sistema] A CIDADE NO BRASIL" seguido de
+// "[00:00 · você] A CIDADE NO BRASIL" — quatro palavras, duplicadas no mesmo
+// instante. Isso exigia um segundo mecanismo (`crossTrackDuplicate`) ao lado do
+// filtro de eco, porque o filtro tinha um piso de 8 tokens e nenhuma noção fina de
+// tempo. Com a regra direcional e o timestamp por fala (ADR-0025) uma regra só
+// resolve os dois casos, e o mecanismo paralelo saiu: os casos reais dele agora
+// rodam contra `LM.micLeakOfSystem` em meeting.test.js — inclusive este, o dos
+// turnos de conversa e o dos textos parecidos mas diferentes.
+test("B4 — o ponto único de anexação decide pela física, não pela chegada", () => {
   const body = fnBody("appendMeetingSpeech");
-  assert.match(body, /crossTrackDuplicate\(/);
-  const dup = body.indexOf("crossTrackDuplicate(");
+  // uma regra só, e ela é direcional: quem pode cair é a cópia do MICROFONE
+  assert.match(body, /LM\.micLeakOfSystem\(/);
+  assert.ok(!APP.includes("crossTrackDuplicate"), "o mecanismo paralelo saiu");
+  const dup = body.indexOf("LM.micLeakOfSystem(");
   const push = body.indexOf("meeting.appended.push");
   assert.ok(dup < push, "o teste vem antes do registro, como o do eco");
   // ADR-0022 §26: e nada pode se intercalar entre os dois. Foi um `await` nesse
@@ -206,6 +186,52 @@ test("ADR-0025 — as duas trilhas convertem pela MESMA linha do tempo", () => {
   // até ela chegar, a âncora é uma ESTIMATIVA do início deste segmento. Com ela
   // em null o offset cru valeria, e num retomar a janela cairia antes da pausa.
   assert.match(fnBody("startMeetingTail"), /meeting\.sysAnchor = Date\.now\(\)/);
+});
+
+// O dono da junção. O portão em si é puro e testado em meeting.test.js; aqui o que
+// se prende é a FIAÇÃO dele — que a espera aconteça no lugar certo e que ninguém
+// fique preso nela. Uma espera que nunca é liberada seria pior que a corrida.
+test("ADR-0025 — a fala do microfone espera a junção antes de ser resolvida", () => {
+  const body = fnBody("onPreviewSegment");
+  const espera = body.indexOf("awaitAttribution(");
+  const append = body.indexOf("appendMeetingSpeech(");
+  assert.ok(espera > -1, "sem a espera o rótulo volta a ser sorteado");
+  assert.ok(espera < append, "esperar DEPOIS de escrever não decide nada");
+  // e a trilha de sistema não espera nada: ela nunca é descartada
+  assert.ok(!fnBody("runMeetingTail").includes("awaitAttribution"));
+});
+
+// A junção compara os DOIS lados no mesmo relógio. Se um lado fosse tempo de
+// reunião (derivado dos bytes do WAV) e o outro relógio de parede, a comparação
+// afrouxaria sozinha ao longo de uma reunião longa: os dois `setInterval` derivam
+// um do outro, e nada no código diria que isso aconteceu.
+test("ADR-0025 — os dois lados da junção estão no mesmo relógio", () => {
+  const tail = fnBody("runMeetingTail");
+  assert.match(tail, /const snapAt = Date\.now\(\)/);
+  assert.match(tail, /gate\.advance\(snapAt\)/);
+  const escreve = tail.indexOf("appendMeetingSpeech(");
+  assert.ok(tail.indexOf("gate.advance(") > escreve,
+    "publicar a cobertura antes de escrever devolveria o sorteio do rótulo");
+  assert.match(tail.slice(tail.indexOf("} finally {")), /gate\.advance\(/,
+    "no finally: uma janela que falhou não pode prender a junção para sempre");
+  // e o outro lado é o fim REAL do segmento de microfone, no mesmo Date.now()
+  assert.match(fnBody("spawnPreviewRec"), /onPreviewSegment\([^)]*Date\.now\(\)\)/);
+  assert.match(fnBody("awaitAttribution"), /segEndEpoch - ATTRIB_TOL_MS/);
+});
+
+test("ADR-0025 — ninguém fica preso esperando o que não vem", () => {
+  // pausar e encerrar fecham o portão: o último segmento de microfone está em voo
+  assert.match(fnBody("pauseMeeting"), /meeting\.gate\.close\(\)/);
+  assert.match(fnBody("finalizeMeeting"), /meeting\.gate\.close\(\)/);
+  // retomar reabre
+  assert.match(fnBody("startMeetingTail"), /meeting\.gate\.reopen\(\)/);
+  // e o portão é POR reunião (o histórico de eco já vazou entre reuniões uma vez)
+  assert.match(fnBody("startMeetingWith"), /meeting\.gate = LM\.coverageGate\(\)/);
+  // o teto existe e é um tique — perder fala é pior que duplicar (ADR-0018)
+  assert.match(APP, /const ATTRIB_HOLD_MS = MEETING_TAIL_MS/);
+  // e a liberação por prazo é REGISTRADA: degradar em silêncio foi como o filtro
+  // de eco ficou inerte por duas versões (ADR-0022 §26)
+  assert.match(fnBody("awaitAttribution"), /how === "deadline"/);
 });
 
 test("ADR-0025 — encerrar despeja a última janela de sistema antes de parar", () => {

@@ -59,9 +59,11 @@
     noiseSuppression: false,
   };
   // `echoCancel` é a escolha de quem ouve por ALTO-FALANTE: sem ela o microfone
-  // escuta os outros de volta pela caixa e a mesma fala entra nas duas trilhas —
-  // e aí nem o filtro de eco (LoroMeeting.echoOfOtherSource) consegue dizer com
-  // certeza quem falou, porque as duas cópias são igualmente plausíveis. Ligar
+  // escuta os outros de volta pela caixa e a mesma fala entra nas duas trilhas. O
+  // rótulo continua certo — o vazamento tem um sentido só e quem cai é sempre a
+  // cópia do microfone (LoroMeeting.micLeakOfSystem, ADR-0025) — mas ligar mata o
+  // vazamento na origem em vez de limpá-lo depois, e a fala que é 100% vazamento
+  // deixa de custar uma linha descartada da transcrição. Ligar
   // custa o processamento de voz do sistema; por isso é escolha, não padrão.
   // Ganho automático e supressão de ruído seguem SEMPRE desligados: são eles que
   // achatam a voz, e nenhum dos dois protege contra o vazamento da caixa.

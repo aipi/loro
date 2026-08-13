@@ -30,10 +30,13 @@ SIDEBAR      │ TABS (only when a document is open) │ PANEL 330px
   recording continues if you switch tabs — a `recording · mm:ss` pill in the
   header takes you back.
 - **If you listen through speakers**, the mic hears the others back, and the
-  same sentence enters both tracks. Loro drops the copy by itself; if it still
-  mixes up who spoke, turn on **cancel speaker echo** in Settings → Capture —
-  at the cost, stated there, of your voice coming out quieter. With
-  headphones, leave it off.
+  same sentence reaches both tracks. Loro drops the copy by itself, and always
+  the **mic** one: sound leaks from the speaker into the mic and never the other
+  way around, so the others' speech is never labelled as yours. To do that it
+  waits a few seconds for the system track before writing your speech — that is
+  why your text sometimes shows up slightly later. To kill the leak at the
+  source, turn on **cancel speaker echo** in Settings → Capture, at the cost,
+  stated there, of your voice coming out quieter. With headphones, leave it off.
 - **Every utterance lands at its own time**, on both tracks, counted from the
   moment recording actually began. In a meeting the system-audio capture starts
   before the screen appears, so the clock may open with a few seconds already

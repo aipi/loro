@@ -272,33 +272,100 @@ test("meetingQueueBlock declara o motivo quando não há análise", () => {
 // pares reais da captura que o dono enviou.
 const ECO_MIC = "Tô, tô gripadão, tô zoado. Mas assim, eu tô sofrendo um negócio que você falou muito, você falou muito, você não passou lá no buraco de ar, velho. A minha aplicaçãozinha pra fechar ela lá.";
 const ECO_SYS = "Tô gripadão, tô zoado, mas eu tô sofrendo um negócio que você falou muito, você falou muito, você vai passar lá no buraco de ar, velho, a minha aplicaçãozinha pra fechar ela lá.";
+// #53, segunda captura do dono (o par que provou que o filtro nunca rodava).
+const DUP_A = "Estabilizou, já delegamos ali, já consegui arrumar agora a casa, amanhã é mais executar a importação das multas ali, porque vai vir 600 e caralhadas multas ali, pra dentro da cestão.";
+const DUP_B = "estabilizou, já delegamos ali, já consegui arrumar agora a casa, amanhã é mais executar a importação das multas ali, porque vai vir 600 e caralhadas multas ali, pra dentro do sistema.";
+// O par de sobreposição PARCIAL: o microfone traz fala própria E o vazamento.
+const PARC_SYS = "Ah, agora estou com esse negócio das multas, né? Eu estava com a Ordonia ali fechando, envolve tudo, está no site bot, está misturando tudo, a pressão aumentou um pouquinho, mas já";
+const PARC_MIC = "E tá de boa aí? Tá pegado Ah, agora tô com esse negócio das multas, né? Porque tava com a Ardonia ali fechando Envolve tudo, tá no site bot Tá com coisa, misturou tudo A pressão aumentou um pouquinho Mas já";
+// A COINCIDÊNCIA: frase curta cujas palavras funcionais aparecem todas numa
+// janela sobre outro assunto. É o contraexemplo que calibra o limiar.
+const CURTO = "Eu acho que a gente pode fechar isso com o time.";
+const JANELA = "Então o fornecedor mandou a proposta ontem e eu acho que a gente pode discutir o prazo com o time de compras, porque isso trava tudo. A gente pode ver isso amanhã. O time de logística falou que com esse volume a rota fica cara.";
+
+// ADR-0025 — helper: um trecho com intervalo, como as falas passam a chegar.
+function fala(text, tMs, endMs, source) {
+  return { tMs: tMs, endMs: endMs, source: source, tokens: LM.speechTokens(text) };
+}
+
+// ADR-0025 · o VÃO MEDIDO. O limiar não é chute: estes são os pares reais da
+// captura do dono, e a separação entre eles é o que escolhe o corte. Um limiar
+// sem vão não passa neste teste — é ele que impede a próxima calibração de
+// escorregar para um número bonito sem evidência.
+test("a cobertura por corridas separa eco real de coincidência", () => {
+  const cov = (a, b) => LM.leakCoverage(LM.speechTokens(a), LM.speechTokens(b));
+  // eco de verdade: as duas trilhas ouviram a MESMA fala
+  assert.ok(cov(ECO_MIC, ECO_SYS) >= 0.85, "eco real: " + cov(ECO_MIC, ECO_SYS));
+  assert.ok(cov(DUP_A, DUP_B) >= 0.85, "eco real: " + cov(DUP_A, DUP_B));
+  // a coincidência: frase curta cujas palavras aparecem numa janela de OUTRO
+  // assunto. Com corridas de 3 ela mede 0,82 — foi este número que reprovou o
+  // desenho anterior, antes de virar código.
+  const coinc = cov(CURTO, JANELA);
+  assert.ok(coinc <= 0.6, "coincidência: " + coinc);
+  // e o vão tem de existir de verdade, não por um decimal
+  assert.ok(cov(ECO_MIC, ECO_SYS) - coinc >= 0.25, "sem vão não há limiar");
+  // fala sem relação nenhuma não compartilha corrida alguma
+  assert.strictEqual(cov(ECO_MIC, "Vamos fechar o orçamento da frota antes de sexta."), 0);
+});
 
 test("o eco de uma trilha na outra é barrado (par real da captura)", () => {
-  const recent = [{ tMs: 18000, source: "mic", tokens: LM.speechTokens(ECO_MIC) }];
-  const eco = LM.echoOfOtherSource({ text: ECO_SYS, tMs: 19000, source: "system" }, recent);
+  const recent = [fala(ECO_SYS, 18000, 30000, "system")];
+  const eco = LM.micLeakOfSystem(fala(ECO_MIC, 18200, 30200, "mic"), recent);
   assert.ok(eco, "não reconheceu o eco entre trilhas");
-  assert.strictEqual(eco.source, "mic");
+  assert.strictEqual(eco.source, "system");
+});
+
+// O INVARIANTE. O vazamento é físico e tem UM sentido: o som sai do alto-falante
+// e entra no microfone. O caminho inverso não existe — o sidecar exclui o áudio
+// do próprio Loro e o microfone não é saída de sistema. Então a fala do sistema
+// nunca é descartada por causa do microfone, e é isso que tira o rótulo do
+// sorteio: antes, quem chegasse primeiro ganhava, e a fala do outro virava "você".
+test("a fala do sistema NUNCA é descartada por causa do microfone", () => {
+  const recent = [fala(ECO_MIC, 18000, 30000, "mic")];
+  assert.strictEqual(LM.micLeakOfSystem(fala(ECO_SYS, 18200, 30200, "system"), recent), null,
+    "o vazamento não sobe do microfone para a trilha de sistema");
+  // nem quando são idênticas, nem quando o microfone chegou primeiro
+  assert.strictEqual(LM.micLeakOfSystem(fala(ECO_MIC, 18000, 30000, "system"), recent), null);
 });
 
 test("fala diferente na outra trilha NÃO é barrada", () => {
-  const recent = [{ tMs: 18000, source: "mic", tokens: LM.speechTokens(ECO_MIC) }];
   const outra = "Vamos fechar o orçamento da frota antes de sexta, então preciso dos números do fornecedor.";
-  assert.strictEqual(LM.echoOfOtherSource({ text: outra, tMs: 19000, source: "system" }, recent), null);
+  const recent = [fala(outra, 18000, 30000, "system")];
+  assert.strictEqual(LM.micLeakOfSystem(fala(ECO_MIC, 18200, 30200, "mic"), recent), null);
 });
 
 test("a mesma trilha repetindo é fala repetida, não eco", () => {
-  const recent = [{ tMs: 18000, source: "mic", tokens: LM.speechTokens(ECO_MIC) }];
-  assert.strictEqual(LM.echoOfOtherSource({ text: ECO_MIC, tMs: 19000, source: "mic" }, recent), null);
+  const recent = [fala(ECO_MIC, 18000, 30000, "mic")];
+  assert.strictEqual(LM.micLeakOfSystem(fala(ECO_MIC, 18200, 30200, "mic"), recent), null);
 });
 
-test("trecho curto nunca é barrado — 'tá bom' repete numa conversa de verdade", () => {
-  const recent = [{ tMs: 1000, source: "system", tokens: LM.speechTokens("tá bom, pode ser") }];
-  assert.strictEqual(LM.echoOfOtherSource({ text: "Tá bom, pode ser.", tMs: 1500, source: "mic" }, recent), null);
+test("uma coincidência de palavras em OUTRO instante não é eco", () => {
+  // o caso que reprovou o desenho anterior: as palavras batem, o tempo não.
+  const recent = [fala(JANELA, 0, 18000, "system")];
+  assert.strictEqual(LM.micLeakOfSystem(fala(CURTO, 30000, 33000, "mic"), recent), null,
+    "fora do intervalo não há vazamento possível");
+  // e mesmo DENTRO do intervalo a medida reprova: eco é simétrico, isto não é
+  assert.strictEqual(LM.micLeakOfSystem(fala(CURTO, 2000, 5000, "mic"), recent), null,
+    "descartar isto perderia fala legítima — a transcrição é a única saída (ADR-0018)");
 });
 
 test("longe no tempo não é eco — a mesma frase dita de novo dez minutos depois", () => {
-  const recent = [{ tMs: 18000, source: "mic", tokens: LM.speechTokens(ECO_MIC) }];
-  assert.strictEqual(LM.echoOfOtherSource({ text: ECO_SYS, tMs: 618000, source: "system" }, recent), null);
+  const recent = [fala(ECO_SYS, 18000, 30000, "system")];
+  assert.strictEqual(LM.micLeakOfSystem(fala(ECO_MIC, 618000, 630000, "mic"), recent), null);
+});
+
+// A saída real que motivou o duplicado exato (ADR-0022 §B4): "[00:00 · sistema] A
+// CIDADE NO BRASIL" seguido de "[00:00 · você] A CIDADE NO BRASIL". Quatro
+// palavras — abaixo de qualquer piso de tamanho — duplicadas no mesmo instante.
+// Agora uma regra só resolve: cobertura total + intervalos que coincidem.
+test("a mesma linha curta nas duas trilhas no mesmo instante é uma só", () => {
+  const recent = [fala("A CIDADE NO BRASIL", 0, 2000, "system")];
+  assert.ok(LM.micLeakOfSystem(fala("A CIDADE NO BRASIL", 100, 2100, "mic"), recent));
+  // mas 'tá bom, pode ser' dito por duas pessoas em TURNOS é conversa de verdade
+  const conversa = [fala("tá bom, pode ser", 0, 1500, "system")];
+  assert.strictEqual(LM.micLeakOfSystem(fala("Tá bom, pode ser.", 4000, 5500, "mic"), conversa), null);
+  // e textos parecidos mas DIFERENTES continuam passando, curtos ou não
+  assert.strictEqual(LM.micLeakOfSystem(fala("A CIDADE NO CHILE", 100, 2100, "mic"), recent), null);
 });
 
 test("speechTokens normaliza acento e pontuação (tô/to é a mesma palavra)", () => {
@@ -314,46 +381,88 @@ test("tokenContainment exige cobertura dos DOIS lados", () => {
   assert.strictEqual(LM.tokenContainment(tk("a b c"), tk("a b c")), 1);
 });
 
-// O achado da revisão, com o cenário exato: uma frase curta de microfone cujas
-// palavras funcionais aparecem todas numa janela de 18s sobre OUTRO assunto.
-// Antes: 0,91 → a janela com a fala de todo mundo era descartada em silêncio.
-test("um trecho curto NÃO derruba uma janela longa de outro assunto", () => {
-  const curto = "Eu acho que a gente pode fechar isso com o time.";
-  const janela = "Então o fornecedor mandou a proposta ontem e eu acho que a gente pode discutir o prazo com o time de compras, porque isso trava tudo. A gente pode ver isso amanhã. O time de logística falou que com esse volume a rota fica cara.";
-  const recent = [{ tMs: 1000, source: "mic", tokens: LM.speechTokens(curto) }];
-  assert.strictEqual(LM.echoOfOtherSource({ text: janela, tMs: 5000, source: "system" }, recent), null,
-    "a janela de sistema seria descartada — a transcrição é a ÚNICA saída da reunião (ADR-0018)");
-});
-
 // #53 (segunda captura do dono) — o filtro NUNCA disparava, e o log provou:
-// zero descartes. As duas trilhas giram no MESMO intervalo de 18s, então as duas
-// cópias chegam praticamente juntas; como o registro acontecia depois do await
-// do append, ambas testavam contra uma lista que ainda não tinha a outra, ambas
-// passavam e o par sobrevivia. O teste reproduz a concorrência: dois appends em
-// voo ao mesmo tempo, com o registro feito ANTES de esperar.
+// zero descartes. As duas cópias da mesma fala chegam praticamente juntas; como o
+// registro acontecia depois do await do append, ambas testavam contra uma lista
+// que ainda não tinha a outra, ambas passavam e o par sobrevivia. O registro feito
+// ANTES de esperar é o que vê o par (ADR-0022 §26).
 test("registrar antes de esperar é o que faz o par ser visto", () => {
-  const A = "Estabilizou, já delegamos ali, já consegui arrumar agora a casa, amanhã é mais executar a importação das multas ali, porque vai vir 600 e caralhadas multas ali, pra dentro da cestão.";
-  const B = "estabilizou, já delegamos ali, já consegui arrumar agora a casa, amanhã é mais executar a importação das multas ali, porque vai vir 600 e caralhadas multas ali, pra dentro do sistema.";
   const appended = [];
-  // trilha 1 chega: nada na lista, passa, e SE REGISTRA na hora
-  assert.strictEqual(LM.echoOfOtherSource({ text: A, tMs: 18000, source: "mic" }, appended), null);
-  appended.push({ tMs: 18000, source: "mic", tokens: LM.speechTokens(A) });
-  // trilha 2 chega em seguida, ainda com o append da primeira em voo
-  const eco = LM.echoOfOtherSource({ text: B, tMs: 19000, source: "system" }, appended);
-  assert.ok(eco, "o par da captura real precisa ser reconhecido");
+  // a trilha de sistema chega: nada na lista, passa, e SE REGISTRA na hora
+  const daSystem = fala(DUP_B, 18000, 30000, "system");
+  assert.strictEqual(LM.micLeakOfSystem(daSystem, appended), null);
+  appended.push(daSystem);
+  // o microfone chega em seguida, ainda com o append da primeira em voo
+  assert.ok(LM.micLeakOfSystem(fala(DUP_A, 18200, 30200, "mic"), appended),
+    "o par da captura real precisa ser reconhecido");
 });
 
 // Sobreposição parcial: o trecho tem fala própria E o vazamento. Não pode ser
 // descartado (perderia a fala legítima), mas é evidência de que o microfone está
 // ouvindo a caixa — é o que dispara a oferta do cancelamento de eco.
 test("sobreposição parcial é sinalizada, não descartada", () => {
-  const sys = "Ah, agora estou com esse negócio das multas, né? Eu estava com a Ordonia ali fechando, envolve tudo, está no site bot, está misturando tudo, a pressão aumentou um pouquinho, mas já";
-  const mic = "E tá de boa aí? Tá pegado Ah, agora tô com esse negócio das multas, né? Porque tava com a Ardonia ali fechando Envolve tudo, tá no site bot Tá com coisa, misturou tudo A pressão aumentou um pouquinho Mas já";
-  const recent = [{ tMs: 0, source: "system", tokens: LM.speechTokens(sys) }];
-  const novo = { tMs: 0, source: "mic", tokens: LM.speechTokens(mic) };
-  assert.strictEqual(LM.echoOfOtherSource({ text: mic, tMs: 0, source: "mic" }, recent), null,
+  const recent = [fala(PARC_SYS, 0, 15000, "system")];
+  const novo = fala(PARC_MIC, 200, 15200, "mic");
+  assert.strictEqual(LM.micLeakOfSystem(novo, recent), null,
     "tem fala própria junto — descartar perderia o que só o microfone ouviu");
   assert.ok(LM.partialCrossTalk(novo, recent), "mas o vazamento tem de ser percebido");
+});
+
+test("vazamento em OUTRO instante não é sinalizado — o empurrãozinho não pode ser falso", () => {
+  const recent = [fala(PARC_SYS, 0, 15000, "system")];
+  assert.strictEqual(LM.partialCrossTalk(fala(PARC_MIC, 60000, 75000, "mic"), recent), false);
+});
+
+// ADR-0025 · o dono da junção. Antes as duas trilhas eram dois appendadores
+// correndo para o mesmo arquivo, e a corrida decidia o rótulo. A trilha de sistema
+// escreve na hora (ela nunca é descartada, não tem o que esperar); a fala do
+// microfone espera a trilha de sistema cobrir o mesmo intervalo — aí a resolução é
+// DECIDIDA. Com teto, para nada ficar preso esperando o que não vem.
+test("o portão libera quando a trilha de sistema cobre o intervalo", async () => {
+  const g = LM.coverageGate();
+  let liberou = false;
+  const p = g.wait(20000, 99999).then((r) => { liberou = true; return r; });
+  g.advance(10000);
+  await Promise.resolve();
+  assert.strictEqual(liberou, false, "10s não cobrem uma fala que termina em 20s");
+  g.advance(20000);
+  assert.strictEqual(await p, "ready");
+});
+
+test("o portão não espera o que já está coberto", async () => {
+  const g = LM.coverageGate();
+  g.advance(30000);
+  assert.strictEqual(await g.wait(20000, 99999), "ready");
+});
+
+test("o portão libera no teto, e diz que foi no teto", async () => {
+  const g = LM.coverageGate();
+  // o prazo é injetado: o teste controla o tempo, não espera por ele
+  const agora = (fn) => fn();
+  assert.strictEqual(await g.wait(20000, 18000, agora), "deadline",
+    "vencido o prazo a fala entra do jeito que está — perder é pior que duplicar");
+});
+
+test("o portão libera quando não vem mais janela (pausar/encerrar)", async () => {
+  const g = LM.coverageGate();
+  const p = g.wait(20000, 99999);
+  g.close();
+  assert.strictEqual(await p, "ready");
+  // e depois de fechado ninguém mais espera
+  assert.strictEqual(await g.wait(50000, 99999), "ready");
+  // retomar reabre o portão
+  g.reopen();
+  let liberou = false;
+  g.wait(60000, 99999).then(() => { liberou = true; });
+  await Promise.resolve();
+  assert.strictEqual(liberou, false);
+});
+
+test("a cobertura nunca anda para trás", () => {
+  const g = LM.coverageGate();
+  g.advance(30000);
+  g.advance(10000);
+  assert.strictEqual(g.coveredMs(), 30000);
 });
 
 // ADR-0025 — as duas trilhas carimbavam a mesma fala com tempos diferentes. A
@@ -404,7 +513,7 @@ test("tempo nunca é negativo — um bloco antes do t=0 vai para o zero", () => 
 });
 
 test("fala sem relação nenhuma não é sinalizada como vazamento", () => {
-  const recent = [{ tMs: 0, source: "system", tokens: LM.speechTokens("Vamos fechar o orçamento da frota antes de sexta com o fornecedor novo.") }];
-  const novo = { tMs: 1000, source: "mic", tokens: LM.speechTokens("Preciso revisar o contrato de manutenção da filial de Recife amanhã cedo.") };
+  const recent = [fala("Vamos fechar o orçamento da frota antes de sexta com o fornecedor novo.", 0, 8000, "system")];
+  const novo = fala("Preciso revisar o contrato de manutenção da filial de Recife amanhã cedo.", 1000, 9000, "mic");
   assert.strictEqual(LM.partialCrossTalk(novo, recent), false);
 });

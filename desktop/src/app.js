@@ -163,9 +163,14 @@ const meeting = {
   // and appended live, so the OPERATOR's speech shows in the stream (the system
   // tail above only covers the other participants). Audio is transient.
   previewRec: null, previewChunks: [], previewTimer: null,
-  // últimos trechos appendados (mic e sistema), para detectar o eco de uma
-  // trilha na outra quando o som sai por alto-falante (LM.echoOfOtherSource).
+  // últimos trechos appendados (mic e sistema), para detectar o vazamento de uma
+  // trilha na outra quando o som sai por alto-falante (LM.micLeakOfSystem).
   appended: [],
+  // ADR-0025: o dono da junção. As duas trilhas não são mais dois appendadores
+  // correndo pelo mesmo arquivo — a de sistema escreve na hora (nunca é
+  // descartada) e a do microfone só é resolvida quando a de sistema já foi ouvida
+  // até o fim daquele segmento. Um por reunião (LM.coverageGate).
+  gate: null,
 };
 
 // ---- configurações persistidas (localStorage) ----
@@ -901,6 +906,7 @@ async function startMeetingWith(choice) {
   meeting.originEpoch = res.startedEpochMs || null; // ADR-0025: o t=0 das DUAS trilhas
   meeting.phase = "recording"; meeting.pendingLines = [];
   meeting.appended = []; crossTalkHits = 0; crossTalkNudged = false;
+  meeting.gate = LM.coverageGate(); // ADR-0025: o dono da junção é POR reunião
                            // histórico de eco é POR reunião (antes dependia de o
                            // relógio ler exatamente 0 — um tique de 1ms vazava a
                            // reunião anterior para dentro da nova)
@@ -939,6 +945,7 @@ function startMeetingTail() {
   // Quem diz é o sidecar, pela âncora que chega em cada resposta do tail. O que
   // fica aqui é o total pausado até este segmento — a pausa não é tempo gravado.
   meeting.tailFrom = 0; meeting.tailBusy = false;
+  if (meeting.gate) meeting.gate.reopen(); // retomar volta a fazer a junção esperar
   meeting.segPausedMs = state.pausedMs;
   // A melhor âncora CONHECIDA agora: este instante. A medida do sidecar chega na
   // primeira resposta do tail e substitui esta. O fallback tem de ser uma
@@ -988,7 +995,9 @@ function spawnPreviewRec() {
     // Only respawn while the rotation is live (previewTimer set); stopMeetingPreview
     // clears it first, so the final stop flushes the last segment without respawning.
     if (meeting.active && meeting.phase === "recording" && meeting.previewTimer) spawnPreviewRec();
-    onPreviewSegment(chunks, rec.mimeType || "audio/webm", segStartEpoch, segPausedMs);
+    // `Date.now()` aqui é o fim REAL deste segmento — o onstop dispara logo após o
+    // stop(). É o outro lado da junção, no mesmo relógio da cobertura.
+    onPreviewSegment(chunks, rec.mimeType || "audio/webm", segStartEpoch, segPausedMs, Date.now());
   };
   try { rec.start(); } catch (e) { clog("preview start error: " + e); }
 }
@@ -1005,27 +1014,33 @@ function stopMeetingPreview() {
   const rec = meeting.previewRec; meeting.previewRec = null;
   if (rec && rec.state !== "inactive") { try { rec.stop(); } catch (_) {} } // flush the last segment
 }
-// O filtro de eco da ADR-0022 §22 só compara trechos com 8+ palavras de
-// substância — o piso existe para não apagar fala curta legítima ("tá bom", "sim,
-// claro") que duas pessoas repetem naturalmente. Mas uma linha IDÊNTICA, no MESMO
-// ponto da linha do tempo, nas DUAS trilhas, não é conversa: é uma fala ouvida
-// duas vezes. Saída real de uma reunião: "[00:00 · sistema] A CIDADE NO BRASIL"
-// seguido de "[00:00 · você] A CIDADE NO BRASIL" — quatro palavras, abaixo do
-// piso, duplicada. Aqui a identidade exata substitui o piso de tamanho, e a
-// janela é apertada (o eco chega junto; uma conversa tem turnos).
-const DUP_WINDOW_MS = 3000;
-function crossTrackDuplicate(chunk, recent) {
-  const c = chunk || {};
-  const mine = (c.tokens || []).join(" ");
-  if (!mine) return null;
-  const list = Array.isArray(recent) ? recent : [];
-  for (let i = list.length - 1; i >= 0; i--) {
-    const prev = list[i];
-    if (!prev || prev === chunk || prev.source === c.source) continue;
-    if (Math.abs((prev.tMs || 0) - (c.tMs || 0)) > DUP_WINDOW_MS) continue;
-    if ((prev.tokens || []).join(" ") === mine) return prev;
+// ADR-0025: o teto da espera pela junção. Vencido o prazo, a fala do microfone
+// entra do jeito que está — sob a ADR-0018 a transcrição ao vivo é a ÚNICA saída da
+// reunião, então uma linha possivelmente duplicada é muito melhor que uma linha
+// perdida. Um tique é o intervalo natural: é de quanto em quanto tempo a trilha de
+// sistema entrega uma janela.
+const ATTRIB_HOLD_MS = MEETING_TAIL_MS;
+// As duas trilhas giram no MESMO intervalo, então a janela de sistema que cobre um
+// segmento de microfone é fotografada no mesmo tique — e pode sair alguns
+// milissegundos ANTES de o segmento fechar. Exigir cobertura estrita faria toda
+// fala do microfone esperar o tique seguinte, sistematicamente. A folga é isso:
+// milissegundos de audio a menos no fim da janela não mudam a transcrição do eco.
+const ATTRIB_TOL_MS = 1000;
+// Espera a trilha de sistema ter sido ouvida até o fim deste segmento. O portão é
+// puro (LM.coverageGate); aqui só decidimos quando desistir e o que dizer ao usuário
+// enquanto isso — uma espera silenciosa seria a interface sabendo algo que não diz.
+async function awaitAttribution(id, segEndEpoch) {
+  const gate = meeting.gate;
+  if (!gate || !meeting.active) return;
+  const aviso = setTimeout(() => setTailStatus(id, t("conferindo de quem é a fala…")), 1200);
+  try {
+    const how = await gate.wait(segEndEpoch - ATTRIB_TOL_MS, ATTRIB_HOLD_MS);
+    // BR-8: o log conta O QUE aconteceu, nunca o que foi dito. O caso do prazo é o
+    // patológico, e é o único jeito de saber que ele aconteceu.
+    if (how === "deadline") clog("meeting attribution: hold expired, appending mic speech unresolved");
+  } finally {
+    clearTimeout(aviso);
   }
-  return null;
 }
 
 // Ponto ÚNICO de anexação da transcrição ao vivo: as duas trilhas passam por
@@ -1049,8 +1064,10 @@ async function appendMeetingSpeech(id, utterances, source) {
       tokens: LM.speechTokens(text),
       text: text,
     };
-    const eco = LM.echoOfOtherSource({ text: text, tMs: chunk.tMs, source: source }, meeting.appended)
-      || crossTrackDuplicate(chunk, meeting.appended);
+    // ADR-0025: quem pode ser descartado é só a cópia do MICROFONE, porque o
+    // vazamento tem um sentido só (alto-falante → microfone). Antes o descarte era
+    // simétrico e caía em quem chegasse em segundo lugar — o rótulo era sorteado.
+    const eco = LM.micLeakOfSystem(chunk, meeting.appended);
     if (eco) {
       // BR-8: o log conta O QUE aconteceu, nunca o que foi dito.
       clog("meeting append: dropped cross-source echo (source=" + source + " prev=" + eco.source + ")");
@@ -1088,8 +1105,10 @@ async function appendMeetingSpeech(id, utterances, source) {
   return { appended: fresh.length, dropped: dropped };
 }
 
-// O vazamento da caixa é físico: o filtro limpa o texto, mas quem resolve de
-// verdade é o cancelamento de eco — um controle que o usuário não tem por que
+// O vazamento da caixa é físico. Desde a ADR-0025 o RÓTULO já sai certo — quem cai
+// é sempre a cópia do microfone —, mas a fala que é 100% vazamento ainda custa uma
+// linha descartada e alguns segundos de espera na junção. Matar o vazamento na
+// origem evita as duas coisas, e é um controle que o usuário não tem por que
 // adivinhar que existe. Ao terceiro sinal, o app liga os dois: o sintoma que ele
 // está vendo e a chave que o desliga. Uma vez por reunião.
 let crossTalkHits = 0, crossTalkNudged = false;
@@ -1100,7 +1119,7 @@ function noteCrossTalk(n) {
   toast(t("as duas trilhas estão ouvindo a mesma fala — ligue o cancelamento de eco em Configurações → Captura"), 12000);
 }
 
-async function onPreviewSegment(chunks, mime, segStartEpoch, segPausedMs) {
+async function onPreviewSegment(chunks, mime, segStartEpoch, segPausedMs, segEndEpoch) {
   if (!chunks || !chunks.length || !meeting.id) return;
   const id = meeting.id;
   try {
@@ -1116,6 +1135,12 @@ async function onPreviewSegment(chunks, mime, segStartEpoch, segPausedMs) {
       endMs: LM.micBlockMs(segStartEpoch, s.endMs, meeting.originEpoch, segPausedMs),
       text: s.text,
     }));
+    // A JUNÇÃO: espera a trilha de sistema ter sido ouvida até o fim deste segmento
+    // antes de resolver de quem é a fala. Sem isto o rótulo volta a ser sorteado —
+    // quem chegasse primeiro ganharia. O `await` fica AQUI, antes do teste de
+    // vazamento; entre o teste e o registro não pode haver nenhum (ADR-0022 §26).
+    await awaitAttribution(id, segEndEpoch || Date.now());
+    if (meeting.id !== id) return;
     try {
       const r = await appendMeetingSpeech(id, utterances, "mic");
       setTailStatus(id, r.appended || r.dropped
@@ -1138,6 +1163,17 @@ async function runMeetingTail() {
   if (!meeting.active || meeting.phase !== "recording" || !meeting.id) return;
   meeting.tailBusy = true;
   const id = meeting.id;
+  // Até QUANDO a trilha de sistema já foi ouvida, em epoch — o mesmo relógio que
+  // marca o fim de um segmento de microfone. Deliberadamente NÃO é o tempo de
+  // reunião derivado do WAV: a junção compararia bytes de áudio contra relógio de
+  // parede, e os dois `setInterval` (tail e microfone) derivam um do outro ao longo
+  // de uma reunião longa. Aqui os dois lados são `Date.now()`, então a relação
+  // "esta janela foi tirada depois daquele segmento" é exata.
+  //
+  // Tomado ANTES do invoke porque é aí que o backend fotografa o WAV; é a leitura
+  // conservadora (a janela cobre um pouco além disso), e errar para menos só custa
+  // espera, nunca um rótulo errado.
+  const snapAt = Date.now();
   try {
     const res = await invoke("brain_meeting_transcribe_tail", { input: { id, fromMs: meeting.tailFrom } });
     if (!res) { setTailStatus(id, t("preview: sem resposta do backend")); return; }
@@ -1172,6 +1208,11 @@ async function runMeetingTail() {
     setTailStatus(id, t("preview indisponível") + ": " + tErr(String(e)));
   } finally {
     meeting.tailBusy = false;
+    // No FINALLY, e mesmo em caso de erro: uma janela que falhou não pode prender a
+    // junção. O silêncio também cobre — uma janela sem fala prova que aquele
+    // intervalo foi ouvido e não havia eco nenhum ali, e sem isso um trecho calado
+    // do outro lado faria toda fala do microfone esperar o teto inteiro.
+    if (meeting.gate) meeting.gate.advance(snapAt);
   }
 }
 // Surface the pseudo-stream status in the meeting panel (repaint on change only).
@@ -1210,6 +1251,9 @@ async function pauseMeeting() {
     try { await meeting.tailFlush; } catch (_) {}
     try { await tickMeetingTail(); } // última janela de sistema (best-effort)
     catch (e) { clog("final tail before pause: " + e); }
+    // Não vem mais janela: quem espera pela junção é liberado agora, em vez de
+    // ficar preso no teto (o último segmento de microfone está em voo).
+    if (meeting.gate) meeting.gate.close();
     await invoke("brain_meeting_pause", { input: { id: meeting.id } });
     state.paused = true; state.pauseStart = Date.now();
     if (audio.ctx) { try { audio.ctx.suspend(); } catch (_) {} } // congela a onda
@@ -1288,6 +1332,9 @@ async function finalizeMeeting() {
   try { await meeting.tailFlush; } catch (_) {}
   try { await tickMeetingTail(); }
   catch (e) { clog("final tail before stop: " + e); }
+  // Não vem mais janela: libera o último segmento de microfone, que está em voo e
+  // senão esperaria o teto inteiro antes de entrar.
+  if (meeting.gate) meeting.gate.close();
   meeting.phase = "transcribing";
   setRecPending("stopping"); // desabilita o ● E diz por quê ("encerrando…")
   renderIfLiving(id);
