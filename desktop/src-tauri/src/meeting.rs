@@ -1956,7 +1956,7 @@ mod tests {
         std::fs::write(c.dir.join("audio").join("system.wav"), b"RIFF").unwrap();
 
         git_init_repo(&base).unwrap();
-        set_identity(&base, "Teste", "teste@localhost").unwrap();
+        set_identity(&base, "Teste", "teste@exemplo.com").unwrap();
         // a versioned file so the commit is non-empty
         std::fs::write(base.join("contextos-README.md"), "x").unwrap();
         stage_and_commit(&base, "base".into()).unwrap();

@@ -1,16 +1,17 @@
 # Manual do Loro
 
 _O Loro captura sua fala e seus textos localmente e transforma tudo em uma base
-de conhecimento por contexto — privada, versionável e revisável. Nada de áudio
+de conhecimento por tema — privada, com histórico e revisável. Nada de áudio
 ou texto sai da sua máquina sem uma ação explícita sua._
 
 ## O fluxo em uma frase
 
-**Brainstorming → Fila → Contexto**: você acumula material bruto (reuniões,
-notas, anexos) num brainstorming; seleciona **os arquivos** que importam e cada
-um entra na fila como ele mesmo (um item por arquivo — não há mais relatório
-consolidado); o botão "gerar contexto" pede ao Claude do terminal que destile a
-fila em `contextos/` — a fonte oficial da verdade, versionada em git.
+**Ideias → Para organizar → Conhecimento**: você acumula material bruto
+(reuniões, notas, anexos) dentro de uma **ideia**; seleciona **os arquivos** que
+importam e cada um entra em **para organizar** como ele mesmo (um item por
+arquivo); o botão **Transformar em conhecimento →** pede ao agente que destile
+tudo isso em **temas de conhecimento** — a fonte oficial da verdade, com
+histórico de versões.
 
 ## A tela, em uma olhada
 
@@ -43,6 +44,9 @@ BARRA LATERAL │ ABAS (só quando há documento aberto) │ PAINEL 330px
   árvore abre uma aba de pré-visualização (em itálico); dois cliques fixam.
 - O **alternador da barra lateral** (250px ⇄ 60px) fica embaixo, ao lado de
   **⚙ Configurações**.
+- As três seções da barra lateral (**ideias**, **para organizar**,
+  **conhecimento**) **recolhem**: clique no título. Com muitos temas isso é o que
+  mantém a árvore navegável.
 - `Cmd/Ctrl+K` abre a **paleta**: arquivos e comandos na mesma lista, agrupados
   em *ir para · gravar · criar · documento · fazer*, com o atalho de cada um à
   direita. Ela é a lista viva de tudo o que dá para fazer.
@@ -62,25 +66,22 @@ Loro: o processo é local e a conta é sua.
 - `sonnet · alto ⌄` é um controle só: escolha o **modelo** e o **esforço** (quanto
   o agente pensa antes de responder).
 - O ↑ vira **■** enquanto responde — clique para parar o turno.
-- Se o agente precisar de **permissão** para mexer na pasta, aparece um bloco
-  âmbar: **Permitir esta pasta** (vale só para esta conversa) ou **Continuar no
-  terminal**, onde ele pode pedir permissão passo a passo.
-
+- Cada passo do agente (uma ferramenta que ele usou) **abre**: clique para ver o
+  que foi pedido e o que voltou. Um passo que falhou já abre sozinho.
+- Se o agente **não teve permissão** para concluir, aparece um bloco âmbar:
+  **Liberar tudo e repetir** — que muda o que o chat pode fazer para *tudo, sem
+  perguntar*, e vale das próximas vezes também — ou **Continuar no terminal**,
+  onde ele pode pedir permissão passo a passo. Nada foi alterado até você
+  escolher.
 - **Onde as habilidades rodam** é escolha sua: **Configurações → IA e terminal**.
   *No chat*, a resposta fica na conversa; *no terminal*, você acompanha o passo a
   passo e pode intervir. Vale para tudo — analisar uma reunião, perguntar ao
   projeto, rodar uma ação pelo menu ⋯.
-- As três seções da barra lateral (**ideias**, **para organizar**,
-  **conhecimento**) **recolhem**: clique no título. Com muitos temas isso é o que
-  mantém a árvore navegável.
-
 - **O que o chat pode fazer** também é escolha sua (**Configurações → IA e
   terminal**). O chat não consegue parar e perguntar no meio de uma ação, então
   ele já vem com permissão para agir: *ler e editar o projeto* cobre analisar uma
   reunião e escrever notas; *tudo, sem perguntar* libera também conectores
   externos (Slack, Drive…) e caminhos fora da pasta do projeto.
-- Cada passo do agente (uma ferramenta que ele usou) **abre**: clique para ver o
-  que foi pedido e o que voltou. Um passo que falhou já abre sozinho.
 
 ### Ajustar as larguras
 
@@ -115,31 +116,31 @@ Na primeira abertura, um **modal de boas-vindas** resume as principais
 funcionalidades (fluxo, gravação, modelos, agente, IA e atalhos) — reabra
 quando quiser pela paleta: `Cmd/Ctrl+K` → "apresentação do Loro".
 
-1. **Criar o acervo** — na primeira abertura, o assistente mostra todos os
+1. **Criar o projeto** — na primeira abertura, o assistente mostra todos os
    campos de uma vez (nada fica atrás de "opções avançadas"): nome, modelo de
    uso com os temas iniciais logo ao lado (ex.: `produto`, `engenharia`),
    pasta (a padrão já aparece preenchida; o ⓘ detalha o que será guardado
    nela), idioma, cor e o agente de IA. Deixe "guardar histórico de versões"
    marcado para habilitar o fluxo de revisão (recomendado).
-2. **Modelo de uso** — a primeira opção é **Automático** (padrão): o loop
-   cria e atribui contexto sozinho ao processar a fila, então você não
-   precisa definir contextos agora (dá para desligar depois em
+2. **Modelo de uso** — a primeira opção é **Automático** (padrão): o agente
+   cria e atribui o tema sozinho ao organizar, então você não
+   precisa definir temas agora (dá para desligar depois em
    Configurações). As demais opções são modelos prontos (Vendas,
    Engenharia, Produto & gestão, Aprendizado, Educação, Recrutamento,
-   Saúde) ou o Genérico (em branco) — nesses, você define os contextos e o
-   loop não cria novos sozinho. Cada modelo pré-preenche os contextos (você
-   pode editar), adiciona regras da vertical ao `AGENTS.md`, semeia o guia
-   da fila e define o molde do `context.md` de cada contexto (as seções
+   Saúde) ou o Genérico (em branco) — nesses, você define os temas e o
+   agente não cria novos sozinho. Cada modelo pré-preenche os temas (você
+   pode editar), adiciona regras da vertical ao `AGENTS.md`, semeia as instruções
+   do agente e define o molde do documento de conhecimento de cada tema (as seções
    variam por vertical — vendas fala de pipeline e compromissos, saúde de
    condutas e protocolos). A explicação de cada opção aparece logo abaixo ao
-   selecioná-la. "Duplicar para personalizar" copia qualquer modelo para
+   selecioná-la. "duplicar para personalizar" copia qualquer modelo para
    `~/.loro/templates/`, onde você edita os arquivos e ele passa a aparecer
    no assistente. Modelos com dados pessoais (Vendas, Recrutamento, Saúde)
    trazem regras de minimização — o de Saúde avisa: dados de saúde são
-   sensíveis e o acervo não substitui o prontuário.
+   sensíveis e o projeto não substitui o prontuário.
 3. **Agente de IA** — o campo "agente de IA (comando)" define qual CLI o
-   terminal embutido usa neste acervo: `claude` (padrão), `gemini`,
-   `ollama run llama3`… O acervo é só arquivos + convenção (`AGENTS.md`),
+   terminal embutido usa neste projeto: `claude` (padrão), `gemini`,
+   `ollama run llama3`… O projeto é só arquivos + convenção (`AGENTS.md`),
    então qualquer agente — inclusive um modelo local — consegue trabalhar
    nele; para agentes que não entendem slash-commands, o Loro envia as
    instruções da skill como texto.
@@ -153,70 +154,72 @@ quando quiser pela paleta: `Cmd/Ctrl+K` → "apresentação do Loro".
    verificado. Se um modelo antigo tiver ficado pela metade, ele volta a aparecer
    como *não instalado* — basta baixar de novo.
 5. **Idioma** — na engrenagem (⚙), "idioma da interface" alterna pt-BR/inglês.
-   Tudo que o app **gera** (análises, documentos de reunião, contextos)
+   Tudo que o app **gera** (análises, documentos de reunião, conhecimento)
    nasce no idioma ativo da interface.
 6. **Versão** — o rodapé das Configurações (⚙) mostra a versão instalada
    (ex.: `v0.8.0`), para você conferir num relance se a atualização pegou.
 
 ## Gravar e transcrever
 
-- **● (gravar)** abre o diálogo de gravação perguntando **onde salvar**: um
-  brainstorming (vira uma reunião ligada ao tema) ou "transcrição avulsa"
-  (o texto fica no painel ao vivo para salvar/descartar ao final). O atalho
-  global é `Cmd/Ctrl+Alt+Espaço`.
-- Cada comando da paleta (`Cmd/Ctrl+K`) tem um atalho `Cmd/Ctrl+Alt+
-  <tecla>`, exibido ao lado do comando na própria paleta.
-- **Fontes**: microfone, áudio do sistema (requer BlackHole — o app guia a
-  instalação) ou **reunião** (mic + sistema juntos; a transcrição acontece ao
+- **● (gravar)** abre o diálogo de gravação perguntando **onde salvar**: uma
+  ideia (vira uma reunião ligada a ela) ou **transcrição avulsa (salvar ao
+  final)** — o texto fica no painel ao vivo para salvar/descartar quando você
+  parar. O atalho global é `Cmd/Ctrl+Alt+Espaço`.
+- Cada comando da paleta (`Cmd/Ctrl+K`) tem um atalho
+  `Cmd/Ctrl+Alt+<tecla>`, exibido ao lado do comando na própria paleta.
+- **Fontes** (Configurações → Transcrição → *fonte*): **microfone**, **áudio do
+  sistema** (requer BlackHole — o app guia a instalação) ou **minha voz + áudio
+  do sistema** (a reunião: as duas trilhas juntas; a transcrição acontece ao
   final, com mais fidelidade).
 - O áudio é **transitório**: usado para transcrever e descartado. O indicador
   de privacidade na barra mostra o estado ("sem gravar" / "grava áudio").
 
-## Brainstorming (o mundo não versionado)
+## Ideias (o mundo sem histórico de versões)
 
 - **Escrever uma nota** (na tela Início) abre um markdown **em branco** na hora:
   você escreve primeiro e, ao salvar, escolhe o título e onde a nota vai morar —
-  um brainstorming existente ou um contexto. Enquanto não salvar, nada é gravado
+  uma ideia existente ou um tema de conhecimento. Enquanto não salvar, nada é gravado
   em disco.
-- O **＋** no cabeçalho da seção cria um brainstorming (espaço privado para
-  um tema); o **＋** da seção contextos cria um contexto.
-- Dentro dele (expanda o brainstorming na lateral): cada pasta tem sua
+- O **＋** ao lado de **ideias** cria uma ideia (o botão se chama "Nova ideia"):
+  um espaço privado para um assunto. O **＋** ao lado de **conhecimento** cria um
+  tema (o botão se chama "Novo tema").
+- Dentro dela (expanda a ideia na lateral): cada pasta tem sua
   própria ação de criação no topo — **notas** → **＋ nova nota**;
   **reuniões** → **● gravar reunião** (também na paleta `Cmd/Ctrl+K`
-  → "nova reunião"); **anexos** → **⇄ sincronizar** (traz de Drive/Slack/
-  Jira/Confluence) e **＋ do computador** (abre o seletor de arquivos e copia
+  → "nova reunião"); **anexos** → **⇄ sincronizar** (traz de
+  Drive/Slack/Jira/Confluence) e **＋ do computador** (abre o seletor e copia
   um `.pdf`/`.xlsx`/imagem que você já tem para os anexos do tema).
-- **✦ nota por IA** (menu ⋯ do brainstorming) cria uma nota a partir de um
+- **✦ nota por IA** (menu ⋯ da ideia) cria uma nota a partir de um
   pedido seu; **✦ pedir à IA** (menu ⋯ de uma nota/análise **e no rail à
   direita de qualquer arquivo aberto**) aplica um pedido sobre o conteúdo
   existente — a IA evolui, nunca apaga.
 - **Menu ⋯ de uma reunião**: além de renomear e apagar, **⇄ mover para…** leva a
-  reunião inteira — transcrição, análises e material gerado — para outro
-  brainstorming — disponível depois que a reunião termina, como analisar e enviar
-  para a fila. Também dá para arrastar a reunião pelo ícone até o cabeçalho
-  **📁 reuniões** do brainstorming de destino. Uma reunião de mesmo nome no destino
+  reunião inteira — transcrição, análises e material gerado — para outra
+  ideia — disponível depois que a reunião termina, como analisar e enviar
+  para organizar. Também dá para arrastar a reunião pelo ícone até o cabeçalho
+  **📁 reuniões** da ideia de destino. Uma reunião de mesmo nome no destino
   nunca é sobrescrita.
 - **Menu ⋯ de qualquer arquivo** (nota, anexo, avulso, nota de reunião):
   além de **renomear** e **apagar**, traz **⇄ mover para…** (escolha a pasta
-  de destino — avulso, ou as pastas notas/anexos de qualquer brainstorming) e
+  de destino — avulso, ou as pastas notas/anexos de qualquer ideia) e
   **⧉ copiar caminho** — **relativo** (portátil, no formato usado pelas
   referências `acervo://`) ou **absoluto** (o caminho completo no disco, útil
   para abrir no Finder/terminal). Nunca sobrescreve um arquivo de mesmo nome no
   destino. O **copiar caminho** está no menu ⋯ de **todo item da árvore
-  lateral** — arquivos, brainstormings, reuniões, itens da fila, contextos,
+  lateral** — arquivos, ideias, reuniões, itens para organizar, temas,
   pastas (anexos) e habilidades, além das fontes.
 - **Arrastar e soltar:** arraste o **ícone** de um arquivo (o cursor vira uma
   mãozinha) e solte sobre o cabeçalho de uma pasta (📁 notas, 📁 anexos ou
   📁 avulso) para movê-lo — o mesmo efeito do **mover para…**, restrito ao
-  mundo do brainstorming (nunca toca o que é versionado). O resto da linha
+  mundo das ideias (nunca toca o que tem histórico de versões). O resto da linha
   continua sendo clique-para-abrir.
 - **Rail de ações à direita do arquivo:** ao abrir qualquer nota/documento,
   a lateral direita mostra cartões de ação separados — **habilidade** (um
   dropdown com nomes amigáveis; a descrição da habilidade selecionada fica
   sempre visível logo abaixo, e **▶ executar** roda sobre o arquivo aberto),
-  **pedir à IA…**, e **versionar** (quando o arquivo é de um contexto).
-  Mesmo padrão em todo lugar onde essas ações existem — reunião, documento
-  comum, cabeçalho do acervo. No **modo edição** o editor ocupa o painel
+  **pedir à IA…**, e **Salvar versão** (quando o arquivo é de um tema de
+  conhecimento). Mesmo padrão em todo lugar onde essas ações existem — reunião,
+  documento comum, cabeçalho do projeto. No **modo edição** o editor ocupa o painel
   inteiro e o rail fica oculto; as ações continuam disponíveis no modo
   visualizar.
 - **Barra de formatação no modo edição:** acima do editor há botões para
@@ -226,14 +229,14 @@ quando quiser pela paleta: `Cmd/Ctrl+K` → "apresentação do Loro".
   cursor (ou envolvem o texto selecionado) e desfazem quando você clica de
   novo sobre um trecho já formatado — o arquivo continua sendo markdown
   legível, então o histórico no git mostra apenas o que você mudou de fato.
-  A mesma barra aparece no editor de pendentes da fila e das instruções do
-  loop, onde **⌘S** salva.
-- As ações **analisar**, **perguntar…** e **enviar para a fila** ficam no menu
-  **⋯** da reunião na lateral. **Perguntar** funciona já durante a gravação; as
-  outras duas habilitam quando a reunião termina. **Enviar para a fila** manda as
-  **análises** da reunião (o que estiver em `notas/`) — a transcrição bruta nunca
-  vai. Uma reunião que ninguém analisou não tem o que enviar, e o menu diz isso
-  em vez de falhar no clique.
+  A mesma barra aparece no editor dos itens em **para organizar** e das
+  instruções do agente, onde **⌘S** salva.
+- **✦ analisar**, **? perguntar…** e **enviar para organizar →** ficam no menu
+  **⋯** da reunião na lateral. **perguntar…** funciona já durante a gravação; as
+  outras duas habilitam quando a reunião termina. **enviar para organizar** manda
+  as **análises** da reunião (o que estiver em `notas/`) — a transcrição bruta
+  nunca vai. Uma reunião que ninguém analisou não tem o que enviar, e o menu diz
+  isso em vez de falhar no clique.
 - A aba `reuniao.md` da reunião mostra, em vez de botões fixos, um único
   **dropdown de habilidades** ("o que fazer com esta reunião") — escolha
   qualquer habilidade (incluindo analisar/perguntar) e rode sobre a reunião
@@ -244,14 +247,14 @@ quando quiser pela paleta: `Cmd/Ctrl+K` → "apresentação do Loro".
   para o Claude escrever a análise em `notas/`. Quando a gravação termina, o app
   abre a transcrição e **oferece** analisar em um clique — é uma sugestão, não
   roda nada sozinho, e some se você ignorar.
-- Nada do brainstorming é versionado nem sai da máquina.
+- Nada de uma ideia entra no histórico de versões nem sai da máquina.
 - As **notas** de cada reunião (análises, respostas e qualquer documento que
   uma habilidade gere) ficam **recolhidas por padrão** na lateral (toque na
   seta ▸ ao lado da reunião para abrir) — evita que a lista cresça demais
   quando há muitas reuniões analisadas. Tudo o que uma habilidade produz sobre
   a reunião vai para a pasta **notas/** dela (não mais em pastas separadas como
   investigações/respostas).
-- Cada brainstorming tem exatamente três pastas, visíveis na lateral como
+- Cada ideia tem exatamente três pastas, visíveis na lateral como
   grupos com ícone de pasta (📁 **reuniões**, 📁 **notas**, 📁 **anexos** —
   cada uma clicável para expandir/recolher):
   **reunioes/** (toda reunião nasce ali), **notas/** e **anexos/** (uma
@@ -259,22 +262,27 @@ quando quiser pela paleta: `Cmd/Ctrl+K` → "apresentação do Loro".
   `anexos/` é alimentada por uma habilidade (sincronizar, apresentação,
   artefato) ou arrastando um arquivo
   direto na pasta real no disco.
-- Com muitos brainstormings, um campo de busca aparece no topo da seção
+- Com muitas ideias, um campo de busca aparece no topo da seção
   (acima de 8) — filtra por nome; sem busca, mostra só os mais recentes +
   "ver todos".
 
-## Habilidades
+## Habilidades de IA
 
-Habilidades são ações do agente de IA — algumas já vêm prontas (padrão),
+As habilidades de IA são ações do agente — algumas já vêm prontas (padrão),
 outras você cria. Não ficam mais na Visão Geral: rode uma pelo menu **⋯**
-de um brainstorming → **"executar habilidade…"**, pelo botão **"executar
+de uma ideia → **"executar habilidade…"**, pelo botão **"executar
 habilidade…"** no topo do visualizador de **qualquer arquivo markdown**, ou
 pelo dropdown de habilidades numa reunião aberta. Sempre um menu/controle
 compacto — a descrição de cada uma só aparece ao passar o mouse, para não
 poluir a tela quando houver muitas.
 
+Quando você roda uma habilidade sem nenhum documento aberto (pelo ⌘K, em
+Início), a folha pergunta **onde** ela deve agir: um seletor com as ideias e os
+conhecimentos que o projeto já tem. Abrindo a habilidade de dentro de um
+documento, o alvo já vem preenchido com ele.
+
 - **Sincronizar** traz um item externo (Google Drive/Gemini, Slack, Jira ou
-  Confluence) para um **anexo local** do brainstorming, referenciado numa
+  Confluence) para um **anexo local** da ideia, referenciado numa
   nota. Drive traz o documento inteiro; Slack, Jira e Confluence trazem um
   **resumo** escrito pelo agente (nunca o texto/descrição crus). Cada fonte
   pede um identificador diferente: Drive aceita uma busca opcional ou um
@@ -287,15 +295,15 @@ poluir a tela quando houver muitas.
   serviço (Drive, Slack, Jira, Confluence) já configurado/autenticado — o
   Loro não gerencia essas credenciais.
 - **Apresentação** e **artefato** são habilidades padrão que geram material
-  (um deck em markdown, um diagrama, um script, uma planilha) a partir de um
-  brainstorming ou de um contexto — sempre em `anexos/` (não há pasta
+  (um deck em markdown, um diagrama, um script, uma planilha) a partir de uma
+  ideia ou de um tema — sempre em `anexos/` (não há pasta
   própria de apresentações), e se você apontar para uma nota específica,
   ela ganha a referência automaticamente.
 - **Habilidades padrão** (as de sincronizar, apresentação e artefato) podem
   ser **editadas**, mas nunca excluídas. **Habilidades customizadas** são
   skills que você mesmo cria — aparecem como comandos de barra reais
   (`/nome-da-habilidade`) assim que existem. Duas formas de criar, no **＋**
-  da seção "habilidades" da lateral: **"nova habilidade (IA)"** — descreva
+  da seção "Habilidades de IA" da lateral: **"nova habilidade (IA)"** — descreva
   o que ela deve fazer e a IA escreve a skill — ou **"importar skill
   existente"** — cole o conteúdo de uma skill que você já tem. Cada
   habilidade listada (na lateral) tem um menu **⋯** com **usar**,
@@ -305,12 +313,12 @@ poluir a tela quando houver muitas.
 - Na lateral, o ícone diz a origem: **🧩 peça** = habilidade padrão,
   **★ estrela** = customizada (o **📖 livro** marca a seção e os controles
   de habilidade, como no próprio Claude). Clique no título da seção
-  "habilidades" para **recolher/exibir** a lista inteira (o caret ▾/▸
+  "Habilidades de IA" para **recolher/exibir** a lista inteira (o caret ▾/▸
   mostra o estado).
 
 ## Grifar, comentar e agir sobre um trecho
 
-Em qualquer markdown do acervo — a transcrição de uma reunião, um contexto,
+Em qualquer markdown do projeto — a transcrição de uma reunião, um tema,
 uma nota — **selecione um trecho** com o mouse e uma pequena ferramenta
 flutuante aparece com cinco ações:
 
@@ -324,118 +332,160 @@ flutuante aparece com cinco ações:
   trecho: ele é grifado e entregue **evidenciado** ao agente, que foca a
   análise/pergunta nele.
 - **➤ Slack** — envia uma pergunta sobre o trecho para um **#canal** ou
-  **@pessoa** no Slack (ex.: "estamos num brainstorming, preciso da sua ajuda
+  **@pessoa** no Slack (ex.: "estamos discutindo uma ideia, preciso da sua ajuda
   com isto"). Quem fala com o Slack é o **agente do terminal**, com o conector
   dele — o Loro nunca guarda credencial, e nada é enviado sem sua confirmação.
 
+**Sem mouse:** na paleta (`Cmd/Ctrl+K`) existe **Grifar um trecho…** — escreva ou
+cole o trecho exato e ele é grifado. Cada grifo é um controle: entra na navegação
+por **Tab** e abre as mesmas ações com **Enter**. Dentro delas as **setas** andam
+de ação em ação, como em qualquer menu do app, e **Esc** fecha devolvendo o foco
+ao grifo.
+
 Os grifos e comentários ficam num arquivo ao lado do documento
-(`<doc>.anotacoes.json`) e **viajam com o acervo** — não sujam o texto
+(`<doc>.anotacoes.json`) e **viajam com o projeto** — não sujam o texto
 original nem entram em nenhum log. Se um documento for muito editado e um
 trecho grifado não for mais encontrado, ele não é perdido em silêncio:
 aparece como **"trecho órfão"** no painel de comentários.
 
-## Contextos também têm anexos
+## Os temas de conhecimento também têm anexos
 
-Cada contexto tem sua pasta **anexos/**, sempre visível na árvore — com
-**＋ nova nota** (escreve uma nota que nasce dentro do contexto) e **＋ do
-computador** (seletor de arquivos). Diferente dos anexos de brainstorming,
-os anexos de um contexto são **versionados junto com ele** (entram no fluxo
-de versionar/propor mudança normalmente).
+Cada tema tem sua pasta **anexos/**, sempre visível na árvore — com **＋ nova
+nota** (escreve uma nota que nasce dentro do tema) e **＋ do computador**
+(seletor de arquivos). Diferente dos anexos de uma ideia, os anexos de um tema
+**entram no histórico de versões junto com ele** (passam por salvar versão e
+por enviar para revisão do time normalmente).
 
-## Fila → gerar contexto
+## Para organizar → conhecimento
 
 - **Antes de entrar, o Loro confere o que o arquivo carrega.** Se parecer haver
   uma credencial (chave de API, token, chave privada), o arquivo **não entra** —
-  o projeto é versionado e vai para o git, e o que é empurrado não volta. CPF ou
-  transcrição colada dentro de uma nota geram um aviso: você lê e decide.
+  o projeto guarda histórico e vai para o git, e o que é publicado não volta.
+  CPF ou transcrição colada dentro de uma nota geram um aviso: você lê e decide.
   O aviso diz a regra e a linha, nunca repete o que encontrou.
+- Marque os **arquivos** de uma ideia (reunião → suas análises, notas, anexos)
+  e use **enviar para organizar** — cada arquivo vira um item próprio (a
+  multi-seleção envia todos). No ⋯ da ideia, **→ tudo para organizar** manda
+  todos os arquivos de uma vez. (Você também pode soltar arquivos `.md`/`.txt`
+  direto na lista.) A transcrição bruta da reunião nunca vai (BR-8).
+- **Transformar em conhecimento →** roda a habilidade de organizar no agente,
+  que estrutura o material dentro do tema (o documento de conhecimento + o
+  histórico do tema).
+- Cada documento de conhecimento abre com um **Sumário** (1 linha por seção +
+  IDs `D-…`/`H-…`), regenerado a cada atualização — é ele que deixa a leitura
+  barata para pessoas e agentes; decisões e hotspots ganham IDs estáveis,
+  localizáveis por busca.
+- Sem nada **para organizar**, o botão avisa e não roda: não há de onde gerar.
+- O seletor **destino** decide onde o material entra: *a IA decide* ou um tema
+  que você escolhe. **guardar os anexos junto** (opcional, marque antes) copia
+  os anexos dos itens processados para os anexos do tema — sem marcar, eles
+  ficam só na ideia. **ajustar instruções** abre o que o agente deve seguir
+  antes de organizar.
 
-- Marque os **arquivos** de um brainstorming (reunião → suas análises, notas,
-  anexos) e **envie para a fila** — cada arquivo vira um item próprio
-  na fila (multi-seleção envia todos). No ⋯ do brainstorming, **"enviar tudo →
-  fila"** manda todos os arquivos de uma vez. (Você também pode soltar arquivos
-  `.md`/`.txt` direto na fila.) A transcrição bruta da reunião nunca vai (BR-8).
-- **▶ gerar contexto** roda `/loro-context` no Claude do terminal, que
-  estrutura o material em `contextos/<c>/context.md` (+ CHANGELOG).
-- Cada `context.md` abre com um **Sumário** (1 linha por seção + IDs `D-…`/`H-…`),
-  regenerado a cada atualização — é ele que deixa a leitura barata para pessoas
-  e agentes; decisões e hotspots ganham IDs estáveis, localizáveis por busca.
-- Com a fila **vazia**, o botão avisa e não roda: não há de onde gerar.
-- O checkbox **"salvar anexos referenciados no contexto"** (opcional, marque
-  antes de gerar) copia os anexos dos itens processados para
-  `contextos/<c>/anexos/` — sem marcar, os anexos ficam só no brainstorming.
+## Salvar versão e enviar para revisão do time
 
-## Versionar e propor mudança (RFC = PR)
+- **⎇** mostra o **rascunho de trabalho** atual; clique para trocar de rascunho
+  ou criar um novo. Uma mudança de conhecimento **sempre nasce num rascunho** —
+  o conhecimento oficial fica protegido.
+- **Salvar versão do projeto** guarda o **projeto inteiro** — todos os temas, não
+  só o documento aberto — no histórico, dentro do rascunho de trabalho em que
+  você está, com a frase que você escrever. A frase descreve a versão; ela **não
+  troca de rascunho** (para isso existe o **⎇**). Sem rede? O fluxo segue local e
+  o app avisa.
+- Quando não há nada novo para guardar, o botão diz **tudo salvo ✓** e fica
+  desligado: não existe versão vazia. Se você pedir uma assim mesmo (pelo ⌘K,
+  por exemplo), o app responde **nada mudou desde a última versão** — e nenhum
+  rascunho é criado.
+- **↗ Enviar para revisão do time** publica o rascunho e abre a revisão no
+  GitHub. Os donos do tema revisam; quando aprovam, a mudança vira o
+  conhecimento oficial. Depois de enviar, o aviso oferece **abrir a revisão**
+  (vai direto para ela no navegador) e **ver revisões** — a lista das revisões
+  abertas, cada uma com **abrir** e **copiar link**.
+- **Ver revisões do time** está sempre à mão: na seção **TIME** do painel ✦ IA e
+  no ⌘K, além do aviso no topo de **Conhecimento**. Você nunca depende de pegar
+  um aviso passando.
+- Sem GitHub configurado, salvar versão continua funcionando **local** e a
+  seção **TIME** aponta onde se liga (**Configurações → Versões e GitHub**). Na
+  linha **repositório remoto** de **Configurações → Versões e GitHub**, o botão
+  **conectar** cria o repositório do time e conecta o projeto — o app diz antes o
+  que sobe (só o que já está em versões; reuniões, notas e itens para organizar
+  ficam neste computador).
+- **Sem rede é diferente de sem configuração**: com tudo conectado e a internet
+  fora, o distintivo diz **sem rede**, a seção TIME explica que a revisão volta
+  quando a conexão voltar, e o link é **verificar de novo**.
+- Cada versão é assinada com a **identidade do git** (nome e e-mail) — é o que o
+  time vê no histórico. Em **Configurações → Versões e GitHub**, a linha
+  **identidade git** tem **corrigir**; o e-mail precisa ser um endereço de
+  verdade (`ana@exemplo.com`), senão a assinatura não chega a ninguém.
+- Trocar de rascunho com mudanças ainda não salvas em uma versão é bloqueado —
+  salve a versão antes.
+- No **⎇**, cada linha diz **quanto aquele rascunho guarda** ("18 documentos",
+  ou "nada guardado ainda"). Trocar para um rascunho que não tem os seus
+  documentos **tira esses documentos da tela** — nada é apagado, eles continuam
+  guardados no rascunho em que você estava e voltam quando você voltar para ele.
+  O app avisa quantos saem e para onde se volta **antes** de trocar.
 
-- **⎇ (branch)** mostra a branch atual; clique para trocar de branch ou criar
-  uma nova. Mudanças de conhecimento **sempre nascem numa branch** `rfc/…` —
-  a main é protegida.
-- **versionar** sincroniza a main com o remoto (quando houver), cria/reusa a
-  branch `rfc/<slug>` e commita suas mudanças locais. Sem rede? O fluxo segue
-  local e o app avisa.
-- **propor mudança** publica a branch e abre o Pull Request (a RFC). Os donos
-  do contexto (CODEOWNERS) revisam; o merge torna a proposta oficial.
-- Trocar de branch com alterações não versionadas é bloqueado — versione antes.
+## Perguntar ao projeto
 
-## Perguntar ao acervo
-
-- Na Visão Geral, o botão **📖 executar habilidade** abre a lista completa de
-  habilidades — **perguntar ao acervo** é uma delas (também na paleta,
-  `Cmd/Ctrl+Alt+Q`). A pergunta roda com `/loro-ask`; a resposta se ancora
-  nos `context.md` do acervo e diz claramente quando a base não cobre o
-  assunto.
-- Ao lado de **propor mudança** há um **ⓘ** explicando o fluxo: publica a
-  branch `rfc/…` e abre o Pull Request (a RFC) para revisão dos donos do
-  contexto.
+- **perguntar ao projeto** é uma habilidade como as outras: está nos chips do
+  painel **✦ IA**, na lista **todas ▸** e na paleta (`Cmd/Ctrl+Alt+Q`). A
+  resposta se ancora no conhecimento do projeto e diz claramente quando a base
+  não cobre o assunto.
+- Ao lado de **↗ Enviar para revisão do time** há um **ⓘ** explicando o fluxo:
+  publica o rascunho de trabalho e abre a revisão para os donos do tema.
 
 ## FAQ
 
-**Onde ficam meus dados?** Na pasta do acervo que você escolheu, e só nela.
+**Onde ficam meus dados?** Na pasta do projeto que você escolheu, e só nela.
 Config e modelos ficam em `~/.loro/`. Nenhum conteúdo sai da máquina sem ação
-sua (rodar um skill, propor um PR).
+sua (rodar uma habilidade, enviar uma mudança para revisão).
 
-**O que sobe para a nuvem?** Nada, por padrão. "Propor mudança" publica a
-branch no seu repositório remoto; os skills do Claude leem a base local
-primeiro e declaram quando consultam algo externo.
+**O que sobe para a nuvem?** Nada, por padrão. "Enviar para revisão do time"
+publica o rascunho de trabalho no seu repositório remoto; as habilidades leem o
+conhecimento local primeiro e declaram quando consultam algo externo.
 
-**Posso usar vários projetos?** Sim — o seletor ◆ no topo da lateral troca de
-acervo e cria novos.
+**Posso usar vários projetos?** Sim — o seletor no topo da lateral troca de
+projeto e cria novos.
 
-**Por que o botão "gerar contexto" está desabilitado?** A fila está vazia.
-Envie arquivos de um brainstorming (ou solte arquivos na fila) primeiro.
+**Por que o botão "Transformar em conhecimento" está desabilitado?** Não há
+nada para organizar.
+Envie arquivos de uma ideia (ou solte arquivos na lista) primeiro.
 
 **O Claude não abre no terminal.** Confira se o CLI está instalado (`claude`
-no PATH) e se há um acervo configurado. O app avisa quando não consegue abrir.
+no PATH) e se há um projeto configurado. O app avisa quando não consegue abrir.
 
 **Como mudo a largura da lateral?** Arraste a divisória entre a lateral e o
-editor; com a lateral larga, os arquivos mostram data e estado git. Clique
+editor; com a lateral larga, os arquivos mostram data e estado do histórico. Clique
 duplo na divisória volta ao padrão.
 
-**Uma aba mostrou conteúdo de outro arquivo.** Isso era um defeito antigo do
-editor, corrigido — se voltar a acontecer, abra um issue com os passos.
+**Uma aba mostrou conteúdo de outro arquivo.** O caminho no topo do documento é
+quem manda: **salvar versão** grava a aba ativa, não o que está desenhado. Se os
+dois discordarem, feche a aba e abra o documento de novo — e abra um issue com
+os passos.
 
 **Em que idioma o conteúdo é gerado?** No idioma que você escolheu ao criar o
-acervo (pt-BR ou inglês) — a interface inteira segue essa escolha. Dá para
-trocar depois na engrenagem (⚙); um acervo pode conter documentos nos dois
+projeto (pt-BR ou inglês) — a interface inteira segue essa escolha. Dá para
+trocar depois na engrenagem (⚙); um projeto pode conter documentos nos dois
 idiomas se você alternar. As pastas no disco (`reunioes/`, `notas/`,
-`anexos/`, `contextos/`) ficam sempre em português, independente do idioma.
+`anexos/`, `contextos/`) ficam sempre em português, independente do idioma —
+elas são o disco, não a tela.
 
 **O que é uma "habilidade customizada"?** Uma skill que você mesmo cria —
 descrevendo o que ela deve fazer (a IA escreve) ou importando uma que você já
 tem. Vira um comando de barra de verdade (`/nome-da-habilidade`) e aparece na
-seção "habilidades" da lateral; roda pelo menu ⋯ ("executar habilidade…")
-de um brainstorming ou reunião.
+seção "Habilidades de IA" da lateral; roda pelo menu ⋯ ("executar habilidade…")
+de uma ideia ou reunião.
 
 **Posso apagar uma habilidade padrão (sincronizar, apresentação, artefato)?**
 Não — pode editá-la, mas não excluí-la. Só habilidades customizadas (criadas
 por você) podem ser excluídas.
 
 **O que o "modo automático" realmente faz?** É o modelo de uso "Automático"
-(escolhido na criação, o padrão). Com ele, o loop pode criar um contexto novo
-ou decidir a qual contexto atribuir algo, sozinho, ao processar a fila.
+(escolhido na criação, o padrão). Com ele, o agente pode criar um tema novo
+ou decidir a qual tema atribuir algo, sozinho, ao organizar.
 Escolhendo qualquer outro modelo (ou desligando depois em Configurações), ele
-não cria nada novo por conta própria — deixa o item pendente na fila e avisa
-que precisa da sua decisão manual. Não afeta atribuir a um contexto que já
+não cria nada novo por conta própria — deixa o item em **para organizar** e avisa
+que precisa da sua decisão manual. Não afeta atribuir a um tema que já
 existe.
 
 **Por que as notas de uma reunião não aparecem de cara?**

@@ -1,6 +1,6 @@
 # {{CONTEXT}} — contexto
 
-_Fonte oficial da verdade deste contexto (markdown, legível para negócio). Evolui por RFC (branch + PR) revisada pelos donos do contexto._
+_Fonte oficial da verdade deste tema (markdown, legível para negócio). Toda mudança é enviada para revisão do time antes de virar oficial._
 
 > **Aviso (LGPD):** nunca registre dados de paciente identificáveis aqui —
 > dado de saúde é sensível e o prontuário vive no sistema oficial.

@@ -270,13 +270,16 @@ pub struct AcervoSettings {
 
 pub fn write_acervo_settings(base: &Path, auto_context: bool) -> Result<(), String> {
     let dir = base.join(".loro");
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    // N20 — this marker is written inside the project folder during setup, so its
+    // failures are the folder's failures: a code the UI translates, never a raw
+    // std::io message in English (ADR-0001 §10).
+    std::fs::create_dir_all(&dir).map_err(|e| crate::paths::folder_write_error(&e))?;
     let settings = AcervoSettings { auto_context };
     std::fs::write(
         dir.join("settings.json"),
         serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?,
     )
-    .map_err(|e| e.to_string())
+    .map_err(|e| crate::paths::folder_write_error(&e))
 }
 
 pub fn active_acervo(cfg: &LoroConfig) -> Option<&Acervo> {
