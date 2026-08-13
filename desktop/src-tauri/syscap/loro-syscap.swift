@@ -77,6 +77,13 @@ final class Capturer: NSObject, SCStreamOutput {
                     // 16k mono via ffmpeg, so we keep the native 48k float WAV.
                     file = try AVAudioFile(forWriting: outputURL, settings: fmt.settings,
                                            commonFormat: .pcmFormatFloat32, interleaved: false)
+                    // ADR-0025: THIS instant is the file's t=0, and the parent has
+                    // no other way to know it — it was estimating, and a meeting's
+                    // two tracks ended up on clocks up to seconds apart. One
+                    // machine-readable line on stdout, at the only moment it is
+                    // true. Never any audio content (BR-8).
+                    print("first-sample-epoch-ms \(Int(Date().timeIntervalSince1970 * 1000))")
+                    fflush(stdout)
                 }
                 try file?.write(from: pcm)
             }

@@ -803,6 +803,7 @@
     "perguntar": "ask",
     "perguntar ao projeto": "ask the project",
     "Perguntar ao acervo": "Ask the knowledge base",
+    "conferindo de quem é a fala…": "checking who is speaking…",
     "perguntar sobre a reunião": "ask about the meeting",
     "Perguntar sobre a reunião": "Ask about the meeting",
     "português": "portuguese",

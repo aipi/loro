@@ -99,7 +99,7 @@ only ever shows `err.acervo_dir_is_file` / `err.acervo_dir_not_writable` /
 | `start` | `cfg {model, lang, translate, threads, capture?}` | `()` / err | spawn the streaming engine (live mode) |
 | `stop` | — | `()` | terminate the engine process (live mode) |
 | `transcribe_file` | `path, cfg {model, lang, translate, threads}` | `()` / err | file mode: converts `path` to 16kHz mono WAV (ffmpeg) and transcribes it whole with `whisper-cli` (no VAD); runs off the main thread, streams results via `transcript-line`/`transcribe-state`/`transcribe-error` |
-| `start_system_capture` | — | wavPath / err | meeting mode (ADR-0001 §2): spawn the ScreenCaptureKit sidecar recording system audio to a WAV; errors fast on a denied Screen Recording permission |
+| `start_system_capture` | — | wavPath / err | meeting mode (ADR-0001 §2): spawn the ScreenCaptureKit sidecar recording system audio to a WAV; errors fast on a denied Screen Recording permission. The sidecar reports the epoch of its first written sample on **stdout** (`first-sample-epoch-ms <n>`) — the WAV's own t=0, kept per segment and handed to the frontend by the tail (ADR-0025) |
 | `stop_system_capture` | — | `()` | stop the sidecar cleanly (close its stdin → it finalizes the WAV) |
 | `transcribe_meeting` | `micPath?, sysPath?, cfg` | `()` / err | mix the mic and system-audio tracks (ffmpeg `amix`) into one 16kHz mono WAV and transcribe whole with `whisper-cli`; same events as `transcribe_file` |
 | `save_recording` | `data, filename` | path | write a recorded buffer (e.g. file-mode audio or diarization capture) to `transcripts/` |
@@ -139,11 +139,16 @@ Brainstorming world + the fila → contexto flow (ADR-0001 §7):
 | `brain_create_brainstorm` | `{nome, categoria?}` | `{slug, rel}` | create a brainstorming under `brainstorming/` |
 | `brain_list_brainstorms` | — | list | list brainstormings (with categoria) |
 | `brain_list_meetings` | `slug` | `[{id,rel,titulo,status,notas}]` | a brainstorming's meetings, newest first, labelled by manifest `titulo`; `notas` counts how many of the meeting's `notas/` the fila would accept (0 = nothing to send, ADR-0018) |
+| `brain_meeting_start` | `{tema, titulo?, cfg?}` | `{id, dir, livingRel, startedEpochMs}` | scaffold the meeting home + manifest + `reuniao.md` and start the capture sidecar (capture first, so a permission denial leaves no orphan). `startedEpochMs` is the meeting's **t=0**, taken right before the spawn: both tracks convert their timestamps to it (ADR-0025) |
 | `brain_meeting_finish` | `id` | `{rel}` | close a meeting: `status: "done"`, nothing authored; returns the `reuniao.md` rel the UI opens (ADR-0018 — replaces `brain_meeting_build_notebook`) |
 | `brain_meeting_rename` | `{id, titulo}` | `()` | rename a meeting (manifest + heading; the folder id stays stable) |
+| `brain_meeting_transcribe_tail` | `{id, fromMs}` | `{segments[], nextMs, anchorEpochMs?}` | best-effort live window of the system track: snapshots the growing WAV, transcribes `[fromMs, end]` and returns **every utterance whisper timed**, each with its offset into that capture segment's WAV, plus `anchorEpochMs` — the WAV's own t=0, measured by the sidecar (absent until reported; the caller degrades) (ADR-0012, ADR-0025) |
+| `brain_meeting_transcribe_segment` | `{id, data}` | `{segments[]}` | same for one rotated mic segment (bytes in, transient temp, nothing stored): each utterance with its offset into the segment (ADR-0012 model A, ADR-0025) |
+| `brain_meeting_append` | `{id, chunk, tMs?, source?}` | `()` | append one block below the stable marker (append-only, ADR-0010); timed blocks land in chronological order, untimed ones (skills/legacy) at the tail |
+| `brain_meeting_append_timed` | `{id, blocks[{tMs, source, chunk}]}` | `()` | a whole window's utterances in ONE pass — one read, one write, one `meeting-appended` — so the living surface repaints once instead of once per utterance (ADR-0025) |
 | `brain_triage_files` | `rels[]` | `[{rel, findings[]}]` | read-only: what these files carry before they enter the acervo — `{severity, rule, line, count}`, NEVER the matched text (BR-8 binds the detector itself). A meeting expands to its `notas/*` through the same owner as the send path (ADR-0024) |
 | `brain_meeting_pause` | `id` | `()` / err | stop the capture sidecar mid-meeting: NOTHING is recorded while paused. The segment already written stays in the pending list so its last window can still be transcribed (ADR-0022 §19) |
-| `brain_meeting_resume` | `id` | `()` / err | open a NEW capture segment (`system-2.wav`, …). The frontend rebases its tail offset (`tailBase`) and the clock discounts the pause, so both timelines stay aligned (ADR-0022 §19) |
+| `brain_meeting_resume` | `id` | `()` / err | open a NEW capture segment (`system-2.wav`, …). Its window offsets restart at zero and its place on the meeting timeline comes from the segment's own anchor, with the pause discounted on both tracks alike (ADR-0022 §19, ADR-0025) |
 | `brain_rename_brainstorm` | `slug, nome` | `{slug, rel}` | rename a brainstorming (folder + meta) |
 | `brain_set_brainstorm_category` | `{slug, categoria?}` | `()` | set/clear the UI grouping category |
 | `brain_brainstorm_delete` | `{rel}` | `()` | delete a brainstorming item (guarded to `brainstorming/`) |

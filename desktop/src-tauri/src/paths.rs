@@ -278,7 +278,7 @@ mod tests {
             assert_eq!(code, "err.acervo_dir_unusable", "{kind:?}");
         }
         // no io text ever survives into what the user reads
-        let raw = folder_write_error(&Error::new(ErrorKind::Other, "os error 20"));
+        let raw = folder_write_error(&Error::other("os error 20"));
         assert!(raw.starts_with("err."), "{raw}");
         assert!(!raw.contains("os error"), "{raw}");
     }

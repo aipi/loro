@@ -205,10 +205,7 @@ mod tests {
     // reconheceu a forma, que é exatamente o que este módulo detecta. Um detector
     // de segredo cujos testes são varridos como segredo não entra no repositório.
     fn amostra(prefixo: &str, corpo: char, n: usize) -> String {
-        format!(
-            "{prefixo}{}",
-            std::iter::repeat(corpo).take(n).collect::<String>()
-        )
+        format!("{prefixo}{}", corpo.to_string().repeat(n))
     }
 
     #[test]

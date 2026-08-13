@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tauri::image::Image;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
@@ -459,8 +459,52 @@ fn list_capture_devices() -> Result<Vec<CaptureDevice>, String> {
     capture_devices()
 }
 
-// extracts the text from whisper-stream lines: "[hh:mm --> hh:mm]   text"
-fn extract_text(line: &str) -> Option<String> {
+// One utterance of a transcription: WHEN it was said (ms into the transcribed
+// window) and what was said. ADR-0025: whisper hands these timestamps over for
+// free and they used to be discarded, which is what forced a meeting to stamp a
+// whole 18s window with a single time — only its first utterance was ever true,
+// and cross-track comparison had nothing finer than the window to reason with.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SpokenSegment {
+    pub(crate) t_ms: u64,
+    pub(crate) end_ms: u64,
+    pub(crate) text: String,
+}
+
+// "hh:mm:ss.mmm" / "mm:ss.mmm" / "mm:ss" -> ms. The LAST field is seconds and the
+// ones before it are minutes then hours, so both the whisper-cli and the
+// whisper-stream shapes read correctly without two parsers.
+fn parse_timecode(s: &str) -> Option<u64> {
+    let parts: Vec<&str> = s.trim().split(':').collect();
+    if parts.is_empty() || parts.len() > 3 {
+        return None;
+    }
+    let last = parts[parts.len() - 1];
+    let (secs, frac) = match last.split_once(['.', ',']) {
+        Some((a, b)) => (a, b),
+        None => (last, ""),
+    };
+    let mut ms = secs.trim().parse::<u64>().ok()? * 1000;
+    if !frac.is_empty() {
+        let digits: String = frac.chars().take(3).collect();
+        if !digits.chars().all(|c| c.is_ascii_digit()) {
+            return None;
+        }
+        ms += digits.parse::<u64>().ok()? * 10u64.pow(3 - digits.len() as u32);
+    }
+    let mut unit = 60_000u64; // minutes, then hours
+    for p in parts[..parts.len() - 1].iter().rev() {
+        ms += p.trim().parse::<u64>().ok()? * unit;
+        unit *= 60;
+    }
+    Some(ms)
+}
+
+// The ONE parser for a whisper output line: "[hh:mm:ss.mmm --> hh:mm:ss.mmm] text".
+// Gives back the text plus, when the timecode is readable, the times. Two parsers
+// is how a line's text and its timecode drift apart.
+fn extract_line(line: &str) -> Option<(Option<(u64, u64)>, String)> {
     if !line.contains("-->") {
         return None;
     }
@@ -469,7 +513,16 @@ fn extract_text(line: &str) -> Option<String> {
     if t.is_empty() || t == "[Start speaking]" {
         return None;
     }
-    Some(t.to_string())
+    let times = line[..idx]
+        .rfind('[')
+        .and_then(|open| line[open + 1..idx].split_once("-->"))
+        .and_then(|(a, b)| Some((parse_timecode(a)?, parse_timecode(b)?)));
+    Some((times, t.to_string()))
+}
+
+// extracts the text from whisper-stream lines: "[hh:mm --> hh:mm]   text"
+fn extract_text(line: &str) -> Option<String> {
+    extract_line(line).map(|(_, text)| text)
 }
 
 // marks the recording state; icon blinking is owned by the tray thread
@@ -759,10 +812,26 @@ fn window_ffmpeg_args(src: &Path, dst: &Path, from_ms: u64, to_ms: Option<u64>) 
     a
 }
 
-// Parse a whisper-cli stdout blob into segment texts, reusing the SAME
-// `extract_text` parser as the live/file paths (no divergent parsing).
-fn parse_whisper_lines(stdout: &str) -> Vec<String> {
-    stdout.lines().filter_map(extract_text).collect()
+// Parse a whisper-cli stdout blob into TIMED segments, reusing the same
+// `extract_line` parser as the live/file paths (no divergent parsing). A spoken
+// line whose timecode is unreadable keeps its text and inherits the previous
+// segment's end: under ADR-0018 the live transcript is the meeting's only output,
+// so speech is never dropped over a timecode.
+fn parse_whisper_segments(stdout: &str) -> Vec<SpokenSegment> {
+    let mut out: Vec<SpokenSegment> = Vec::new();
+    let mut cursor = 0u64;
+    for line in stdout.lines() {
+        let Some((times, text)) = extract_line(line) else {
+            continue;
+        };
+        let (t_ms, end_ms) = match times {
+            Some((a, b)) => (a, b.max(a)),
+            None => (cursor, cursor),
+        };
+        cursor = end_ms;
+        out.push(SpokenSegment { t_ms, end_ms, text });
+    }
+    out
 }
 
 // Duration (ms) of a canonical PCM WAV from its BYTES. Uses the `fmt ` chunk's
@@ -801,9 +870,30 @@ pub(crate) fn wav_duration_ms_from_bytes(b: &[u8]) -> Option<u64> {
     None
 }
 
+// Where a window is carved before whisper reads it. UNIQUE per call, and that is
+// the whole point: the meeting's two tracks rotate on the same 18s tick, so on the
+// FIRST tick both carve with from_ms=0, into the same meeting's audio dir. With the
+// offset alone in the name they landed on ONE file from two threads — two ffmpeg
+// processes writing it and the first to finish deleting it under the other. The
+// first 18 seconds of a meeting came out empty on BOTH tracks, and only the first,
+// because from the second tick on the offsets differ. Same bug class as the
+// snapshot in ADR-0022 §407.
+//
+// The id is a process counter, not the clock: the two carves start in the same
+// instant, so nanoseconds can tie.
+fn window_carve_path(src: &Path, from_ms: u64) -> PathBuf {
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let id = N.fetch_add(1, Ordering::Relaxed);
+    src.with_file_name(format!(".window-{from_ms}-{id}.wav"))
+}
+
 // Transcribe just the window [from_ms, to_ms] of an already-16k-or-any WAV and
-// RETURN the segment texts (no global event). The caller owns any overlap
+// RETURN its timed segments (no global event). The caller owns any overlap
 // (~1.5s) and the offset bookkeeping. Additive sibling of transcribe_wav.
+//
+// The returned times are relative to the WINDOW, not to the file: `-ss` is an
+// input seek, which resets the output timestamps to zero (window_ffmpeg_args), so
+// a segment's offset inside the source is `from_ms + seg.t_ms`.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn transcribe_wav_window(
     ffmpeg: &Path,
@@ -815,8 +905,8 @@ pub(crate) fn transcribe_wav_window(
     threads: &str,
     from_ms: u64,
     to_ms: Option<u64>,
-) -> Result<Vec<String>, String> {
-    let dst = src.with_file_name(format!(".window-{from_ms}.wav"));
+) -> Result<Vec<SpokenSegment>, String> {
+    let dst = window_carve_path(src, from_ms);
     let carve = proc::command(ffmpeg)
         .args(window_ffmpeg_args(src, &dst, from_ms, to_ms))
         .output()
@@ -842,7 +932,9 @@ pub(crate) fn transcribe_wav_window(
     if !out.status.success() {
         return Err("err.whisper_cli_failed".into());
     }
-    Ok(parse_whisper_lines(&String::from_utf8_lossy(&out.stdout)))
+    Ok(parse_whisper_segments(&String::from_utf8_lossy(
+        &out.stdout,
+    )))
 }
 
 // ffmpeg: mixes the microphone track and the system-audio track into one 16kHz
@@ -881,7 +973,7 @@ pub(crate) fn mix_to_wav(
     Ok(())
 }
 
-fn epoch_millis() -> u128 {
+pub(crate) fn epoch_millis() -> u128 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis())
@@ -913,6 +1005,41 @@ fn start_system_capture(app: AppHandle, state: State<AppState>) -> Result<String
     system_capture_start(&app, &state)
 }
 
+// ADR-0025: the epoch (ms) of the first audio sample each capture segment wrote —
+// the WAV's own t=0, reported by the sidecar at the only moment it is knowable.
+// Keyed by the WAV path, so a paused/resumed meeting keeps one anchor per segment.
+// This used to be ESTIMATED by the frontend, which is how a meeting's two tracks
+// ended up on clocks up to seconds apart.
+fn syscap_anchors() -> &'static Mutex<std::collections::HashMap<PathBuf, u64>> {
+    static ANCHORS: OnceLock<Mutex<std::collections::HashMap<PathBuf, u64>>> = OnceLock::new();
+    ANCHORS.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+}
+
+const SYSCAP_ANCHOR_PREFIX: &str = "first-sample-epoch-ms ";
+
+// The sidecar's one machine-readable line. Pure so the contract with the Swift
+// side is testable: a silent mismatch here would disable the anchor and the
+// fallback is deliberately quiet, so nothing would look broken.
+fn parse_anchor_line(line: &str) -> Option<u64> {
+    line.trim()
+        .strip_prefix(SYSCAP_ANCHOR_PREFIX)
+        .and_then(|n| n.trim().parse::<u64>().ok())
+}
+
+// The anchor of a capture segment, or `None` while it has not been reported yet
+// (a silent machine delays the sidecar's first buffer, and an older sidecar binary
+// never reports at all). The caller degrades; it never fails.
+pub(crate) fn syscap_anchor_of(path: &Path) -> Option<u64> {
+    syscap_anchors().lock().ok()?.get(path).copied()
+}
+
+// Forget a finished segment's anchor (called when its WAV leaves the temp dir).
+pub(crate) fn syscap_anchor_forget(path: &Path) {
+    if let Ok(mut m) = syscap_anchors().lock() {
+        m.remove(path);
+    }
+}
+
 // Core of the sidecar start, callable from meeting.rs (ADR-0010) as a plain
 // pub(crate) fn — the #[tauri::command] wrapper cannot be reused directly.
 pub(crate) fn system_capture_start(app: &AppHandle, state: &AppState) -> Result<String, String> {
@@ -938,7 +1065,7 @@ pub(crate) fn system_capture_start(app: &AppHandle, state: &AppState) -> Result<
     let mut child = proc::command(&bin)
         .arg(&out)
         .stdin(Stdio::piped()) // closing this stdin later signals a clean stop
-        .stdout(Stdio::null())
+        .stdout(Stdio::piped()) // ADR-0025: the first-sample epoch arrives here
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| {
@@ -966,6 +1093,24 @@ pub(crate) fn system_capture_start(app: &AppHandle, state: &AppState) -> Result<
         });
     }
 
+    // ADR-0025: the sidecar reports the epoch of its first written sample on
+    // stdout. Read it on its own thread — it may land after this function returns
+    // (a silent machine delays the first buffer), and it is still the right anchor
+    // whenever it lands.
+    let (anchor_tx, anchor_rx) = std::sync::mpsc::channel::<u64>();
+    if let Some(outpipe) = child.stdout.take() {
+        let key = out.clone();
+        std::thread::spawn(move || {
+            for line in BufReader::new(outpipe).lines().map_while(Result::ok) {
+                if let Some(epoch) = parse_anchor_line(&line) {
+                    syscap_anchors().lock().unwrap().insert(key, epoch);
+                    let _ = anchor_tx.send(epoch);
+                    return;
+                }
+            }
+        });
+    }
+
     // A Screen Recording (TCC) denial makes the sidecar exit fast with code 4;
     // poll briefly so we can return an actionable error instead of "recording".
     for _ in 0..12 {
@@ -980,6 +1125,13 @@ pub(crate) fn system_capture_start(app: &AppHandle, state: &AppState) -> Result<
             }
             Ok(None) => {}
             Err(e) => return Err(e.to_string()),
+        }
+        // An anchor PROVES the capture is running, so a denial is no longer
+        // possible and the rest of the poll is dead waiting. Starting a meeting
+        // drops from ~1.2s to ~0.3s — and every millisecond paid here used to be
+        // skew between the two tracks.
+        if anchor_rx.try_recv().is_ok() {
+            break;
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
@@ -4145,6 +4297,7 @@ pub fn run() {
             brain_meeting_pause,
             brain_meeting_resume,
             brain_meeting_append,
+            brain_meeting_append_timed,
             brain_meeting_write_artifact,
             brain_meeting_marker,
             brain_meeting_set_consent,
@@ -5515,16 +5668,158 @@ mod tests {
         assert!(!b.iter().any(|s| s == "-to"));
     }
 
+    // ADR-0025 §28 — reported from a real meeting: from 00:00 to 00:18 NOTHING was
+    // recorded on either track (both showed a whisper silence-hallucination), while
+    // everything from 00:18 on was perfect. The two tracks rotate on the SAME 18s
+    // tick, and on the FIRST tick both carve with from_ms=0 — into the same
+    // `.window-0.wav`, in the same meeting's audio dir, from two spawn_blocking
+    // threads. Two ffmpeg processes writing one path, and the first to finish
+    // deletes it under the other. From the second tick on the tail's offset is
+    // 18000, 36000, … so the names stop colliding and the defect disappears — which
+    // is exactly the shape of the report. Same bug class as the snapshot in
+    // ADR-0022 §407: that name was made unique, this one was not.
     #[test]
-    fn parse_whisper_lines_uses_the_shared_parser() {
-        // a whisper-cli stdout fixture: two spoken lines + noise the parser drops
+    fn two_carves_at_the_same_offset_never_share_a_file() {
+        let tail = Path::new("/m/audio/.tail.snapshot.123.wav");
+        let mic = Path::new("/m/audio/.seg.456.webm");
+        // as duas trilhas, no primeiro tique, com o MESMO from_ms
+        let a = window_carve_path(tail, 0);
+        let b = window_carve_path(mic, 0);
+        assert_ne!(a, b, "as duas trilhas cortariam para o mesmo arquivo");
+        // e nem duas chamadas idênticas se cruzam
+        assert_ne!(window_carve_path(tail, 0), window_carve_path(tail, 0));
+        // continua ao lado do arquivo de origem (quarentena sob pessoal/)
+        assert_eq!(a.parent(), Some(Path::new("/m/audio")));
+        assert!(a
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with(".window-"));
+        assert_eq!(a.extension().unwrap(), "wav");
+    }
+
+    // ADR-0025 — the anchor's contract spans two languages: Swift prints it, Rust
+    // reads it. Nothing else would report a mismatch, because a missing anchor
+    // degrades QUIETLY back to the old estimate — the meeting would keep working
+    // while the clocks silently drifted apart again.
+    #[test]
+    fn the_sidecar_and_the_parent_agree_on_the_anchor_line() {
+        let swift = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("syscap/loro-syscap.swift"),
+        )
+        .expect("o sidecar tem de estar no repositório");
+        assert!(
+            swift.contains(&format!("print(\"{SYSCAP_ANCHOR_PREFIX}")),
+            "o sidecar precisa imprimir exatamente o prefixo que o pai lê"
+        );
+        // and the line it prints is the line we parse
+        assert_eq!(
+            parse_anchor_line("first-sample-epoch-ms 1786624147797"),
+            Some(1_786_624_147_797)
+        );
+        // an older sidecar (or any other chatter on stdout) is simply not an anchor
+        assert_eq!(parse_anchor_line("syscap: capturing system audio"), None);
+        assert_eq!(parse_anchor_line("first-sample-epoch-ms abc"), None);
+        assert_eq!(parse_anchor_line(""), None);
+    }
+
+    // ADR-0025 — the meeting's two tracks could not be put on one timeline while
+    // this parser threw the whisper timestamps away: an 18s window collapsed into
+    // ONE block stamped at its start, so only its first utterance had a true
+    // timecode and cross-track comparison had nothing finer than the window.
+    #[test]
+    fn parse_whisper_segments_keeps_the_time_of_each_utterance() {
+        // Saída REAL do whisper-cli (v1.8, modelo small, pt) sobre 7s de fala. Foi
+        // colhida rodando a ferramenta, não escrita à mão: é o formato de linha que
+        // sustenta todo o resto, e 7 segundos já rendem DUAS falas com tempos
+        // próprios — a granularidade que a janela de 18s jogava fora.
+        let real = "\n[00:00:00.000 --> 00:00:05.780]   Bom dia a todos, vamos revisar os custos da frota hoje, depois eu mando os números\n\
+            [00:00:05.780 --> 00:00:06.780]   do fornecedor.\n";
+        let segs = parse_whisper_segments(real);
+        assert_eq!(segs.len(), 2);
+        assert_eq!(segs[0].t_ms, 0);
+        assert_eq!(segs[0].end_ms, 5_780);
+        assert!(segs[0].text.starts_with("Bom dia a todos"));
+        assert_eq!(segs[1].t_ms, 5_780);
+        assert_eq!(segs[1].end_ms, 6_780);
+        assert_eq!(segs[1].text, "do fornecedor.");
+
+        // e o ruído em volta continua fora
         let stdout = "### START | t0 = 0 ms\n\
             [00:00:00.000 --> 00:00:02.000]   Bom dia a todos\n\
             [00:00:02.000 --> 00:00:03.000]   [Start speaking]\n\
-            [00:00:03.000 --> 00:00:05.000]   vamos revisar os custos\n\
+            [00:00:03.500 --> 00:00:05.000]   vamos revisar os custos\n\
             linha sem timestamp\n";
-        let segs = parse_whisper_lines(stdout);
-        assert_eq!(segs, vec!["Bom dia a todos", "vamos revisar os custos"]);
+        assert_eq!(
+            parse_whisper_segments(stdout),
+            vec![
+                SpokenSegment {
+                    t_ms: 0,
+                    end_ms: 2_000,
+                    text: "Bom dia a todos".into()
+                },
+                SpokenSegment {
+                    t_ms: 3_500,
+                    end_ms: 5_000,
+                    text: "vamos revisar os custos".into()
+                },
+            ]
+        );
+    }
+
+    // A janela é cortada com `-ss`, que é seek de ENTRADA: os timestamps de saída
+    // voltam a zero, e é por isso que o tail soma o `from_ms` de volta. Verificado
+    // rodando ffmpeg+whisper de verdade — cortando fala.wav a partir de 4s, o
+    // whisper devolveu "[00:00:00.000 --> 00:00:02.000] depois eu mando os números
+    // do fornecedor", isto é, o áudio do segundo 4 carimbado em zero. Sem essa
+    // soma, toda janela depois da primeira cairia no começo da reunião.
+    #[test]
+    fn a_carved_window_restarts_at_zero_so_the_caller_adds_its_offset() {
+        let carved =
+            "[00:00:00.000 --> 00:00:02.000]   depois eu mando os números do fornecedor.\n";
+        let seg = &parse_whisper_segments(carved)[0];
+        assert_eq!(seg.t_ms, 0);
+        let from_ms = 4_000;
+        assert_eq!(seg.t_ms + from_ms, 4_000);
+        assert_eq!(seg.end_ms + from_ms, 6_000);
+    }
+
+    // ONE parser for both paths (the streaming/file paths only need the text).
+    // Two parsers is how a line's text and its timecode drift apart.
+    #[test]
+    fn the_timed_and_the_text_paths_read_the_same_line() {
+        let line = "[01:02:03.250 --> 01:02:04.000]   depois de uma hora";
+        let seg = &parse_whisper_segments(line)[0];
+        assert_eq!(seg.t_ms, 3_723_250);
+        assert_eq!(seg.end_ms, 3_724_000);
+        assert_eq!(extract_text(line).unwrap(), seg.text);
+        // a bracketed annotation is still text, exactly as the file path sees it
+        let ann = "[00:00:00.000 --> 00:00:05.000]   [SOM DE FUNDO]";
+        assert_eq!(parse_whisper_segments(ann)[0].text, "[SOM DE FUNDO]");
+        // and the lines that carry no speech carry no segment either
+        for quiet in [
+            "[Start speaking]",
+            "linha sem timestamp",
+            "[00:00:00.000 --> 00:00:05.000]    ",
+            "### Transcription 0 START | t0 = 77 ms",
+        ] {
+            assert!(parse_whisper_segments(quiet).is_empty(), "{quiet}");
+            assert_eq!(extract_text(quiet), None, "{quiet}");
+        }
+    }
+
+    // A spoken line whose timestamp we cannot read must not lose its TEXT: under
+    // ADR-0018 the live transcript is the meeting's only output. It inherits the
+    // previous segment's end, which keeps the window monotonic.
+    #[test]
+    fn parse_whisper_segments_never_drops_speech_over_an_unreadable_timecode() {
+        let stdout = "[00:00:01.000 --> 00:00:02.000]   primeira fala\n\
+            [??:?? --> ??:??]   fala com timecode ilegível\n";
+        let segs = parse_whisper_segments(stdout);
+        assert_eq!(segs.len(), 2);
+        assert_eq!(segs[1].text, "fala com timecode ilegível");
+        assert_eq!(segs[1].t_ms, 2_000);
+        assert_eq!(segs[1].end_ms, 2_000);
     }
 
     #[test]
