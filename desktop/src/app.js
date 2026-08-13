@@ -1495,7 +1495,7 @@ async function startRecordFlow() {
 }
 
 // ---- salvar / descartar / limpar ----
-// C24 (ADR-0025) · "Salvar em ideias" abria o painel Salvar do sistema e escrevia
+// "Salvar em ideias" abria o painel Salvar do sistema e escrevia
 // onde o usuário navegasse: a transcrição avulsa nunca chegava ao projeto, e o
 // único outro caminho ("Descartar") a destruía. Uma transcrição é material
 // CAPTADO, então ela pousa onde material captado mora — as notas de uma ideia, no
@@ -1568,7 +1568,7 @@ async function exportTranscript() {
 //
 // F22 · e destruía a ÚNICA cópia da transcrição num clique, sem confirmação e
 // sem desfecho — enquanto o mesmo ato, pedido em Configurações ("limpar
-// transcrição"), pergunta antes e responde depois. Desde a ADR-0025 a
+// transcrição"), pergunta antes e responde depois. Desde que a transcrição avulsa passou a virar nota de uma ideia, a
 // transcrição TEM destino no projeto (uma nota de ideia), então descartar deixou
 // de ser "a outra saída" e passou a ser uma perda de verdade: a folha diz o
 // preço e o que existe em vez dela (DESIGN.md §1).
@@ -7247,7 +7247,7 @@ function renderGhCard() {
     const run = cmd && !c.ok
       ? ` <button class="mini act" data-runterm="${esc(cmd)}">${t("autenticar no Terminal")}</button>` : "";
     // N4 · o único bloqueio que sobra depois de todo mundo autenticar não tinha
-    // remédio nenhum — só a palavra "origin" (ADR-0025 regra 6: o remédio de um
+    // remédio nenhum — só a palavra "origin" (o remédio de um
     // bloqueio é um botão). Só quando não há repositório nenhum conectado: com
     // um remoto configurado e fora do ar o remédio é a rede voltar.
     const connect = c === d.remote && !c.ok && !c.detail

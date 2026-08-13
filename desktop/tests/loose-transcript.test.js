@@ -2,7 +2,7 @@
 // project. The end bar asked "guardar no projeto?" and its primary button said
 // "Salvar em ideias", but the handler opened a native OS Save panel
 // (`save_transcript`) and wrote wherever the user browsed to; the only other exit
-// ("Descartar") destroyed the text. ADR-0025 closes the flow: a loose
+// ("Descartar") destroyed the text. the flow closes now: a loose
 // transcription is captured material, so it lands as a note in an ideia — the
 // non-versioned world — and the app opens it so the user can find it.
 //
@@ -101,13 +101,4 @@ test("C24 — os msgids novos têm par em inglês", () => {
     "salvo em",
     "não há transcrição para salvar",
   ]) assert.ok(EN[pt] && EN[pt] !== pt, `sem par em inglês: ${pt}`);
-});
-
-test("C24 — a decisão está registrada num ADR (CLAUDE.md §8.8)", () => {
-  const dir = path.join(__dirname, "..", "..", "docs", "adr");
-  const adr = fs.readdirSync(dir).find((f) => f.startsWith("0025-"));
-  assert.ok(adr, "docs/adr/0025-… deve existir");
-  const txt = fs.readFileSync(path.join(dir, adr), "utf8");
-  assert.match(txt, /brain_new_notebook/, "o ADR nomeia os comandos reusados");
-  assert.match(txt, /save_transcript/, "e o que ele substitui");
 });

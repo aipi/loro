@@ -296,7 +296,7 @@ test("R8 — transformar em conhecimento tem UMA aparência na tela", () => {
 // "Descartar" destruía a única cópia da transcrição da sessão num clique: sem
 // confirmação, sem desfecho, e com a frase que diz o preço ilegível ao lado dos
 // botões. O mesmo ato pedido em Configurações ("limpar transcrição") já
-// perguntava antes e respondia depois. Desde a ADR-0025 a transcrição TEM
+// perguntava antes e respondia depois. Desde que a transcrição avulsa passa a virar nota, a transcrição TEM
 // destino no projeto (uma nota de ideia), então descartar é perda de verdade —
 // DESIGN.md §1: o preço está na cópia.
 test("F22 — descartar confirma, diz o preço e nomeia a alternativa", () => {
@@ -306,7 +306,7 @@ test("F22 — descartar confirma, diz o preço e nomeia a alternativa", () => {
   assert.match(body, /t\("Descartar a transcrição\?"\)/, "a folha pergunta o que vai fazer");
   assert.match(body, /não pode ser desfeito/, "e diz o preço, no corpo da folha");
   assert.match(body, /Salvar em ideias/,
-    "…e nomeia o que existe em vez disso (ADR-0025: a transcrição cabe no projeto)");
+    "…e nomeia o que existe em vez disso (a transcrição cabe no projeto)");
   // a destruição mora DENTRO do onConfirm da folha, não solta no corpo
   assert.match(body, /t\("descartar"\),\s*\(\) => \{ clearDoc\(\);/,
     "clearDoc tem de ser o que o botão 'descartar' da folha executa");
