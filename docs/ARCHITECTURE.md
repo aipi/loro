@@ -86,7 +86,11 @@ are camelCase on the JS side. Events flow Rust → frontend via `emit`/`listen`.
 **Error contract (ADR-0001 §10):** user-facing command errors are stable codes
 — `err.<snake_key>`, optionally `err.<key>:<detail>` — translated by the
 frontend (`tErr()` in `src/i18n.js`) into the active UI language. Raw
-OS/serde errors may still pass through and are shown untranslated.
+OS/serde errors may still pass through and are shown untranslated — **except
+where the user typed the input that failed**: everything written into a project
+folder maps its `io::Error` through `paths::folder_write_error`, so the wizard
+only ever shows `err.acervo_dir_is_file` / `err.acervo_dir_not_writable` /
+`err.acervo_dir_unusable`, each naming the next step.
 
 ### 4.1 Commands (representative)
 
@@ -123,7 +127,7 @@ OS/serde errors may still pass through and are shown untranslated.
 | `chat_status` | — | `{running,hasSession,agent}` | lets the UI recover its state after a window reload |
 | `chat_handoff` | — | `"<agent> --resume <id>"` | the line that resumes this conversation in the embedded terminal, where the agent CAN ask interactively (ADR-0021) |
 | `brain_new_tool` / `brain_delete_tool` | `nome, conteudo` / `rel` | rel / `()` | create (imported skill content) or delete a custom habilidade — any `.claude/commands/*.md` outside the 11 built-in skills (ADR-0005) |
-| `brain_annotations_get` | `rel` | `{doc, anotacoes[]}` | read a document's annotation sidecar `<doc>.anotacoes.json` (empty if none); highlights/comments anchored by text-quote (ADR-0007) |
+| `brain_annotations_get` | `rel` | `{doc, anotacoes[]}` | read a document's annotation sidecar `<doc>.anotacoes.json` (empty if none); highlights/comments anchored by text-quote (ADR-0007). The sidecar is the MACHINE's file: no directory listing ever returns it (`SIDECAR_SUFFIX`) |
 | `brain_annotation_add` | `rel, anotacao` | id | add a highlight/comment; returns the assigned stable `an_…` id (ADR-0007) |
 | `brain_annotation_update` | `rel, id, patch` | `()` | patch an annotation — change `cor` and/or append a `comentario` (ADR-0007) |
 | `brain_annotation_delete` | `rel, id` | `()` | remove a highlight/comment ("desgrifar") (ADR-0007) |
@@ -155,14 +159,15 @@ Knowledge versioning & collaboration (ADR-0001 §5) — all opt-in, no credentia
 | Command | Args | Returns | Purpose |
 |---|---|---|---|
 | `brain_git_state` / `brain_git_files` | — | state / per-file status | local repo status (button label, VSCode-like tree colors) |
-| `env_doctor` | — | checklist + `versioningEnabled` | validate git/gh/auth/identity/remote; gates the remote flow |
-| `env_set_identity` | `name, email` | `()` / err | the one safe wizard fix — sets git identity scoped to the acervo |
-| `brain_version` | `slug, message` | `{branch, result, warn?}` | Versionar (ADR-0002 §2): sync local default with origin (fetch + ff-only, degradable — `warn` = `err.git_offline`/`err.main_diverged`), then `rfc/<slug>` + add + commit (local) |
-| `git_branches` / `git_switch_branch` / `git_create_branch` | — / `branch` / `slug` | `{current, default, branches, dirty}` / branch / branch | branch-first flow (ADR-0002 §2): picker data, switch (blocked on dirty tree), create `rfc/<slug>` off the synced default |
+| `env_doctor` | — | checklist + `versioningEnabled` + `offline` | validate git/gh/auth/identity/remote; gates the remote flow. `offline` tells a network failure apart from a missing configuration, so a connected machine with no network is never reported as unconfigured; each check carries `detail` AND `hint`, and the screen prints both |
+| `env_set_identity` | `name, email` | `()` / err | the one safe wizard fix — sets git identity scoped to the acervo; the e-mail's shape is validated here (`err.git_identity_invalid_email`), because this identity signs every version the team reads |
+| `brain_version` | `slug, message` | `{branch, saved, warn?}` | Versionar (ADR-0002 §2): with nothing pending it refuses FIRST — no fetch, no draft, `saved:false`. Otherwise sync local default with origin (fetch + ff-only, degradable — `warn` = `err.git_offline`/`err.main_diverged`), then `rfc/<slug>` + add + commit (local) |
+| `git_branches` / `git_switch_branch` / `git_create_branch` | — / `branch` / `slug` | `{current, default, branches:[{name, docs, leaving}], dirty}` / branch / branch | branch-first flow (ADR-0002 §2): picker data, switch (blocked on dirty tree), create `rfc/<slug>` off the synced default. Each stand carries what the branch KEEPS (`docs`) and what leaves the screen on the way there (`leaving`) — the price the picker states before the click |
 | `term_status` | — | `{open, agentRunning}` | readiness handshake (ADR-0002 §4, ADR-0003 §3): skill invocations are injected only when the acervo's agent process lives under the PTY shell |
 | `term_agent` | — | command string | the active acervo's AI agent command (frontend launches it in the PTY; non-Claude agents get skills as plain prompts) |
 | `brain_propose_change` | `title, body` | `{number, url}` | Propor: push the rfc/ branch + `gh pr create` (the RFC); gated |
-| `gh_pr_list` / `gh_pr_status` | — / `number` | PR(s) | read open PRs / one PR's review status via `gh --json` |
+| `gh_pr_list` / `gh_pr_status` | — / `number` | PR(s) | read open PRs / one PR's review status via `gh --json`; backs the "Revisões abertas" sheet |
+| `brain_open_link` | `url` | `()` / err | open a review (or an external ref) in the OS default browser: http(s) only, no whitespace/control characters, never through a shell (`err.unsupported_link_scheme`) —  |
 | `brain_notifications` | — | inbox by category | collaboration inbox from open PRs; `connected:false` when local-only |
 | `brain_timeline` | `rel?` | `[{id,when,author,label}]` | abstracted history (git log) for the timeline UI |
 | `brain_migrate` | `apply?` | report | non-destructive `guia.md`→`context.md` + scaffolding (dry-run default) |
@@ -233,7 +238,13 @@ Path resolution: `LORO_HOME` (exported by `loro.sh`) or a sensible default;
   `/loro-artifact`, `/loro-slack`, `/loro-digest`); built-ins can be edited but never deleted. Custom ones
   are created either by describing them to `/loro-tool` (AI drafts the
   skill, same dual create-or-evolve shape as `/loro-note`) or by importing
-  an already-written skill file directly (`brain_new_tool`, no AI). Listed
+  an already-written skill file directly (`brain_new_tool`, no AI). Two lines
+  of a skill's front matter are UI copy — `description:` (sidebar tooltip and
+  the sentence of the "usar" sheet) and `argument-hint:` ("argumentos: …" and
+  the placeholder of its field) — so both obey DESIGN.md §4, and seeding
+  refreshes them in projects created by an older Loro
+  (`templates::refreshed_front_matter`, only while the line is still a string
+  Loro itself shipped). Listed
   in a sidebar section (usar/editar/pedir à IA/excluir-if-custom) and run
   from "⋯ → executar habilidade" on a brainstorming (curated picker,
   excludes the 5 workflow-specific built-ins with dedicated UI elsewhere),
@@ -244,14 +255,22 @@ Path resolution: `LORO_HOME` (exported by `loro.sh`) or a sensible default;
   generate material (markdown by default) into `anexos/` — a
   brainstorming's `brainstorming/<tema>/anexos/` or a context's
   `contextos/<c>/anexos/`; there is no separate presentations folder.
-- **Knowledge versioning (ADR-0001 §5), Git hidden behind two buttons:** *Versionar*
-  → `brain_version` creates `rfc/<slug>` off the default branch and commits the
-  working changes locally (Git only). *Propor mudança* → `brain_propose_change`
-  pushes that branch and opens the PR (the RFC) via `gh`, gated on `env_doctor`'s
-  `versioningEnabled`. Owners approve on GitHub via `.github/CODEOWNERS` + branch
-  protection; merging into `main` makes the change the official source of truth.
-  Local-only stays the default; `brain_notifications`/`brain_timeline` surface
-  review status and history without exposing commits/branches to the user.
+- **Knowledge versioning (ADR-0001 §5), Git hidden behind two buttons:**
+  a project created with versioning on gets its **baseline commit** at setup
+  (`ensure_baseline_commit`), so the official branch exists from day one — without
+  it the first version renamed the unborn branch and approval had nothing to become
+  official into. *Salvar versão do projeto* → `brain_version` puts the WHOLE acervo
+  (`git add -A`, minus the ADR-0009/0013 quarantine) on `rfc/<slug>` and commits
+  locally, signed with the user's own git identity; the draft is the one the user is
+  already on (the description is the message, never the branch address), and a new
+  draft with pending edits starts from `HEAD`. *Enviar para revisão do time* →
+  `brain_propose_change` pushes that branch and opens the PR (the RFC) via `gh`,
+  gated on `env_doctor`'s `versioningEnabled`, and its url is opened/listed through
+  `brain_open_link` + `gh_pr_list`. Owners approve on GitHub via
+  `.github/CODEOWNERS` + branch protection; merging into `main` makes the change the
+  official source of truth. Local-only stays the default;
+  `brain_notifications`/`brain_timeline` surface review status and history without
+  exposing commits/branches to the user.
 
 ## 6. Observability
 

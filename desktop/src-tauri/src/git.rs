@@ -146,11 +146,35 @@ pub fn git_identity(base: &Path) -> (Option<String>, Option<String>) {
     (read("user.name"), read("user.email"))
 }
 
+// Is this text an e-mail ADDRESS? The identity signs every version the team
+// reads and is how GitHub attributes a commit to a person, so "seu@email" — the
+// example the sheet itself used to pre-fill as a value — cannot be accepted just
+// because it is not empty. Shape only: exactly one `@`, both halves non-empty, a
+// dotted domain, and none of the characters that would break the author line
+// (whitespace, control, `<`, `>`, `,`, `;`, `"`).
+fn is_email_shaped(email: &str) -> bool {
+    let e = email.trim();
+    let Some((local, domain)) = e.split_once('@') else {
+        return false;
+    };
+    !local.is_empty()
+        && !domain.contains('@')
+        && domain.contains('.')
+        && !domain.starts_with('.')
+        && !domain.ends_with('.')
+        && !e
+            .chars()
+            .any(|c| c.is_whitespace() || c.is_control() || "<>,;\"".contains(c))
+}
+
 // Safe, idempotent onboarding fix: set the git identity locally in the acervo
 // repo (scoped; no system-wide change). Values are plain positional args.
 pub fn set_identity(base: &Path, name: &str, email: &str) -> Result<(), String> {
     if name.trim().is_empty() || email.trim().is_empty() {
         return Err("err.git_identity_required".into());
+    }
+    if !is_email_shaped(email) {
+        return Err("err.git_identity_invalid_email".into());
     }
     git_init_repo(base)?;
     for (key, val) in [("user.name", name.trim()), ("user.email", email.trim())] {
@@ -179,11 +203,52 @@ pub fn git_remote_url(base: &Path) -> Option<String> {
     (!s.is_empty()).then_some(s)
 }
 
+// Why the remote could not be reached. A bool collapsed "you have not connected
+// a repository" and "this machine has no network right now" into the same
+// answer, so five minutes offline made the app blame the user's setup (N6).
+#[derive(PartialEq, Debug, Clone, Copy)]
+pub enum RemoteAccess {
+    Ok,
+    Denied,
+    Offline,
+}
+
+// A transport failure names itself in gh's stderr; anything else is an answer
+// FROM GitHub (404/403/not found), which is a real access problem.
+fn looks_offline(stderr: &str) -> bool {
+    let s = stderr.to_lowercase();
+    [
+        "dial tcp",
+        "no such host",
+        "network is unreachable",
+        "temporary failure in name resolution",
+        "connection refused",
+        "connection reset",
+        "i/o timeout",
+        "timeout awaiting",
+        "tls handshake",
+        "proxyconnect",
+        "server misbehaving",
+        "eof",
+    ]
+    .iter()
+    .any(|needle| s.contains(needle))
+}
+
 // Read access to the remote confirmed without writing anything.
-pub fn gh_repo_accessible(base: &Path) -> bool {
-    gh(base, &["repo", "view", "--json", "nameWithOwner"])
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+pub fn gh_repo_accessible(base: &Path) -> RemoteAccess {
+    match gh(base, &["repo", "view", "--json", "nameWithOwner"]) {
+        Ok(o) if o.status.success() => RemoteAccess::Ok,
+        Ok(o) => {
+            if looks_offline(&String::from_utf8_lossy(&o.stderr)) {
+                RemoteAccess::Offline
+            } else {
+                RemoteAccess::Denied
+            }
+        }
+        // gh itself did not run: nothing was asked of the network
+        Err(_) => RemoteAccess::Denied,
+    }
 }
 
 // Used by create_branch to branch off the default branch.
@@ -285,6 +350,44 @@ pub fn list_branches(base: &Path) -> Result<Vec<String>, String> {
         .map(|l| l.trim().to_string())
         .filter(|l| !l.is_empty())
         .collect())
+}
+
+// What a branch actually HOLDS, in documents — the only honest way for the
+// picker to talk about it. A project that started versioning after setup has an
+// empty default branch (Baseline::Empty commits nothing), so the row the UI
+// labels "(principal)" can be an empty room: leaving the draft for it takes
+// every document off the disk. Git keeps the content safe on the draft commit,
+// but the screen goes empty, so the price has to be stated before the click
+// (DESIGN.md §1). Dot-folders are the machine's own (.github/, .claude/,
+// .gitignore) — the user never sees them as documents, so they are not counted.
+fn tracked_documents(base: &Path, rev: &str) -> Vec<String> {
+    let out = crate::proc::command("git")
+        .args(["ls-tree", "-r", "--name-only", rev])
+        .current_dir(base)
+        .output();
+    let Ok(out) = out else { return Vec::new() };
+    if !out.status.success() {
+        return Vec::new();
+    }
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty() && !l.split('/').any(|p| p.starts_with('.')))
+        .collect()
+}
+
+pub fn documents_on(base: &Path, rev: &str) -> usize {
+    tracked_documents(base, rev).len()
+}
+
+// Documents that leave the screen when the user goes from `rev` to `target`.
+pub fn documents_leaving(base: &Path, rev: &str, target: &str) -> usize {
+    let there: std::collections::HashSet<String> =
+        tracked_documents(base, target).into_iter().collect();
+    tracked_documents(base, rev)
+        .into_iter()
+        .filter(|f| !there.contains(f))
+        .count()
 }
 
 pub fn switch_branch(base: &Path, branch: &str) -> Result<(), String> {
@@ -543,28 +646,103 @@ pub fn current_branch(base: &Path) -> Option<String> {
     (!s.is_empty() && s != "HEAD").then_some(s)
 }
 
-// Versionar step 1: create (or switch to) rfc/<slug>, branching off the default
-// branch when it exists locally so main stays clean.
-pub fn create_branch(base: &Path, slug: &str) -> Result<String, String> {
-    git_init_repo(base)?;
-    let branch = format!("rfc/{slug}");
-    // branch off the locally-resolved default (no network); the propose path
-    // still asks gh for the authoritative default branch
-    let start = local_default_branch(base);
-    let has_start = crate::proc::command("git")
-        .args([
-            "rev-parse",
-            "--verify",
-            "--quiet",
-            &format!("refs/heads/{start}"),
-        ])
+// Does HEAD resolve to a commit? False on a repo that was only `git init`ed:
+// its default branch is UNBORN, so no ref points at anything yet.
+fn head_commit_exists(base: &Path) -> bool {
+    crate::proc::command("git")
+        .args(["rev-parse", "--verify", "--quiet", "HEAD"])
         .current_dir(base)
         .output()
         .map(|o| o.status.success())
-        .unwrap_or(false);
+        .unwrap_or(false)
+}
+
+// What the baseline commit contains.
+// `Seeded`: the acervo exactly as setup created it — the official starting point
+// of the knowledge, so a later draft carries only the user's own changes.
+// `Empty`: a repo that reached the versioning flow with no baseline at all (it
+// was created before this rule). Its whole working tree IS the version the user
+// is saving right now, so the baseline takes nothing and the draft keeps every
+// change to propose.
+pub enum Baseline {
+    Seeded,
+    Empty,
+}
+
+// The project's official branch has to EXIST before the first draft: on an
+// unborn repo `git checkout -b rfc/<slug>` renames the unborn branch instead of
+// branching off it, so the default branch is never created — the branch picker
+// calls a non-existent branch the default, switching to it fails, the sync can
+// never fast-forward, and the promise "quando o time aprova, vira oficial" has
+// nothing to become official into. Idempotent: a no-op once HEAD has a commit.
+pub fn ensure_baseline_commit(base: &Path, kind: Baseline) -> Result<(), String> {
+    if head_commit_exists(base) {
+        return Ok(());
+    }
+    // Name the unborn branch after the default THIS app resolves, so the branch
+    // the picker labels "(principal)" is the one on disk whatever the machine's
+    // init.defaultBranch happens to be.
+    let default = local_default_branch(base);
+    let _ = crate::proc::command("git")
+        .args(["symbolic-ref", "HEAD", &format!("refs/heads/{default}")])
+        .current_dir(base)
+        .output();
+    match kind {
+        Baseline::Seeded => stage_and_commit(base, BASELINE_MESSAGE.into()).map(|_| ()),
+        Baseline::Empty => commit_empty_baseline(base),
+    }
+}
+
+// The timeline prints commit subjects verbatim, so the baseline names itself in
+// the user's words (DESIGN.md §4: acervo → projeto).
+const BASELINE_MESSAGE: &str = "base do projeto";
+
+fn commit_empty_baseline(base: &Path) -> Result<(), String> {
+    let (name, email) = git_identity(base);
+    let mut args = identity_args(name.as_deref(), email.as_deref());
+    args.push("-c".into());
+    args.push("commit.gpgsign=false".into());
+    args.push("commit".into());
+    args.push("--allow-empty".into());
+    args.push("-m".into());
+    args.push(BASELINE_MESSAGE.into());
+    let out = crate::proc::command("git")
+        .args(&args)
+        .current_dir(base)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
+}
+
+// Versionar step 1: create (or switch to) rfc/<slug>.
+//
+// A draft starts from the work in front of the user. With pending edits the new
+// draft branches off HEAD, never off the default branch: `checkout -b <new>
+// <default>` moves those edits onto another base, so a version already saved on
+// the current draft disappears from the open document (and, when the same file
+// is touched twice, git refuses the checkout altogether). With a clean tree the
+// draft starts from the locally-resolved default so it stays independent
+// (ADR-0002 §2; the propose path still asks gh for the authoritative default).
+pub fn create_branch(base: &Path, slug: &str) -> Result<String, String> {
+    git_init_repo(base)?;
+    ensure_baseline_commit(base, Baseline::Empty)?;
+    let branch = format!("rfc/{slug}");
+    if current_branch(base).as_deref() == Some(branch.as_str()) {
+        return Ok(branch);
+    }
+    let start = if is_dirty(base) {
+        current_branch(base)
+    } else {
+        let default = local_default_branch(base);
+        ref_exists(base, &format!("refs/heads/{default}")).then_some(default)
+    };
     let mut args: Vec<&str> = vec!["checkout", "-b", &branch];
-    if has_start {
-        args.push(&start);
+    if let Some(start) = start.as_deref() {
+        args.push(start);
     }
     let create = crate::proc::command("git")
         .args(&args)
@@ -581,7 +759,13 @@ pub fn create_branch(base: &Path, slug: &str) -> Result<String, String> {
         .output()
         .map_err(|e| e.to_string())?;
     if switch.status.success() {
-        Ok(branch)
+        return Ok(branch);
+    }
+    // The one failure left that the user can act on is pending work blocking the
+    // checkout: say it as a code the UI translates, instead of forwarding git's
+    // raw multi-line English into a toast.
+    if is_dirty(base) {
+        Err("err.working_tree_dirty".into())
     } else {
         Err(String::from_utf8_lossy(&create.stderr).trim().to_string())
     }
@@ -717,6 +901,19 @@ pub struct GitState {
     branch: Option<String>,
 }
 
+// How many changes a version would carry. ONE authority: the number the button
+// counts is the same one the save flow asks before deciding there is anything to
+// save, so the label ("tudo salvo ✓") and the refusal can never disagree.
+pub fn pending_changes(base: &Path) -> usize {
+    crate::proc::command("git")
+        .args(["status", "--porcelain"])
+        .current_dir(base)
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).lines().count())
+        .unwrap_or(0)
+}
+
 #[tauri::command]
 pub fn brain_git_state() -> GitState {
     let available = git_available();
@@ -726,16 +923,7 @@ pub fn brain_git_state() -> GitState {
         .map(|b| b.join(".git").is_dir())
         .unwrap_or(false);
     let pending = if available && repo {
-        base.as_ref()
-            .and_then(|b| {
-                crate::proc::command("git")
-                    .args(["status", "--porcelain"])
-                    .current_dir(b)
-                    .output()
-                    .ok()
-            })
-            .map(|o| String::from_utf8_lossy(&o.stdout).lines().count())
-            .unwrap_or(0)
+        base.as_ref().map(|b| pending_changes(b)).unwrap_or(0)
     } else {
         0
     };
@@ -804,9 +992,80 @@ pub fn brain_git_commit(message: String) -> Result<String, String> {
     stage_and_commit(&base, message)
 }
 
+// What a save attempt DID, as a fact the screen can read. The result used to be
+// a pt-BR sentence ("nada para versionar") the app never looked at, so it
+// toasted "versão salva" over a commit that never happened.
+pub struct VersionAttempt {
+    pub branch: String,
+    pub saved: bool,
+    pub warn: Option<String>,
+}
+
+// Sync outcomes the user should see as a warning (the flow still proceeds —
+// branch-first degrades, ADR-0002 §2). NoRemote is the pure-local case: no warn.
+fn sync_warn(outcome: &SyncOutcome) -> Option<String> {
+    match outcome {
+        SyncOutcome::Offline => Some("err.git_offline".into()),
+        SyncOutcome::Diverged => Some("err.main_diverged".into()),
+        _ => None,
+    }
+}
+
+// "Salvar versão", whole: refuse a no-op, sync the default branch (best effort),
+// open the draft and commit the work there.
+//
+// Lives here (not in the Tauri wrapper) because the decisions it takes are
+// domain rules, and a rule with no test is how the app came to announce versions
+// that did not exist.
+pub fn save_version(base: &Path, slug: &str, message: String) -> Result<VersionAttempt, String> {
+    // N3 · nothing pending is not a version. Asked BEFORE the network sync and
+    // before any draft is created, so a no-op costs no ~10s fetch, leaves no
+    // empty draft behind and moves nobody onto another draft.
+    if base.join(".git").is_dir() && pending_changes(base) == 0 {
+        return Ok(VersionAttempt {
+            branch: current_branch(base).unwrap_or_default(),
+            saved: false,
+            warn: None,
+        });
+    }
+    let warn = sync_warn(&sync_default_branch(base));
+    let branch = create_branch(base, slug)?;
+    let result = stage_and_commit(base, message)?;
+    Ok(VersionAttempt {
+        branch,
+        saved: result == OUTCOME_VERSIONED,
+        warn,
+    })
+}
+
+// The `-c` overrides a version is committed with. Command-line `-c` has the
+// HIGHEST precedence in git, so passing an identity unconditionally does not
+// "fall back": it OVERRIDES the one the doctor's "identidade git" fix just set,
+// every version ends up authored by a bot, and the review flow loses who
+// proposed what. Only the half git cannot resolve is filled in, so a machine
+// with no identity at all still commits.
+fn identity_args(name: Option<&str>, email: Option<&str>) -> Vec<String> {
+    let mut args: Vec<String> = Vec::new();
+    if name.is_none() {
+        args.push("-c".into());
+        args.push("user.name=Loro".into());
+    }
+    if email.is_none() {
+        args.push("-c".into());
+        args.push("user.email=loro@localhost".into());
+    }
+    args
+}
+
+// The two outcomes of a commit attempt, as STABLE codes. They are not sentences
+// for the user: the screen decides what to say from the fact, in its own
+// language (CLAUDE.md §6 — a pt-BR sentence from the backend is not a msgid).
+pub const OUTCOME_VERSIONED: &str = "versionado";
+pub const OUTCOME_NOTHING: &str = "nada-a-versionar";
+
 // Core of "version now", reused by the two-button flow (Versionar/Propor):
-// ensure ephemeral sources stay untracked, stage everything else, commit with a
-// fallback identity so machines without a global git identity still succeed.
+// ensure ephemeral sources stay untracked, stage everything else, commit with the
+// user's git identity (falling back only for what the machine does not define).
 pub fn stage_and_commit(base: &Path, message: String) -> Result<String, String> {
     if !base.join(".git").is_dir() {
         git_init_repo(base)?;
@@ -847,20 +1106,17 @@ pub fn stage_and_commit(base: &Path, message: String) -> Result<String, String> 
     } else {
         message
     };
-    // -c avoids failing when the machine has no global git identity, and
-    // disables gpg signing (users with commit.gpgsign=true would otherwise fail)
+    let (name, email) = git_identity(base);
+    let mut args = identity_args(name.as_deref(), email.as_deref());
+    // no TTY for a passphrase inside the app: users with commit.gpgsign=true
+    // would otherwise fail on every version
+    args.push("-c".into());
+    args.push("commit.gpgsign=false".into());
+    args.push("commit".into());
+    args.push("-m".into());
+    args.push(msg);
     let out = crate::proc::command("git")
-        .args([
-            "-c",
-            "user.name=Loro",
-            "-c",
-            "user.email=loro@localhost",
-            "-c",
-            "commit.gpgsign=false",
-            "commit",
-            "-m",
-            &msg,
-        ])
+        .args(&args)
         .current_dir(base)
         .output()
         .map_err(|e| e.to_string())?;
@@ -868,11 +1124,11 @@ pub fn stage_and_commit(base: &Path, message: String) -> Result<String, String> 
         let err = String::from_utf8_lossy(&out.stdout).to_string()
             + &String::from_utf8_lossy(&out.stderr);
         if err.contains("nothing to commit") {
-            return Ok("nada para versionar".into());
+            return Ok(OUTCOME_NOTHING.into());
         }
         return Err(err.trim().to_string());
     }
-    Ok("versionado".into())
+    Ok(OUTCOME_VERSIONED.into())
 }
 
 // Reset from the index every staged path the ADR-0009 quarantine denies. Reads
@@ -1019,7 +1275,7 @@ mod tests {
         std::fs::create_dir_all(root.join("brainstorming/x")).unwrap();
         std::fs::create_dir_all(root.join("pessoal/temas/x")).unwrap();
         git_init_repo(&root).unwrap();
-        set_identity(&root, "Teste", "teste@localhost").unwrap();
+        set_identity(&root, "Teste", "teste@exemplo.com").unwrap();
 
         std::fs::write(root.join("contextos/frota/context.md"), "conhecimento").unwrap();
         std::fs::write(root.join("contextos/frota/reunioes/r1/audio.wav"), b"RIFF").unwrap();
@@ -1094,10 +1350,233 @@ mod tests {
     // inits as "master"; the tests need "main").
     fn init_with_commit(root: &Path) {
         git_init_repo(root).unwrap();
-        set_identity(root, "Teste", "teste@localhost").unwrap();
+        set_identity(root, "Teste", "teste@exemplo.com").unwrap();
         std::fs::write(root.join("context.md"), "base").unwrap();
         stage_and_commit(root, "base".into()).unwrap();
         run_git(root, &["branch", "-M", "main"]);
+    }
+
+    // N1 — "salvar versão" twice with different descriptions used to branch the
+    // second draft off the default, which moved the pending edit onto another
+    // base: the version saved a moment earlier left the open document and the
+    // history, while the UI still said "versão salva / tudo salvo".
+    #[test]
+    fn a_new_draft_keeps_the_version_saved_on_the_current_one() {
+        if which("git").is_none() {
+            return; // git is a system dependency; skip when absent
+        }
+        let root = temp_repo("draft-chain");
+        init_with_commit(&root);
+
+        std::fs::write(root.join("frota.md"), "politica de frota").unwrap();
+        create_branch(&root, "politica-de-frota").unwrap();
+        stage_and_commit(&root, "politica de frota".into()).unwrap();
+
+        // a second knowledge file, described differently → another draft
+        std::fs::write(root.join("mobile.md"), "nota mobile").unwrap();
+        create_branch(&root, "nota-mobile").unwrap();
+        stage_and_commit(&root, "nota mobile".into()).unwrap();
+
+        assert_eq!(current_branch(&root).as_deref(), Some("rfc/nota-mobile"));
+        assert_eq!(
+            std::fs::read_to_string(root.join("frota.md")).ok(),
+            Some("politica de frota".to_string()),
+            "the document went back to its pre-version content"
+        );
+        let log = run_git(&root, &["log", "--oneline"]);
+        let log = String::from_utf8_lossy(&log.stdout).to_string();
+        assert!(
+            log.contains("politica de frota"),
+            "the version saved first vanished from the history: {log}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // N1 (variant) — editing the SAME file twice made git abort the checkout and
+    // its raw multi-line English landed verbatim in a toast. The draft the user
+    // is on keeps the work either way.
+    #[test]
+    fn a_second_draft_over_the_same_file_never_leaks_raw_git_english() {
+        if which("git").is_none() {
+            return;
+        }
+        let root = temp_repo("draft-same-file");
+        init_with_commit(&root);
+
+        std::fs::write(root.join("context.md"), "primeira").unwrap();
+        create_branch(&root, "primeira-mudanca").unwrap();
+        stage_and_commit(&root, "primeira mudança".into()).unwrap();
+        std::fs::write(root.join("context.md"), "segunda").unwrap();
+
+        let branch = create_branch(&root, "segunda-mudanca")
+            .unwrap_or_else(|e| panic!("versionar failed with a raw git message: {e}"));
+        assert_eq!(branch, "rfc/segunda-mudanca");
+        assert_eq!(
+            std::fs::read_to_string(root.join("context.md")).unwrap(),
+            "segunda",
+            "the pending edit was thrown away by the checkout"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // N2 — a project whose repo has no commits: the first "salvar versão" used to
+    // RENAME the unborn default branch, so the acervo lived on a draft forever and
+    // "quando o time aprova, vira oficial" had nothing to become official into.
+    #[test]
+    fn the_first_version_leaves_an_official_branch_to_merge_into() {
+        if which("git").is_none() {
+            return;
+        }
+        let root = temp_repo("baseline");
+        git_init_repo(&root).unwrap();
+        set_identity(&root, "Teste", "teste@exemplo.com").unwrap();
+        std::fs::write(root.join("context.md"), "conhecimento").unwrap();
+
+        create_branch(&root, "primeira-mudanca").unwrap();
+        let result = stage_and_commit(&root, "primeira mudança".into()).unwrap();
+
+        assert!(
+            ref_exists(&root, "refs/heads/main"),
+            "no official branch exists after the first version"
+        );
+        assert_eq!(local_default_branch(&root), "main");
+        assert_eq!(
+            current_branch(&root).as_deref(),
+            Some("rfc/primeira-mudanca")
+        );
+        // the baseline must not swallow the version the user is saving: it lands
+        // on the draft, so there is something to send for review
+        assert_eq!(result, "versionado");
+        let tracked = run_git(
+            &root,
+            &["ls-tree", "-r", "--name-only", "rfc/primeira-mudanca"],
+        );
+        assert!(String::from_utf8_lossy(&tracked.stdout).contains("context.md"));
+        // the picker's "(principal)" row has to be reachable
+        switch_branch(&root, "main").unwrap();
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // N2 (setup leg) — a project created with "guardar histórico" on had git init
+    // and no commit, so it owned no branch at all. The baseline is the seeded
+    // acervo itself: what the team's approval later makes official.
+    #[test]
+    fn a_seeded_project_starts_on_an_official_branch() {
+        if which("git").is_none() {
+            return;
+        }
+        let root = temp_repo("seeded-baseline");
+        git_init_repo(&root).unwrap();
+        set_identity(&root, "Teste", "teste@exemplo.com").unwrap();
+        std::fs::create_dir_all(root.join("contextos/frota")).unwrap();
+        std::fs::write(root.join("contextos/frota/context.md"), "semente").unwrap();
+
+        ensure_baseline_commit(&root, Baseline::Seeded).unwrap();
+
+        assert!(ref_exists(&root, "refs/heads/main"));
+        let tracked = run_git(&root, &["ls-tree", "-r", "--name-only", "main"]);
+        assert!(String::from_utf8_lossy(&tracked.stdout).contains("contextos/frota/context.md"));
+        assert!(
+            !is_dirty(&root),
+            "the seeded project starts fully versioned"
+        );
+        // and running setup again on the same project changes nothing
+        let before = rev_sha(&root, "HEAD");
+        ensure_baseline_commit(&root, Baseline::Seeded).unwrap();
+        assert_eq!(rev_sha(&root, "HEAD"), before);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // N3 — every version was authored by "Loro <loro@localhost>": command-line
+    // `-c` wins over everything, so the identity the doctor's "corrigir" writes
+    // was overridden and the timeline attributed the team's knowledge to a bot.
+    #[test]
+    fn a_version_is_authored_by_the_identity_the_doctor_sets() {
+        if which("git").is_none() {
+            return;
+        }
+        let root = temp_repo("author");
+        git_init_repo(&root).unwrap();
+        set_identity(&root, "Daniela Lima", "daniela@exemplo.com.br").unwrap();
+        std::fs::write(root.join("context.md"), "conhecimento").unwrap();
+
+        stage_and_commit(&root, "primeira versão".into()).unwrap();
+
+        let out = run_git(&root, &["log", "-1", "--format=%an <%ae>"]);
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            "Daniela Lima <daniela@exemplo.com.br>"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // N3 (second leg) — the sheet used to ship its own example ("seu@email") as
+    // an editable VALUE and the only check here was non-empty, so the address
+    // stamped on every version the team reads could be text that is not an
+    // address. The refusal lives at the boundary: the doctor row would turn ✓ on
+    // an identity GitHub can never attribute to anyone.
+    #[test]
+    fn set_identity_refuses_an_email_that_is_not_an_address() {
+        for bad in [
+            "seu@email",
+            "seu@email.",
+            "seu@.com",
+            "ana",
+            "@exemplo.com",
+            "ana@",
+            "ana@exemplo com.br",
+            "Ana <ana@exemplo.com>",
+            "ana@a@exemplo.com",
+        ] {
+            assert!(!is_email_shaped(bad), "{bad} is not an e-mail address");
+        }
+        for good in [
+            "ana@exemplo.com",
+            "ana.souza@exemplo.com.br",
+            "ana+frota@exemplo.com",
+        ] {
+            assert!(is_email_shaped(good), "{good} is an e-mail address");
+        }
+        if which("git").is_none() {
+            return;
+        }
+        let root = temp_repo("identity-email");
+        git_init_repo(&root).unwrap();
+        assert_eq!(
+            set_identity(&root, "Ana", "seu@email").unwrap_err(),
+            "err.git_identity_invalid_email"
+        );
+        // and nothing was written: a refused identity leaves the repo as it was
+        // (scoped to --local; the machine's global identity is not ours to read)
+        let local = |root: &Path| {
+            let out = run_git(root, &["config", "--local", "user.email"]);
+            out.status
+                .success()
+                .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+        };
+        assert_eq!(local(&root), None);
+        set_identity(&root, "Ana", "ana@exemplo.com").unwrap();
+        assert_eq!(local(&root).as_deref(), Some("ana@exemplo.com"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // N3 — the fallback still exists for a machine with no git identity, and it
+    // never covers a half the user did define.
+    #[test]
+    fn only_the_identity_git_cannot_resolve_falls_back() {
+        assert_eq!(
+            identity_args(None, None),
+            vec!["-c", "user.name=Loro", "-c", "user.email=loro@localhost"]
+        );
+        assert!(identity_args(Some("Daniela"), Some("d@exemplo.com.br")).is_empty());
+        assert_eq!(
+            identity_args(Some("Daniela"), None),
+            vec!["-c", "user.email=loro@localhost"]
+        );
+        assert_eq!(
+            identity_args(None, Some("d@exemplo.com.br")),
+            vec!["-c", "user.name=Loro"]
+        );
     }
 
     #[test]
@@ -1186,7 +1665,7 @@ mod tests {
         )
         .status
         .success());
-        set_identity(&c, "Teste", "teste@localhost").unwrap();
+        set_identity(&c, "Teste", "teste@exemplo.com").unwrap();
 
         // origin moves ahead; the local clone is behind
         std::fs::write(a.join("context.md"), "avanço").unwrap();
@@ -1224,7 +1703,7 @@ mod tests {
         )
         .status
         .success());
-        set_identity(&c, "Teste", "teste@localhost").unwrap();
+        set_identity(&c, "Teste", "teste@exemplo.com").unwrap();
 
         // both sides commit: origin and local main diverge
         std::fs::write(c.join("context.md"), "local próprio").unwrap();
@@ -1315,7 +1794,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         git_init_repo(&root).unwrap();
-        set_identity(&root, "Teste", "teste@localhost").unwrap();
+        set_identity(&root, "Teste", "teste@exemplo.com").unwrap();
         std::fs::write(root.join("context.md"), "base").unwrap();
         stage_and_commit(&root, "base".into()).unwrap();
         let orig = current_branch(&root).unwrap();
@@ -1340,5 +1819,155 @@ mod tests {
             .success();
         assert!(kept);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // N2 — a project whose versioning started AFTER setup has an empty default
+    // branch (Baseline::Empty commits nothing), so every document lives on the
+    // draft. Switching to the branch the picker labels "(principal)" therefore
+    // takes the whole project off the disk. Git keeps it safe on the draft
+    // commit; the SCREEN went empty with no warning and no way back stated.
+    // The UI can only state that price if the backend counts it.
+    #[test]
+    fn the_default_branch_of_a_draft_only_project_holds_no_documents() {
+        if which("git").is_none() {
+            return;
+        }
+        let root = temp_repo("docs-empty-main");
+        std::fs::create_dir_all(root.join("contextos/frota")).unwrap();
+        std::fs::create_dir_all(root.join(".github/workflows")).unwrap();
+        std::fs::write(root.join("contextos/frota/context.md"), "conhecimento").unwrap();
+        std::fs::write(root.join("INDEX.md"), "índice").unwrap();
+        std::fs::write(root.join(".github/workflows/ci.yml"), "on: push").unwrap();
+        git_init_repo(&root).unwrap();
+        set_identity(&root, "Teste", "teste@exemplo.com").unwrap();
+
+        // exactly what "começar a guardar versões" runs on a repo-less project
+        create_branch(&root, "primeira-versao").unwrap();
+        stage_and_commit(&root, "primeira versão".into()).unwrap();
+        let default = local_default_branch(&root);
+
+        assert_eq!(
+            documents_on(&root, &default),
+            0,
+            "the baseline commits nothing: the branch called (principal) is an empty room"
+        );
+        assert_eq!(
+            documents_on(&root, "rfc/primeira-versao"),
+            2,
+            "the draft holds the documents; machine folders (.github/) are not documents"
+        );
+        assert_eq!(
+            documents_leaving(&root, "rfc/primeira-versao", &default),
+            2,
+            "switching to (principal) takes both documents off the screen"
+        );
+        assert_eq!(
+            documents_leaving(&root, &default, "rfc/primeira-versao"),
+            0,
+            "going back to the draft costs nothing"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // The seeded baseline is the same defect with a smaller blast radius: only
+    // the documents created after setup leave the screen.
+    #[test]
+    fn a_seeded_default_branch_only_loses_what_the_draft_added() {
+        if which("git").is_none() {
+            return;
+        }
+        let root = temp_repo("docs-seeded-main");
+        init_with_commit(&root); // context.md committed on main
+        create_branch(&root, "frota").unwrap();
+        std::fs::write(root.join("nota-nova.md"), "documento novo").unwrap();
+        stage_and_commit(&root, "nova nota".into()).unwrap();
+
+        assert_eq!(documents_on(&root, "main"), 1);
+        assert_eq!(documents_on(&root, "rfc/frota"), 2);
+        assert_eq!(documents_leaving(&root, "rfc/frota", "main"), 1);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // N3 — the app said "versão salva" over a commit that never happened, and
+    // the attempt still created (and switched to) an empty draft on the way.
+    // Nothing pending is not a version: the flow refuses BEFORE it changes
+    // anything, and reports the refusal as a fact.
+    #[test]
+    fn saving_a_version_with_nothing_pending_saves_nothing_and_says_so() {
+        if which("git").is_none() {
+            return;
+        }
+        let root = temp_repo("version-noop");
+        init_with_commit(&root);
+        create_branch(&root, "politica-de-frota").unwrap();
+        std::fs::write(root.join("frota.md"), "conhecimento").unwrap();
+        let first = save_version(&root, "politica-de-frota", "política de frota".into()).unwrap();
+        assert!(
+            first.saved,
+            "the first version had a pending change to carry"
+        );
+        assert_eq!(
+            pending_changes(&root),
+            0,
+            "the tree is clean after a version"
+        );
+
+        let branches_before = list_branches(&root).unwrap();
+        let head_before = rev_sha(&root, "HEAD");
+
+        let again = save_version(&root, "reviso-a-politica", "reviso a política".into()).unwrap();
+
+        assert!(
+            !again.saved,
+            "there was nothing to version — the app must not be told a version was saved"
+        );
+        assert_eq!(
+            list_branches(&root).unwrap(),
+            branches_before,
+            "a no-op created an empty draft as a side effect the sheet never mentions"
+        );
+        assert_eq!(
+            current_branch(&root).unwrap(),
+            "rfc/politica-de-frota",
+            "a no-op moved the user onto another draft"
+        );
+        assert_eq!(rev_sha(&root, "HEAD"), head_before, "nothing was committed");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // The other half of the same rule: a real pending change still versions.
+    #[test]
+    fn saving_a_version_with_a_pending_change_commits_it() {
+        if which("git").is_none() {
+            return;
+        }
+        let root = temp_repo("version-real");
+        init_with_commit(&root);
+        std::fs::write(root.join("frota.md"), "conhecimento").unwrap();
+        assert!(pending_changes(&root) > 0);
+
+        let out = save_version(&root, "politica-de-frota", "política de frota".into()).unwrap();
+
+        assert!(out.saved);
+        assert_eq!(out.branch, "rfc/politica-de-frota");
+        assert_eq!(pending_changes(&root), 0);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // N6 — the doctor could not tell "no repository connected" from "this
+    // machine has no network right now", so five minutes offline switched the
+    // team flow off and blamed the user's setup.
+    #[test]
+    fn a_transport_failure_is_offline_not_a_missing_repository() {
+        assert!(looks_offline(
+            "dial tcp: lookup api.github.com: no such host"
+        ));
+        assert!(looks_offline("Get \"https://api.github.com\": i/o timeout"));
+        assert!(looks_offline("connection refused"));
+        assert!(
+            !looks_offline("GraphQL: Could not resolve to a Repository with the name 'x/y'."),
+            "an answer FROM GitHub is an access problem, not a network one"
+        );
+        assert!(!looks_offline("HTTP 404: Not Found"));
     }
 }

@@ -15,7 +15,7 @@ use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 mod paths;
 use paths::*;
@@ -1113,12 +1113,37 @@ fn default_brain_dir() -> PathBuf {
     user_home().join("Documents/Loro")
 }
 
+// The folder a NEW project defaults to: `Documents/Loro` while it is free, then
+// the same name with a numeric suffix. A folder that already holds a project is
+// refused (resolve_acervo_slot), so offering it as the default opened the wizard
+// on a red refusal the user had not caused — the one state a second project could
+// ever start in. Pure over the configured list so it stays deterministic.
+fn first_free_acervo_dir(acervos: &[Acervo], base: &Path) -> PathBuf {
+    let taken = |p: &Path| acervos.iter().any(|a| Path::new(&a.dir) == p);
+    if !taken(base) {
+        return base.to_path_buf();
+    }
+    let name = base
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("Loro")
+        .to_string();
+    let parent = base.parent().unwrap_or(base);
+    (2..=99)
+        .map(|n| parent.join(format!("{name} {n}")))
+        .find(|p| !taken(p))
+        // 98 projects in one place: the taken-check still refuses honestly
+        .unwrap_or_else(|| base.to_path_buf())
+}
+
 // The wizard shows the folder that WILL be used when none is picked — the
 // same fallback brain_setup applies to an empty dir (all data visible up
 // front, ADR-0022 §30).
 #[tauri::command]
 fn default_acervo_dir() -> String {
-    default_brain_dir().display().to_string()
+    first_free_acervo_dir(&read_loro_config().acervos, &default_brain_dir())
+        .display()
+        .to_string()
 }
 
 // ============================ brain (acervo) ==================================
@@ -1169,7 +1194,7 @@ fn context_file(dir: &Path) -> Option<PathBuf> {
 
 fn seed_context(base: &Path, name: &str, lang: &str, mold: Option<&str>) -> Result<(), String> {
     let d = base.join("contextos").join(name);
-    std::fs::create_dir_all(&d).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&d).map_err(|e| folder_write_error(&e))?;
     let ch = d.join("CHANGELOG.md");
     if !ch.exists() {
         let body = if lang == "en" {
@@ -1177,13 +1202,13 @@ fn seed_context(base: &Path, name: &str, lang: &str, mold: Option<&str>) -> Resu
         } else {
             format!("# {name} — CHANGELOG\n\n> Registro cronológico do conhecimento deste contexto, escrito como documentação.\n> O loop apenas acrescenta entradas datadas; nunca reescreve as anteriores.\n")
         };
-        std::fs::write(&ch, body).map_err(|e| e.to_string())?;
+        std::fs::write(&ch, body).map_err(|e| folder_write_error(&e))?;
     }
     // Non-destructive: only seed context.md when neither the new nor the legacy
     // knowledge file exists (an already-populated context is never overwritten).
     if context_file(&d).is_none() {
         std::fs::write(d.join("context.md"), context_md(name, lang, mold))
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| folder_write_error(&e))?;
     }
     // Ideas are no longer files: unconsolidated knowledge lives as HOTSPOTS inside
     // context.md. New contexts get no brainstorming/ folder; legacy folders on
@@ -1270,12 +1295,33 @@ fn acervos_view() -> AcervosView {
 // Materialize the acervo folder structure (idempotent, non-destructive).
 // `tpl` is the usage template (preset, ADR-0003) applied only at creation:
 // AGENTS.md vertical addendum, extra skills and the initial queue guide.
+// A project folder must be a folder Loro can own: an absolute path, and — when
+// something is already there — a directory. Inspection only: it never writes, so
+// it can run before the one-way door of seeding a template (ADR-0024).
+fn acervo_dir_must_be_a_folder(dir: &Path) -> Result<(), String> {
+    if dir.as_os_str().is_empty() || !dir.is_absolute() {
+        return Err("err.invalid_path".into());
+    }
+    // N20 — "caminho inválido" is true and useless: the user typed a path that
+    // exists and holds something else. The code says WHICH thing is wrong, so the
+    // sentence can name the next step (pick another folder).
+    if dir.exists() && !dir.is_dir() {
+        return Err("err.acervo_dir_is_file".into());
+    }
+    Ok(())
+}
+
 fn ensure_acervo_structure(
     base: &Path,
     ctxs: &[String],
     lang: &str,
     tpl: Option<&TemplateContent>,
 ) -> Result<(), String> {
+    // N20 — every write below lands inside the folder the user typed, so every io
+    // failure here is the same statement ("this folder cannot hold a project") and
+    // answers with a code the UI translates, never a raw std::io message in
+    // English (ADR-0001 §10).
+    std::fs::create_dir_all(base).map_err(|e| folder_write_error(&e))?;
     // First setup = no loop state yet. The queue guide (inbox/_prompt.md) is
     // consumed by the loop, so re-materializations must never re-inject it.
     let first_setup = !base.join(".brain/state.json").exists();
@@ -1288,7 +1334,7 @@ fn ensure_acervo_structure(
         "contextos",
         ".claude/commands",
     ] {
-        std::fs::create_dir_all(base.join(sub)).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(base.join(sub)).map_err(|e| folder_write_error(&e))?;
     }
     // /loro-context is the thin Claude adapter for the queue -> context loop
     // (ADR-0013); analyse/answer are the meeting-AI skills the terminal Claude runs
@@ -1321,7 +1367,9 @@ fn ensure_acervo_structure(
     ] {
         let p = base.join(rel);
         if !p.exists() {
-            std::fs::write(&p, body).map_err(|e| e.to_string())?;
+            std::fs::write(&p, body).map_err(|e| folder_write_error(&e))?;
+        } else {
+            refresh_builtin_front_matter(&p, body);
         }
     }
     // Vertical extra skills from the usage template (ADR-0003), after the four
@@ -1330,14 +1378,14 @@ fn ensure_acervo_structure(
         for (name, body) in &tpl.skills {
             let p = base.join(".claude/commands").join(name);
             if !p.exists() {
-                std::fs::write(&p, body).map_err(|e| e.to_string())?;
+                std::fs::write(&p, body).map_err(|e| folder_write_error(&e))?;
             }
         }
         if first_setup {
             if let Some(prompt) = &tpl.inbox_prompt {
-                let p = base.join("inbox/_prompt.md");
+                let p = base.join("inbox").join(QUEUE_GUIDE_NAME);
                 if !p.exists() {
-                    std::fs::write(&p, prompt).map_err(|e| e.to_string())?;
+                    std::fs::write(&p, prompt).map_err(|e| folder_write_error(&e))?;
                 }
             }
         }
@@ -1348,11 +1396,11 @@ fn ensure_acervo_structure(
     }
     let state = base.join(".brain/state.json");
     if !state.exists() {
-        std::fs::write(&state, "{\"processed\":[]}\n").map_err(|e| e.to_string())?;
+        std::fs::write(&state, "{\"processed\":[]}\n").map_err(|e| folder_write_error(&e))?;
     }
     let act = base.join(".brain/activity.log");
     if !act.exists() {
-        std::fs::write(&act, "").map_err(|e| e.to_string())?;
+        std::fs::write(&act, "").map_err(|e| folder_write_error(&e))?;
     }
     // agnostic instruction file (AGENTS.md); keep any legacy CLAUDE.md untouched.
     // The template contributes an addendum, never a replacement — the default
@@ -1364,7 +1412,7 @@ fn ensure_acervo_structure(
             body.push('\n');
             body.push_str(extra);
         }
-        std::fs::write(&agents, body).map_err(|e| e.to_string())?;
+        std::fs::write(&agents, body).map_err(|e| folder_write_error(&e))?;
     }
     let index = base.join("INDEX.md");
     if !index.exists() {
@@ -1373,19 +1421,20 @@ fn ensure_acervo_structure(
         } else {
             "# Índice do acervo\n\n_O loop preenche este índice a cada processamento._\n"
         };
-        std::fs::write(&index, body).map_err(|e| e.to_string())?;
+        std::fs::write(&index, body).map_err(|e| folder_write_error(&e))?;
     }
     // Collaboration scaffolding (opt-in): CODEOWNERS defines who approves each
     // context; the PR template is the RFC body. Non-destructive — never touch an
     // existing CODEOWNERS/template (users curate owners by hand).
-    std::fs::create_dir_all(base.join(".github")).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(base.join(".github")).map_err(|e| folder_write_error(&e))?;
     let codeowners = base.join(".github/CODEOWNERS");
     if !codeowners.exists() {
-        std::fs::write(&codeowners, codeowners_template(ctxs, lang)).map_err(|e| e.to_string())?;
+        std::fs::write(&codeowners, codeowners_template(ctxs, lang))
+            .map_err(|e| folder_write_error(&e))?;
     }
     let pr_tmpl = base.join(".github/pull_request_template.md");
     if !pr_tmpl.exists() {
-        std::fs::write(&pr_tmpl, pr_template(lang)).map_err(|e| e.to_string())?;
+        std::fs::write(&pr_tmpl, pr_template(lang)).map_err(|e| folder_write_error(&e))?;
     }
     Ok(())
 }
@@ -1423,8 +1472,30 @@ fn ui_set_lang(lang: String, state: State<AppState>) -> Result<String, String> {
     Ok(lang)
 }
 
+// One folder, one project. `expect_new` carries the user's intent: the wizard's
+// "novo projeto" sets it, so setup refuses a folder that already belongs to
+// another project instead of taking it over; re-running setup on the SAME
+// project leaves it idempotent.
+#[derive(Debug, PartialEq, Eq)]
+enum AcervoSlot {
+    Existing(String),
+    New,
+}
+
+fn resolve_acervo_slot(
+    acervos: &[Acervo],
+    dir: &str,
+    expect_new: bool,
+) -> Result<AcervoSlot, String> {
+    match acervos.iter().find(|a| a.dir == dir) {
+        Some(a) if expect_new => Err(format!("err.acervo_dir_taken:{}", a.name)),
+        Some(a) => Ok(AcervoSlot::Existing(a.id.clone())),
+        None => Ok(AcervoSlot::New),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
-#[allow(clippy::too_many_arguments)] // mirrors the wizard form 1:1 (IPC contract)
 fn brain_setup(
     dir: String,
     contexts: Vec<String>,
@@ -1435,12 +1506,18 @@ fn brain_setup(
     lang: Option<String>,
     template: Option<String>,
     agent: Option<String>,
+    expect_new: Option<bool>,
 ) -> Result<AcervosView, String> {
     let dir = if dir.trim().is_empty() {
-        default_brain_dir().display().to_string()
+        default_acervo_dir()
     } else {
         dir.trim().to_string()
     };
+    // The folder field is typeable, so the path can be something no folder picker
+    // could ever produce. Refuse it with a code the UI translates BEFORE any disk
+    // write — the alternative was `ensure_acervo_structure` forwarding a raw
+    // std::io message ("Not a directory (os error 20)") into a pt-BR screen.
+    acervo_dir_must_be_a_folder(Path::new(&dir))?;
     let auto = auto_context.unwrap_or(false);
     let ctxs: Vec<String> = contexts
         .iter()
@@ -1455,6 +1532,14 @@ fn brain_setup(
             return Err(format!("err.invalid_context:{c}"));
         }
     }
+    // A folder holds exactly one project, and this has to be settled BEFORE any
+    // disk write: seeding a second template into a folder that already is a
+    // project mixes two domains' knowledge, and nothing in the UI undoes it.
+    let slot = resolve_acervo_slot(
+        &read_loro_config().acervos,
+        &dir,
+        expect_new.unwrap_or(false),
+    )?;
     // ADR-0002 §1: generated content follows the UI language; the per-acervo
     // language field is retired (still stored for older tooling, never asked).
     let lang = lang.map(|l| normalize_lang(&l)).unwrap_or_else(ui_lang);
@@ -1471,6 +1556,15 @@ fn brain_setup(
     write_acervo_settings(&base, auto)?;
     if git_init.unwrap_or(false) {
         git_init_repo(&base)?;
+        // The project needs an official branch from day one: without a baseline
+        // commit the first "salvar versão" renames the unborn default branch and
+        // every version of the knowledge base lives on a rascunho forever, with
+        // nothing for the team's approval to make official. Best effort: a git
+        // that cannot commit must not abort a project that is already on disk —
+        // create_branch repairs the baseline on the versioning path.
+        if let Err(e) = ensure_baseline_commit(&base, Baseline::Seeded) {
+            warn!(target: "acervo", err = %e, "baseline commit skipped");
+        }
     }
     let display_name = name
         .map(|n| n.trim().to_string())
@@ -1484,7 +1578,9 @@ fn brain_setup(
     let color = color.unwrap_or_default();
     let mut cfg = read_loro_config();
     // reuse an existing acervo pointing at this dir, else create a new one
-    let id = if let Some(a) = cfg.acervos.iter_mut().find(|a| a.dir == dir) {
+    let id = if let (AcervoSlot::Existing(_), Some(a)) =
+        (&slot, cfg.acervos.iter_mut().find(|a| a.dir == dir))
+    {
         a.name = display_name;
         a.auto_context = auto;
         a.lang = lang;
@@ -1807,6 +1903,10 @@ struct EnvDoctor {
     git_identity: Check,
     remote: Check,
     versioning_enabled: bool,
+    // N6 — the team flow is off because the network is down, NOT because
+    // something is missing from this machine. Without this the screen printed
+    // "falta conectar o GitHub" at a fully connected setup.
+    offline: bool,
     account: Option<String>,
     protocol: Option<String>,
 }
@@ -1890,17 +1990,27 @@ fn env_doctor_blocking() -> EnvDoctor {
     };
 
     let remote_url = base.as_ref().and_then(|b| git_remote_url(b));
-    let access = authed
-        && base
+    // N6 · a bool collapsed "no repository connected" with "no network right
+    // now", so five minutes offline made this row report missing configuration
+    // for an environment that is fully configured. Access is only ASKED when a
+    // remote exists and the user is authenticated — otherwise there is nothing
+    // to reach and no network call to make.
+    let access = match (&remote_url, authed) {
+        (Some(_), true) => base
             .as_ref()
             .map(|b| gh_repo_accessible(b))
-            .unwrap_or(false);
+            .unwrap_or(RemoteAccess::Denied),
+        _ => RemoteAccess::Denied,
+    };
+    let offline = access == RemoteAccess::Offline;
     let remote = Check {
-        ok: remote_url.is_some() && access,
+        ok: remote_url.is_some() && access == RemoteAccess::Ok,
         detail: remote_url.clone().unwrap_or_default(),
         hint: if remote_url.is_none() {
             "err.git_remote_required".into()
-        } else if !access {
+        } else if offline {
+            "err.github_unreachable".into()
+        } else if access != RemoteAccess::Ok {
             "err.check_repo_access".into()
         } else {
             String::new()
@@ -1912,7 +2022,7 @@ fn env_doctor_blocking() -> EnvDoctor {
     info!(
         target: "env_doctor",
         git = git.ok, gh = gh.ok, authed = gh_auth.ok,
-        identity = git_identity.ok, remote = remote.ok, versioning_enabled,
+        identity = git_identity.ok, remote = remote.ok, offline, versioning_enabled,
         "env checks"
     );
     EnvDoctor {
@@ -1922,6 +2032,7 @@ fn env_doctor_blocking() -> EnvDoctor {
         git_identity,
         remote,
         versioning_enabled,
+        offline,
         account,
         protocol,
     }
@@ -2034,22 +2145,15 @@ fn brain_notifications() -> Notifications {
 
 // ---- write flow: Versionar (local) then Propor mudança (remote PR/RFC) -----
 
+// N3 — `result` used to be a pt-BR sentence the app never read, so a commit that
+// never happened was announced as "versão salva". `saved` is the fact the screen
+// decides its copy from.
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct VersionOutcome {
     branch: String,
-    result: String,
+    saved: bool,
     warn: Option<String>,
-}
-
-// Sync outcomes the user should see as a warning (the flow still proceeds —
-// branch-first degrades, ADR-0002 §2). NoRemote is the pure-local case: no warn.
-fn sync_warn(outcome: &SyncOutcome) -> Option<String> {
-    match outcome {
-        SyncOutcome::Offline => Some("err.git_offline".into()),
-        SyncOutcome::Diverged => Some("err.main_diverged".into()),
-        _ => None,
-    }
 }
 
 // "Versionar": sync the default branch (best effort), create rfc/<slug> off it
@@ -2059,24 +2163,36 @@ fn brain_version(slug: String, message: String) -> Result<VersionOutcome, String
     let cfg = read_brain_config().ok_or("err.acervo_not_configured")?;
     let base = PathBuf::from(&cfg.brain_dir);
     let slug = sanitize_slug(&slug)?;
-    let warn = sync_warn(&sync_default_branch(&base));
-    let branch = create_branch(&base, &slug)?;
-    let result = stage_and_commit(&base, message)?;
+    let attempt = save_version(&base, &slug, message)?;
     Ok(VersionOutcome {
-        branch,
-        result,
-        warn,
+        branch: attempt.branch,
+        saved: attempt.saved,
+        warn: attempt.warn,
     })
 }
 
 // ---- branch-first IPC (ADR-0002 §2): list / switch / create ----------------
+
+// N2 — the picker used to receive branch NAMES only, so it called one of them
+// "(principal)" without knowing whether that branch held any of the project.
+// On a project that started versioning after setup it holds nothing, and the
+// switch emptied the screen with no warning. Each row now carries what the
+// branch keeps (`docs`) and what leaves the screen on the way there
+// (`leaving`), which is the price the copy has to state (DESIGN.md §1).
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BranchStand {
+    name: String,
+    docs: usize,
+    leaving: usize,
+}
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct BranchesInfo {
     current: Option<String>,
     default: String,
-    branches: Vec<String>,
+    branches: Vec<BranchStand>,
     dirty: bool,
 }
 
@@ -2092,10 +2208,22 @@ fn acervo_repo_base() -> Result<PathBuf, String> {
 #[tauri::command]
 fn git_branches() -> Result<BranchesInfo, String> {
     let base = acervo_repo_base()?;
+    let current = current_branch(&base);
+    let branches = list_branches(&base)?
+        .into_iter()
+        .map(|name| BranchStand {
+            docs: documents_on(&base, &name),
+            leaving: match current.as_deref() {
+                Some(cur) if cur != name => documents_leaving(&base, cur, &name),
+                _ => 0,
+            },
+            name,
+        })
+        .collect();
     Ok(BranchesInfo {
-        current: current_branch(&base),
+        current,
         default: local_default_branch(&base),
-        branches: list_branches(&base)?,
+        branches,
         dirty: is_dirty(&base),
     })
 }
@@ -2537,21 +2665,45 @@ fn brain_move_to_acervo(
     let ctx = context
         .map(|c| c.trim().to_string())
         .filter(|c| !c.is_empty());
+    move_queue_item(
+        Path::new(&active),
+        Path::new(&target),
+        &name,
+        ctx.as_deref(),
+    )
+}
+
+// The cross-acervo move itself, base-taking so the contract is unit-testable
+// without a running Tauri app (clean-core premise, CLAUDE.md §5).
+fn move_queue_item(
+    active: &Path,
+    target: &Path,
+    name: &str,
+    ctx: Option<&str>,
+) -> Result<(), String> {
     if target == active && ctx.is_none() {
         return Err("err.choose_destination".into());
     }
-    let src = PathBuf::from(&active).join("inbox").join(&name);
+    let src = active.join("inbox").join(name);
     if !src.is_file() {
         return Err("err.not_in_queue".into());
     }
-    let tdir = PathBuf::from(&target).join("inbox");
+    let tdir = target.join("inbox");
     std::fs::create_dir_all(&tdir).map_err(|e| e.to_string())?;
     let fname = match ctx {
-        Some(c) if valid_context(&c) => format!("{}--{}", c.replace('/', "-"), name),
+        Some(c) if valid_context(c) => format!("{}--{}", c.replace('/', "-"), name),
         Some(_) => return Err("err.invalid_context".into()),
-        None => name.clone(),
+        None => name.to_string(),
     };
-    std::fs::rename(&src, tdir.join(fname)).map_err(|e| e.to_string())
+    let dest = tdir.join(&fname);
+    // Non-destructive, like `brain_move` inside one acervo: an item waiting in the
+    // destination's fila is not versioned anywhere, so replacing it would destroy
+    // the only copy of a capture — and the user asked to move one file, not to
+    // trade one for another.
+    if dest.exists() {
+        return Err("err.file_exists_in_target".into());
+    }
+    std::fs::rename(&src, &dest).map_err(|e| e.to_string())
 }
 
 // Move any acervo file into a context's `referencias/` (or to `notas/` when no
@@ -2601,7 +2753,15 @@ fn brain_move(rel: String, dest_context: String) -> Result<String, String> {
 // deletes a NOT-YET-PROCESSED inbox file (so it is never processed)
 #[tauri::command]
 fn brain_delete_inbox(name: String) -> Result<(), String> {
-    if name.contains('/') || name.contains("..") || name.starts_with('.') || name.is_empty() {
+    // non-text queue items are deletable (the fila accepts pdf/docs), hence the
+    // narrower check here; the guide is not an item, and it is cleared by writing
+    // it empty (`brain_write_guide`), never by the queue's delete.
+    if name.contains('/')
+        || name.contains("..")
+        || name.starts_with('.')
+        || name.is_empty()
+        || is_queue_guide(&name)
+    {
         return Err("err.invalid_name".into());
     }
     let cfg = read_brain_config().ok_or("err.acervo_not_configured")?;
@@ -2625,13 +2785,16 @@ fn count_md(dir: &Path) -> usize {
         .unwrap_or(0)
 }
 
-// safe queue filename (no path separators / traversal), text only
+// safe name for a queue ITEM: no path separators / traversal, text only, and never
+// the loop guide — the guide shares the folder but not the nature (`is_queue_guide`),
+// so the item commands (write / delete / move / send) must all refuse it.
 fn valid_inbox_name(name: &str) -> bool {
     !name.is_empty()
         && !name.starts_with('.')
         && !name.contains('/')
         && !name.contains("..")
         && (name.ends_with(".md") || name.ends_with(".txt"))
+        && !is_queue_guide(name)
 }
 
 // Phase 2.3 — edit an unprocessed inbox file (text only). Creates it if new.
@@ -2679,6 +2842,8 @@ fn resolve_queue_entry(
         return Err("err.report_outside_acervo".into());
     }
     let name = import_name(ctx, &crate::acervo::queue_name_for(&r));
+    // `valid_inbox_name` also refuses the loop guide, so a brainstorming file that
+    // flattens to `_prompt.md` cannot rewrite the instructions the loop obeys.
     if !valid_inbox_name(&name) {
         return Err("err.invalid_queue_name".into());
     }
@@ -2708,14 +2873,31 @@ fn brain_send_files_to_queue(
     let base = PathBuf::from(&cfg.brain_dir)
         .canonicalize()
         .map_err(|e| e.to_string())?;
+    queue_files_into(&base, &rels, ctx.as_deref())
+}
+
+// The send itself, base-taking so the batch contract is unit-testable without a
+// running Tauri app (clean-core premise, CLAUDE.md §5). `base` must be canonical.
+//
+// ALL-OR-NOTHING: every entry is resolved, read AND triaged before the first byte
+// is written. The fila is a one-way door — the acervo is versioned (ADR-0024) — so
+// of the three possible outcomes (all, none, some) the partial write is the worst:
+// it puts files in the queue while the caller is told the send failed, and the
+// truth of the screen depends on the order of the selection. On success the return
+// value names exactly what was written.
+fn queue_files_into(
+    base: &Path,
+    rels: &[String],
+    ctx: Option<&str>,
+) -> Result<Vec<String>, String> {
     // ADR-0018: a selected MEETING is a directory, and what represents it in the
     // fila is decided by its one owner (`acervo::meeting_queueables`) — never by
     // a second walk here (hotspot #46). A meeting nobody analysed expands to
     // nothing and says so instead of queueing an empty item.
     let mut expanded = Vec::with_capacity(rels.len());
-    for rel in &rels {
+    for rel in rels {
         if base.join(rel.replace('\\', "/")).is_dir() {
-            let files = crate::acervo::meeting_queueables(&base, rel);
+            let files = crate::acervo::meeting_queueables(base, rel);
             if files.is_empty() {
                 return Err("err.meeting_not_analysed".into());
             }
@@ -2724,15 +2906,10 @@ fn brain_send_files_to_queue(
             expanded.push(rel.clone());
         }
     }
-    let mut entries = Vec::with_capacity(expanded.len());
+    let mut staged = Vec::with_capacity(expanded.len());
     for rel in &expanded {
-        entries.push(resolve_queue_entry(&base, rel, ctx.as_deref())?);
-    }
-    let inbox = base.join("inbox");
-    std::fs::create_dir_all(&inbox).map_err(|e| e.to_string())?;
-    let mut names = Vec::with_capacity(entries.len());
-    for (src, name) in &entries {
-        let content = std::fs::read_to_string(src).map_err(|e| e.to_string())?;
+        let (src, name) = resolve_queue_entry(base, rel, ctx)?;
+        let content = std::fs::read_to_string(&src).map_err(|e| e.to_string())?;
         // Triagem de entrada (ADR-0024). O bloqueio é revalidado AQUI e não só na
         // tela: o acervo é versionado, então uma credencial que passa vira commit
         // — e um portão que confia no frontend ter perguntado não é portão.
@@ -2740,7 +2917,18 @@ fn brain_send_files_to_queue(
         if intake::blocked(&intake::scan(&content)) {
             return Err(format!("err.intake_secret:{name}"));
         }
-        std::fs::write(inbox.join(name), content).map_err(|e| e.to_string())?;
+        // The triaged bytes are the bytes written: re-reading at write time would
+        // reopen the window in which a file changes after passing the door.
+        staged.push((name, content));
+    }
+    let inbox = base.join("inbox");
+    std::fs::create_dir_all(&inbox).map_err(|e| e.to_string())?;
+    let mut names = Vec::with_capacity(staged.len());
+    for (name, content) in &staged {
+        // Past the door everything has been validated, so the only failure left is
+        // the filesystem itself — it names the item it broke on instead of surfacing
+        // a bare OS error the caller cannot place.
+        std::fs::write(inbox.join(name), content).map_err(|e| format!("{name}: {e}"))?;
         names.push(name.clone());
     }
     Ok(names)
@@ -2853,7 +3041,11 @@ fn brain_list_dir(rel: String) -> Result<Vec<TreeEntry>, String> {
     if let Ok(rd) = std::fs::read_dir(&target) {
         for e in rd.flatten() {
             let name = e.file_name().to_string_lossy().to_string();
-            if name.starts_with('.') {
+            // N12 · the annotation sidecar is the machine's file, written beside
+            // the document the user grifou. Listed as content it became a fake
+            // document in every tree — and, under .claude/commands, a fake
+            // habilidade whose "excluir" could never work.
+            if name.starts_with('.') || name.ends_with(crate::acervo::SIDECAR_SUFFIX) {
                 continue;
             }
             let dir = e.path().is_dir();
@@ -2967,11 +3159,32 @@ fn brain_list_all() -> Result<Vec<FileHit>, String> {
 
 // Phase 2.2 — optional guide prompt the loop runs BEFORE standard processing.
 // Stored at inbox/_prompt.md (only affects pending items).
+//
+// The guide LIVES in the fila but it is NOT a queue item: `brain_setup` seeds it
+// from the acervo's usage template (ADR-0003) and the /loro-context loop reads,
+// archives and removes it. Everything that ENUMERATES the fila must skip it —
+// otherwise a brand-new acervo reports one capture ready to organize and its one
+// primary action sends the app's own scaffolding into the versioned acervo, which
+// is a one-way door (ADR-0024). `brain_read_guide`/`brain_write_guide` and the
+// seeding in `ensure_acervo_structure` are its only legitimate consumers.
+const QUEUE_GUIDE_NAME: &str = "_prompt.md";
+
+// True for the fila's guide, given a queue file name or an acervo-relative path.
+fn is_queue_guide(name_or_rel: &str) -> bool {
+    let r = name_or_rel.replace('\\', "/");
+    r.rsplit('/').next().unwrap_or(r.as_str()) == QUEUE_GUIDE_NAME
+}
+
 #[tauri::command]
 fn brain_read_guide() -> String {
     read_brain_config()
         .and_then(|cfg| {
-            std::fs::read_to_string(PathBuf::from(cfg.brain_dir).join("inbox/_prompt.md")).ok()
+            std::fs::read_to_string(
+                PathBuf::from(cfg.brain_dir)
+                    .join("inbox")
+                    .join(QUEUE_GUIDE_NAME),
+            )
+            .ok()
         })
         .unwrap_or_default()
 }
@@ -2981,7 +3194,7 @@ fn brain_write_guide(content: String) -> Result<(), String> {
     let cfg = read_brain_config().ok_or("acervo not configured")?;
     let dir = PathBuf::from(&cfg.brain_dir).join("inbox");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let p = dir.join("_prompt.md");
+    let p = dir.join(QUEUE_GUIDE_NAME);
     if content.trim().is_empty() {
         let _ = std::fs::remove_file(&p);
         return Ok(());
@@ -3053,6 +3266,16 @@ fn list_files_filtered(base: &Path, sub: &str, only_text: bool) -> Vec<BrainFile
     out
 }
 
+// The fila as the app must see it: everything dropped in inbox/ EXCEPT the loop
+// guide (`is_queue_guide`). Single owner of "what is in the queue", so the listing,
+// the badge count and the CTA that acts on the queue can never disagree.
+fn list_queue(base: &Path) -> Vec<BrainFile> {
+    list_files_filtered(base, "inbox", false)
+        .into_iter()
+        .filter(|f| !is_queue_guide(&f.name))
+        .collect()
+}
+
 #[tauri::command]
 fn brain_status() -> BrainStatus {
     let Some(cfg) = read_brain_config() else {
@@ -3117,7 +3340,7 @@ fn brain_status() -> BrainStatus {
         configured: true,
         dir: cfg.brain_dir.clone(),
         contexts,
-        inbox: list_files_filtered(&base, "inbox", false),
+        inbox: list_queue(&base),
         processed: list_files_filtered(&base, "processed", false).len(),
         reunioes: list_files(&base, "reunioes"),
         notas: list_files(&base, "notas"),
@@ -3132,6 +3355,56 @@ fn import_name(context: Option<&str>, filename: &str) -> String {
         Some(c) if !c.is_empty() => format!("{c}--{filename}"),
         _ => filename.to_string(),
     }
+}
+
+// The fila's door for files that come from OUTSIDE the acervo. Single owner, so
+// the native picker (`brain_import`) and the external drag-and-drop
+// (`brain_import_paths`) carry the same guarantees — a guard on one door only is
+// no guard, and the drop path was the one that had none.
+//
+// Base-taking so the contract is unit-testable without a running Tauri app
+// (clean-core premise, CLAUDE.md §5). Directories are skipped, so the returned
+// count is what actually entered the fila and the caller can report it as fact.
+fn import_into_inbox(
+    inbox: &Path,
+    srcs: &[PathBuf],
+    context: Option<&str>,
+) -> Result<usize, String> {
+    let mut planned: Vec<(&PathBuf, String)> = Vec::with_capacity(srcs.len());
+    for src in srcs {
+        if !src.is_file() {
+            continue;
+        }
+        let Some(name) = src.file_name().map(|s| s.to_string_lossy().to_string()) else {
+            continue;
+        };
+        let name = import_name(context, &name);
+        // The guide lives in inbox/ but it is NOT a queue item (`is_queue_guide`):
+        // it is the instruction file the /loro-context loop obeys, and `list_queue`
+        // hides it. An import that landed on it destroyed it with no undo AND was
+        // counted as an item the fila never shows. Refused for the WHOLE batch,
+        // before the first copy: the fila is a one-way door (ADR-0024), so the
+        // count the caller reports is exactly what entered.
+        if is_queue_guide(&name) {
+            return Err(format!("err.invalid_queue_name:{name}"));
+        }
+        planned.push((src, name));
+    }
+    if planned.is_empty() {
+        return Ok(0);
+    }
+    std::fs::create_dir_all(inbox).map_err(|e| e.to_string())?;
+    let mut n = 0;
+    for (src, name) in planned {
+        // These bytes come from OUTSIDE the acervo, so a name collision is a
+        // different file with the same name — and the item already in the fila may
+        // have been edited there. Never overwritten, exactly as the sibling door
+        // `brain_import_files` treats anexos/.
+        let dest = crate::acervo::next_free_name(inbox, &name);
+        std::fs::copy(src, &dest).map_err(|e| format!("{name}: {e}"))?;
+        n += 1;
+    }
+    Ok(n)
 }
 
 // imports files into the acervo inbox (native picker, multi-select),
@@ -3150,18 +3423,8 @@ async fn brain_import(app: AppHandle, context: Option<String>) -> Result<usize, 
         .map_err(|e| e.to_string())?;
     let Some(files) = files else { return Ok(0) };
     let inbox = PathBuf::from(&cfg.brain_dir).join("inbox");
-    std::fs::create_dir_all(&inbox).map_err(|e| e.to_string())?;
-    let mut n = 0;
-    for f in files {
-        let src = PathBuf::from(f.to_string());
-        let Some(name) = src.file_name().map(|s| s.to_string_lossy().to_string()) else {
-            continue;
-        };
-        let dest = inbox.join(import_name(context.as_deref(), &name));
-        std::fs::copy(&src, &dest).map_err(|e| format!("{name}: {e}"))?;
-        n += 1;
-    }
-    Ok(n)
+    let srcs: Vec<PathBuf> = files.iter().map(|f| PathBuf::from(f.to_string())).collect();
+    import_into_inbox(&inbox, &srcs, context.as_deref())
 }
 
 // ADR-0005: import files from the computer straight into an anexos/ folder —
@@ -3188,26 +3451,7 @@ async fn brain_import_files(app: AppHandle, dest_rel: String) -> Result<usize, S
             continue;
         };
         // never overwrite: on collision, insert a numeric suffix before the ext
-        let mut dest = dir.join(&name);
-        if dest.exists() {
-            let stem = std::path::Path::new(&name)
-                .file_stem()
-                .map(|s| s.to_string_lossy().to_string())
-                .unwrap_or_else(|| name.clone());
-            let ext = std::path::Path::new(&name)
-                .extension()
-                .map(|e| format!(".{}", e.to_string_lossy()))
-                .unwrap_or_default();
-            let mut i = 2;
-            loop {
-                let cand = dir.join(format!("{stem}-{i}{ext}"));
-                if !cand.exists() {
-                    dest = cand;
-                    break;
-                }
-                i += 1;
-            }
-        }
+        let dest = crate::acervo::next_free_name(&dir, &name);
         std::fs::copy(&src, &dest).map_err(|e| format!("{name}: {e}"))?;
         n += 1;
     }
@@ -3225,21 +3469,8 @@ fn brain_import_paths(paths: Vec<String>, context: Option<String>) -> Result<usi
         }
     }
     let inbox = PathBuf::from(&cfg.brain_dir).join("inbox");
-    std::fs::create_dir_all(&inbox).map_err(|e| e.to_string())?;
-    let mut n = 0;
-    for p in paths {
-        let src = PathBuf::from(&p);
-        if !src.is_file() {
-            continue;
-        }
-        let Some(name) = src.file_name().map(|s| s.to_string_lossy().to_string()) else {
-            continue;
-        };
-        let dest = inbox.join(import_name(context.as_deref(), &name));
-        std::fs::copy(&src, &dest).map_err(|e| format!("{name}: {e}"))?;
-        n += 1;
-    }
-    Ok(n)
+    let srcs: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
+    import_into_inbox(&inbox, &srcs, context.as_deref())
 }
 
 // reads a file INSIDE the acervo (path-traversal protection)
@@ -3264,6 +3495,13 @@ fn brain_read(rel: String) -> Result<String, String> {
 fn auto_save(content: String, dir: String, filename: String) -> Result<String, String> {
     if !is_safe_filename(&filename) {
         return Err("err.invalid_file_name".into());
+    }
+    // The default destination IS the fila (`default_save_dir`), and the fila's guide
+    // is not a save target: a transcript written there would replace the
+    // instructions the /loro-context loop obeys. The check belongs at the door, not
+    // in the caller — the frontend is not the only caller of the future (ADR-0024).
+    if is_queue_guide(&filename) && Path::new(&dir).file_name().is_some_and(|d| d == "inbox") {
+        return Err(format!("err.invalid_queue_name:{filename}"));
     }
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let path = Path::new(&dir).join(filename);
@@ -3347,6 +3585,20 @@ fn client_log(msg: String) {
 // `/loro-context`, `/loro-analyse` and `/loro-question` are discoverable by the
 // terminal Claude even for acervos created before this change — no explicit
 // "migrar acervo" needed. Create-if-absent; never overwrites user edits.
+// The description and the argument-hint are the lines of a habilidade the UI
+// prints (sidebar tooltip, "usar" sheet and the placeholder of its field).
+// Seeding is create-if-absent, so a project created by an older Loro would keep
+// the old wording forever: rewrite those single lines, and only while they are
+// still strings Loro itself shipped — anything the user edited is never touched.
+fn refresh_builtin_front_matter(path: &Path, shipped: &str) {
+    let Ok(current) = std::fs::read_to_string(path) else {
+        return;
+    };
+    if let Some(next) = refreshed_front_matter(&current, shipped) {
+        let _ = std::fs::write(path, next);
+    }
+}
+
 fn ensure_meeting_skills(base: &Path, lang: &str) {
     if std::fs::create_dir_all(base.join(".claude/commands")).is_err() {
         return;
@@ -3379,6 +3631,8 @@ fn ensure_meeting_skills(base: &Path, lang: &str) {
         let p = base.join(rel);
         if !p.exists() {
             let _ = std::fs::write(&p, body);
+        } else {
+            refresh_builtin_front_matter(&p, body);
         }
     }
 }
@@ -3927,15 +4181,149 @@ pub fn run() {
 mod tests {
     use super::*;
 
-    // ADR-0022 §30 — the wizard shows the folder that will actually be used
-    // when none is picked; it must be the very fallback brain_setup applies.
+    // "novo projeto" must never take over a folder that already IS a project.
+    // Reproduced in the running app: creating a second project while accepting
+    // the default folder (always ~/Documents/Loro, so the likeliest path there
+    // is) renamed and re-templated the EXISTING acervo in place — the first
+    // project vanished from the switcher and the two domains' contexts ended up
+    // in one folder. That breaks the product's self-contained & non-destructive
+    // premise; setup stays idempotent for the SAME project, which is why the
+    // intent has to be explicit.
+    #[test]
+    fn a_new_project_refuses_a_folder_that_is_already_a_project() {
+        let existing = vec![Acervo {
+            id: "engenharia".into(),
+            name: "Engenharia".into(),
+            dir: "/tmp/loro-a".into(),
+            auto_context: false,
+            color: String::new(),
+            lang: "pt".into(),
+            template: "engenharia".into(),
+            agent: "claude".into(),
+        }];
+        // asking for a NEW project on a taken folder is refused, with the name
+        // of the project that owns it so the UI can say which one it is
+        assert_eq!(
+            resolve_acervo_slot(&existing, "/tmp/loro-a", true),
+            Err("err.acervo_dir_taken:Engenharia".into())
+        );
+        // a free folder is a new slot
+        assert_eq!(
+            resolve_acervo_slot(&existing, "/tmp/loro-b", true),
+            Ok(AcervoSlot::New)
+        );
+        // re-running setup on the SAME project (not "novo projeto") still reuses
+        // its entry, so reconfiguring never duplicates it
+        assert_eq!(
+            resolve_acervo_slot(&existing, "/tmp/loro-a", false),
+            Ok(AcervoSlot::Existing("engenharia".into()))
+        );
+    }
+
+    fn acervo_at(dir: &str) -> Acervo {
+        Acervo {
+            id: "engenharia".into(),
+            name: "Engenharia".into(),
+            dir: dir.into(),
+            auto_context: false,
+            color: String::new(),
+            lang: "pt".into(),
+            template: "engenharia".into(),
+            agent: "claude".into(),
+        }
+    }
+
+    // ADR-0022 §30 — the wizard shows the folder that will actually be used when
+    // none is picked; it must be the very fallback brain_setup applies. Asserted
+    // over the resolver both share, so the check does not depend on which
+    // projects the machine running the suite happens to have.
     #[test]
     fn default_acervo_dir_matches_brain_setup_fallback() {
+        let base = default_brain_dir();
+        assert_eq!(first_free_acervo_dir(&[], &base), base);
+        assert!(base.display().to_string().ends_with("Documents/Loro"));
+    }
+
+    // N19 — the wizard prefilled a CONSTANT default, so from the second project
+    // on it opened already refused: the folder it offered was the one folder
+    // resolve_acervo_slot rejects, in red, before the user typed anything.
+    #[test]
+    fn the_default_folder_of_a_new_project_is_never_one_already_taken() {
+        let base = Path::new("/tmp/Documents/Loro");
+        let taken = vec![acervo_at("/tmp/Documents/Loro")];
+        let free = first_free_acervo_dir(&taken, base);
+        assert_eq!(free, Path::new("/tmp/Documents/Loro 2"));
         assert_eq!(
-            default_acervo_dir(),
-            default_brain_dir().display().to_string()
+            resolve_acervo_slot(&taken, &free.display().to_string(), true),
+            Ok(AcervoSlot::New),
+            "the wizard's default has to be a folder a new project can accept"
         );
-        assert!(default_acervo_dir().ends_with("Documents/Loro"));
+        // and it keeps walking while the suffixes are taken too
+        let mut many = taken.clone();
+        many.push(acervo_at("/tmp/Documents/Loro 2"));
+        assert_eq!(
+            first_free_acervo_dir(&many, base),
+            Path::new("/tmp/Documents/Loro 3")
+        );
+    }
+
+    // N20 — the folder field became typeable, so it can hold a path that is a
+    // FILE. brain_setup accepted it and the user got the raw std::io string
+    // "Not a directory (os error 20)" on a pt-BR screen.
+    #[test]
+    fn a_project_folder_that_is_not_a_folder_is_refused_with_a_translated_code() {
+        let root = std::env::temp_dir().join(format!("loro-notdir-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let file = root.join("config.json");
+        std::fs::write(&file, "{}").unwrap();
+
+        assert_eq!(
+            acervo_dir_must_be_a_folder(&file),
+            Err("err.acervo_dir_is_file".into())
+        );
+        // a path whose parent is that file cannot be created either, and the
+        // failure still has to be a code the UI translates
+        assert_eq!(
+            ensure_acervo_structure(&file.join("sub"), &["frota".into()], "pt", None),
+            Err("err.acervo_dir_unusable".into())
+        );
+        // a relative path would resolve against whatever the app's cwd is
+        assert_eq!(
+            acervo_dir_must_be_a_folder(Path::new("Documents/Loro")),
+            Err("err.invalid_path".into())
+        );
+        // an absolute folder that does not exist yet is fine: setup creates it
+        assert_eq!(acervo_dir_must_be_a_folder(&root.join("novo")), Ok(()));
+        assert_eq!(acervo_dir_must_be_a_folder(&root), Ok(()));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // N20 (the other half) — the inspection above cannot know whether the folder
+    // ACCEPTS a project: a real, existing directory the user cannot write into
+    // passes every check and then fails on the first mkdir. That failure used to
+    // travel as "Permission denied (os error 13)" straight into the wizard.
+    #[cfg(unix)]
+    #[test]
+    fn a_project_folder_that_refuses_writes_answers_with_a_translated_code() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("loro-ro-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let ro = root.join("somente-leitura");
+        std::fs::create_dir_all(&ro).unwrap();
+        std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o555)).unwrap();
+
+        let err = ensure_acervo_structure(&ro, &["frota".into()], "pt", None)
+            .expect_err("an unwritable folder cannot hold a project");
+        assert_eq!(err, "err.acervo_dir_not_writable");
+        // and the per-acervo marker written by the same setup answers the same way
+        assert_eq!(
+            crate::config::write_acervo_settings(&ro, true),
+            Err("err.acervo_dir_not_writable".into())
+        );
+
+        std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     // ADR-0002 §4 — the terminal/Claude readiness handshake asks the OS whether
@@ -4395,6 +4783,34 @@ mod tests {
         assert!(co.contains("CODEOWNERS"));
     }
 
+    // N13 — a project created before the vocabulary fix carries the old lines ON
+    // DISK, and seeding is create-if-absent: the refresh is the only thing that
+    // ever reaches it. Both lines the user reads are rewritten (the tooltip and
+    // the "argumentos: …" of the "usar" sheet); the body he may have edited is not.
+    #[test]
+    fn seeding_refreshes_the_two_front_matter_lines_the_user_reads() {
+        let root = std::env::temp_dir().join(format!("loro-refresh-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join(".claude/commands")).unwrap();
+        let p = root.join(".claude/commands/loro-slack.md");
+        std::fs::write(
+            &p,
+            "---\ndescription: Envia uma pergunta sobre um trecho grifado para um canal/pessoa no Slack, pelo conector do agente (ADR-0007)\nargument-hint: <alvo:acervo://<rel>#<annot-id>> <#canal-ou-@pessoa> [mensagem]\n---\n\ncorpo que o usuário editou\n",
+        )
+        .unwrap();
+
+        ensure_acervo_structure(&root, &[], "pt", None).unwrap();
+
+        let out = std::fs::read_to_string(&p).unwrap();
+        assert!(!out.contains("ADR-0007"), "{out}");
+        assert!(!out.contains("acervo://"), "{out}");
+        assert!(
+            out.ends_with("corpo que o usuário editou\n"),
+            "the refresh touches the two lines and nothing else: {out}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn seeding_uses_context_md_and_collaboration_without_brainstorming() {
         let root = std::env::temp_dir().join(format!("loro-seed-{}", std::process::id()));
@@ -4662,6 +5078,269 @@ mod tests {
         assert!(!valid_inbox_name("../x.md")); // traversal
         assert!(!valid_inbox_name("file.pdf")); // not text-editable
         assert!(!valid_inbox_name(".hidden.md"));
+        assert!(!valid_inbox_name(QUEUE_GUIDE_NAME)); // the loop guide is not an item
+    }
+
+    // ---- the fila and the loop guide -----------------------------------------
+
+    // The guide LIVES in inbox/ but is not a queue item: `brain_setup` seeds it and
+    // the loop consumes it. A brand-new acervo must therefore report an EMPTY fila —
+    // otherwise the first screen claims one capture is ready and its single primary
+    // action offers to turn the app's own scaffolding into versioned knowledge
+    // (DESIGN.md §1: state must never lie).
+    #[test]
+    fn the_loop_guide_is_not_a_queue_item() {
+        let root = std::env::temp_dir().join(format!("loro-guide-q-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("inbox")).unwrap();
+        std::fs::write(root.join("inbox/_prompt.md"), "# Guia da fila\n").unwrap();
+        assert!(
+            list_queue(&root).is_empty(),
+            "a fresh acervo must report nothing to organize"
+        );
+        std::fs::write(root.join("inbox/nota.md"), "uma captura\n").unwrap();
+        let q = list_queue(&root);
+        assert_eq!(q.len(), 1);
+        assert_eq!(q[0].name, "nota.md");
+        // the guide is skipped, never removed: its own reader/writer still owns it
+        assert!(root.join("inbox/_prompt.md").is_file());
+        assert!(is_queue_guide("_prompt.md"));
+        assert!(is_queue_guide("inbox/_prompt.md"));
+        assert!(!is_queue_guide("prompt.md"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // Fixture: a brainstorming with one note per (name, body) pair.
+    fn brainstorming_with(root: &Path, slug: &str, notes: &[(&str, String)]) -> Vec<String> {
+        let dir = root.join("brainstorming").join(slug).join("notas");
+        std::fs::create_dir_all(&dir).unwrap();
+        notes
+            .iter()
+            .map(|(name, body)| {
+                std::fs::write(dir.join(name), body).unwrap();
+                format!("brainstorming/{slug}/notas/{name}")
+            })
+            .collect()
+    }
+
+    // ADR-0024 — the fila is a ONE-WAY door (the acervo is versioned), so the batch
+    // is all-or-nothing: a credential anywhere in the selection must leave inbox/
+    // untouched. Writing the earlier files and then reporting "não enviei" is the
+    // worst of the three outcomes — the fila gained items while the UI says it did
+    // not (BR-9: no credential enters; DESIGN.md §1: state must never lie).
+    #[test]
+    fn a_blocked_credential_leaves_nothing_in_the_queue() {
+        let root = std::env::temp_dir().join(format!("loro-q-block-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let base = root.canonicalize().unwrap();
+        // the credential is composed at runtime — see intake.rs: a literal sample
+        // is swept up by GitHub push protection, which is what this module detects
+        let token = format!("ghp_{}", "a".repeat(36));
+        let rels = brainstorming_with(
+            &base,
+            "frota",
+            &[
+                ("a.md", "primeira captura\n".into()),
+                ("b.md", "segunda captura\n".into()),
+                ("c.md", format!("export TOKEN={token}\n")),
+            ],
+        );
+        let err = queue_files_into(&base, &rels, None).unwrap_err();
+        assert_eq!(err, "err.intake_secret:frota-notas-c.md");
+        let queued: Vec<String> = list_queue(&base).into_iter().map(|f| f.name).collect();
+        assert!(
+            queued.is_empty(),
+            "partial write: the fila gained {queued:?} while the send reported failure"
+        );
+
+        // and the clean part of the same selection goes through when it is the batch
+        let names = queue_files_into(&base, &rels[..2], None).unwrap();
+        assert_eq!(names, ["frota-notas-a.md", "frota-notas-b.md"]);
+        assert_eq!(list_queue(&base).len(), 2);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // A queued file must never LAND on the guide: `queue_name_for` flattens the
+    // brainstorming-relative path, so a file named `_prompt.md` at the root of
+    // `brainstorming/` would otherwise rewrite the instructions the loop obeys.
+    #[test]
+    fn a_queued_file_never_clobbers_the_loop_guide() {
+        let root = std::env::temp_dir().join(format!("loro-q-guide-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("brainstorming")).unwrap();
+        let base = root.canonicalize().unwrap();
+        std::fs::write(base.join("brainstorming/_prompt.md"), "nao sou guia\n").unwrap();
+        let err = resolve_queue_entry(&base, "brainstorming/_prompt.md", None).unwrap_err();
+        assert_eq!(err, "err.invalid_queue_name");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // Fixture: a folder OUTSIDE the acervo with one file per (name, body) pair —
+    // what the picker and the drag-and-drop hand to the import doors.
+    fn outside_files(dir: &Path, files: &[(&str, &str)]) -> Vec<PathBuf> {
+        std::fs::create_dir_all(dir).unwrap();
+        files
+            .iter()
+            .map(|(name, body)| {
+                let p = dir.join(name);
+                std::fs::write(&p, body).unwrap();
+                p
+            })
+            .collect()
+    }
+
+    // C6 — the import doors write into inbox/ too, so they carry the same guard as
+    // the send door. The guide is not a queue item: `list_queue` hides it, so a file
+    // named `_prompt.md` that landed on it destroyed the instructions the
+    // /loro-context loop obeys AND was counted as an item the fila never shows
+    // (DESIGN.md §1: state must never lie). Refused BEFORE the first copy, because
+    // the fila is a one-way door (ADR-0024) and a partial batch reported as a
+    // failure is the worst of the three outcomes.
+    #[test]
+    fn an_import_never_lands_on_the_loop_guide() {
+        let root = std::env::temp_dir().join(format!("loro-imp-guide-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let inbox = root.join("inbox");
+        std::fs::create_dir_all(&inbox).unwrap();
+        std::fs::write(inbox.join(QUEUE_GUIDE_NAME), "# Guia da fila\n").unwrap();
+        let srcs = outside_files(
+            &root.join("fora"),
+            &[
+                ("_prompt.md", "conteudo de fora\n"),
+                ("nota.md", "captura\n"),
+            ],
+        );
+
+        let err = import_into_inbox(&inbox, &srcs, None).unwrap_err();
+        assert_eq!(err, "err.invalid_queue_name:_prompt.md");
+        assert_eq!(
+            std::fs::read_to_string(inbox.join(QUEUE_GUIDE_NAME)).unwrap(),
+            "# Guia da fila\n",
+            "the loop guide was overwritten by an imported file"
+        );
+        let queued: Vec<String> = list_queue(&root).into_iter().map(|f| f.name).collect();
+        assert!(
+            queued.is_empty(),
+            "partial import: the fila gained {queued:?} while the import reported failure"
+        );
+
+        // Steered to a context the SAME file is an ordinary item: the prefix makes a
+        // different name, so nothing is lost and nothing is refused for no reason.
+        assert_eq!(import_into_inbox(&inbox, &srcs, Some("frota")).unwrap(), 2);
+        let mut queued: Vec<String> = list_queue(&root).into_iter().map(|f| f.name).collect();
+        queued.sort();
+        assert_eq!(queued, ["frota--_prompt.md", "frota--nota.md"]);
+        assert_eq!(
+            std::fs::read_to_string(inbox.join(QUEUE_GUIDE_NAME)).unwrap(),
+            "# Guia da fila\n"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // Non-destructive premise (brain/contexts/loro/context.md, Core premises): the
+    // imported bytes come from OUTSIDE the acervo, so a name collision is a
+    // DIFFERENT file with the same name — and the item already in the fila may have
+    // been edited there (`brain_write_inbox`). It gets a numeric suffix, the same
+    // judgment the sibling door `brain_import_files` already makes for anexos/.
+    #[test]
+    fn an_import_never_overwrites_an_item_already_in_the_queue() {
+        let root = std::env::temp_dir().join(format!("loro-imp-clash-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let inbox = root.join("inbox");
+        std::fs::create_dir_all(&inbox).unwrap();
+        std::fs::write(inbox.join("nota.md"), "a captura que ja estava na fila\n").unwrap();
+        let srcs = outside_files(
+            &root.join("fora"),
+            &[("nota.md", "outra nota, outro arquivo\n")],
+        );
+
+        assert_eq!(import_into_inbox(&inbox, &srcs, None).unwrap(), 1);
+        assert_eq!(
+            std::fs::read_to_string(inbox.join("nota.md")).unwrap(),
+            "a captura que ja estava na fila\n",
+            "the import overwrote a queue item that was already there"
+        );
+        assert_eq!(
+            std::fs::read_to_string(inbox.join("nota-2.md")).unwrap(),
+            "outra nota, outro arquivo\n"
+        );
+        assert_eq!(list_queue(&root).len(), 2);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // Non-destructive premise, across acervos: `brain_move` refuses a collision
+    // inside one acervo (`err.file_exists_in_target`), so the cross-acervo move —
+    // the same action with a different destination — must not silently replace the
+    // item waiting in the OTHER acervo's fila. Nothing here is versioned yet, so the
+    // overwritten capture had no copy anywhere.
+    #[test]
+    fn moving_a_queue_item_to_another_acervo_never_overwrites_it() {
+        let root = std::env::temp_dir().join(format!("loro-mv-clash-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let a = root.join("a");
+        let b = root.join("b");
+        std::fs::create_dir_all(a.join("inbox")).unwrap();
+        std::fs::create_dir_all(b.join("inbox")).unwrap();
+        std::fs::write(a.join("inbox/nota.md"), "a captura de A\n").unwrap();
+        std::fs::write(b.join("inbox/nota.md"), "a captura de B\n").unwrap();
+
+        let err = move_queue_item(&a, &b, "nota.md", None).unwrap_err();
+        assert_eq!(err, "err.file_exists_in_target");
+        assert_eq!(
+            std::fs::read_to_string(b.join("inbox/nota.md")).unwrap(),
+            "a captura de B\n",
+            "the move replaced the item waiting in the other acervo's fila"
+        );
+        // and the origin keeps its file: a refused move moves nothing
+        assert!(a.join("inbox/nota.md").is_file());
+
+        // the same move to a free name goes through
+        std::fs::remove_file(b.join("inbox/nota.md")).unwrap();
+        move_queue_item(&a, &b, "nota.md", None).unwrap();
+        assert!(!a.join("inbox/nota.md").exists());
+        assert_eq!(
+            std::fs::read_to_string(b.join("inbox/nota.md")).unwrap(),
+            "a captura de A\n"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // The transcription auto-save writes into inbox/ as well (`default_save_dir`),
+    // with a caller-supplied name. A gate that trusts the frontend to have asked is
+    // not a gate (ADR-0024) — and `is_safe_filename` accepts `_prompt.md`, so this
+    // door could put a transcript over the loop's instruction file. BR-8 also lives
+    // here: the transcript belongs in the fila as an item, never as the guide.
+    #[test]
+    fn auto_save_never_writes_over_the_loop_guide() {
+        let root = std::env::temp_dir().join(format!("loro-as-guide-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let inbox = root.join("inbox");
+        std::fs::create_dir_all(&inbox).unwrap();
+        std::fs::write(inbox.join(QUEUE_GUIDE_NAME), "# Guia da fila\n").unwrap();
+        let dir = inbox.display().to_string();
+
+        let err = auto_save(
+            "uma transcricao\n".into(),
+            dir.clone(),
+            QUEUE_GUIDE_NAME.into(),
+        )
+        .unwrap_err();
+        assert_eq!(err, format!("err.invalid_queue_name:{QUEUE_GUIDE_NAME}"));
+        assert_eq!(
+            std::fs::read_to_string(inbox.join(QUEUE_GUIDE_NAME)).unwrap(),
+            "# Guia da fila\n",
+            "auto-save wrote over the loop guide"
+        );
+        // the real auto-save name still works — the guard is the guide, not the door
+        auto_save(
+            "uma transcricao\n".into(),
+            dir,
+            "loro-20260812-1200.md".into(),
+        )
+        .unwrap();
+        assert_eq!(list_queue(&root).len(), 1);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

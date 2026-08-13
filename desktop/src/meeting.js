@@ -72,6 +72,16 @@
       .replace(/^[ \t]*<!--\s*loro:t=\d+\s*-->[ \t]*\r?\n?/gm, "");
   }
 
+  // N18 · meeting.rs semeia TODO arquivo de reunião com "# <título>", então
+  // `body.trim()` era verdadeiro mesmo sem uma única fala transcrita: as três
+  // frases de vazio da superfície ("gravando — o preview ao vivo aparece…",
+  // "sem transcrição — a gravação foi interrompida…") eram código morto, e uma
+  // reunião interrompida sem fala mostrava só a palavra "Reunião". O que conta
+  // como transcrição é o que vem DEPOIS do título.
+  function transcriptText(body) {
+    return String(body == null ? "" : body).replace(/^\s*#\s+[^\n]*\n?/, "");
+  }
+
   // A human label for a meeting in the tree. Prefer the manifest `titulo`; fall
   // back to the meeting id (folder name) so a meeting NEVER shows as a stale
   // "nova reunião" default. `id` is the last path segment of the meeting dir.
@@ -299,7 +309,7 @@
     looseEndAction, analyseOffer, meetingQueueBlock,
     livingId, isLiving, meetingDir,
     sanitizeSkillArg, meetingSkillCmd,
-    stripMarker, acervoJoin, aiStatusLine, MARKER,
+    stripMarker, transcriptText, acervoJoin, aiStatusLine, MARKER,
     isHallucination, filterHallucinations,
     speechTokens, tokenContainment, echoOfOtherSource, partialCrossTalk,
     meetingTitleFromManifest, meetingLabel,

@@ -538,15 +538,19 @@ fn dir_has_files(dir: &Path) -> bool {
     false
 }
 
-// A collision-free path in `dir` for `name` (numeric suffix before the ext).
-fn next_free_name(dir: &Path, name: &str) -> PathBuf {
+// A collision-free path in `dir` for `name` (numeric suffix before the ext). The
+// single owner of "do not overwrite what is already there" for every door that
+// brings a file in from outside its folder (the non-destructive premise).
+pub(crate) fn next_free_name(dir: &Path, name: &str) -> PathBuf {
     let mut target = dir.join(name);
     if !target.exists() {
         return target;
     }
+    // A leading dot belongs to the name, not to an extension: `.env` must not be
+    // suffixed into `-2.env`, which would stop being a hidden file.
     let (stem, ext) = match name.rsplit_once('.') {
-        Some((s, e)) => (s.to_string(), format!(".{e}")),
-        None => (name.to_string(), String::new()),
+        Some((s, e)) if !s.is_empty() => (s.to_string(), format!(".{e}")),
+        _ => (name.to_string(), String::new()),
     };
     let mut n = 1;
     while target.exists() {
@@ -991,6 +995,12 @@ pub struct AnnotationPatch {
     add_comentario: Option<Comentario>,
 }
 
+// The suffix that marks a file as the MACHINE's, not the user's. It is content
+// the app writes beside a document, so no listing may offer it as a document
+// (N12: a highlight inside a habilidade grew a `.anotacoes.json` row in
+// HABILIDADES DE IA whose "excluir" could never work).
+pub const SIDECAR_SUFFIX: &str = ".anotacoes.json";
+
 // The sidecar for `<doc>.md` is `<doc>.anotacoes.json` beside it. The annotated
 // doc must already exist inside the acervo (guarded); the sidecar itself need
 // not exist yet.
@@ -1000,7 +1010,7 @@ fn sidecar_path(base: &Path, doc_rel: &str) -> Result<PathBuf, String> {
         return Err("err.annot_doc_invalid".into());
     }
     guarded_existing(base, &rel)?;
-    let side = format!("{}.anotacoes.json", &rel[..rel.len() - 3]);
+    let side = format!("{}{SIDECAR_SUFFIX}", &rel[..rel.len() - 3]);
     Ok(base.join(side))
 }
 
@@ -1990,21 +2000,42 @@ pub fn brain_open_external(rel: String) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
-// An external ref (loro-sync, e.g. a Drive doc link) is only ever http(s) —
-// never a local path, shell metacharacter, or other scheme (js:, file:, …).
+// An external ref (loro-sync, e.g. a Drive doc link) and a review on GitHub are
+// only ever http(s) — never a local path, shell metacharacter, or other scheme
+// (js:, file:, …). Whitespace and control characters are refused as well: this
+// URL is the only caller-supplied token in the spawn below, so it stays a single
+// argument that no argument splitter can break in two.
 fn is_openable_link(url: &str) -> bool {
-    url.starts_with("http://") || url.starts_with("https://")
+    (url.starts_with("http://") || url.starts_with("https://"))
+        && !url.chars().any(|c| c.is_whitespace() || c.is_control())
 }
 
-// Open an external link (e.g. a Drive doc from a `tipo: drive` ref) in the OS
-// default browser. Restricted to http(s); fixed args, no shell.
+// The OS's own "open this URL in the default browser". Never through a shell:
+// `cmd /C start` would hand a caller-supplied URL to the command interpreter, so
+// Windows invokes the protocol handler directly instead (ADR-0001 §5, BR-9 — no
+// credential is ever part of a link the app opens).
+fn open_url_cmd(url: &str) -> (&'static str, Vec<String>) {
+    if cfg!(target_os = "windows") {
+        (
+            "rundll32.exe",
+            vec!["url.dll,FileProtocolHandler".into(), url.into()],
+        )
+    } else {
+        ("open", vec![url.into()])
+    }
+}
+
+// Open an external link (a Drive doc from a `tipo: drive` ref, the review a
+// change was sent to) in the OS default browser. Restricted to http(s); fixed
+// args, no shell.
 #[tauri::command]
 pub fn brain_open_link(url: String) -> Result<(), String> {
     if !is_openable_link(&url) {
         return Err("err.unsupported_link_scheme".into());
     }
-    crate::proc::command("open")
-        .arg(&url)
+    let (bin, args) = open_url_cmd(&url);
+    crate::proc::command(bin)
+        .args(args)
         .spawn()
         .map(|_| ())
         .map_err(|e| e.to_string())
@@ -2537,6 +2568,33 @@ mod tests {
         assert!(!is_openable_link("acervo://notas/x.md"));
     }
 
+    // N4 — the review a change was sent to opens through this same door, so the
+    // URL must stay ONE argument: whitespace or a control character could be an
+    // argument splitter on the way to the OS opener.
+    #[test]
+    fn is_openable_link_refuses_whitespace_and_control_chars() {
+        assert!(is_openable_link("https://github.com/acme/brain/pull/7"));
+        assert!(!is_openable_link(
+            "https://github.com/acme/brain/pull/7 -a Xcode"
+        ));
+        assert!(!is_openable_link("https://github.com/acme\n/pull/7"));
+        assert!(!is_openable_link("https://github.com/acme\t/pull/7"));
+    }
+
+    // The URL is caller-supplied, so it never reaches a command interpreter:
+    // `cmd /C start` on Windows would let `&` split the line.
+    #[test]
+    fn open_url_cmd_never_goes_through_a_shell() {
+        let (bin, args) = open_url_cmd("https://github.com/acme/brain/pull/7");
+        assert!(bin != "cmd" && bin != "sh" && bin != "powershell.exe");
+        assert!(args.contains(&"https://github.com/acme/brain/pull/7".to_string()));
+        if cfg!(target_os = "windows") {
+            assert_eq!(bin, "rundll32.exe");
+        } else {
+            assert_eq!(bin, "open");
+        }
+    }
+
     #[test]
     fn new_tool_writes_command_file_and_refuses_builtin_names() {
         let base = tmp("tool-new");
@@ -2566,6 +2624,25 @@ mod tests {
         assert_ne!(a, b);
         assert_eq!(std::fs::read_to_string(base.join(&a)).unwrap(), "primeira");
         assert_eq!(std::fs::read_to_string(base.join(&b)).unwrap(), "segunda");
+    }
+
+    // The one owner of "never overwrite what is already there" for every door that
+    // brings a file in from outside its folder (the import doors, the meeting fold).
+    // A hidden file keeps its leading dot: suffixing `.env` into `-2.env` would make
+    // it visible, which is a silent change to a file the acervo did not author.
+    #[test]
+    fn next_free_name_suffixes_instead_of_overwriting() {
+        let dir = tmp("free-name");
+        assert_eq!(next_free_name(&dir, "nota.md"), dir.join("nota.md"));
+        std::fs::write(dir.join("nota.md"), "ja existe").unwrap();
+        assert_eq!(next_free_name(&dir, "nota.md"), dir.join("nota-2.md"));
+        std::fs::write(dir.join("nota-2.md"), "ja existe").unwrap();
+        assert_eq!(next_free_name(&dir, "nota.md"), dir.join("nota-3.md"));
+        // no extension at all, and a hidden file (the dot is part of the name)
+        std::fs::write(dir.join("LEIA"), "ja existe").unwrap();
+        assert_eq!(next_free_name(&dir, "LEIA"), dir.join("LEIA-2"));
+        std::fs::write(dir.join(".env"), "ja existe").unwrap();
+        assert_eq!(next_free_name(&dir, ".env"), dir.join(".env-2"));
     }
 
     // ADR-0005: anexos folders exist in both worlds; the guard only accepts a

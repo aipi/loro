@@ -26,10 +26,12 @@ test("setLang normalizes unknown languages to pt", () => {
 });
 
 test("tErr translates backend error codes in both languages", () => {
+  // N7 · a amostra segue o vocabulário da tela (DESIGN.md §4): "acervo" saiu do
+  // dicionário de erros junto com branch/main/origin.
   setLang("pt");
-  assert.equal(tErr("err.acervo_not_found"), "acervo não encontrado");
+  assert.equal(tErr("err.acervo_not_found"), "projeto não encontrado");
   setLang("en");
-  assert.equal(tErr("err.acervo_not_found"), "knowledge base not found");
+  assert.equal(tErr("err.acervo_not_found"), "project not found");
   setLang("pt");
 });
 
@@ -128,6 +130,42 @@ test("every err.* emitted by the backend is translated", () => {
   assert.deepStrictEqual(semPar, [], "códigos sem tradução:\n  " + semPar.join("\n  "));
 });
 
+// C9 — os checks de ambiente (Versões e GitHub) mandam a dica em DOIS formatos
+// no mesmo campo: um código `err.*` estável e uma frase pt-BR (que é o msgid).
+// A tela imprimia o campo cru: a linha que diz o que falta para conectar o
+// GitHub aparecia como `err.git_remote_required`, e as frases nunca traduziam.
+test("C9 — toda dica dos checks de ambiente tem tradução nos dois idiomas", () => {
+  const rs = fs.readFileSync(path.join(__dirname, "..", "src-tauri", "src", "lib.rs"), "utf8");
+  const doctor = rs.match(/fn env_doctor_blocking\(\) -> EnvDoctor \{([\s\S]*?)\n\}/);
+  assert.ok(doctor, "lib.rs deve definir env_doctor_blocking()");
+  const dicas = [...doctor[1].matchAll(/hint: if[\s\S]*?\n\s*\},/g)]
+    .flatMap((b) => [...b[0].matchAll(/"([^"]+)"\.into\(\)/g)].map((m) => m[1]));
+  assert.ok(dicas.length >= 5, `esperava as dicas dos checks, achei ${dicas.length}`);
+  const semPar = dicas.filter((d) => (d.startsWith("err.")
+    ? !(d in ERR_PT) || !(d in EN)
+    : !EN[d] || EN[d] === d));
+  assert.deepStrictEqual(semPar, [],
+    "dica que chega crua (ou sem inglês) à tela:\n  " + semPar.join("\n  "));
+});
+
+test("C9 — a tela traduz a dica em vez de imprimir o campo cru", () => {
+  const app = fs.readFileSync(path.join(__dirname, "..", "src", "app.js"), "utf8");
+  const card = app.match(/function renderGhCard\(\)\s*\{([\s\S]*?)\n\}/);
+  assert.ok(card, "app.js deve definir renderGhCard()");
+  assert.ok(!/c\.detail \|\| c\.hint/.test(card[1]),
+    "o campo cru chegava à tela como `err.git_remote_required`");
+  // N4 · a decisão do que a linha DIZ virou uma função só (checkSay), que é
+  // quem chama o tradutor: a linha imprime valor E motivo, não um ou outro.
+  assert.match(card[1], /checkSay\(c\)/, "a linha passa por um único decisor");
+  const say = app.match(/function checkSay\(c\)\s*\{([\s\S]*?)\n\}/);
+  assert.ok(say, "app.js deve definir checkSay()");
+  assert.match(say[1], /checkHint\(/, "a dica passa por um tradutor único");
+  const fn = app.match(/function checkHint\(hint\)\s*\{([\s\S]*?)\n\}/);
+  assert.ok(fn, "app.js deve definir checkHint()");
+  assert.match(fn[1], /tErr\(/, "um código err.* é traduzido por tErr");
+  assert.match(fn[1], /\bt\(/, "uma frase pt-BR é um msgid: passa por t()");
+});
+
 // T-11 · AC-4 (ADR-0018) — o relatório de reunião não pode mais ser nomeado por
 // nenhuma string viva, e todo msgid novo tem par em inglês.
 test("nenhum msgid vivo nomeia um relatório de reunião", () => {
@@ -178,10 +216,19 @@ test("todo msgid do index.html tem par em inglês", () => {
     const txt = m[3].trim();
     if (txt && !(txt in EN)) faltando.add(txt);
   }
+  // N19 · aqui o varredor repetia a premissa do aplicador (separar só por
+  // vírgula) e, pior, PULAVA em silêncio o token que não casasse: com
+  // `data-i18n-attrs="aria-label title"` a busca virava /aria-label title="…"/,
+  // não casava nada, e um nome acessível sem par passava como traduzido — a
+  // mesma premissa que derrubava o boot (N1). Agora separa por vírgula OU
+  // espaço e RECLAMA do token que não nomeie um atributo do elemento: um
+  // pulo em silêncio é um falso "está tudo traduzido".
   for (const m of html.matchAll(/<[^>]*\bdata-i18n-attrs="([^"]+)"[^>]*>/g)) {
-    for (const attr of m[1].split(",").map((x) => x.trim())) {
-      const v = new RegExp(attr + '="([^"]+)"').exec(m[0]);
-      if (v && !(v[1] in EN)) faltando.add(`${attr}: ${v[1]}`);
+    for (const attr of m[1].split(/[,\s]+/).map((x) => x.trim())) {
+      if (!attr) continue;
+      const v = new RegExp("\\b" + attr + '="([^"]*)"').exec(m[0]);
+      if (!v) { faltando.add(`${attr}: atributo declarado e ausente do elemento`); continue; }
+      if (v[1] && !(v[1] in EN)) faltando.add(`${attr}: ${v[1]}`);
     }
   }
   assert.deepStrictEqual([...faltando].sort(), [],

@@ -26,8 +26,8 @@ const el = {
   dot: $("dot"), timer: $("timer"), cfgBtn: $("cfgBtn"), privacy: $("privacy"),
   surface: $("surface"), empty: $("empty"), doc: $("doc"),
   wave: $("wave"), toggle: $("toggleBtn"), savebar: $("savebar"),
-  saveBtn: $("saveBtn"), discardBtn: $("discardBtn"),
-  cfgPop: $("cfgPop"), toast: $("toast"),
+  saveBtn: $("saveBtn"), exportBtn: $("exportBtn"), discardBtn: $("discardBtn"),
+  cfgPop: $("cfgPop"), toast: $("toast"), srLive: $("srLive"),
   optScroll: $("optScroll"), optTop: $("optTop"), optOverlay: $("optOverlay"),
   optDiar: $("optDiar"), clearBtn: $("clearBtn"),
   model: $("model"), lang: $("lang"), translate: $("translate"),
@@ -41,18 +41,33 @@ const el = {
 // Static HTML is translated in place: [data-i18n] marks a text node and
 // [data-i18n-attrs="title,placeholder"] marks attributes; the original pt
 // value is captured on first pass so switching back is lossless.
+// `data-i18n-dyn` marks a node whose text is written at RUNTIME by a painter
+// (the privacy seal, the dependency banner, the gh badge, the modal title).
+// applyI18n freezes a node's msgid on the first pass and rewrites it on every
+// language switch, so it was overwriting live state with the boot label — the
+// privacy seal went back to "sem guardar áudio", red .warn still applied, while
+// audio was being written to disk (BR-8). Whoever owns the text at runtime also
+// owns it across a language switch, from rerenderForLang.
 const { t, tErr, setLang: setI18nLang } = window.LoroI18n;
 function applyI18n() {
   setI18nLang(settings.uiLang);
   document.documentElement.setAttribute("lang", settings.uiLang === "en" ? "en" : "pt-br");
   document.querySelectorAll("[data-i18n]").forEach((n) => {
+    if (n.dataset.i18nDyn !== undefined) return;
     if (!n.dataset.i18nSrc) n.dataset.i18nSrc = n.textContent.trim();
     n.textContent = t(n.dataset.i18nSrc);
   });
   document.querySelectorAll("[data-i18n-attrs]").forEach((n) => {
-    for (const attr of n.dataset.i18nAttrs.split(",")) {
+    // N1 · a lista se separava só por vírgula, e um espaço no lugar dela virava
+    // UM token com espaço dentro: a chave de dataset derivada pedia ao DOM o
+    // atributo `data-i18n-src-aria-label title`, que não é um nome válido —
+    // setAttribute lançava no init, applySettings() abortava e a janela nascia
+    // em branco. Uma convenção de separador nossa não pode derrubar o app: os
+    // dois separadores valem, e um token que não nomeie um atributo do elemento
+    // é ignorado (o teste tests/boot.test.js é que reclama dele).
+    for (const attr of n.dataset.i18nAttrs.split(/[,\s]+/)) {
       const a = attr.trim();
-      if (!a) continue;
+      if (!a || !/^[A-Za-z_:][A-Za-z0-9._:-]*$/.test(a)) continue;
       // dataset keys must be camelCase — "aria-label" → i18nSrcAriaLabel
       const src = `i18nSrc${a.replace(/(^|-)([a-z])/g, (_, __, c) => c.toUpperCase())}`;
       if (!n.dataset[src]) n.dataset[src] = n.getAttribute(a) || "";
@@ -67,9 +82,39 @@ const uiLocale = () => (settings.uiLang === "en" ? "en-US" : "pt-BR");
 function rerenderForLang() {
   try { render(); } catch (_) {}
   try { updateCfgLabel(); } catch (_) {}
+  // R11 · a lateral é desenhada por innerHTML atrás de DUAS assinaturas de cache
+  // (sideSig, pessoalSig) construídas a partir do estado do projeto — e o idioma
+  // não faz parte desse estado. Trocar de idioma deixava a árvore em inglês ao
+  // lado de cabeçalhos em português, até um poll qualquer mudar a assinatura por
+  // outro motivo. Zerar as duas AQUI é o que faz o repintar acontecer.
+  // (toolsSig é a mesma doença: os rótulos das habilidades também são traduzidos)
+  sideSig = ""; pessoalSig = ""; toolsSig = "";
   try { brainRefresh(); } catch (_) {}
+  try { paintSideToggle(); } catch (_) {}
+  try { paintTermSideBtn(); } catch (_) {}
+  try { paintPanelTermPlaceholder(); } catch (_) {}
   try { renderSelectionBar(); } catch (_) {}
   try { refreshTabFromDisk(MANUAL_REL); } catch (_) {} // manual follows uiLang
+  // O documento aberto e o painel direito ("COM ESTE DOCUMENTO", as habilidades,
+  // o selo versionado/rascunho) são desenhados em innerHTML por renderActive:
+  // sem esta linha, escolher inglês deixava metade da tela em português até o
+  // usuário clicar em outra aba. renderActive é serializado por geração, então
+  // a chamada re-entrante é segura.
+  try { renderActive(); } catch (_) {}
+  // os nós data-i18n-dyn: quem escreve em tempo de execução também traduz
+  try { updatePrivacy(); } catch (_) {}
+  try { paintRecControl(); } catch (_) {}
+  try { paintSetupBanner(); } catch (_) {}
+  try { renderGhCard(); } catch (_) {}
+  try { paintChatMode(); } catch (_) {}
+  try { paintAutoContextHint(); } catch (_) {}
+  // C4 · o painel do chat é pintado por innerHTML FORA de renderActive: depois
+  // de escolher inglês, o chip seguia dizendo "perguntar ao acervo" ao lado de um
+  // menu já em inglês — a mesma habilidade, duas vezes, em dois idiomas. As
+  // linhas de modelo em Configurações tinham a mesma doença.
+  try { renderChatChips(); } catch (_) {}
+  try { paintChatEmpty(); } catch (_) {}
+  try { refreshModelManager(); } catch (_) {}
 }
 
 // A gravação é uma VISTA do corpo (redesign 1f), irmã dos destinos e do
@@ -161,7 +206,7 @@ function applySettings() {
   el.optScroll.checked = settings.autoscroll;
   { const ec = $("optEchoCancel"); if (ec) ec.checked = !!settings.micEchoCancel; }
   el.autosave.checked = settings.autosave;
-  el.source.value = settings.source;
+  paintSourceSelectors();
   el.mode.value = settings.mode;
   state.autoscroll = settings.autoscroll;
   el.pickDir.textContent = settings.saveDir || "…";
@@ -170,6 +215,9 @@ function applySettings() {
   applySideWidth();
   applyChrome();
   applyI18n();
+  // o rótulo do ● é escrito em tempo de execução (R4): quem reaplica o cromo
+  // também o traduz — no boot em inglês ele ficaria com o msgid do HTML
+  paintRecControl();
 }
 
 // redesign: tema, barra lateral e painel direito são estado de interface
@@ -183,6 +231,9 @@ function applyChrome() {
   paintActionMode();
   S.setTheme(settings.theme);
   S.setSidebarCollapsed(settings.sidebarCollapsed);
+  // o nome do alternador acompanha o estado restaurado (uma lateral que abre
+  // recolhida não pode oferecer "recolher")
+  paintSideToggle();
   S.setPanelOpen(settings.aiPanelOpen);
   S.setPanelTab(settings.aiPanelTab);
   document.querySelectorAll("#modeSeg .segbtn").forEach((b) =>
@@ -193,7 +244,35 @@ function applyChrome() {
 // user-chosen (drag grip), clamped to [180, 45vw]. Wide sidebars reveal the
 // per-row metadata line (.bmeta).
 const SIDE_WIDE_AT = 300;
+// N26 · os dois tetos de arrasto somavam 105vw (45vw + 60vw) e NADA re-limitava
+// na aplicação nem no resize: uma largura guardada num monitor externo reabria
+// numa janela menor com a coluna de conteúdo em 0px, a lateral cortada e o painel
+// desenhado fora da janela — um estado quebrado que sobrevive ao restart
+// (DESIGN.md §2 regra 9 e §7). Decisão pura, em px da janela atual.
+const SIDE_MIN = 180, SIDE_DEFAULT = 250, PANEL_DEFAULT = 330, CONTENT_MIN = 400, TERM_MIN = 120;
+function clampPanes(winW, winH, s) {
+  const open = !!s.aiPanelOpen;
+  let sideW = s.sideW || 0, panelW = s.panelW || 0, termH = s.termH || 0;
+  // sempre para BAIXO: arredondar para cima devolvia meio pixel além do teto, e um
+  // teto que o valor aplicado ultrapassa não é um teto
+  if (panelW) {
+    const room = winW - CONTENT_MIN - (sideW || SIDE_DEFAULT);
+    panelW = Math.floor(Math.min(Math.max(panelW, PANEL_MIN), Math.max(PANEL_MIN, Math.min(winW * 0.6, room))));
+  }
+  if (sideW) {
+    const room = winW - CONTENT_MIN - (open ? (panelW || PANEL_DEFAULT) : 0);
+    sideW = Math.floor(Math.min(Math.max(sideW, SIDE_MIN), Math.max(SIDE_MIN, Math.min(winW * 0.45, room))));
+  }
+  if (termH) termH = Math.floor(Math.min(Math.max(termH, TERM_MIN), winH * 0.75));
+  return { sideW, panelW, termH };
+}
+function reclampPanes() {
+  const c = clampPanes(window.innerWidth, window.innerHeight, settings);
+  settings.sideW = c.sideW; settings.panelW = c.panelW; settings.termH = c.termH;
+  return c;
+}
 function applySideWidth() {
+  reclampPanes();
   const root = document.documentElement;
   if (settings.sideW) root.style.setProperty("--side-w", settings.sideW + "px");
   else root.style.removeProperty("--side-w");
@@ -257,18 +336,49 @@ function wireGrip(grip, opts) {
   });
 }
 
-// Painel direito: 0 = os 330px do design. O piso de 260px é o ponto em que a
-// linha das três abas (Documento·Chat·Terminal) ainda cabe sem quebrar.
-const PANEL_MIN = 260;
+// Painel direito: 0 = os 330px do design. O piso era 260px "onde as três abas
+// ainda cabem" — medido na janela real, não cabiam: a faixa pedia 308px, tinha
+// 259px e jogava a aba Terminal para fora da janela, fazendo o <body> rolar na
+// horizontal (proibido pelo DESIGN.md §7). O piso agora é a largura em que as
+// três abas cabem de fato; a própria faixa também rola por dentro, para que
+// nenhuma largura futura volte a empurrar a página.
+const PANEL_MIN = 300;
 function applyPanelWidth() {
   const root = document.documentElement;
+  // O piso E o teto valem na aplicação, não só no arrasto: uma largura guardada
+  // antes de o piso subir (ou numa janela maior) continuava em vigor.
+  reclampPanes();
   if (settings.panelW) root.style.setProperty("--panel-w", settings.panelW + "px");
   else root.style.removeProperty("--panel-w");
   const grip = $("aiGrip");
-  if (grip) grip.hidden = !settings.aiPanelOpen;
+  // a alça só existe onde o painel existe: abaixo do ponto de quebra ela ficava
+  // pintada em cima da coluna de conteúdo, arrastando um painel invisível (N24)
+  if (grip) grip.hidden = !settings.aiPanelOpen || !panelRendered();
+}
+// N24 · o painel direito pode não ser DESENHADO (a folha de estilo o retira em
+// janelas estreitas). Quem pergunta é a geometria real, não um ponto de quebra
+// copiado no JS: se amanhã o CSS voltar a desenhá-lo, nada aqui precisa mudar.
+function panelRendered() {
+  const p = $("aiPanel");
+  if (!p || p.hidden) return false;
+  if (!p.getBoundingClientRect) return true;
+  return p.getBoundingClientRect().width > 0;
+}
+// aberto e ainda assim sem caixa = a folha de estilo o retirou nesta largura
+function panelDropped() {
+  const p = $("aiPanel");
+  return !!p && !p.hidden && !panelRendered();
+}
+// e, quando não é desenhado, a interface diz — em vez de deixar o botão "aberto"
+// e o clique sem resposta
+function panelUnavailable() {
+  toast(t("o painel ✦ IA não cabe nesta largura — alargue a janela"), 5000);
+  const btn = $("aiPanelBtn");
+  if (btn) { btn.classList.remove("on"); btn.setAttribute("aria-expanded", "false"); }
 }
 // Doca do terminal: só existe quando o terminal está embaixo (⇆).
 function applyTermHeight() {
+  reclampPanes();
   const root = document.documentElement;
   if (settings.termH) root.style.setProperty("--term-h", settings.termH + "px");
   else root.style.removeProperty("--term-h");
@@ -313,11 +423,67 @@ function render() {
 }
 function appendLine(text) { state.lines.push(text); render(); }
 
+// F6 · WCAG 4.1.3 — o app tem UMA região viva (#srLive) e um único ponto que
+// fala nela. Ela é lida e não vista: o que aparece na tela continua sendo o
+// toast, o indicador do chat e o relógio, então dar voz ao app não acrescenta
+// cromo nenhum (a anatomia da DESIGN.md §2 é inviolável).
+// O que NÃO passa por aqui: o relógio da gravação (falaria uma vez por segundo)
+// e os deltas do chat (falariam a resposta letra por letra). Transições, sim.
+function announce(msg) {
+  const r = el.srLive;
+  if (!r || !msg) return;
+  r.textContent = String(msg);
+}
+
+// N8/N10 · um nó que ganhou role="button" tem de responder como botão: Enter e
+// Espaço. Sem isto a linha é anunciada como controle e não se ativa pelo teclado
+// (WCAG 2.1.1) — foi o caso do seletor de rascunho e das marcas de anotação.
+function wireActivateKeys(node) {
+  if (!node) return node;
+  node.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " " && e.key !== "Spacebar") return;
+    e.preventDefault();
+    if (typeof node.onclick === "function") node.onclick(e);
+  });
+  return node;
+}
+
+// Um toast é o único canal de sucesso/erro do app (DESIGN.md §5): sem região
+// viva, uma recusa é indistinguível da ação não ter feito nada.
+// A ORDEM importa: uma região viva só é lida quando o texto muda com ela na
+// árvore — escrever e só então revelar não anuncia nada.
 function toast(msg, ms = 2600) {
-  el.toast.textContent = msg;
   el.toast.hidden = false;
+  el.toast.textContent = msg;
+  announce(msg);
   clearTimeout(toast._t);
   if (ms) toast._t = setTimeout(() => (el.toast.hidden = true), ms);
+  else addToastDismiss();
+}
+// R15/R23 · Um toast SEM prazo (uma recusa que o usuário precisa ler inteira, um
+// trabalho longo em curso) não tinha como sair da tela: sem ×, sem Escape e sem
+// clique, a recusa da Gravação de Tela ficou minutos por cima do card do
+// documento, em todos os destinos, dizendo "tente de novo" muito depois da
+// tentativa. DESIGN.md §5: nenhum cromo permanente entra no layout — quem não tem
+// prazo tem porta de saída. O Escape mora no ouvinte da pilha de camadas: uma
+// folha aberta é a camada do topo e responde primeiro.
+function addToastDismiss() {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "toastbtn toastclose";
+  b.textContent = "×";
+  b.title = t("fechar aviso");
+  b.setAttribute("aria-label", t("fechar aviso"));
+  b.onclick = clearToast;
+  el.toast.appendChild(b);
+}
+// Retira um toast ainda no ar. Serve a um caso só: o pedido SAIU (o agente subiu)
+// e o turno morreu logo depois — a autenticação, que só se revela no chat-done.
+// O "enviada" continua sendo verdade no instante em que foi dito, mas não pode
+// ficar na tela ao lado de "nada foi enviado" (DESIGN.md §1).
+function clearToast() {
+  clearTimeout(toast._t);
+  el.toast.hidden = true;
 }
 
 // ADR-0018 · AC-5 — um toast que carrega ações. É o empurrãozinho: some sozinho
@@ -325,7 +491,9 @@ function toast(msg, ms = 2600) {
 // ação a executa e fecha. Dispensar é não clicar em nada.
 function toastAction(msg, actions, ms = 12000) {
   clearTimeout(toast._t);
+  el.toast.hidden = false;   // a região viva precisa existir antes do texto
   el.toast.textContent = "";
+  announce(msg);
   const span = document.createElement("span");
   span.textContent = msg;
   el.toast.appendChild(span);
@@ -336,7 +504,6 @@ function toastAction(msg, actions, ms = 12000) {
     b.onclick = () => { el.toast.hidden = true; clearTimeout(toast._t); a.run(); };
     el.toast.appendChild(b);
   }
-  el.toast.hidden = false;
   if (ms) toast._t = setTimeout(() => (el.toast.hidden = true), ms);
 }
 
@@ -354,10 +521,18 @@ function elapsedActiveMs() {
 function startTimer() {
   state.startTime = Date.now();
   state.paused = false; state.pausedMs = 0; state.pauseStart = 0;
-  el.timer.textContent = "00:00";
-  state.timerId = setInterval(() => {
-    el.timer.textContent = fmt(Math.floor(elapsedActiveMs() / 1000));
-  }, 1000);
+  paintElapsed("00:00");
+  state.timerId = setInterval(() => paintElapsed(), 1000);
+}
+// C1 · o tempo decorrido aparece em DOIS lugares — o rodapé e a aba da reunião.
+// renderTabs escrevia o relógio da aba UMA vez (no valor que ele tinha quando a
+// aba nasceu), então a aba ficava em 00:00 pela reunião inteira enquanto o rodapé
+// contava. Um pintor só escreve os dois: o mesmo relógio não pode ter duas
+// leituras (DESIGN.md §1).
+function paintElapsed(text) {
+  const now = typeof text === "string" ? text : fmt(Math.floor(elapsedActiveMs() / 1000));
+  el.timer.textContent = now;
+  B.wsTabs.querySelectorAll(".wstime").forEach((n) => { n.textContent = now; });
 }
 function stopTimer() { clearInterval(state.timerId); state.timerId = null; }
 
@@ -451,7 +626,7 @@ async function startAudio(deviceLabel) {
     } catch (e) { clog("enumerateDevices error: " + e); setMeter("off"); return; }
   }
   audio.stream = await navigator.mediaDevices.getUserMedia(constraints);
-  setMeter(settings.source === "meeting" ? "meeting" : (deviceLabel ? "system" : "mic"));
+  setMeter(meterKind({ source: settings.source, deviceLabel, paused: state.paused }));
   audio.ctx = new (window.AudioContext || window.webkitAudioContext)();
   audio.analyser = audio.ctx.createAnalyser();
   audio.analyser.fftSize = 1024;
@@ -472,13 +647,17 @@ async function startAudio(deviceLabel) {
   drawLoop();
   clog("audio meter active");
 }
-// indicador funcional da captura: mic / sistema / sem sinal / desligado
+// indicador funcional da captura: mic / sistema / pausado / sem sinal / desligado
 function setMeter(kind) {
   if (!el.privacy) return;
   const map = {
     mic: ["● mic", t("captando microfone")],
     system: [`● ${t("sistema")}`, t("captando áudio do computador")],
     meeting: [`● ${t("reunião")}`, t("captando sua voz + áudio do computador (Loro Reunião)")],
+    // ADR-0022 §19 · pausar para a captura DE VERDADE. O selo continuava em
+    // "● mic / captando microfone" ao lado de "nada está sendo gravado": este é o
+    // indicador de privacidade (BR-8), a única afirmação que tem de ser exata.
+    paused: [`⏸ ${t("pausada")}`, t("reunião pausada — nada está sendo gravado")],
     // o tooltip não cita comando: o caminho de configuração muda por SO (ADR-0012)
     nosignal: [t("sem sinal"), t("não achei o dispositivo de captura — configure o áudio do sistema")],
     off: [t("gravando"), t("gravando")],
@@ -487,6 +666,21 @@ function setMeter(kind) {
   el.privacy.textContent = txt;
   el.privacy.title = title;
   el.privacy.dataset.meter = kind;
+}
+// O que o selo está descrevendo. Pura, e o único lugar que decide: a captura
+// (startAudio) e a pausa/retomada liam a mesma regra de dois jeitos, e a pausa
+// simplesmente não repintava.
+function meterKind({ source, deviceLabel, paused }) {
+  if (paused) return "paused";
+  if (source === "meeting") return "meeting";
+  return deviceLabel ? "system" : "mic";
+}
+// Repinta o selo a partir do estado atual — texto, tooltip E o vermelho que diz
+// "o áudio está indo para o disco", que também mente enquanto nada é gravado.
+function paintCaptureMeter() {
+  const kind = meterKind({ source: settings.source, deviceLabel: meterLabelFor(settings.source), paused: state.paused });
+  setMeter(kind);
+  if (el.privacy) el.privacy.classList.toggle("warn", kind !== "paused" && audioGoesToDisk());
 }
 function stopAudio() {
   if (audio.raf) cancelAnimationFrame(audio.raf);
@@ -583,9 +777,14 @@ async function startSession() {
   }
   clog("start: " + JSON.stringify(cfg));
   // 1) inicia a transcrição PRIMEIRO — não depende do microfone do webview
+  // R16 · o pendente nasce AQUI, junto do processo: até esta linha o app só
+  // perguntou coisas. Quem o desfaz é o rec-state (onStarted) — ou a falha logo
+  // abaixo, que é o mesmo tipo de verdade.
+  setRecPending("starting");
   try {
     await invoke("start", { cfg });
   } catch (e) {
+    setRecPending(null);
     toast(t("não iniciou") + ": " + tErr(String(e)));
     clog("invoke start error: " + e);
     // model missing on first run, or left incomplete by an interrupted
@@ -598,8 +797,12 @@ async function startSession() {
   startAudio(meterLabel).catch((e) => clog("startAudio failed (continuing without wave): " + e));
 }
 async function stopSession() {
-  if (!state.running) return;
+  // meeting.active PRIMEIRO: uma reunião grava o áudio do sistema pelo sidecar do
+  // backend, então ela pode estar ativa com state.running falso (o microfone
+  // nunca subiu). Na outra ordem "Encerrar reunião" caía no early-return e não
+  // fazia nada — o cromo ficava em "encerrando…" com o ● desabilitado.
   if (meeting.active) return stopMeeting();
+  if (!state.running) return;
   if (settings.mode === "file") { clog("stop (file mode)"); onStopped(); return; }
   clog("stop requested");
   try { await invoke("stop"); } catch (e) { clog("invoke stop error: " + e); }
@@ -612,8 +815,13 @@ async function stopSession() {
 // itself). The mic keeps recording via the existing MediaRecorder (the onda +
 // audio/mic.webm). The reuniao.md tab is opened as THE live surface (the footer
 // live panel is retired for meetings), and the transcript only shows after stop.
+// Uma reunião nasce em DOIS tempos (o backend sobe o sidecar de sistema, o
+// microfone depende de uma permissão do sistema): entre eles ela não está ativa
+// mas também não pode ser iniciada de novo. Esta trava cobre essa janela.
+let meetingStarting = false;
+const meetingBusy = () => state.running || meeting.active || meetingStarting;
 async function startMeetingSession(presetTema) {
-  if (state.running || meeting.active) { toast(t("já há uma gravação em andamento")); return; }
+  if (meetingBusy()) { toast(t("já há uma gravação em andamento")); return; }
   // Choke point for every entrance: the source selector, the palette's "nova
   // reunião" and the brainstorming sidebar row. The palette path ignores the
   // source selector by design, so hiding the option there is not enough. Fail
@@ -625,20 +833,58 @@ async function startMeetingSession(presetTema) {
   if (!choice || !choice.tema) return;
   return startMeetingWith(choice);
 }
+// Espera `p` por no máximo `ms`; devolve `fallback` quando o prazo vence. A
+// promessa continua viva — quem chama decide o que fazer se ela chegar depois.
+// Uma promessa PENDENTE não é uma promessa rejeitada: try/catch não a alcança, e
+// era isso que travava o início de uma reunião (o diálogo de permissão do
+// microfone só resolve quando o usuário responde).
+function settleWithin(p, ms, fallback) {
+  return new Promise((resolve) => {
+    const id = setTimeout(() => resolve(fallback), ms);
+    Promise.resolve(p).then(
+      (v) => { clearTimeout(id); resolve(v); },
+      () => { clearTimeout(id); resolve(fallback); }
+    );
+  });
+}
+// Prazo do microfone. Acima disso há um diálogo do sistema na frente do usuário:
+// a reunião não pode ficar presa esperando nem se pintar como GRAVANDO — segue
+// com o áudio do sistema (já em captura) e diz em que estado está.
+const MIC_GRANT_MS = 6000;
 async function startMeetingWith(choice) {
-  if (state.running || meeting.active) { toast(t("já há uma gravação em andamento")); return; }
+  if (meetingBusy()) { toast(t("já há uma gravação em andamento")); return; }
   const cfg = currentCfg();
   clog("start (meeting ADR-0010): tema=" + choice.tema);
+  meetingStarting = true;
+  setRecPending("starting"); // nada foi estabelecido ainda: o cromo diz "iniciando…"
   let res;
   try {
     res = await invoke("brain_meeting_start", { input: { tema: choice.tema, titulo: choice.titulo, cfg } });
   } catch (e) {
     const msg = String(e);
-    if (/permiss|tcc|grava|screen/i.test(msg)) toast(t("permita a Gravação de Tela nas Configurações e tente de novo"), 0);
+      // R15/R24 · a recusa apontava para "as Configurações", que no vocabulário do
+    // Loro é a PRÓPRIA página do app (e lá não existe nada sobre isso). O caminho
+    // certo é o do sistema, e o app já tem essa frase: err.screen_recording_denied.
+    if (/permiss|tcc|grava|screen/i.test(msg)) toast(tErr("err.screen_recording_denied"), 0);
     else toast(t("não iniciei a reunião") + ": " + tErr(msg));
     clog("brain_meeting_start error: " + e);
+    meetingStarting = false; setRecPending(null);
     return;
   }
+  // O MICROFONE ANTES DO CROMO. Antes a aba reuniao.md era aberta com o selo
+  // GRAVANDO e o rodapé de gravação subia, e só então o startAudio era esperado:
+  // na primeira reunião depois da instalação essa promessa fica pendente no
+  // diálogo de permissão do macOS, o onStarted nunca rodava, o relógio ficava em
+  // 00:00 e nenhum preview ao vivo começava. A interface afirmava um estado que
+  // não havia alcançado (DESIGN.md §1).
+  const micReady = startAudio(undefined).then(
+    () => true,
+    (e) => { clog("startAudio (meeting) error — continuing with system audio only: " + e); return false; }
+  );
+  const mic = await settleWithin(micReady, MIC_GRANT_MS, "asking");
+  if (mic === "asking") toast(t("o sistema está pedindo permissão para o microfone — a reunião já grava o áudio do sistema"), 8000);
+  else if (mic === false) toast(t("sem microfone — a reunião está gravando só o áudio do sistema"), 8000);
+
   meeting.active = true; meeting.id = res.id; meeting.dir = res.dir;
   meeting.livingRel = res.livingRel; meeting.tema = choice.tema;
   meeting.phase = "recording"; meeting.pendingLines = [];
@@ -647,15 +893,21 @@ async function startMeetingWith(choice) {
                            // relógio ler exatamente 0 — um tique de 1ms vazava a
                            // reunião anterior para dentro da nova)
   state.meetingMode = true;
+  meetingStarting = false;
   await openDoc(res.livingRel, { preview: false }); // a aba é a superfície ao vivo
-  // microfone via MediaRecorder (onda + audio/mic.webm); degrada p/ só-sistema se falhar
-  try { await startAudio(undefined); }
-  catch (e) { clog("startAudio (meeting) error — continuing with system audio only: " + e); }
   onStarted();
   startMeetingTail(); // ADR-0012: sistema (outros participantes) ao vivo
-  startMeetingPreview(); // ADR-0012 modelo A: microfone (operador) ao vivo
+  if (mic === true) startMeetingPreview(); // ADR-0012 modelo A: microfone (operador) ao vivo
+  // permissão concedida DEPOIS do prazo: o microfone entra na reunião em curso
+  // em vez de ficar de fora dela até o fim — e se a reunião já acabou, a captura
+  // é fechada na hora (BR-1: nada fica com o microfone aberto sem gravação).
+  else micReady.then((ok) => {
+    if (!ok) return;
+    if (meeting.active && meeting.phase === "recording") startMeetingPreview();
+    else stopAudio();
+  });
   pessoalSig = ""; refreshPessoal();
-  toast(t("reunião iniciada — a transcrição aparece durante a reunião"));
+  if (mic === true) toast(t("reunião iniciada — a transcrição aparece durante a reunião"));
 }
 
 // ADR-0012 pseudo-stream: while recording, poll the system-audio tail every ~18s
@@ -732,11 +984,35 @@ function stopMeetingPreview() {
   const rec = meeting.previewRec; meeting.previewRec = null;
   if (rec && rec.state !== "inactive") { try { rec.stop(); } catch (_) {} } // flush the last segment
 }
+// O filtro de eco da ADR-0022 §22 só compara trechos com 8+ palavras de
+// substância — o piso existe para não apagar fala curta legítima ("tá bom", "sim,
+// claro") que duas pessoas repetem naturalmente. Mas uma linha IDÊNTICA, no MESMO
+// ponto da linha do tempo, nas DUAS trilhas, não é conversa: é uma fala ouvida
+// duas vezes. Saída real de uma reunião: "[00:00 · sistema] A CIDADE NO BRASIL"
+// seguido de "[00:00 · você] A CIDADE NO BRASIL" — quatro palavras, abaixo do
+// piso, duplicada. Aqui a identidade exata substitui o piso de tamanho, e a
+// janela é apertada (o eco chega junto; uma conversa tem turnos).
+const DUP_WINDOW_MS = 3000;
+function crossTrackDuplicate(chunk, recent) {
+  const c = chunk || {};
+  const mine = (c.tokens || []).join(" ");
+  if (!mine) return null;
+  const list = Array.isArray(recent) ? recent : [];
+  for (let i = list.length - 1; i >= 0; i--) {
+    const prev = list[i];
+    if (!prev || prev === chunk || prev.source === c.source) continue;
+    if (Math.abs((prev.tMs || 0) - (c.tMs || 0)) > DUP_WINDOW_MS) continue;
+    if ((prev.tokens || []).join(" ") === mine) return prev;
+  }
+  return null;
+}
+
 // Ponto ÚNICO de anexação da transcrição ao vivo: as duas trilhas passam por
 // aqui, e é aqui que o eco de uma na outra é barrado. Devolve true se appendou.
 async function appendMeetingChunk(id, text, tMs, source) {
   const chunk = { tMs: tMs || 0, source: source, tokens: LM.speechTokens(text) };
-  const eco = LM.echoOfOtherSource({ text: text, tMs: chunk.tMs, source: source }, meeting.appended);
+  const eco = LM.echoOfOtherSource({ text: text, tMs: chunk.tMs, source: source }, meeting.appended)
+    || crossTrackDuplicate(chunk, meeting.appended);
   if (eco) {
     // BR-8: o log conta O QUE aconteceu, nunca o que foi dito.
     clog("meeting append: dropped cross-source echo (source=" + source + " prev=" + eco.source + ")");
@@ -878,6 +1154,8 @@ async function pauseMeeting() {
     await invoke("brain_meeting_pause", { input: { id: meeting.id } });
     state.paused = true; state.pauseStart = Date.now();
     if (audio.ctx) { try { audio.ctx.suspend(); } catch (_) {} } // congela a onda
+    paintCaptureMeter();   // o selo de privacidade não pode seguir dizendo "● mic"
+    renderTabs();          // e o ponto vermelho da aba também afirma gravação
     setTailStatus(meeting.id, t("reunião pausada — nada está sendo gravado"));
     toast(t("reunião pausada — nada está sendo gravado"));
   } catch (e) {
@@ -902,9 +1180,12 @@ async function resumeMeeting() {
     state.pausedMs += Date.now() - state.pauseStart;
     state.paused = false; state.pauseStart = 0;
     if (audio.ctx) { try { audio.ctx.resume(); } catch (_) {} }
+    paintCaptureMeter();   // volta a dizer o que está sendo captado
+    renderTabs();
     startMeetingTail();    // rebase: tailFrom=0, tailBase=tempo já gravado
     startMeetingPreview();
     setTailStatus(meeting.id, t("preview ao vivo ativo"));
+    announce(t("gravando"));   // pausar avisa por toast; retomar não avisava nada
   } catch (e) {
     clog("brain_meeting_resume error: " + e);
     toast(t("não consegui retomar") + ": " + tErr(String(e)));
@@ -941,7 +1222,7 @@ async function finalizeMeeting() {
   const id = meeting.id;
   if (!id) return;
   meeting.phase = "transcribing";
-  el.toggle.disabled = true;
+  setRecPending("stopping"); // desabilita o ● E diz por quê ("encerrando…")
   renderIfLiving(id);
   // encerra o sidecar de áudio do sistema (o mix é ignorado — áudio é transiente)
   try { await invoke("brain_meeting_stop", { input: { id } }); }
@@ -978,7 +1259,9 @@ async function finishMeetingAfterTranscription() {
   const id = meeting.id;
   if (meeting.flushTimer) { clearTimeout(meeting.flushTimer); meeting.flushTimer = null; }
   await flushMeetingLines();
-  el.toggle.disabled = false;
+  // único ponto que sabe que a reunião REALMENTE acabou: é aqui que o cromo sai
+  // de "encerrando…" para o estado real
+  setRecPending(null);
   el.privacy.classList.remove("warn");
   updatePrivacy();
   let rel = null;
@@ -1020,7 +1303,7 @@ async function markMeeting() {
 // paleta: "nova reunião" (independe do seletor de fonte).
 // presetTema pins the brainstorming when the flow starts from its sidebar row.
 function startMeetingFlow(presetTema) {
-  if (state.running || meeting.active) { toast(t("já há uma gravação em andamento")); return; }
+  if (meetingBusy()) { toast(t("já há uma gravação em andamento")); return; }
   startMeetingSession(presetTema);
 }
 // ADR-0013: general Q&A over the acervo. Any question is answered from the
@@ -1029,10 +1312,10 @@ function startMeetingFlow(presetTema) {
 // skills — the answer appears in the terminal. Not meeting-scoped.
 function askAcervo(ctx) {
   const scope = ctx
-    ? `<p class="pmnote mono">${t("a pergunta fica ancorada neste contexto")}: <b>${esc(ctx)}</b></p>`
+    ? `<p class="pmnote mono">${t("a pergunta fica ancorada neste tema")}: <b>${esc(ctx)}</b></p>`
     : "";
   openModal(
-    ctx ? t("Perguntar ao contexto") : t("Perguntar ao acervo"),
+    ctx ? t("Perguntar a um tema") : t("Perguntar ao projeto"),
     scope +
       `<p class="pmnote mono">${t("A resposta vem primeiro do conhecimento do projeto e, se preciso, de fontes externas configuradas nas habilidades.")} ${esc(aiTargetHint())}</p>` +
       `<label class="wfield"><span class="mono">${t("pergunta")}</span>` +
@@ -1042,8 +1325,7 @@ function askAcervo(ctx) {
       const q = (($("askInput") && $("askInput").value) || "").trim();
       const cmd = LoroBrainstorm.brainAskCmd(q, ctx);
       if (!cmd) { toast(t("digite uma pergunta")); return; }
-      runAiCommand(cmd);
-      toast(aiTargetHint(), 4000);
+      return dispatchAiFromSheet(cmd);
     }
   );
   const inp = $("askInput"); if (inp) inp.focus();
@@ -1057,7 +1339,9 @@ function offerAnalyse(dir) {
   toastAction(t("reunião encerrada — quer analisar agora?"), [
     { label: t("analisar"), run: () => {
         const cmd = LM.analyseOffer("analisar", dir);
-        if (cmd) runAiCommand(cmd);
+        // o mesmo par despachar → relatar do resto do app: o toast que sobra
+        // dizendo onde a resposta aparece só sai se o pedido saiu
+        if (cmd) dispatchAi(cmd, `${t("análise enviada")} — ${aiTargetHint()}`);
       } },
     { label: t("agora não"), run: () => {} },
   ]);
@@ -1091,6 +1375,9 @@ function onStarted() {
   if (!meeting.active) setLivePanel(true);
   el.savebar.hidden = true;
   startTimer();
+  // F6 · o estado da gravação é um STATUS (não um alerta): a transição é dita
+  // uma vez. O relógio fica de fora — ele mudaria de segundo em segundo.
+  announce(t("gravando"));
 }
 function onStopped() {
   setRecPending(null);
@@ -1102,9 +1389,10 @@ function onStopped() {
   // ADR-0013: clear the elapsed clock so a NEW recording never looks like it
   // resumes from the last session's time.
   state.startTime = 0;
-  el.timer.textContent = "00:00";
+  paintElapsed("00:00");
   stopAudio();
   updatePrivacy();
+  announce(t("gravação encerrada"));
   endLooseBuffer();
 }
 
@@ -1149,26 +1437,43 @@ function toggle() {
   if (now - lastToggle < 500) return;
   lastToggle = now;
   const stopping = state.running;
-  setRecPending(stopping ? "stopping" : "starting");
+  // R16 · o clique em ● não começa nada: ele PERGUNTA onde a gravação vai morar.
+  // Pintar "iniciando…" aqui afirmava um começo que ninguém tentou — e desabilitava
+  // o único controle capaz de desistir enquanto a folha estava na tela. Parar, sim,
+  // é imediato. Quem realmente sobe um processo (startSession / startMeetingWith)
+  // pinta o seu próprio pendente, e quem o desfaz é o evento do backend.
+  if (stopping) setRecPending("stopping");
   Promise.resolve(stopping ? stopSession() : startRecordFlow())
-    // um fluxo que só ABRE um diálogo (escolher a ideia) volta sem gravar:
-    // o pendente sai assim que a promessa resolve e o estado real manda
-    .finally(() => { if (!state.running || stopping) setRecPending(null); });
+    // uma falha no caminho aparece (e não deixa o cromo pendente para trás)
+    .catch((e) => { setRecPending(null); toast(tErr(String(e))); clog("toggle error: " + e); })
+    .finally(() => { if (stopping && !meeting.active) setRecPending(null); });
 }
 
 // `null` | "starting" | "stopping". Só toca no cromo — quem decide se está
 // gravando continua sendo o backend (rec-state).
 let recPending = null;
+// R4 · o ● trazia aria-label="Gravar / Parar" fixo no HTML — um nome que anuncia
+// as duas ações opostas ao mesmo tempo e nunca muda. Como o aria-label vence o
+// conteúdo, a tecnologia assistiva ouvia isso nos quatro estados e não tinha como
+// saber se apertar ia começar ou parar. O rótulo visível já era verdade: esta é a
+// decisão única de que estado o controle está, e o nome acessível sai dela.
+function recControlLabel(kind, on) {
+  return kind === "starting" ? t("iniciando…")
+    : kind === "stopping" ? t("encerrando…")
+    : on ? t("Parar") : t("Gravar");
+}
+function paintRecControl() {
+  const text = recControlLabel(recPending, state.running || meeting.active);
+  const label = $("recLabel");
+  if (label) label.textContent = text;
+  el.toggle.title = text;
+  el.toggle.setAttribute("aria-label", text);
+}
 function setRecPending(kind) {
   recPending = kind;
-  const label = $("recLabel");
   el.toggle.classList.toggle("pending", !!kind);
   el.toggle.disabled = !!kind;
-  if (label) {
-    label.textContent = kind === "starting" ? t("iniciando…")
-      : kind === "stopping" ? t("encerrando…")
-      : (state.running || meeting.active) ? t("Parar") : t("Gravar");
-  }
+  paintRecControl();
   document.querySelectorAll("[data-mtgfinish]").forEach((b) => {
     b.disabled = kind === "stopping";
     b.classList.toggle("pending", kind === "stopping");
@@ -1179,7 +1484,7 @@ function setRecPending(kind) {
 // other flow, it first asks WHERE the result will live — a brainstorming
 // (meeting) or an explicit one-off transcription (the old savebar flow).
 async function startRecordFlow() {
-  if (state.running || meeting.active) return;
+  if (meetingBusy()) return;
   if (settings.source === "meeting") return startMeetingSession(); // already asks
   let temas = [];
   try { temas = (await invoke("brain_list_brainstorms")) || []; } catch (_) {}
@@ -1190,25 +1495,208 @@ async function startRecordFlow() {
 }
 
 // ---- salvar / descartar / limpar ----
+// "Salvar em ideias" abria o painel Salvar do sistema e escrevia
+// onde o usuário navegasse: a transcrição avulsa nunca chegava ao projeto, e o
+// único outro caminho ("Descartar") a destruía. Uma transcrição é material
+// CAPTADO, então ela pousa onde material captado mora — as notas de uma ideia, no
+// mundo não versionado. Conhecimento (versionado) está fora de questão: uma
+// transcrição crua não entra no que vai para o git (BR-8/ADR-0009).
+function looseNoteTitle(d) {
+  const p = (n) => String(n).padStart(2, "0");
+  // sem acento: o backend transforma o título em nome de arquivo ASCII
+  return `${t("conversa")} ${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}h${p(d.getMinutes())}`;
+}
+// Cria a nota e escreve `body` DEPOIS do esqueleto do backend (front-matter +
+// título) em vez de substituí-lo: é o front-matter que faz da nota uma referência
+// citável (ADR-0009).
+async function newNoteInIdea(tema, titulo, body) {
+  const rel = await invoke("brain_new_notebook", { tema: tema || null, titulo });
+  if (!rel) throw "err.note_not_created";
+  let head = "";
+  try { head = await invoke("brain_read", { rel }); } catch (_) {}
+  if (head && !head.endsWith("\n")) head += "\n";
+  await invoke("brain_write", { rel, content: `${head}\n${body}` });
+  return rel;
+}
 async function save() {
   const content = state.lines.join("\n\n") + "\n";
+  if (!content.trim()) { toast(t("não há transcrição para salvar")); return; }
+  let temas = [];
+  try { temas = (await invoke("brain_list_brainstorms")) || []; } catch (_) {}
+  // "soltas" é a pasta que o backend já usa quando nenhuma ideia é escolhida
+  // (brainstorming/avulso): a transcrição sempre tem casa, mesmo num projeto novo.
+  const opts = temas.map((b) => `<option value="${esc(b.slug)}">${esc(b.nome)}</option>`).join("") +
+    `<option value="">${t("soltas (sem ideia)")}</option>`;
+  openModal(
+    t("Salvar em ideias"),
+    `<p class="pmnote mono">${t("vira uma nota da ideia escolhida — o áudio é apagado depois de transcrito")}</p>` +
+      `<label class="wfield"><span class="mono">${t("título")}</span>` +
+      `<input id="looseTitle" type="text" value="${esc(looseNoteTitle(new Date()))}" spellcheck="false"></label>` +
+      `<label class="wfield"><span class="mono">${t("onde guardar")}</span>` +
+      `<select id="looseDest">${opts}</select></label>`,
+    t("salvar"),
+    async () => {
+      const titulo = (($("looseTitle") && $("looseTitle").value) || "").trim();
+      const tema = ($("looseDest") && $("looseDest").value) || "";
+      if (!titulo) { toast(t("informe um título")); return; }
+      try {
+        const rel = await newNoteInIdea(tema, titulo, content);
+        el.savebar.hidden = true;
+        clearDoc();
+        pessoalSig = ""; refreshPessoal();
+        openDoc(rel, { preview: false });
+        toast(`${t("salvo em")} ${rel}`, 5000);
+      } catch (e) { toast(tErr(String(e))); clog("save loose transcript error: " + e); }
+    }
+  );
+  const inp = $("looseTitle"); if (inp) { inp.focus(); inp.select(); }
+}
+// Exportar continua possível — com o nome do que faz. O diálogo do sistema
+// pertence a ESTA ação, não à que promete guardar no projeto.
+async function exportTranscript() {
+  const content = state.lines.join("\n\n") + "\n";
+  if (!content.trim()) { toast(t("não há transcrição para salvar")); return; }
   try {
     const path = await invoke("save_transcript", { content });
-    if (path) { toast(t("salvo")); el.savebar.hidden = true; clearDoc(); }
-  } catch (e) { toast(t("falha ao salvar")); clog("save error: " + e); }
+    if (path) toast(`${t("salvo em")} ${path}`, 5000);
+  } catch (e) { toast(t("falha ao salvar")); clog("export error: " + e); }
 }
 // Descartar joga fora de verdade. Antes só escondia a barra: as linhas ficavam
 // no buffer, a gravação seguinte era APENDADA ao texto descartado, e qualquer
 // sessão posterior — inclusive uma reunião — reabria o rodapé avulso com aquela
 // sobra, para sempre (o buffer só era limpo ao salvar).
-function discard() { clearDoc(); }
+//
+// F22 · e destruía a ÚNICA cópia da transcrição num clique, sem confirmação e
+// sem desfecho — enquanto o mesmo ato, pedido em Configurações ("limpar
+// transcrição"), pergunta antes e responde depois. Desde que a transcrição avulsa passou a virar nota de uma ideia, a
+// transcrição TEM destino no projeto (uma nota de ideia), então descartar deixou
+// de ser "a outra saída" e passou a ser uma perda de verdade: a folha diz o
+// preço e o que existe em vez dela (DESIGN.md §1).
+function discard() {
+  if (!state.lines.length) { clearDoc(); return; }
+  openModal(
+    t("Descartar a transcrição?"),
+    `<p class="pmnote">${t("apaga a única cópia do que foi transcrito nesta sessão — não pode ser desfeito.")}</p>` +
+      `<p class="pmnote">${t("para guardar, feche esta folha e use “Salvar em ideias”.")}</p>`,
+    t("descartar"),
+    () => { clearDoc(); toast(t("transcrição descartada")); }
+  );
+}
 // limpa buffer de transcrição E o timer (sessão salva começa do zero)
-function clearDoc() { state.lines = []; render(); el.savebar.hidden = true; el.timer.textContent = "00:00"; }
+function clearDoc() { state.lines = []; render(); el.savebar.hidden = true; paintElapsed("00:00"); }
+// "limpar transcrição" mora DENTRO de Configurações, que é uma página opaca em
+// cima de tudo: clearDoc repinta a superfície de gravação atrás dela, então o
+// clique não produzia nenhuma mudança visível — um botão aparentemente inerte que
+// apagava a única cópia da transcrição. Agora diz o preço antes e o desfecho
+// depois (DESIGN.md §1).
+// N23 · o MESMO ato tinha duas aparências: o botão do rodapé confirmava na folha
+// do app e este, em Configurações, num diálogo do sistema — fora do sistema de
+// design e sem o caminho do que vai sumir (DESIGN.md §5).
+function clearTranscript() {
+  if (!state.lines.length) { toast(t("não há transcrição para limpar")); return; }
+  openModal(
+    t("Apagar a transcrição desta sessão?"),
+    `<p class="pmnote">${t("apaga a única cópia do que foi transcrito nesta sessão — não pode ser desfeito.")}</p>` +
+      `<p class="pmnote">${t("Não pode ser desfeito.")}</p>`,
+    t("apagar"),
+    () => { clearDoc(); toast(t("transcrição apagada")); }
+  );
+}
+
+// ---- F7 · a ARIA acompanha a classe ----------------------------------------
+// A seleção era escrita SÓ como `.on`: um estado que existe apenas em CSS não
+// existe para a tecnologia assistiva (WCAG 4.1.2). Em Configurações o segmento é
+// o ÚNICO controle (o <select id="mode"> é hidden) — inclusive o que decide se o
+// chat pode rodar conectores externos e comandos fora da pasta do projeto.
+// Os pintores moram em três lugares (shell.js, app.js e a restauração do boot),
+// então o espelho observa a CLASSE em vez de depender de todos eles.
+const ARIA_MIRROR = [
+  ["#destNav .dest", "aria-current", "page", "false"],
+  ["#cfgNav .cfgnavbtn", "aria-current", "true", "false"],
+  ["#panelTabs .ptab", "aria-selected", "true", "false"],
+  [".segrow .segbtn", "aria-pressed", "true", "false"],
+  ["#bModes .tab", "aria-pressed", "true", "false"],
+  ["#aiPanelBtn", "aria-expanded", "true", "false"],
+  // C18 · a linha selecionada da árvore (markSel só trocava a classe) e a cor
+  // escolhida do projeto também eram estado só-em-CSS.
+  [".btree .bitem", "aria-selected", "true", "false"],
+  [".swatches .swatch", "aria-pressed", "true", "false"],
+];
+function paintAriaState() {
+  for (const [sel, attr, on, off] of ARIA_MIRROR) {
+    document.querySelectorAll(sel).forEach((n) => n.setAttribute(attr, n.classList.contains("on") ? on : off));
+  }
+}
+{
+  const obs = new MutationObserver((recs) => {
+    if (recs.some((r) => r.target.matches && ARIA_MIRROR.some(([sel]) => r.target.matches(sel)))) paintAriaState();
+  });
+  obs.observe(document.documentElement, { subtree: true, attributes: true, attributeFilter: ["class"] });
+  paintAriaState();
+}
+
+// ---- F19 · foco das camadas modais -----------------------------------------
+// Configurações é uma camada OPACA sobre o app inteiro (.cfgpage) e as folhas
+// cobrem o conteúdo: sem inert, o Tab andava por dezenas de controles pintados
+// por baixo delas — foco invisível e Enter agindo na tela de trás (WCAG 2.4.3/
+// 2.4.7). `inert` tira a região do Tab E da árvore de acessibilidade de uma vez,
+// que é o que aria-hidden sozinho não faz.
+const INERT_BEHIND = ["appHead", "brainShell", "brainSetup", "aiGrip", "aiPanel", "termPanel"];
+function setBackgroundInert(on) {
+  for (const id of INERT_BEHIND) {
+    const n = $(id);
+    if (!n) continue;
+    if (on) n.setAttribute("inert", ""); else n.removeAttribute("inert");
+  }
+}
+const overlayStack = [];
+// C3/C20 · o Escape fechava Configurações, a folha de confirmação, a paleta e a
+// busca — cada uma com o seu próprio ouvinte — e NÃO fechava #editWrap, que é
+// justamente a que prende o foco atrás de um fundo inert. Quem entra na pilha
+// registra COMO se fecha, e um ouvinte só dispensa a camada do topo: uma folha
+// nova não pode mais nascer sem Escape.
+function enterOverlay(wrap, first, onEscape) {
+  if (!wrap || overlayStack.some((o) => o.wrap === wrap)) return;
+  overlayStack.push({ wrap, back: document.activeElement, onEscape });
+  setBackgroundInert(true);
+  const target = (typeof first === "function" ? first() : first)
+    || wrap.querySelector("input, select, textarea, button, [href], [tabindex]:not([tabindex='-1'])");
+  if (target) { try { target.focus(); } catch (_) {} }
+}
+function leaveOverlay(wrap) {
+  const i = overlayStack.findIndex((o) => o.wrap === wrap);
+  if (i < 0) return;
+  const [gone] = overlayStack.splice(i, 1);
+  // uma camada pode abrir outra (a paleta em cima de Configurações): o fundo só
+  // volta a existir quando a última se fecha
+  if (!overlayStack.length) setBackgroundInert(false);
+  if (gone.back && gone.back.isConnected) { try { gone.back.focus(); } catch (_) {} }
+}
+// Só a camada do TOPO responde: a paleta (que fecha no seu próprio input, com
+// preventDefault) fica no topo com Configurações embaixo, e sem esta regra um
+// Escape fecharia as duas de uma vez.
+window.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape" || e.defaultPrevented || !overlayStack.length) return;
+  const top = overlayStack[overlayStack.length - 1];
+  if (!top.onEscape) return;
+  e.preventDefault();
+  top.onEscape();
+});
+// R15/R23 · o Escape também dispensa um toast que está esperando o usuário — e
+// só quando não há folha na frente: a camada do topo responde primeiro, pela
+// mesma regra da pilha acima.
+window.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape" || e.defaultPrevented || overlayStack.length) return;
+  if (!el.toast || el.toast.hidden) return;
+  e.preventDefault();
+  clearToast();
+});
 
 // ---- popover do menu + folha de configurações ----
 const cfgWrap = $("cfgWrap"), cfgClose = $("cfgClose"), acervoDir = $("acervoDir");
 async function openCfg() {
   cfgWrap.hidden = false;
+  enterOverlay(cfgWrap, cfgClose, closeCfg);
   cfgEnvSeen = false; // os checks de rede rodam de novo nesta visita, quando a seção aparecer
   document.querySelectorAll(".cfgsec").forEach((s) => (s.hidden = false));
   $("cfgPop").scrollTop = 0;
@@ -1224,7 +1712,7 @@ async function openCfg() {
   drawProjColors(cur);
   // ADR-0005: autoContext tem efeito real no loop — dá para desligar aqui
   const autoCtx = $("cfgAutoContext");
-  if (autoCtx) autoCtx.checked = !!(cur && cur.autoContext);
+  if (autoCtx) { autoCtx.checked = !!(cur && cur.autoContext); paintAutoContextHint(autoCtx.checked); }
   // sem pasta escolhida: mostra o destino padrão real (inbox do acervo)
   if (!settings.saveDir) {
     try { el.pickDir.textContent = await invoke("default_save_dir"); } catch (_) {}
@@ -1275,18 +1763,18 @@ $("cfgPop").addEventListener("scroll", () => {
   });
 });
 function drawProjColors(cur) {
-  renderSwatches($("projColors"), cur ? cur.color : "", async (hex) => {
-    applyAccent(hex);
+  renderSwatches($("projColors"), cur ? cur.color : "", async (id) => {
+    applyAccent(id);
     if (!cur) return;
     try {
-      const av = await invoke("brain_set_color", { id: cur.id, color: hex });
+      const av = await invoke("brain_set_color", { id: cur.id, color: id });
       acervos = av.acervos || [];
       const updated = acervos.find((a) => a.id === cur.id);
       drawProjColors(updated);
     } catch (e) { toast(tErr(String(e))); }
   });
 }
-function closeCfg() { cfgWrap.hidden = true; }
+function closeCfg() { cfgWrap.hidden = true; leaveOverlay(cfgWrap); }
 cfgClose.addEventListener("click", closeCfg);
 
 // ---- model manager (ADR-0006): show which models are installed and let the
@@ -1306,7 +1794,7 @@ async function refreshModelManager() {
   el.modelManager.innerHTML = MU.sortModels(list).map((m) => {
     const note = t(MODEL_NOTES[m.id] || "");
     const size = MU.formatSize(m.sizeBytes);
-    const rec = m.default ? ` <span class="modeltag">${t("recomendado")}</span>` : "";
+    const rec = m.default ? `<span class="modeltag">${t("recomendado")}</span>` : "";
     let action;
     if (m.installed) {
       action = `<span class="modelok" title="${t("instalado")}">✓ ${t("instalado")}</span>`;
@@ -1316,7 +1804,7 @@ async function refreshModelManager() {
       action = `<button class="abtn modeldl" data-dl="${esc(m.id)}">+ ${t("baixar")} · ${size}</button>`;
     }
     return `<div class="modelrow" data-model="${esc(m.id)}">
-      <div class="modelinfo"><span class="mono modelname">${esc(m.label)}</span>${rec}
+      <div class="modelinfo"><span class="modelhead"><span class="mono modelname">${esc(m.label)}</span>${rec}</span>
       <span class="modelnote">${esc(note)}</span></div>
       <div class="modelaction">${action}</div></div>`;
   }).join("");
@@ -1343,18 +1831,33 @@ listen("model-download-progress", (e) => {
   const bar = el.modelManager && el.modelManager.querySelector(`[data-bar="${p.model}"]`);
   if (bar) bar.style.width = MU.progressPercent(p.downloaded, p.total) + "%";
 });
+// C29 · a dica embaixo do interruptor explicava o comportamento DESLIGADO
+// enquanto ele estava ligado — o preço declarado era o preço do outro ajuste
+// (DESIGN.md §1: o preço está na cópia, e o estado não mente). A frase é escrita
+// pelo estado, não pelo HTML.
+function autoContextHint(on) {
+  return on
+    ? t("ligado: quando nada existente couber, a IA cria um tema novo e organiza o item nele")
+    : t('desligado: quando nada existente couber, a IA deixa o item em "para organizar" e pede o tema a você');
+}
+function paintAutoContextHint(on) {
+  const n = $("cfgAutoContextHint");
+  if (!n) return;
+  const box = $("cfgAutoContext");
+  n.textContent = autoContextHint(on === undefined ? !!(box && box.checked) : !!on);
+}
 {
   const autoCtx = $("cfgAutoContext");
   if (autoCtx) autoCtx.addEventListener("change", async () => {
+    paintAutoContextHint(autoCtx.checked);
     try {
       await invoke("brain_set_auto_context", { value: autoCtx.checked });
       const cur = acervos.find((a) => a.id === activeAcervo);
       if (cur) cur.autoContext = autoCtx.checked;
-    } catch (e) { toast(tErr(String(e))); autoCtx.checked = !autoCtx.checked; }
+    } catch (e) { toast(tErr(String(e))); autoCtx.checked = !autoCtx.checked; paintAutoContextHint(autoCtx.checked); }
   });
 }
 cfgWrap.addEventListener("click", (e) => { if (e.target === cfgWrap) closeCfg(); });
-window.addEventListener("keydown", (e) => { if (e.key === "Escape" && !cfgWrap.hidden) closeCfg(); });
 
 function updateCfgLabel() {
   const m = el.model.value === "large-v3-turbo" ? "turbo" : "small";
@@ -1367,12 +1870,33 @@ function updateCfgLabel() {
   if (sub) sub.textContent = line;
   el.cfgBtn.title = `${t("Configurações")} — ${el.lang.value} · ${m} · ${modeLabel}`;
 }
+// BR-8 · o selo diz o que está acontecendo com o áudio, e o tooltip diz o mesmo.
+// O title vinha estático do HTML ("Modo sem armazenamento") e continuava
+// afirmando isso enquanto o áudio ia para o disco: o texto e o tooltip têm de ter
+// o mesmo dono (nó marcado data-i18n-dyn — applyI18n não toca nele).
+// O áudio vai para o disco nestes três modos (diarização, "gravar tudo" e
+// reunião) — um dono só para a condição, porque o selo de captura precisa da
+// MESMA regra para saber quando o vermelho é verdade.
+const audioGoesToDisk = () => state.recordForDiarize || state.fileMode || state.meetingMode;
 function updatePrivacy() {
+  // Durante uma captura quem é dono do selo é o MEDIDOR (● mic / ● reunião /
+  // ⏸ pausada). Sem esta linha, qualquer repintura — trocar de idioma, marcar uma
+  // caixa em Configurações — devolvia "grava áudio" no meio de uma reunião
+  // PAUSADA, onde nada está sendo gravado (BR-8).
+  if (state.running || meeting.active) return paintCaptureMeter();
   el.privacy.classList.remove("warn");
   delete el.privacy.dataset.meter;
-  if (state.recordForDiarize || state.fileMode || state.meetingMode) { el.privacy.textContent = t("grava áudio"); el.privacy.classList.add("warn"); }
-  else if (settings.autosave) { el.privacy.textContent = "auto-save"; }
-  else { el.privacy.textContent = t("sem guardar áudio"); }
+  if (audioGoesToDisk()) {
+    el.privacy.textContent = t("grava áudio");
+    el.privacy.title = t("o áudio é apagado depois de transcrito");
+    el.privacy.classList.add("warn");
+  } else if (settings.autosave) {
+    el.privacy.textContent = "auto-save";
+    el.privacy.title = t("salvar automaticamente ao parar");
+  } else {
+    el.privacy.textContent = t("sem guardar áudio");
+    el.privacy.title = t("Modo sem armazenamento");
+  }
 }
 
 // ---- wiring ----
@@ -1386,8 +1910,9 @@ if (el.uiLang) el.uiLang.addEventListener("change", async (e) => {
   rerenderForLang();
 });
 el.saveBtn.addEventListener("click", save);
+el.exportBtn.addEventListener("click", exportTranscript);
 el.discardBtn.addEventListener("click", discard);
-el.clearBtn.addEventListener("click", clearDoc);
+el.clearBtn.addEventListener("click", clearTranscript);
 el.optScroll.addEventListener("change", (e) => {
   state.autoscroll = e.target.checked;
   settings.autoscroll = e.target.checked; persistSettings();
@@ -1402,7 +1927,18 @@ $("optEchoCancel").addEventListener("change", (e) => {
   if (state.running || meeting.active) toast(t("vale na próxima gravação"));
 });
 el.optDiar.addEventListener("change", (e) => { state.recordForDiarize = e.target.checked; updatePrivacy(); });
-el.source.addEventListener("change", () => { settings.source = el.source.value; persistSettings(); updateCfgLabel(); });
+// R21 · o seletor de fonte do rodapé de gravação nunca era ESCRITO a partir da
+// configuração: ele mostrava "minha voz + áudio do sistema" enquanto a sessão
+// captava só o microfone (system_audio=false no log). Os dois controles decidem a
+// MESMA coisa, então têm um pintor só, e ele lê a fonte que vale.
+function paintSourceSelectors() {
+  el.source.value = settings.source;
+  const rec = $("recSource");
+  if (rec) rec.value = settings.source;
+}
+el.source.addEventListener("change", () => {
+  settings.source = el.source.value; persistSettings(); paintSourceSelectors(); updateCfgLabel();
+});
 
 // A reunião depende do sidecar ScreenCaptureKit, que é de macOS (ADR-0005). Fora
 // do macOS a opção sai do seletor em vez de deixar o usuário escolher e só
@@ -1445,7 +1981,8 @@ el.pickDir.addEventListener("click", async () => {
 const B = {
   main: $("brain"),
   setup: $("brainSetup"), shell: $("brainShell"),
-  dirBtn: $("brainDirBtn"), ctxInput: $("brainCtxInput"), createBtn: $("brainCreateBtn"),
+  dirBtn: $("brainDirBtn"), dirInput: $("brainDirInput"), dirNote: $("brainDirNote"),
+  ctxInput: $("brainCtxInput"), createBtn: $("brainCreateBtn"),
   nameInput: $("brainNameInput"), gitInput: $("brainGit"), wizLang: $("wizLang"),
   agentInput: $("brainAgentInput"), wizTemplates: $("wizTemplates"), wizTemplateHint: $("wizTemplateHint"),
   cancelBtn: $("brainCancelBtn"), wizTitle: $("wizTitle"), setupErr: $("brainSetupErr"),
@@ -1468,7 +2005,7 @@ const B = {
   editModalBar: $("editModalBar"), editModalHost: $("editModalHost"),
   editSave: $("editSave"), editCancel: $("editCancel"), editClose: $("editClose"),
 };
-let brainTab = false, brainPoll = null, brainDir = "", lastSt = null, brainVisHook = false;
+let brainTab = false, brainPoll = null, lastSt = null, brainVisHook = false;
 // ADR-0008 — the Knowledge Studio workspace. `ws` is plain and serializable;
 // live CM6 handles and last-saved buffers live in side Maps keyed by tab id.
 const HOME_REL = "__home__";          // sentinel rel for the pinned Home tab
@@ -1482,6 +2019,9 @@ const fmById = new Map();
 const bOpen = new Set();   // nós expandidos da lateral
 let sideSig = "";          // assinatura p/ não re-renderizar a lateral sem mudança
 let acervos = [], activeAcervo = "", creatingNew = false, gitFiles = {}, wizColor = "";
+// git no sistema (brain_git_state.available): a mesma autoridade que decide se o
+// botão "salvar versão" existe decide o que a nota do TIME pode prometer
+let gitAvailable = true;
 // usage template picker state (ADR-0003): selected id, fetched list, and
 // whether the user already edited the contexts field by hand.
 // ADR-0005: "automático" is a synthetic FIRST option of the same
@@ -1492,31 +2032,135 @@ const AUTO_TEMPLATE_ID = "__auto";
 let wizTemplate = AUTO_TEMPLATE_ID, wizTemplates = [], wizCtxDirty = false;
 let lastEnvAcervo = null;
 
-// paleta curada (funciona no claro e no escuro); "" = padrão (teal do tema)
+// R1/R5 · a paleta do projeto guarda IDENTIDADES, nunca valores de cor. Cada uma
+// é um par de tokens por tema em style.css (--accent-<id> + --on-accent-<id>),
+// medido por tokens.test.js: eram cinco hexes crus aqui, sem valor no escuro e
+// sem tinta própria, e escolher âmbar deixava o único botão primário do app a
+// 3,14:1. `id` é o que fica gravado no projeto ("" = o teal do tema).
 const PALETTE = [
-  { name: "teal", hex: "" }, { name: "azul", hex: "#2f6feb" },
-  { name: "roxo", hex: "#8957e5" }, { name: "âmbar", hex: "#bf8700" },
-  { name: "verde", hex: "#2da44e" }, { name: "rosa", hex: "#cf4b8f" },
+  { id: "", name: "teal", legacy: [] },
+  { id: "blue", name: "azul", legacy: ["#2f6feb"] },
+  { id: "purple", name: "roxo", legacy: ["#8957e5"] },
+  { id: "amber", name: "âmbar", legacy: ["#bf8700"] },
+  { id: "green", name: "verde", legacy: ["#2da44e"] },
+  { id: "pink", name: "rosa", legacy: ["#cf4b8f"] },
 ];
-// aplica a cor de acento do projeto ativo (var --accent; "" volta ao teal)
-function applyAccent(hex) {
-  const root = document.documentElement.style;
-  if (hex) root.setProperty("--accent", hex); else root.removeProperty("--accent");
+// O que está gravado no projeto → a identidade da paleta. Instalações anteriores
+// gravaram o hex cru, então as duas formas resolvem aqui; o que não estiver na
+// paleta cai no padrão, em vez de pintar uma cor que ninguém mediu.
+function accentId(stored) {
+  const v = String(stored == null ? "" : stored).trim().toLowerCase();
+  if (!v) return "";
+  const hit = PALETTE.find((c) => (c.id && c.id === v) || c.legacy.includes(v));
+  return hit ? hit.id : "";
+}
+// aplica a cor de acento do projeto ativo (data-accent no <html>)
+function applyAccent(stored) {
+  const id = accentId(stored);
+  if (id) document.documentElement.setAttribute("data-accent", id);
+  else document.documentElement.removeAttribute("data-accent");
 }
 function renderSwatches(container, current, onPick) {
   if (!container) return;
+  const cur = accentId(current);
   container.innerHTML = PALETTE.map((c) =>
-    `<button class="swatch${(current || "") === c.hex ? " on" : ""}" title="${t(c.name)}"
-      data-hex="${c.hex}" style="--sw:${c.hex || "var(--teal)"}"></button>`).join("");
-  container.querySelectorAll("[data-hex]").forEach((b) => (b.onclick = () => onPick(b.dataset.hex, b)));
+    `<button class="swatch${cur === c.id ? " on" : ""}" title="${t(c.name)}" aria-label="${t(c.name)}"
+      data-accent="${c.id}" style="--sw:var(--accent-${c.id || "teal"})"></button>`).join("");
+  container.querySelectorAll("[data-accent]").forEach((b) => (b.onclick = () => onPick(b.dataset.accent, b)));
+  paintAriaState();   // C18 · a cor escolhida é um estado, não só uma classe
 }
 
-function closeFloat() { B.bMenu.hidden = true; B.acervoMenu.hidden = true; }
+// ---- teclado dos menus flutuantes (F17 · WCAG 2.1.1/4.1.2) ------------------
+// Todo menu ⋯ é uma pilha de <div class="fitem2"> com .onclick: o usuário de
+// teclado chegava ao ⋯ (que É um <button>), abria o menu — e ficava preso, sem
+// nenhum item focável e sem Escape. Renomear, mover, apagar, executar
+// habilidade, analisar reunião e trocar de projeto só existem aqui.
+// Por que papel em vez de <button>: um <button> por item traria de volta o cromo
+// do navegador (fundo, borda, texto centrado) e as linhas de projeto CONTÊM um
+// <button> (o × de remover) — controle dentro de controle é HTML inválido. O
+// cromo é CSS, e a anatomia não muda por causa de acessibilidade (DESIGN.md §2).
+// Então o item recebe o papel que seu comportamento já tem: role=menuitem dentro
+// de role=menu, uma única entrada de foco e as setas (WAI-ARIA APG, menu).
+let menuAnchor = null;
+function menuItems(menu) {
+  return [...menu.querySelectorAll(".fitem2, button")].filter((n) =>
+    !n.hidden && !n.closest("[hidden]") &&
+    !n.classList.contains("fstatic") && !n.classList.contains("off") &&
+    !(n.classList.contains("fitem2") && n.classList.contains("muted")));
+}
+// `close` é opcional: um menu flutuante que NÃO é o #bMenu/#acervoMenu (o popover
+// de anotação, ADR-0007) traz o seu próprio fechador, senão o Escape dele fecharia
+// outro menu e devolveria o foco a um controle que não abriu nada.
+function wireFloatMenu(menu, anchor, close) {
+  if (!menu) return;
+  const dismiss = typeof close === "function" ? close : closeFloat;
+  menu.setAttribute("role", "menu");
+  const head = menu.querySelector(".fhead");
+  if (head) {
+    head.setAttribute("role", "presentation");
+    menu.setAttribute("aria-label", head.textContent.trim());
+    menu.dataset.autolabel = "1";
+  } else if (menu.dataset.autolabel) {
+    // o nó é reusado (innerHTML trocado): o nome vindo do cabeçalho de OUTRO menu
+    // não pode ficar. Um nome escrito pelo próprio autor permanece — uma superfície
+    // de leitura não ganha cabeçalho visível só para ter nome acessível (DESIGN.md §2)
+    delete menu.dataset.autolabel;
+    menu.removeAttribute("aria-label");
+  }
+  menu.querySelectorAll(".fsep").forEach((s) => s.setAttribute("role", "separator"));
+  const items = menuItems(menu);
+  for (const it of items) {
+    it.setAttribute("role", "menuitem");
+    it.tabIndex = -1;
+    if (it.classList.contains("on")) it.setAttribute("aria-current", "true");
+  }
+  // Sem âncora (o menu de configurar áudio do sistema abre por conta do fluxo,
+  // não de um controle): o foco entra no menu, e fechar não tem a quem voltar.
+  // Quem tem fechador próprio guarda a sua âncora: o menuAnchor é do closeFloat, e
+  // um clique fora chamaria focus() nela sem nada aberto.
+  if (dismiss === closeFloat) menuAnchor = anchor || null;
+  if (anchor) {
+    anchor.setAttribute("aria-haspopup", "true");
+    anchor.setAttribute("aria-expanded", "true");
+  }
+  menu.onkeydown = (e) => {
+    // um campo dentro do menu (renomear) manda nas suas próprias teclas
+    if (/^(INPUT|TEXTAREA)$/.test(e.target.tagName) && e.key !== "Escape") return;
+    const list = menuItems(menu);
+    const at = list.indexOf(document.activeElement);
+    const go = (i) => { const n = list[(i + list.length) % (list.length || 1)]; if (n) n.focus(); };
+    if (e.key === "ArrowDown") { e.preventDefault(); go(at + 1); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); go(at < 0 ? -1 : at - 1); }
+    else if (e.key === "Home") { e.preventDefault(); go(0); }
+    else if (e.key === "End") { e.preventDefault(); go(list.length - 1); }
+    else if (e.key === "Enter" || e.key === " ") {
+      if (list.includes(document.activeElement)) { e.preventDefault(); document.activeElement.click(); }
+    } else if (e.key === "Escape") { e.preventDefault(); dismiss(); }
+    else if (e.key === "Tab") dismiss();   // sair pelo Tab fecha e devolve o foco
+  };
+  // O foco ENTRA no menu — sem isto o teclado abria um menu que não podia tocar.
+  const first = menu.querySelector("input, textarea") || items[0];
+  if (first) { try { first.focus({ preventScroll: true }); } catch (_) { first.focus(); } }
+}
+function closeFloat() {
+  const inside = B.bMenu.contains(document.activeElement) || B.acervoMenu.contains(document.activeElement);
+  B.bMenu.hidden = true; B.acervoMenu.hidden = true;
+  const a = menuAnchor; menuAnchor = null;
+  if (!a) return;
+  a.setAttribute("aria-expanded", "false");
+  // Devolver o foco só quando ele estava DENTRO do menu (ou perdido no <body>):
+  // fechar por clique fora não pode roubar o foco de onde o usuário clicou.
+  if (inside || document.activeElement === document.body) { try { a.focus(); } catch (_) {} }
+}
 // cliques DENTRO do menu nunca chegam ao clique-fora (mesmo com innerHTML trocado)
 B.bMenu.addEventListener("click", (e) => e.stopPropagation());
 document.addEventListener("click", (e) => {
-  if (!e.target.closest("#bMenu") && !e.target.closest("[data-qmenu]") && !e.target.closest("[data-cmenu]")) B.bMenu.hidden = true;
-  if (!e.target.closest("#acervoSwitch")) B.acervoMenu.hidden = true;
+  const outMenu = !e.target.closest("#bMenu") && !e.target.closest("[data-qmenu]") && !e.target.closest("[data-cmenu]");
+  const outSwitch = !e.target.closest("#acervoSwitch");
+  // fechar os dois passa pelo closeFloat: é ele que desfaz o aria-expanded do ⋯
+  if (outMenu && outSwitch) return closeFloat();
+  if (outMenu) B.bMenu.hidden = true;
+  if (outSwitch) B.acervoMenu.hidden = true;
 });
 
 // ---- (i) ajuda: tooltip clicável --------------------------------------------
@@ -1591,6 +2235,13 @@ let editOnSave = null, editCm = null;
 function openEditor(title, content, onSave) {
   B.editTitle.textContent = title;
   editOnSave = onSave;
+  // N8 · sem gravador não há o que salvar: o "salvar" cheio (a ÚNICA ação
+  // primária da folha) descartava em silêncio, e uma barra de markdown de 16
+  // botões pairava sobre um texto de leitura.
+  const readOnly = typeof onSave !== "function";
+  B.editSave.hidden = readOnly;
+  B.editModalBar.hidden = readOnly;
+  B.editCancel.textContent = readOnly ? t("fechar") : t("cancelar");
   B.editWrap.hidden = false;
   if (editCm) { try { editCm.destroy(); } catch (_) {} editCm = null; }
   editCm = window.LoroCM6.create({
@@ -1601,10 +2252,13 @@ function openEditor(title, content, onSave) {
   });
   wireMdKeys(editCm);
   wireMdBar(B.editModalBar, () => editCm);
+  // o editor já chamava o foco; o que faltava era tirar o app de trás do Tab
+  enterOverlay(B.editWrap, () => null, closeEditor);
   requestAnimationFrame(() => editCm && editCm.focus());
 }
 function closeEditor() {
   B.editWrap.hidden = true;
+  leaveOverlay(B.editWrap);
   editOnSave = null;
   if (editCm) { try { editCm.destroy(); } catch (_) {} editCm = null; }
 }
@@ -1632,7 +2286,7 @@ async function genContextNow() {
   // ADR-0002 §5: an empty queue is refused loudly here, not just by disabled
   // buttons — there is nothing to generate context FROM, and the user must know.
   if (!lastSt || !lastSt.inbox || !lastSt.inbox.length) {
-    toast(t("a fila está vazia — envie um relatório ou arquivos antes de gerar contexto"), 5000);
+    toast(t("não há nada para organizar — envie uma reunião ou arquivos antes de gerar conhecimento"), 5000);
     return;
   }
   const saveAnexos = $("queueSaveAnexos");
@@ -1644,8 +2298,7 @@ async function genContextNow() {
       }
     } catch (e) { clog("queueSaveAnexos guide write error: " + e); }
   }
-  runAiCommand(LoroBrainstorm.brainContextCmd());
-  toast(t("transformando em conhecimento") + " — " + aiTargetHint(), 4000);
+  await dispatchAi(LoroBrainstorm.brainContextCmd(), t("transformando em conhecimento") + " — " + aiTargetHint());
 }
 {
   const gen = $("queueGenCtx");
@@ -1656,6 +2309,16 @@ const fmtWhen = (ms) => new Date(ms).toLocaleString(uiLocale(), { day: "2-digit"
 // editável no app = só pendentes de texto na fila; o resto é gerado pelo loop
 const isEditable = (p) => p.startsWith("inbox/") && /\.(md|txt)$/i.test(p);
 const shortName = (n) => n.replace(/\.(md|txt)$/i, "").replace(/^\d{4}-\d{2}-\d{2}--?/, "");
+
+// C5 · o nome acessível de um <button> vem do seu CONTEÚDO, não do title: os 19
+// gatilhos "⋯" da tela calculavam todos o MESMO nome ("⋯"), e trocar o title
+// (rodada anterior) não mudou isso — title é só dica de mouse. Cada gatilho diz
+// agora de QUAL item ele é (WCAG 4.1.2 · 2.4.6). Um helper único porque são dez
+// lugares que desenham a mesma linha de árvore.
+function rowMenuHtml(attrs, label, actions) {
+  const name = `${actions || t("ações")}: ${label}`;
+  return `<button class="rowmenu" ${attrs} title="${esc(name)}" aria-label="${esc(name)}">⋯</button>`;
+}
 
 function groupMonths(files) {
   const m = new Map();
@@ -1710,22 +2373,38 @@ async function brainRefresh() {
   }).catch(() => {});
   invoke("brain_git_state").then((g) => {
     B.gitBtn.hidden = !g.available;
+    // a nota do TIME segue a MESMA autoridade do botão: sem git no sistema não
+    // existe "funciona local" nenhum para prometer
+    gitAvailable = !!g.available;
+    renderPanelTeamNote();
     if (g.available) {
       // vocabulário do redesign: "versionar" → "salvar versão"
+      // N5 · a contagem é do PROJETO todo (git status do acervo), numa seção que
+      // fala do documento aberto: o rótulo nomeia o que a ação faz de fato.
       B.gitBtn.textContent = g.repo
-        ? (g.pending ? `${t("Salvar versão")} (${g.pending})` : t("tudo salvo ✓"))
+        ? (g.pending ? `${t("Salvar versão do projeto")} (${g.pending})` : t("tudo salvo ✓"))
         : t("começar a guardar versões");
       B.gitBtn.classList.toggle("warm", g.repo && g.pending > 0);
+      // N3 · "tudo salvo ✓" É o estado: o mesmo controle não pode relatar "nada
+      // a fazer" e ainda abrir a folha que faz (DESIGN.md §1). Sem nada pendente
+      // ele fica desabilitado — e a paleta lê este mesmo gate.
+      B.gitBtn.disabled = !!(g.repo && !g.pending);
     }
     // ADR-0002 §2: the current branch is always visible; click to switch/create
     if (B.branchBtn) {
       B.branchBtn.hidden = !(g.available && g.repo && g.branch);
       if (g.branch) B.branchBtn.textContent = "⎇ " + g.branch;
     }
-  }).catch(() => { B.gitBtn.hidden = true; if (B.branchBtn) B.branchBtn.hidden = true; });
+  }).catch(() => {
+    B.gitBtn.hidden = true;
+    if (B.branchBtn) B.branchBtn.hidden = true;
+    gitAvailable = false;
+    renderPanelTeamNote();
+  });
   // GitHub: re-verifica o ambiente ao trocar de acervo (rede — só uma vez por acervo)
   if (activeAcervo !== lastEnvAcervo) { lastEnvAcervo = activeAcervo; envChecked = false; }
   refreshEnv();
+  maybeRefreshNotifications();
   // seletor de contexto do envio (preserva escolha)
   const sel = $("importCtx"), chosen = sel.value;
   sel.innerHTML = `<option value="">${t("destino: a IA decide")}</option>` +
@@ -1793,7 +2472,7 @@ function renderDestOrganize(st, n) {
             </span>
             <span class="oact">
               ${ed ? `<button class="link mono" data-doc="inbox/${esc(f.name)}">${t("abrir")}</button>` : ""}
-              <button class="rowmenu" data-qmenu="${esc(f.name)}" title="${t("ações")}">⋯</button>
+              ${rowMenuHtml(`data-qmenu="${esc(f.name)}"`, shortName(f.name))}
             </span>
           </div>`;
       }).join("")
@@ -1806,8 +2485,8 @@ function renderDestOrganize(st, n) {
   const note = $("orgFootNote");
   if (note) {
     note.textContent = n
-      ? `${n} ${n > 1 ? t("itens na fila") : t("item na fila")} · ${t("a IA propõe, você aprova")}`
-      : t("nada na fila");
+      ? `${n} ${n > 1 ? t("itens para organizar") : t("item para organizar")} · ${t("a IA propõe, você aprova")}`
+      : t("nada para organizar");
   }
   const gen2 = $("queueGenCtx");
   if (gen2) gen2.title = n ? "" : t("não há nada para transformar ainda");
@@ -1822,17 +2501,28 @@ function renderDestKnowledge(st) {
       ? `<span class="kprop">${t("mudanças não salvas")}</span>` : "";
     const desc = c.summary || c.description || t("o conhecimento oficial deste tema");
     const srcs = (c.entries || 0) + (c.ideas || 0);
-    return `<div class="knowcard" data-kctx="${esc(c.name)}">
+    // F5 — o card é a ação primária desta tela e era um <div> com onclick. Ele
+    // CONTÉM o ⋯ (um <button>), então um <button> por fora seria HTML inválido:
+    // o card recebe o papel que já tem, com nome próprio (sem o aria-label ele
+    // seria lido inteiro, texto por texto) e Enter/Espaço abrindo o tema.
+    return `<div class="knowcard" role="button" tabindex="0" data-kctx="${esc(c.name)}"
+        aria-label="${esc(t("abrir conhecimento") + ": " + c.name)}">
         <span class="kt">${ico("context")} ${esc(c.name)}</span>
         <span class="kd">${esc(desc)}</span>
         <span class="kf">${srcs ? `${srcs} ${srcs > 1 ? t("fontes") : t("fonte")}` : t("ainda sem fontes")}${prop ? " " + prop : ""}<span class="kopen">${t("abrir")} →</span></span>
-        <button class="rowmenu" data-cmenu="${esc(c.name)}" data-isctx="1" title="${t("ações")}">⋯</button>
+        ${rowMenuHtml(`data-cmenu="${esc(c.name)}" data-isctx="1"`, c.name)}
       </div>`;
   }).join("");
-  grid.querySelectorAll("[data-kctx]").forEach((el2) => (el2.onclick = (e) => {
-    if (e.target.closest("[data-cmenu]")) return;
-    openDoc(`contextos/${el2.dataset.kctx}/context.md`, { preview: false });
-  }));
+  grid.querySelectorAll("[data-kctx]").forEach((el2) => {
+    el2.onclick = (e) => {
+      if (e.target.closest("[data-cmenu]")) return;
+      openDoc(`contextos/${el2.dataset.kctx}/context.md`, { preview: false });
+    };
+    el2.onkeydown = (e) => {
+      if (e.target !== el2) return;   // o ⋯ de dentro cuida das suas teclas
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); el2.click(); }
+    };
+  });
   grid.querySelectorAll("[data-cmenu]").forEach((el2) => (el2.onclick = (e) => {
     e.stopPropagation(); openCtxMenu(el2, el2.dataset.cmenu, false);
   }));
@@ -1939,7 +2629,7 @@ function renderCtxNode(node) {
   const nctx = node.isCtx ? (lastSt ? lastSt.contexts : []).find((c) => c.name === node.path) : null;
   // em vez da contagem de entradas do CHANGELOG (confundia), um ponto quando há
   // mudança não commitada na subárvore deste contexto (ADR-0005).
-  const dot = ctxDirty(node.path) ? `<span class="gdot" title="${t("mudanças não commitadas")}">●</span>` : "";
+  const dot = ctxDirty(node.path) ? `<span class="gdot" title="${t("mudanças ainda não salvas em uma versão")}">●</span>` : "";
   const pills = (node.isCtx && nctx && nctx.seeded === false
     ? `<span class="pill soft" title="${t("pasta nova — clique para estruturar")}">${t("novo")}</span>` : "") + dot;
   const attr = node.isCtx ? `data-ctx="${esc(node.path)}"` : `data-fold="${esc(node.path)}"`;
@@ -1948,8 +2638,8 @@ function renderCtxNode(node) {
   // histórico/anexos) are siblings of its subcontexts — a .bchild here would
   // double-indent them and read as if they belonged to a subcontext.
   const holder = node.isCtx ? `<div data-ctxchild="${esc(node.path)}" ${open ? "" : "hidden"}></div>` : "";
-  const arch = `<button class="rowmenu" data-cmenu="${esc(node.path)}" data-isctx="${node.isCtx ? 1 : 0}"
-      title="${t("ações")} (${node.isCtx ? t("contexto") : t("pasta")}: ${t("renomear, mover, deletar")})">⋯</button>`;
+  const arch = rowMenuHtml(`data-cmenu="${esc(node.path)}" data-isctx="${node.isCtx ? 1 : 0}"`,
+    node.seg, t("ações (renomear, mover, deletar)"));
   return `<div class="bitem ${node.isCtx ? "ctx" : "grp"}${open ? " open" : ""}" ${attr} title="${esc(node.path)}">
       <span class="tw">${tw}</span>${icon}<span class="bn">${esc(node.seg)}</span>${pills}${arch}
     </div>
@@ -1965,16 +2655,23 @@ function renderSidebar(st) {
         const ed = /\.(md|txt)$/i.test(f.name);
         return `<div class="bitem file unsynced${ed ? " ed" : ""}" data-doc="inbox/${esc(f.name)}"
           title="${ed ? t("não sincronizado — clique para editar") : t("não sincronizado (aguardando o loop)")}">${ico("file")}<span class="bn">${esc(f.name)}${bMeta(f.mtime, "inbox/" + f.name)}</span>
-          <button class="rowmenu" data-qmenu="${esc(f.name)}" data-move="${esc(f.name)}" title="${t("ações")}">⋯</button></div>`;
-      }).join("") +
-      `<div class="bitem addctx" data-genctx>${t("Transformar em conhecimento")} →</div>`
+          ${rowMenuHtml(`data-qmenu="${esc(f.name)}" data-move="${esc(f.name)}"`, shortName(f.name))}</div>`;
+      }).join("")
+    // R8 · a MESMA ação ("Transformar em conhecimento") aparecia duas vezes na
+    // tela ao mesmo tempo — aqui, como linha tracejada de "acrescentar", e em
+    // Organizar, como o único botão cheio. Duas aparências para um passo
+    // irreversível (o acervo é versionado, ADR-0024) deixam o usuário adivinhando
+    // se a linha faz algo menor. Quem sobrevive é o botão: ele é a ação primária
+    // do destino que mostra A FILA sobre a qual ela age, com a contagem e o preço
+    // ao lado (DESIGN.md §5 e §1). A lateral lista, o destino age — e o ⌘K
+    // continua sendo o caminho de teclado.
     : `<div class="bempty">${t("nada para organizar — grave uma reunião, escreva uma nota ou traga arquivos")}</div>`;
   // contextos como ÁRVORE: pastas/áreas agrupam; contextos reais abrem o guia.
   // Criação vive no ＋ do cabeçalho da seção (linhas cheias poluíam a árvore).
   B.navCtx.innerHTML =
     st.contexts.length
       ? renderCtxForest(buildCtxTree(st.contexts))
-      : `<div class="bempty">${t("nenhum contexto ainda — crie o primeiro para organizar o conhecimento")}</div>`;
+      : `<div class="bempty">${t("nenhum tema ainda — crie o primeiro para organizar o conhecimento")}</div>`;
   // fontes agrupadas por mês (escala p/ listas grandes)
   B.navSources.innerHTML = [["reunioes", st.reunioes], ["notas", st.notas]].map(([kind, files]) => {
     if (!files.length) return "";
@@ -1991,10 +2688,117 @@ function renderSidebar(st) {
     return `<div class="bitem ctx${kOpen ? " open" : ""}" data-toggle="${kKey}">
         ${ico(kind === "reunioes" ? "meeting" : "note", "ac")}<span class="bn">${kind === "reunioes" ? t("reuniões") : t("notas")}</span><span class="pill">${files.length}</span></div>
       <div class="bchild" ${kOpen ? "" : "hidden"}>${inner}</div>`;
-  }).join("") || `<div class="bempty">${t("reuniões e notas aparecem aqui quando o loop processar a fila")}</div>`;
+  }).join("") || `<div class="bempty">${t("reuniões e notas aparecem aqui quando o loop organizar o que você capturou")}</div>`;
   wireSidebar();
   // re-carrega filhos dos contextos abertos
   for (const c of st.contexts) if (bOpen.has("ctx:" + c.name)) loadCtxChildren(c.name);
+}
+
+// ---- teclado da árvore lateral (F18 · WCAG 2.1.1) ---------------------------
+// Expandir uma pasta, abrir um tema ou uma ideia era impossível sem mouse: as
+// linhas são <div class="bitem"> com .onclick. Elas CONTÊM um <button
+// class="rowmenu"> (o ⋯), então um <button> por fora seria controle dentro de
+// controle — HTML inválido — e o cromo da linha é CSS, que este conserto não
+// muda (DESIGN.md §2). A linha recebe então o papel que seu comportamento já
+// tem: uma árvore de verdade, com UMA parada de Tab por árvore e as setas
+// andando e expandindo (WAI-ARIA APG, tree).
+function treeRows(tree) {
+  return [...tree.querySelectorAll(".bitem")].filter((r) => !r.closest("[hidden]"));
+}
+function wireTreeKeyboard(root) {
+  if (!root) return;
+  root.querySelectorAll(".btree").forEach((tree) => {
+    const rows = [...tree.querySelectorAll(".bitem")];
+    // uma árvore vazia (só o texto de vazio) não é uma árvore
+    if (!rows.length) { tree.removeAttribute("role"); return; }
+    tree.setAttribute("role", "tree");
+    tree.querySelectorAll(".bchild").forEach((g) => g.setAttribute("role", "group"));
+    const visible = treeRows(tree);
+    const cur = visible.find((r) => r.classList.contains("on")) || visible[0];
+    for (const row of rows) {
+      row.setAttribute("role", "treeitem");
+      row.tabIndex = row === cur ? 0 : -1;
+      const kids = row.nextElementSibling;
+      if (kids && kids.classList.contains("bchild")) row.setAttribute("aria-expanded", String(!kids.hidden));
+      else row.removeAttribute("aria-expanded");
+      row.onkeydown = (e) => onTreeKey(e, tree, row);
+    }
+  });
+}
+function onTreeKey(e, tree, row) {
+  const rows = treeRows(tree);
+  const at = rows.indexOf(row);
+  const focus = (i) => {
+    const n = rows[i];
+    if (!n) return;
+    for (const r of rows) r.tabIndex = -1;
+    n.tabIndex = 0; n.focus();
+  };
+  const open = row.getAttribute("aria-expanded");
+  if (e.key === "ArrowDown") { e.preventDefault(); focus(at + 1); }
+  else if (e.key === "ArrowUp") { e.preventDefault(); focus(at - 1); }
+  else if (e.key === "Home") { e.preventDefault(); focus(0); }
+  else if (e.key === "End") { e.preventDefault(); focus(rows.length - 1); }
+  else if (e.key === "Enter" || e.key === " ") { e.preventDefault(); activateTreeRow(row); }
+  else if (e.key === "ArrowRight") {
+    // C21 · ArrowRight ATIVAVA o nó: abria o context.md do tema e jogava o foco
+    // dentro do editor, então quem navegava pelo teclado não conseguia olhar
+    // dentro de um tema sem ser teleportado. Pelo padrão tree do WAI-ARIA APG,
+    // num nó fechado ele apenas EXPANDE (o foco fica), e num nó aberto vai para
+    // o primeiro filho — nunca ativa.
+    if (open === "false") { e.preventDefault(); expandTreeRow(row); }
+    else if (open === "true") { e.preventDefault(); focus(at + 1); }
+  } else if (e.key === "ArrowLeft" && open === "true") { e.preventDefault(); activateTreeRow(row); }
+}
+// A chave de "está aberto" de cada tipo de linha, do jeito que o clique dela
+// escreve em bOpen. Expandir é só isso — abrir um documento é outra ação.
+const TREE_OPEN_KEY = {
+  ctx: (v) => "ctx:" + v,
+  fold: (v) => "ctx:" + v,
+  toggle: (v) => v,
+  pestoggle: (v) => v,
+  tema: (v) => "pes:tema:" + v,
+};
+function expandTreeRow(row) {
+  const mark = Object.keys(TREE_OPEN_KEY).find((k) => row.dataset[k] !== undefined);
+  if (!mark) return;
+  const val = row.dataset[mark];
+  const key = TREE_OPEN_KEY[mark](val);
+  if (bOpen.has(key)) return;
+  bOpen.add(key);
+  const refocus = () => {
+    const again = [...document.querySelectorAll(".bitem")].find((r) => r.dataset[mark] === val);
+    if (again) { again.tabIndex = 0; try { again.focus(); } catch (_) {} }
+  };
+  // pestoggle/tema abrem no lugar (o irmão .bchild); ctx/fold/toggle redesenham
+  // a lateral inteira, e aí a linha focada deixa de existir.
+  if (mark === "pestoggle" || mark === "tema") {
+    row.classList.add("open");
+    const child = mark === "tema"
+      ? [...document.querySelectorAll("[data-temachild]")].find((h) => h.dataset.temachild === val)
+      : row.nextElementSibling;
+    if (child) child.hidden = false;
+    row.setAttribute("aria-expanded", "true");
+    if (mark === "tema") loadTemaChildren(val);
+    return;
+  }
+  sideSig = ""; renderSidebar(lastSt); markSel();
+  if (mark === "ctx") loadCtxChildren(val);
+  requestAnimationFrame(refocus);
+}
+// Expandir REDESENHA a lateral: o nó que tinha o foco deixa de existir e o foco
+// cairia no <body> — a árvore inteira se perderia a cada expansão. Reencontramos
+// a mesma linha pela sua chave depois do redesenho.
+function activateTreeRow(row) {
+  const mark = ["ctx", "fold", "toggle", "pestoggle", "tema", "doc"].find((k) => row.dataset[k] !== undefined);
+  const val = mark ? row.dataset[mark] : null;
+  row.click();
+  if (!mark) return;
+  requestAnimationFrame(() => {
+    if (document.activeElement && document.activeElement !== document.body) return;
+    const again = [...document.querySelectorAll(".bitem")].find((r) => r.dataset[mark] === val);
+    if (again) { again.tabIndex = 0; again.focus(); }
+  });
 }
 
 function wireSidebar() {
@@ -2030,7 +2834,6 @@ function wireSidebar() {
   // section-header ＋ buttons (compact creation, owner feedback 2026-07-28)
   if ($("addCtxBtn")) $("addCtxBtn").onclick = promptNewContext;
   if ($("addTemaBtn")) $("addTemaBtn").onclick = promptNewTema;
-  B.main.querySelectorAll("[data-genctx]").forEach((el2) => (el2.onclick = genContextNow));
   // pasta/área (não é contexto): só expande/recolhe
   B.main.querySelectorAll("[data-fold]").forEach((el2) => (el2.onclick = (e) => {
     if (e.target.closest("[data-cmenu]")) return;
@@ -2063,6 +2866,7 @@ function wireSidebar() {
     });
   }));
   wireDrag();
+  wireTreeKeyboard(B.main);
 }
 
 // arrastar item da fila → soltar em um contexto (roteia neste acervo)
@@ -2104,7 +2908,7 @@ async function loadCtxChildren(name) {
   // subpastas que já são subdomínios (contextos) aparecem na ÁRVORE de contextos;
   // não as repetimos aqui como "pasta" — visualização única (ADR-0005).
   const ctxSet = new Set((lastSt && lastSt.contexts ? lastSt.contexts : []).map((c) => c.name));
-  const pretty = { "context.md": t("contexto"), "guia.md": t("guia do domínio"), "CHANGELOG.md": t("histórico"), CODEOWNERS: t("donos"), brainstorming: "brainstorming", incubadora: "brainstorming", referencias: t("referências") };
+  const pretty = { "context.md": t("conhecimento"), "guia.md": t("guia do domínio"), "CHANGELOG.md": t("histórico"), CODEOWNERS: t("donos"), brainstorming: t("ideias"), incubadora: t("ideias"), referencias: t("referências") };
   const order = (n) => n === "context.md" ? 0 : n === "guia.md" ? 0 : n === "CHANGELOG.md" ? 1 : n === "referencias" ? 2 : 3;
   entries.sort((a, b) => order(a.name) - order(b.name) || a.name.localeCompare(b.name));
   let html = "";
@@ -2130,8 +2934,8 @@ async function loadCtxChildren(name) {
   catch (_) {}
   const anexRows = anexos.map((f) => `<div class="bitem file ${gitClass(f.path)}" data-doc="${esc(f.path)}" title="${esc(f.name)}">${ico("file")}<span class="bn">${esc(shortName(f.name))}</span>${pathMenuBtnHtml(f.path, shortName(f.name))}</div>`).join("");
   const anexActions =
-    `<button class="bsaddbtn" data-ctxaddnota="${esc(name)}" title="${t("Escrever uma nota nos anexos deste contexto")}">＋ ${t("nova nota")}</button>` +
-    `<button class="bsaddbtn" data-ctxaddanexo="${esc(name)}" title="${t("Adicionar um arquivo do computador aos anexos deste contexto")}">＋ ${t("do computador")}</button>`;
+    `<button class="bsaddbtn" data-ctxaddnota="${esc(name)}" title="${t("Escrever uma nota nos anexos deste tema")}">＋ ${t("nova nota")}</button>` +
+    `<button class="bsaddbtn" data-ctxaddanexo="${esc(name)}" title="${t("Adicionar um arquivo do computador aos anexos deste tema")}">＋ ${t("do computador")}</button>`;
   html += folderGroupHtml(`ctxfolder:${name}:anexos`, t("anexos"), anexos.length, anexRows, t("nenhum anexo ainda"), anexActions, `contextos/${name}/anexos`);
   holder.innerHTML = html || `<div class="bempty">${t("vazio")}</div>`;
   wireSidebar();
@@ -2197,13 +3001,13 @@ function renderPessoal(allTemas, avulso) {
       html += `<div class="bitem ctx${open ? " open" : ""}" data-pestoggle="${key}">${ico("note", "ac")}<span class="bn">${t("avulso")}</span></div>` +
         `<div class="bchild" ${open ? "" : "hidden"}>` +
         avulso.map((f) => `<div class="bitem file" data-doc="${esc(f.path)}" title="${esc(f.name)}">${ico("file")}<span class="bn">${esc(shortName(f.name))}</span>` +
-          `<button class="rowmenu" data-artmenu="${esc(f.path)}" data-artlabel="${esc(f.name)}" title="${t("ações (renomear, mover, copiar caminho, apagar)")}">⋯</button></div>`).join("") +
+          `${rowMenuHtml(`data-artmenu="${esc(f.path)}" data-artlabel="${esc(f.name)}"`, f.name, t("ações (renomear, mover, copiar caminho, apagar)"))}</div>`).join("") +
         `</div>`;
     }
   } else if (pessoalFilterQuery) {
-    html += `<div class="bempty">${t("nenhum brainstorming encontrado para")} "${esc(pessoalFilterQuery)}"</div>`;
+    html += `<div class="bempty">${t("nenhuma ideia encontrada para")} "${esc(pessoalFilterQuery)}"</div>`;
   } else {
-    html += `<div class="bempty">${t("nenhum brainstorming ainda — crie o primeiro para reunir reuniões e notas")}</div>`;
+    html += `<div class="bempty">${t("nenhuma ideia ainda — crie a primeira para reunir reuniões e notas")}</div>`;
   }
   B.navPessoal.innerHTML = html;
   wirePessoal();
@@ -2224,7 +3028,7 @@ function renderTemaNode(t) {
   const holder = `<div class="bchild" data-temachild="${esc(t.slug)}" ${open ? "" : "hidden"}></div>`;
   return `<div class="bitem ctx${open ? " open" : ""}" data-tema="${esc(t.slug)}" title="${esc(t.nome || t.slug)}">` +
     `${ico("idea", "ac")}<span class="bn">${esc(t.nome || t.slug)}</span>` +
-    `<button class="rowmenu" data-bsmenu="${esc(t.slug)}" title="${window.LoroI18n.t("ações do brainstorming")}">⋯</button></div>${holder}`;
+    `${rowMenuHtml(`data-bsmenu="${esc(t.slug)}"`, t.nome || t.slug, window.LoroI18n.t("ações da ideia"))}</div>${holder}`;
 }
 // Dentro de um brainstorming a árvore é PLANA (revisão de UX sobre o ADR-0013):
 // as reuniões aparecem direto no nível do brainstorming — com as notas da
@@ -2237,15 +3041,22 @@ function bsPartRow(kind, openRel, selRel, label, title, indent, meetingId, meeti
   // Uma reunião encerrada e SEM análise não tem o que expandir: a seta abria o
   // vazio. No lugar dela, a ação que falta — gerar a análise.
   const noNotes = meetingId && meetingStatus === "done" && !Number(meetingNotas || 0);
+  // R19 · uma reunião interrompida (manifest travado em "recording") também não
+  // tem o que expandir — e o que falta nela não é a análise, é encerrar.
+  const interrupted = meetingId && meetingStatus === "interrupted";
   const act = meetingId
-    ? (noNotes
+    ? (interrupted
+        ? `<button class="rowgen warn" data-mtgclose="${esc(selRel)}" data-mtgid="${esc(meetingId)}" title="${t("a reunião foi interrompida — encerre para liberar analisar, enviar para organizar e mover")}">■ ${t("encerrar reunião")}</button>`
+        : noNotes
         ? `<button class="rowgen" data-mtganalyse="${esc(selRel)}" data-mtgid="${esc(meetingId)}" title="${t("a IA lê a transcrição e escreve a análise")}">✦ ${t("analisar")}</button>`
         : `<button class="rowtoggle${mopen ? " open" : ""}" data-mtgtoggle="${esc(meetingId)}" title="${t("mostrar/ocultar as notas da reunião")}">▸</button>`) +
-      `<button class="rowmenu" data-mtgmenu="${esc(selRel)}" data-mtgid="${esc(meetingId)}" data-mtgtitle="${esc(label)}" data-mtgstatus="${esc(meetingStatus || "")}" data-mtgnotas="${esc(String(meetingNotas || 0))}" title="${t("ações da reunião (analisar, perguntar, enviar para a fila…)")}">⋯</button>`
-    : `<button class="rowmenu" data-artmenu="${esc(selRel)}" data-artlabel="${esc(label)}" title="${t("ações (renomear, apagar)")}">⋯</button>`;
+      rowMenuHtml(
+        `data-mtgmenu="${esc(selRel)}" data-mtgid="${esc(meetingId)}" data-mtgtitle="${esc(label)}" data-mtgstatus="${esc(meetingStatus || "")}" data-mtgnotas="${esc(String(meetingNotas || 0))}"`,
+        label, t("ações da reunião (analisar, perguntar, enviar para organizar…)"))
+    : rowMenuHtml(`data-artmenu="${esc(selRel)}" data-artlabel="${esc(label)}"`, label, t("ações (renomear, apagar)"));
   const icon = kind === "reuniao" ? "meeting" : kind === "nota" ? "note" : "file";
   return `<div class="bitem file${indent ? " bsub" : ""}" data-doc="${esc(openRel)}" title="${esc(title)}">` +
-    `<input type="checkbox" class="bschk" data-bssel="${esc(selRel)}" data-bskind="${kind}" title="${t("selecionar para a fila")}">` +
+    `<input type="checkbox" class="bschk" data-bssel="${esc(selRel)}" data-bskind="${kind}" title="${t("selecionar para organizar")}">` +
     `${ico(icon)}<span class="bn">${esc(label)}</span>` + act + `</div>`;
 }
 // Investigações/respostas de cada reunião são carregadas sob demanda (fechado
@@ -2280,14 +3091,15 @@ async function loadTemaChildren(slug) {
     const title = LM.meetingTitleFromManifest({ titulo: m.titulo }, m.id);
     const label = title === m.id ? LM.meetingLabel(m.id, settings.uiLang) : title;
     const mkey = "mtg:" + m.id, mopen = bOpen.has(mkey);
-    reunioesRows += bsPartRow("reuniao", `${m.rel}/reuniao.md`, m.rel, label, m.id, true, m.id, m.status, mopen, m.notas);
+    const mstatus = meetingEffectiveStatus(m.status, m.id, meeting);
+    reunioesRows += bsPartRow("reuniao", `${m.rel}/reuniao.md`, m.rel, label, m.id, true, m.id, mstatus, mopen, m.notas);
     reunioesRows += `<div class="bchild" data-mtgchild="${esc(m.id)}" data-mtgrel="${esc(m.rel)}" ${mopen ? "" : "hidden"}></div>`;
     if (mopen) pendingMeetingFills.push([m.id, m.rel]);
   }
   const notasRows = notas.map((f) => bsPartRow("nota", f.path, f.path, shortName(f.name), f.name, true)).join("");
   const anexosRows = anexos.map((f) => bsPartRow("anexo", f.path, f.path, shortName(f.name), f.name, true)).join("");
-  const reunioesActions = `<button class="bsaddbtn rec2" data-addmeeting="${esc(slug)}" title="${t("Gravar uma reunião neste brainstorming (áudio 100% local)")}">● ${t("gravar reunião")}</button>`;
-  const notasActions = `<button class="bsaddbtn" data-addnota="${esc(slug)}" title="${t("Escrever uma nota neste brainstorming")}">＋ ${t("nova nota")}</button>`;
+  const reunioesActions = `<button class="bsaddbtn rec2" data-addmeeting="${esc(slug)}" title="${t("Gravar uma reunião nesta ideia (áudio 100% local)")}">● ${t("gravar reunião")}</button>`;
+  const notasActions = `<button class="bsaddbtn" data-addnota="${esc(slug)}" title="${t("Escrever uma nota nesta ideia")}">＋ ${t("nova nota")}</button>`;
   const anexosActions =
     `<button class="bsaddbtn" data-syncdrive="${esc(slug)}" title="${t("Trazer uma nota de reunião externa (Google Drive/Gemini) para os anexos deste tema")}">⇄ ${t("sincronizar")}</button>` +
     `<button class="bsaddbtn" data-addanexo="${esc(slug)}" title="${t("Adicionar um arquivo do computador aos anexos deste tema")}">＋ ${t("do computador")}</button>`;
@@ -2418,6 +3230,11 @@ function wirePessoal() {
     // mesmo caminho do menu ⋯ (dirOverride explícito), já provado
     runMeetingSkill("analyse", b.dataset.mtgid, null, b.dataset.mtganalyse);
   }));
+  // R19 · encerrar uma reunião interrompida: o mesmo caminho do menu ⋯
+  B.navPessoal.querySelectorAll("[data-mtgclose]").forEach((b) => (b.onclick = (e) => {
+    e.stopPropagation();
+    finishInterruptedMeeting(b.dataset.mtgid, b.dataset.mtgclose);
+  }));
   B.navPessoal.querySelectorAll("[data-mtgtoggle]").forEach((el2) => (el2.onclick = async (e) => {
     e.stopPropagation();
     const id = el2.dataset.mtgtoggle, key = "mtg:" + id;
@@ -2432,6 +3249,7 @@ function wirePessoal() {
     }
   }));
   wirePessoalDnd();
+  wireTreeKeyboard(B.navPessoal.parentElement || B.navPessoal);
 }
 
 // A folder-group key (data-pestoggle) → the acervo-relative directory a dropped
@@ -2605,7 +3423,7 @@ async function promptSyncTool(fonte, slug) {
   if (!slug) {
     let temas = [];
     try { temas = (await invoke("brain_list_brainstorms")) || []; } catch (_) {}
-    if (!temas.length) { toast(t("crie um brainstorming primeiro")); return; }
+    if (!temas.length) { toast(t("crie uma ideia primeiro")); return; }
     temaField = `<label class="wfield"><span class="mono">${t("tema")}</span>` +
       `<select id="syncToolTema">` +
       temas.map((b) => `<option value="${esc(b.slug)}">${esc(b.nome)}</option>`).join("") +
@@ -2624,8 +3442,7 @@ async function promptSyncTool(fonte, slug) {
       if (cfg.required && !q) { toast(t("informe") + ": " + t(cfg.field)); return; }
       const cmd = LoroBrainstorm.syncCmd(fonte, alvo, q);
       if (!cmd) { toast(t("informe o tema")); return; }
-      runAiCommand(cmd);
-      toast(aiTargetHint(), 4000);
+      return dispatchAiFromSheet(cmd);
     }
   );
   const inp = $("syncToolInput"); if (inp) inp.focus();
@@ -2635,6 +3452,12 @@ async function promptSyncTool(fonte, slug) {
 // any .md in .claude/commands/ — the filename IS the slash-command. Built-ins
 // (BUILTIN_SKILLS) can be edited but never deleted (brain_delete_tool already
 // refuses them; the UI just hides the option); custom ones have full CRUD.
+const TOOLS_DIR = ".claude/commands";
+// One place decides what a habilidade's path looks like — the lister and the save
+// path must agree, or the cache outlives the file it describes (N14).
+function isHabilidadeRel(rel) {
+  return /\.md$/.test(String(rel || "")) && String(rel).startsWith(TOOLS_DIR + "/");
+}
 const TOOL_BUILTINS = new Set([
   "loro-context.md", "loro-analyse.md", "loro-question.md",
   "loro-ask.md", "loro-note.md", "loro-sync.md", "loro-tool.md",
@@ -2652,14 +3475,20 @@ const TOOL_PICKER_EXCLUDE = new Set([
   // loro-slack only makes sense with an excerpt alvo, reached from the
   // selection popover (ADR-0007) — never from the generic file-level picker.
   "loro-slack.md",
-  // ADR-0020 §1 revogou o ADR-0011: /loro-digest saiu da UI por inteiro.
-  "loro-digest.md",
 ]);
+// ADR-0020 §1 revogou o ADR-0011: /loro-digest saiu da UI POR INTEIRO — nem no
+// seletor curado nem no irrestrito. O arquivo continua no disco (é editável como
+// qualquer habilidade); nenhuma ação o oferece.
+const TOOL_RETIRED = new Set(["loro-digest.md"]);
 let toolsSig = "";
 async function refreshTools() {
   if (!brainTab) return;
   let files = [];
-  try { files = ((await invoke("brain_list_dir", { rel: ".claude/commands" })) || []).filter((f) => !f.dir); }
+  // N12 · a lista aceitava QUALQUER arquivo do diretório. Um `.anotacoes.json`
+  // (o sidecar que nasce ao grifar a própria habilidade) virava uma habilidade
+  // falsa: "usar" mandava /loro-ask.anotacoes.json ao agente e "excluir" só
+  // sabia recusar (brain_delete_tool exige .md). Uma habilidade é um .md.
+  try { files = ((await invoke("brain_list_dir", { rel: TOOLS_DIR })) || []).filter((f) => !f.dir && f.name.endsWith(".md")); }
   catch (_) { files = []; }
   const sig = JSON.stringify(files.map((f) => f.name));
   if (sig === toolsSig) return;
@@ -2684,14 +3513,17 @@ async function refreshTools() {
   renderTools(withDesc);
 }
 function toolRow(f) {
-  const label = shortName(f.name);
+  const label = habilidadeLabel(f);
   // puzzle = built-in, star = custom (ADR-0005): the origin is legible from
   // the icon alone, and neither repeats the section title's bolt; the
   // "padrão" pill stays as the textual reinforcement.
   return `<div class="bitem file" data-doc="${esc(f.path)}" title="${esc(f.desc || f.path)}">` +
     `${ico(f.builtin ? "builtinskill" : "customskill")}<span class="bn">${esc(label)}</span>` +
     (f.builtin ? `<span class="pill" title="${t("habilidade padrão")}">${t("padrão")}</span>` : "") +
-    `<button class="rowmenu" data-toolmenu="${esc(f.path)}" data-toollabel="${esc(label)}" data-toolbuiltin="${f.builtin ? "1" : ""}" title="${t("ações (usar, editar, pedir à IA, excluir)")}">⋯</button>` +
+    // N16 · o nome era fixo e prometia "excluir" nas 11 padrão, cujo menu não a
+    // tem: o leitor de tela anunciava uma ação destrutiva que o menu recusa.
+    rowMenuHtml(`data-toolmenu="${esc(f.path)}" data-toollabel="${esc(label)}" data-toolbuiltin="${f.builtin ? "1" : ""}"`,
+      label, f.builtin ? t("ações (usar, editar, pedir à IA)") : t("ações (usar, editar, pedir à IA, excluir)")) +
     `</div>`;
 }
 let lastToolFiles = [];
@@ -2706,6 +3538,13 @@ function renderTools(files) {
       : `<div class="bempty">${t("nenhuma habilidade ainda — crie uma com IA ou importe uma pronta (＋)")}</div>`;
   }
   wireTools();
+  // N15 · depois de importar, o rodapé da lateral e o rótulo do painel seguiam na
+  // contagem antiga até o usuário abrir OUTRO documento: quem sabe da lista nova
+  // repinta quem a exibe, na hora.
+  const foot = $("footSkillsN");
+  if (foot) foot.textContent = files.length || "";
+  const tab = activeTab();
+  if (tab && tab.rel !== HOME_REL) renderDocRail(tab, tab.rel === GUIDE_REL);
 }
 function wireTools() {
   const nav = $("navTools");
@@ -2718,6 +3557,7 @@ function wireTools() {
     e.stopPropagation();
     openToolMenu(el2.dataset.toolmenu, el2.dataset.toollabel, el2, !!el2.dataset.toolbuiltin);
   }));
+  wireTreeKeyboard(nav.parentElement || nav);
 }
 // usar / editar / pedir à IA / (excluir, só se não for padrão) — same
 // ⋯-menu spirit as openArtefatoMenu, scoped to a habilidade instead of a nota.
@@ -2740,10 +3580,20 @@ function openToolMenu(rel, label, anchor, builtin) {
   if (!builtin) B.bMenu.querySelector("[data-del]").onclick = () => { closeFloat(); delTool(rel); };
   placeMenu(anchor);
 }
-async function delTool(rel) {
-  if (!confirm(t("excluir esta habilidade?"))) return;
-  try { await invoke("brain_delete_tool", { rel }); toolsSig = ""; refreshTools(); toast(t("excluída")); }
-  catch (e) { toast(tErr(String(e))); }
+// N16/N23 · era um window.confirm: um diálogo do sistema, sem o caminho do que
+// vai sumir, fora do sistema de design (DESIGN.md §5 — a mesma ação não pode ter
+// duas aparências, e a folha do app é quem carrega "uma frase e um caminho").
+function delTool(rel) {
+  openModal(
+    t("Excluir esta habilidade?"),
+    `<p class="pmnote mono">${esc(rel)}</p>` +
+      `<p class="pmnote">${t("Não pode ser desfeito.")}</p>`,
+    t("excluir"),
+    async () => {
+      try { await invoke("brain_delete_tool", { rel }); toolsSig = ""; refreshTools(); toast(t("excluída")); }
+      catch (e) { toast(tErr(String(e))); }
+    }
+  );
 }
 // "usar": reads the tool's own front-matter (description/argument-hint) to
 // prompt for arguments, then just runs "/<slug> <alvo> <args>" — the file
@@ -2753,8 +3603,40 @@ async function delTool(rel) {
 // input (owner feedback) — every loro skill takes the alvo as its first
 // token, so it consumes the hint's first token and the remaining tokens are
 // listed for the user to fill in the free-text box.
+// N14 · a folha declara os argumentos obrigatórios (`<...>` do argument-hint) e
+// despachava com o campo vazio, relatando "a resposta aparece no chat". Um token
+// entre `[...]` é opcional e não bloqueia.
+function missingRequiredArgs(tokens, value) {
+  const required = (tokens || []).filter((tk) => /^<.+>$/.test(String(tk)));
+  return required.length > 0 && !String(value || "").trim();
+}
+// N16 · the argument hint's first token names WHERE the skill acts
+// (`<alvo:ideia-conhecimento-ou-nota>`, `<target:idea>`). Pure decision: it is
+// the only token a destination picker may replace.
+function isAlvoToken(tk) {
+  return /^<\s*(alvo|target)[:-]/i.test(String(tk || ""));
+}
+// The other target an argument hint asks for is a MEETING, and a meeting has a
+// surface of its own (the open meeting, with the action in its menu). Asking for
+// its folder in a text box is the same defect under another name, so the sheet
+// points at the place instead of opening.
+function isReuniaoToken(tk) {
+  return /^<\s*(dir-da-reuniao|meeting-dir)>/i.test(String(tk || ""));
+}
+// The homes the project actually has, in the same vocabulary and shape as
+// "Salvar nota" — the value is the real path the skill receives.
+async function alvoDestinations() {
+  let ideias = [];
+  try { ideias = (await invoke("brain_list_brainstorms")) || []; } catch (_) {}
+  const ctxs = (lastSt && lastSt.contexts) || [];
+  return ideias.map((b) => ({ value: `brainstorming/${b.slug}`, label: `${t("ideias")} · ${b.nome || b.slug}` }))
+    .concat(ctxs.map((c) => ({ value: `contextos/${c.name}`, label: `${t("conhecimento")} · ${c.name}` })));
+}
 async function promptUseTool(rel, alvoRel) {
   const slug = rel.split("/").pop().replace(/\.md$/, "");
+  // N13 · o título era "USAR /LORO-ANALYSE" logo abaixo da linha que o usuário
+  // clicou, chamada "analisar reunião" (DESIGN.md §4: o slug não é nome de ação)
+  const label = habilidadeLabelByRel(rel);
   let hint = "", desc = "";
   try {
     const raw = await invoke("brain_read", { rel });
@@ -2765,20 +3647,39 @@ async function promptUseTool(rel, alvoRel) {
   } catch (_) {}
   const fixed = (alvoRel || "").trim();
   const tokens = hint.match(/<[^>]+>|\[[^\]]+\]/g) || [];
-  const rest = fixed && tokens.length ? tokens.slice(1) : tokens;
+  // N16 · with no document open (the palette on Início) the sheet had no target,
+  // and the internal token reached the screen as copy AND as the placeholder: the
+  // only way through was typing a disk path (`brainstorming/<slug>`). Internal
+  // vocabulary cannot be a prerequisite for using the app (DESIGN.md §4) — the
+  // target is chosen.
+  if (!fixed && tokens.length > 0 && isReuniaoToken(tokens[0])) {
+    toast(t("abra a reunião para analisar"), 5000);
+    return;
+  }
+  const picking = !fixed && tokens.length > 0 && isAlvoToken(tokens[0]);
+  const dests = picking ? await alvoDestinations() : [];
+  if (picking && !dests.length) {
+    toast(t("crie uma ideia ou um tema antes de rodar esta habilidade"), 5000);
+    return;
+  }
+  const rest = (fixed || picking) && tokens.length ? tokens.slice(1) : tokens;
   const restHint = rest.join("  ");
   openModal(
-    `${t("usar")} /${slug}`,
+    `${t("usar")}: ${label}`,
     (desc ? `<p class="pmnote mono">${esc(desc)}</p>` : "") +
       (fixed ? `<div class="wfield"><span class="mono">${t("alvo")}</span><span class="lockval mono" title="${esc(fixed)}">${esc(fixed)}</span></div>` : "") +
+      (picking ? `<label class="wfield"><span class="mono">${t("alvo")}</span><select id="useToolAlvo">` +
+        dests.map((d) => `<option value="${esc(d.value)}">${esc(d.label)}</option>`).join("") + `</select></label>` : "") +
       (restHint ? `<p class="pmnote mono">${t("argumentos")}: ${esc(restHint)}</p>` : "") +
       `<label class="wfield"><span class="mono">${t("escrever")}</span>` +
       `<input id="useToolInput" type="text" placeholder="${esc(restHint || t("opcional"))}" spellcheck="false"></label>`,
     t("rodar"),
     () => {
       const args = (($("useToolInput") && $("useToolInput").value) || "").trim();
-      runAiCommand("/" + slug + (fixed ? " " + fixed : "") + (args ? " " + args : ""));
-      toast(aiTargetHint(), 4000);
+      const alvo = fixed || (($("useToolAlvo") && $("useToolAlvo").value) || "");
+      if (missingRequiredArgs(rest, args)) { toast(t("preencha os argumentos pedidos")); return; }
+      // o chat registra a AÇÃO escolhida (era a barra crua "/loro-question")
+      return dispatchAiFromSheet("/" + slug + (alvo ? " " + alvo : "") + (args ? " " + args : ""), null, label);
     }
   );
   const inp = $("useToolInput"); if (inp) inp.focus();
@@ -2794,8 +3695,7 @@ function promptToolAI(rel) {
       const p = (($("toolAiInput") && $("toolAiInput").value) || "").trim();
       const cmd = LoroBrainstorm.toolCmd(rel, p);
       if (!cmd) { toast(t("descreva o pedido")); return; }
-      runAiCommand(cmd);
-      toast(aiTargetHint(), 4000);
+      return dispatchAiFromSheet(cmd);
     }
   );
   const inp = $("toolAiInput"); if (inp) inp.focus();
@@ -2811,8 +3711,7 @@ function promptNewToolAI() {
       const d = (($("newToolInput") && $("newToolInput").value) || "").trim();
       const cmd = LoroBrainstorm.newToolCmd(d);
       if (!cmd) { toast(t("descreva a habilidade")); return; }
-      runAiCommand(cmd);
-      toast(t("pedido enviado — a habilidade aparece na lateral"), 4000);
+      return dispatchAiFromSheet(cmd, t("pedido enviado — a habilidade aparece na lateral"));
     }
   );
   const inp = $("newToolInput"); if (inp) inp.focus();
@@ -2857,6 +3756,7 @@ function openAddToolMenu(anchor) {
   if (tt && navT) tt.addEventListener("click", () => {
     navT.hidden = !navT.hidden;
     tt.classList.toggle("closed", navT.hidden);
+    tt.setAttribute("aria-expanded", String(!navT.hidden));
   });
 }
 // Shared "executar habilidade" picker (brainstorming ⋯ and meeting ⋯): a
@@ -2871,17 +3771,36 @@ function openAddToolMenu(anchor) {
 // stay in sync automatically.
 // Friendly display names for the built-in habilidades — `loro-…` filenames
 // mean nothing to the user (owner feedback); customs keep their own name.
+// C10/C14 · o rótulo chega a t() por VARIÁVEL, então a varredura de literais não
+// o vê: foi assim que "perguntar ao acervo" (o termo que a DESIGN.md §4 retirou)
+// sobreviveu no chip de todas as telas, e que cinco habilidades ficaram sem par
+// em inglês — a mesma ação aparecia duas vezes, em dois idiomas. Toda habilidade
+// padrão tem rótulo aqui; vocabulary.test.js guarda as duas regras.
 const TOOL_LABELS = {
   "loro-presentation.md": "apresentação",
   "loro-artifact.md": "artefato",
   "loro-note.md": "nota por IA",
-  "loro-ask.md": "perguntar ao acervo",
+  "loro-ask.md": "perguntar ao projeto",
   "loro-analyse.md": "analisar reunião",
   "loro-question.md": "perguntar sobre a reunião",
-  "loro-context.md": "gerar contexto",
+  "loro-context.md": "transformar em conhecimento",
   "loro-tool.md": "criar habilidade",
   "loro-slack.md": "perguntar no Slack",
+  "loro-digest.md": "índice da ideia",
+  // N13 · sem esta linha, loro-sync aparecia na lateral pelo NOME DO ARQUIVO,
+  // entre dez nomes em pt-BR
+  "loro-sync.md": "sincronizar fontes",
 };
+// O nome do ARQUIVO (`loro-ask`) não é o nome de uma ação: as padrão têm rótulo
+// próprio; uma habilidade customizada usa o nome que o autor deu a ela.
+function habilidadeLabel(f) {
+  return TOOL_LABELS[f.name] ? t(TOOL_LABELS[f.name]) : shortName(f.name);
+}
+// O mesmo rótulo a partir do caminho — a folha "usar" só tem o rel em mão.
+function habilidadeLabelByRel(rel) {
+  const name = String(rel || "").split("/").pop() || "";
+  return habilidadeLabel({ name });
+}
 // Relevance order for the dropdown/picker (ADR-0005, owner feedback): the most
 // context-relevant habilidades first, least last. On the meeting surface the
 // meeting skills (perguntar sobre a reunião, analisar) lead; elsewhere the
@@ -2907,7 +3826,7 @@ function habilidadeRank(name, surface) {
 }
 function habilidadeEntriesFrom(files, surface) {
   const entries = [];
-  const ordered = files.slice().sort((a, b) => {
+  const ordered = files.filter((f) => !TOOL_RETIRED.has(f.name)).sort((a, b) => {
     const d = habilidadeRank(a.name, surface) - habilidadeRank(b.name, surface);
     return d !== 0 ? d : shortName(a.name).localeCompare(shortName(b.name));
   });
@@ -2917,8 +3836,7 @@ function habilidadeEntriesFrom(files, surface) {
         entries.push({ kind: "sync", fonte, label: `${t("sincronizar")}: ${fonte}`, title: f.desc });
       }
     } else {
-      const label = TOOL_LABELS[f.name] ? t(TOOL_LABELS[f.name]) : shortName(f.name);
-      entries.push({ kind: "tool", rel: f.path, label, title: f.desc || f.path });
+      entries.push({ kind: "tool", rel: f.path, label: habilidadeLabel(f), title: f.desc || f.path });
     }
   }
   return entries;
@@ -3025,15 +3943,20 @@ function promptNewNota(slug, anchor) {
 // (resumão)": o digest saiu da UI junto com o /loro-digest.
 function openBsMenu(slug, anchor) {
   B.acervoMenu.hidden = true;
+  // o cabeçalho do menu mostrava o SLUG ("PLATAFORMA-DE-PAGAMENTOS"), não o nome
+  // que o usuário digitou — o slug é o nome da pasta no disco
+  const tema = (pessoalRawTemas || []).find((x) => x.slug === slug);
   B.bMenu.innerHTML =
-    `<div class="fhead">${esc(slug)}</div>` +
+    `<div class="fhead">${esc((tema && tema.nome) || slug)}</div>` +
     `<div class="fitem2" data-newnote><span class="fn">${ico("note", "ac")} ${t("nova nota")}</span></div>` +
     `<div class="fitem2" data-rec><span class="fn">${ico("meeting")} ${t("gravar reunião aqui")}</span></div>` +
     `<div class="fitem2" data-attach><span class="fn">${ico("file")} ${t("anexar arquivo")}</span></div>` +
     `<div class="fsep"></div>` +
     `<div class="fitem2 strong" data-ainote><span class="fn">✦ ${t("nota por IA…")}</span></div>` +
     `<div class="fitem2" data-tools><span class="fn">${ico("skill")} ${t("executar habilidade…")}</span></div>` +
-    `<div class="fitem2" data-toqueue><span class="fn">→ ${t("enviar tudo para organizar")}</span></div>` +
+    // B9 · "enviar tudo para organizar" truncava no meio da palavra: o rótulo é
+    // o que cabe na caixa do menu (.floatmenu tem largura máxima em CSS).
+    `<div class="fitem2" data-toqueue><span class="fn">→ ${t("tudo para organizar")}</span></div>` +
     `<div class="fsep"></div>` +
     `<div class="fitem2" data-ren><span class="fn">${t("renomear")}</span></div>` +
     copyPathItemsHtml() +
@@ -3056,7 +3979,7 @@ function openBsMenu(slug, anchor) {
 // (same reason pickMeeting/askMeetingQuestion use openModal).
 function promptRenameBs(slug) {
   openModal(
-    t("Renomear brainstorming"),
+    t("Renomear ideia"),
     `<label class="wfield"><span class="mono">${t("nome")}</span>` +
       `<input id="bsRenInput" type="text" value="${esc(slug)}" spellcheck="false"></label>`,
     t("renomear"),
@@ -3082,17 +4005,30 @@ function openMeetingMenu(rel, id, title, status, anchor, notas) {
   // report is only worth opening after the meeting is done — before that the
   // entry shows disabled with the reason instead of failing on click.
   const ready = status === "done";
+  // R19 · uma reunião cujo manifest ficou em "recording" não vai terminar sozinha:
+  // a nota antiga prometia que analisar/enviar/mover apareceriam "quando a reunião
+  // terminar", e não havia como terminá-la. Aqui ela ganha a saída.
+  const interrupted = status === "interrupted";
   const dis = ready ? "" : " disabled";
   // AC-7: a análise É a saída da reunião — sem nenhuma, não há o que enfileirar,
   // e o motivo fica declarado em vez de o envio falhar em silêncio.
+  // meeting.js decide SE bloqueia (uma razão só: reunião sem análise). O texto
+  // é escrito aqui porque o dele ainda diz "fila", palavra que a DESIGN.md §4
+  // retirou da tela.
   const bloqueio = LM.meetingQueueBlock(notas);
+  const bloqueioMsg = t("analise a reunião antes de enviar para organizar");
   B.bMenu.innerHTML =
     `<div class="fhead">${esc(title)}</div>` +
+    (interrupted
+      ? `<div class="fitem2 strong" data-mtgclose><span class="fn">■ ${t("encerrar reunião")}</span></div>`
+      : "") +
     `<div class="fitem2 strong${dis ? " off" : ""}" data-analyse><span class="fn">✦ ${t("analisar")}</span></div>` +
     `<div class="fitem2${ready ? "" : " strong"}" data-question><span class="fn">? ${t("perguntar…")}</span></div>` +
-    `<div class="fitem2${dis || bloqueio ? " off" : ""}" data-queue><span class="fn">${t("enviar para a fila")} →</span></div>` +
-    (ready ? "" : `<div class="fnote mono">${t("analisar e enviar para a fila ficam disponíveis quando a reunião terminar — perguntar já funciona agora")}</div>`) +
-    (ready && bloqueio ? `<div class="fnote mono">${t(bloqueio)}</div>` : "") +
+    `<div class="fitem2${dis || bloqueio ? " off" : ""}" data-queue><span class="fn">${t("enviar para organizar")} →</span></div>` +
+    (interrupted
+      ? `<div class="fnote mono">${t("a reunião foi interrompida — encerre para liberar analisar, enviar para organizar e mover")}</div>`
+      : ready ? "" : `<div class="fnote mono">${t("analisar e enviar para organizar ficam disponíveis quando a reunião terminar — perguntar já funciona agora")}</div>`) +
+    (ready && bloqueio ? `<div class="fnote mono">${bloqueioMsg}</div>` : "") +
     `<div class="fitem2" data-tools><span class="fn">${ico("skill")} ${t("executar habilidade…")}</span></div>` +
     `<div class="fsep"></div>` +
     `<div class="fitem2" data-ren><span class="fn">✎ ${t("renomear")}</span></div>` +
@@ -3109,9 +4045,12 @@ function openMeetingMenu(rel, id, title, status, anchor, notas) {
       closeFloat();
       // ADR-0018: the meeting goes as its DIRECTORY; the backend's single owner
       // expands it into the notas/ that represent it (BR-8 stays there).
-      if (bloqueio) { toast(t(bloqueio)); return; }
+      if (bloqueio) { toast(bloqueioMsg); return; }
       sendFilesToQueue([LoroBrainstorm.queueRelForSelection("reuniao", rel)]);
     };
+  }
+  if (interrupted) {
+    B.bMenu.querySelector("[data-mtgclose]").onclick = () => { closeFloat(); finishInterruptedMeeting(id, rel); };
   }
   B.bMenu.querySelector("[data-question]").onclick = () => { closeFloat(); askMeetingQuestion(id, rel); };
   B.bMenu.querySelector("[data-tools]").onclick = () => openHabilidadeMenu(rel, anchor);
@@ -3195,7 +4134,7 @@ function openPathMenu(rel, label, anchor) {
 // The copy-only ⋯ button markup for a tree row/folder header that has no richer
 // menu (issue #18); `wirePathMenus` binds every such button under `root`.
 function pathMenuBtnHtml(rel, label) {
-  return `<button class="rowmenu" data-pathmenu="${esc(rel)}" data-pathlabel="${esc(label || rel)}" title="${t("copiar caminho (relativo/absoluto)")}">⋯</button>`;
+  return rowMenuHtml(`data-pathmenu="${esc(rel)}" data-pathlabel="${esc(label || rel)}"`, label || rel, t("copiar caminho (relativo/absoluto)"));
 }
 function wirePathMenus(root) {
   (root || B.main).querySelectorAll("[data-pathmenu]").forEach((el2) => (el2.onclick = (e) => {
@@ -3281,7 +4220,7 @@ function promptNoteAI(target, isFile) {
     isFile ? t("Pedir à IA sobre esta nota") : t("Nota por IA"),
     `<p class="pmnote mono">${isFile
       ? t("a IA lê a nota e aplica o pedido nela mesma — evolui, não apaga.")
-      : t("descreva a nota que o Loro deve criar neste brainstorming.")}</p>` +
+      : t("descreva a nota que o Loro deve criar nesta ideia.")}</p>` +
       `<label class="wfield"><span class="mono">${t("pedido")}</span>` +
       `<input id="noteAiInput" type="text" placeholder="${isFile
         ? t("ex.: resuma em 5 bullets e liste as dúvidas")
@@ -3291,8 +4230,7 @@ function promptNoteAI(target, isFile) {
       const p = (($("noteAiInput") && $("noteAiInput").value) || "").trim();
       const cmd = LoroBrainstorm.noteCmd(target, p);
       if (!cmd) { toast(t("descreva o pedido")); return; }
-      runAiCommand(cmd);
-      toast(t("pedido enviado — a nota aparece na lateral"), 4000);
+      return dispatchAiFromSheet(cmd, t("pedido enviado — a nota aparece na lateral"));
     }
   );
   const inp = $("noteAiInput"); if (inp) inp.focus();
@@ -3350,7 +4288,7 @@ function promptRenameMeeting(id, current) {
 const INTAKE_LABEL = {
   "intake.secret": (f) => t("parece conter uma credencial") + " (" + t("linha") + " " + f.line + ")",
   "intake.cpf": (f) => t("parece conter CPF") + " (" + t("linha") + " " + f.line + ")",
-  "intake.transcript": (f) => f.count + " " + t("marcas de transcrição — a BR-8 mantém transcrição fora da fila"),
+  "intake.transcript": (f) => f.count + " " + t("marcas de transcrição — a BR-8 mantém transcrição fora do que vai para organizar"),
 };
 async function passIntake(rels, whole) {
   let report;
@@ -3367,7 +4305,7 @@ async function passIntake(rels, whole) {
     (blocked.length
       ? `<p class="intakehead block">${blocked.length > 1
           ? blocked.length + " " + t("arquivos não vão entrar")
-          : t("um arquivo não vai entrar")} — ${t("o acervo é versionado e vai para o git")}</p>` +
+          : t("um arquivo não vai entrar")} — ${t("o projeto é versionado e vai para o git")}</p>` +
         blocked.map((r) => row(r, "block")).join("")
       : "") +
     (warned.length
@@ -3379,15 +4317,18 @@ async function passIntake(rels, whole) {
   const soBloqueio = warned.length === 0;
   return await new Promise((resolve) => {
     let decidiu = false;
+    const responde = (v) => { if (!decidiu) { decidiu = true; resolve(v); } };
+    // A folha se dispensa de cinco maneiras (confirmar, cancelar, ×, Escape,
+    // clique fora) e QUEM ESPERA precisa ser avisado por todas: ouvir só os
+    // cliques em cancelar/× deixava este await pendente para sempre no Escape —
+    // o envio para organizar morria em silêncio (o mesmo defeito do ● Gravar).
     openModal(
       t("triagem de entrada"),
       body,
       soBloqueio ? null : t("enviar assim mesmo"),
-      soBloqueio ? null : () => { decidiu = true; resolve(true); },
+      soBloqueio ? null : () => responde(true),
+      () => responde(false),
     );
-    const fecha = () => { if (!decidiu) { decidiu = true; resolve(false); } };
-    PM.cancel.addEventListener("click", fecha, { once: true });
-    PM.close.addEventListener("click", fecha, { once: true });
   });
 }
 
@@ -3404,7 +4345,7 @@ async function sendFilesToQueue(rels) {
     const names = await invoke("brain_send_files_to_queue", { rels: list, destContext: null });
     pessoalSig = ""; refreshPessoal(); sideSig = ""; brainRefresh();
     const n = (names && names.length) || list.length;
-    toast(n > 1 ? `${n} ${t("arquivos na fila de geração de contexto")}` : t("arquivo na fila de geração de contexto"));
+    toast(n > 1 ? `${n} ${t("arquivos para organizar")}` : t("arquivo para organizar"));
   } catch (e) { toast(t("não enviei") + ": " + tErr(String(e))); clog("send_to_queue error: " + e); }
 }
 
@@ -3415,7 +4356,7 @@ async function sendBrainstormAllToQueue(slug) {
     const names = await invoke("brain_send_brainstorm_to_queue", { slug, destContext: null });
     pessoalSig = ""; refreshPessoal(); sideSig = ""; brainRefresh();
     const n = (names && names.length) || 0;
-    toast(n > 1 ? `${n} ${t("arquivos na fila de geração de contexto")}` : t("arquivo na fila de geração de contexto"));
+    toast(n > 1 ? `${n} ${t("arquivos para organizar")}` : t("arquivo para organizar"));
   } catch (e) { toast(t("não enviei") + ": " + tErr(String(e))); clog("send_all_to_queue error: " + e); }
 }
 
@@ -3451,24 +4392,31 @@ function renderSelectionBar() {
   bar.innerHTML =
     `<div class="bsselrow"><span class="mono">${n} ${t(n > 1 ? "selecionados" : "selecionado")}</span>` +
     `<button class="link mono muted" id="bsSelClear">${t("limpar")}</button></div>` +
-    `<button class="railbtn cta" id="bsSelSend" title="${t("Envia cada arquivo escolhido para a fila de geração de contexto (um item por arquivo)")}">${t("enviar para a fila")} →</button>`;
+    `<button class="railbtn cta" id="bsSelSend" title="${t("Envia cada arquivo escolhido para organizar (um item por arquivo)")}">${t("enviar para organizar")} →</button>`;
   $("bsSelSend").onclick = sendSelectionToQueue;
   $("bsSelClear").onclick = () => { bsSelection = new Set(); wirePessoal(); renderSelectionBar(); };
 }
 
 // Apaga um item do mundo brainstorming (arquivo, reunião ou brainstorming inteiro).
 // Confinado a brainstorming/ no backend (nunca toca contextos/ versionado).
-async function delPessoal(rel, kind) {
-  const what = kind === "tema" ? t("o brainstorming e TODO o seu conteúdo")
+function delPessoal(rel, kind) {
+  const what = kind === "tema" ? t("a ideia e TODO o seu conteúdo")
     : kind === "reuniao" ? t("a reunião e todos os seus arquivos (transcrição, análises, artefatos)")
     : t("este item");
-  if (!confirm(`${t("Apagar")} ${what}? ${t("Não pode ser desfeito.")}`)) return;
-  try {
-    await invoke("brain_brainstorm_delete", { input: { rel } });
-    closeTabsUnder(rel);
-    toast(t("apagado"));
-    pessoalSig = ""; refreshPessoal();
-  } catch (e) { toast(t("não apaguei") + ": " + tErr(String(e))); clog("brain_brainstorm_delete error: " + e); }
+  // N23 · a folha do app, com o caminho do que sai do disco — não o confirm do SO
+  openModal(
+    `${t("Apagar")} ${what}?`,
+    `<p class="pmnote mono">${esc(rel)}</p><p class="pmnote">${t("Não pode ser desfeito.")}</p>`,
+    t("apagar"),
+    async () => {
+      try {
+        await invoke("brain_brainstorm_delete", { input: { rel } });
+        closeTabsUnder(rel);
+        toast(t("apagado"));
+        pessoalSig = ""; refreshPessoal();
+      } catch (e) { toast(t("não apaguei") + ": " + tErr(String(e))); clog("brain_brainstorm_delete error: " + e); }
+    }
+  );
 }
 
 // ---- workspace selectors (ADR-0008) ----
@@ -3483,6 +4431,9 @@ function markSel() {
   const rel = currentRel();
   B.main.querySelectorAll("[data-doc]").forEach((el2) =>
     el2.classList.toggle("on", el2.dataset.doc === rel));
+  // C18 · a árvore é redesenhada por innerHTML: sem esta linha as linhas novas
+  // nascem sem aria-selected (o observador só vê MUDANÇA de classe).
+  paintAriaState();
 }
 
 // ---- faixa de abas ----
@@ -3500,12 +4451,22 @@ function renderTabs() {
     if (tab.id === active) cls.push("on");
     if (tab.preview) cls.push("preview");   // aba efêmera: itálico (ADR-0008)
     const rec = meeting.active && meeting.livingRel === tab.rel;
-    const lead = rec ? `<span class="wsrecdot" aria-hidden="true"></span>` : ico(tabIcon(tab), tabIconTone(tab));
+    // pausada: o ponto vermelho é a afirmação "estou gravando" e sai de cena
+    // enquanto nada é captado (ADR-0022 §19) — o relógio congelado fica
+    const lead = rec && !state.paused
+      ? `<span class="wsrecdot" aria-hidden="true"></span>`
+      : ico(tabIcon(tab), tabIconTone(tab));
     const dot = tab.dirty ? `<span class="wsdot" title="${t("alterações não salvas")}">●</span>` : "";
     // a aba de gravação mostra o timer e NÃO tem × (só para pelo botão Parar)
     const time = rec ? `<span class="wstime">${esc(el.timer.textContent)}</span>` : "";
-    const close = rec ? "" : `<button class="wsclose" data-close="${tab.id}" title="${t("fechar")} (⌘/Ctrl+W)" aria-label="${t("fechar")}">×</button>`;
-    return `<div class="${cls.join(" ")}" data-tab="${tab.id}" draggable="true"
+    const close = rec ? "" : `<button class="wsclose" data-close="${tab.id}" title="${t("fechar")} (⌘/Ctrl+W)" aria-label="${t("fechar")} ${esc(tab.title)}">×</button>`;
+    // C18 · qual documento está aberto existia SÓ na classe .on: para a
+    // tecnologia assistiva a faixa era um monte de <div> sem papel (WCAG 4.1.2 /
+    // 1.3.1). A faixa é uma tablist de verdade, com tabindex rotativo — uma
+    // parada de Tab por faixa, como na árvore lateral.
+    const on = tab.id === active;
+    return `<div class="${cls.join(" ")}" data-tab="${tab.id}" draggable="true" role="tab"
+        aria-selected="${on ? "true" : "false"}" tabindex="${on ? 0 : -1}"
         title="${esc(tab.rel)}">${lead}<span class="wsn">${esc(tab.title)}</span>${time}${dot}${close}</div>`;
   }).join("") + (docs.length ? `<button class="tabadd" data-tabadd title="${t("abrir…")}">＋</button>` : "");
   wireTabs();
@@ -3513,9 +4474,32 @@ function renderTabs() {
 // ícone por tipo: conhecimento (teal) · ideia (âmbar) · outros neutros
 function tabIcon(tab) { return tab.kind === "context" ? "context" : tab.kind === "personal" ? "note" : "file"; }
 function tabIconTone(tab) { return tab.kind === "context" ? "ac" : tab.kind === "personal" ? "amber" : ""; }
+// APG (tabs, ativação automática): as setas trocam de aba e o foco acompanha a
+// aba ativa. renderTabs redesenha a faixa inteira, então a linha focada deixa de
+// existir — o foco é reencontrado pelo id da aba, como na árvore lateral.
+function focusTabById(id) {
+  const n = B.wsTabs.querySelector(`[data-tab="${CSS.escape(id)}"]`);
+  if (n) { try { n.focus(); } catch (_) {} }
+}
+function onTabKey(e, ids, at) {
+  const jump = (i) => {
+    const id = ids[(i + ids.length) % ids.length];
+    if (!id) return;
+    e.preventDefault();
+    activateTab(id);
+    focusTabById(id);
+  };
+  if (e.key === "ArrowRight") jump(at + 1);
+  else if (e.key === "ArrowLeft") jump(at - 1);
+  else if (e.key === "Home") jump(0);
+  else if (e.key === "End") jump(ids.length - 1);
+  else if (e.key === "Enter" || e.key === " ") jump(at);
+}
 function wireTabs() {
+  const ids = [...B.wsTabs.querySelectorAll("[data-tab]")].map((n) => n.dataset.tab);
   B.wsTabs.querySelectorAll("[data-tab]").forEach((elx) => {
     const id = elx.dataset.tab;
+    elx.onkeydown = (e) => onTabKey(e, ids, ids.indexOf(id));
     elx.onclick = (e) => { if (e.target.closest("[data-close]")) return; activateTab(id); };
     // middle-click closes (VS Code parity)
     elx.onauxclick = (e) => { if (e.button === 1) { e.preventDefault(); closeTabById(id); } };
@@ -3553,10 +4537,21 @@ function disposeTabState(id) {
 function closeTabById(id) {
   const tab = ws.tabs.find((t) => t.id === id);
   if (!tab || tab.rel === HOME_REL) return; // Home is non-closable
-  if (tab.dirty && !window.confirm(`${t("Descartar alterações não salvas de")} "${tab.title}"?`)) return;
-  disposeTabState(id);
-  ws = LoroWorkspace.closeTab(ws, id);
-  renderTabs(); renderActive();
+  const close = () => {
+    disposeTabState(id);
+    ws = LoroWorkspace.closeTab(ws, id);
+    renderTabs(); renderActive();
+  };
+  // N23 · perder o que foi escrito é destrutivo: confirma na folha do app, com o
+  // nome do documento — o window.confirm era chrome do navegador
+  if (!tab.dirty) return close();
+  openModal(
+    t("Descartar alterações não salvas?"),
+    `<p class="pmnote mono">${esc(tab.title)}</p>` +
+      `<p class="pmnote">${t("o que foi escrito e não salvo é perdido — não pode ser desfeito.")}</p>`,
+    t("descartar"),
+    close
+  );
 }
 function closeActiveTab() { const t = activeTab(); if (t) closeTabById(t.id); }
 function reopenClosedTab() { ws = LoroWorkspace.reopenClosed(ws); renderTabs(); renderActive(); }
@@ -3592,8 +4587,23 @@ function showHome() {
 
 // Sem documento aberto a aba "Documento" do painel não tem sujeito: mostra a
 // razão em uma linha em vez de cabeçalhos vazios e um botão sem alvo.
+// C30 · "Nenhum documento aberto" era falso com quatro abas na faixa: o painel
+// não tem sujeito porque nenhum documento está EM FOCO (o usuário está num
+// destino). A cópia lê a fonte da verdade — as abas do workspace — e orienta o
+// passo seguinte que existe de verdade.
+function panelDocEmptyCopy(openDocs) {
+  return openDocs > 0
+    ? { title: t("Nenhum documento em foco"),
+        hint: t("escolha um documento na faixa de abas acima — as habilidades de IA, as versões e o envio para revisão aparecem aqui.") }
+    : { title: t("Nenhum documento aberto"),
+        hint: t("abra um conhecimento ou uma reunião na barra lateral — as habilidades de IA, as versões e o envio para revisão aparecem aqui.") };
+}
 function clearPanelDoc() {
   const empty = $("pDocEmpty"), secs = $("pDocSecs");
+  const copy = panelDocEmptyCopy(((ws && ws.tabs) || []).filter((tab) => tab.rel !== HOME_REL).length);
+  const title = $("pDocEmptyTitle"), hint = $("pDocEmptyHint");
+  if (title) title.textContent = copy.title;
+  if (hint) hint.textContent = copy.hint;
   if (empty) empty.hidden = false;
   if (secs) secs.hidden = true;
 }
@@ -3624,16 +4634,27 @@ function docBadge(p, isGuide) {
   if (p.startsWith("inbox/")) return [t("pendente — será processado pelo loop"), "ok"];
   if (p.endsWith("guia.md")) return [t("formato antigo — migre para context.md"), "warn2"];
   if (p.endsWith("CHANGELOG.md")) return [t("histórico (append-only)"), "ro"];
-  return [t("documento do acervo"), "ro"];
+  return [t("documento do projeto"), "ro"];
 }
 // Versioning (git) badge — only on context tabs; a pessoal/ tab never surfaces
 // any git state (ADR-0008, LoroWorld.gitVisible).
 function setDocGit(p, kind, isGuide) {
   if (isGuide || !LoroWorld.gitVisible(kind)) { B.gitBadge.hidden = true; return; }
   const cls = gitClass(p);
-  const map = { "g-new": t("novo (não versionado)"), "g-mod": t("modificado"), "g-del": t("apagado") };
-  if (cls && map[cls]) { B.gitBadge.hidden = false; B.gitBadge.textContent = map[cls]; B.gitBadge.className = "mono badge " + cls; }
-  else B.gitBadge.hidden = true;
+  // C13 · a linha do crumb tem DOIS selos de pintores diferentes: o do MUNDO
+  // (LoroWorld.crumbBadge → "versionado") e este, o do ARQUIVO. Dizer "novo (não
+  // versionado)" ao lado de "versionado" era afirmar e negar o mesmo fato na
+  // mesma linha; o selo do arquivo fala do que ele é de fato — se já existe uma
+  // versão salva dele (DESIGN.md §4: versionar → "salvar versão").
+  const map = { "g-new": t("sem versão salva"), "g-mod": t("modificado"), "g-del": t("apagado") };
+  if (cls && map[cls]) {
+    B.gitBadge.hidden = false; B.gitBadge.textContent = map[cls]; B.gitBadge.className = "mono badge " + cls;
+    // N8 · o selo ABRE o histórico: o nome acessível diz a ação e o estado, não
+    // só o estado (4.1.2) — era anunciado como texto estático.
+    const name = `${map[cls]} — ${t("ver o histórico deste documento")}`;
+    B.gitBadge.setAttribute("aria-label", name);
+    B.gitBadge.title = name;
+  } else B.gitBadge.hidden = true;
 }
 
 // O tema do editor vem do TEMA DO APP (ADR-0020: `data-theme`, com "sistema"
@@ -3731,7 +4752,10 @@ function onEditorChange(id, value) {
   const dirty = value !== savedById.get(id);
   const tab = ws.tabs.find((t) => t.id === id);
   if (tab && dirty) maybeFirstEditNote(tab);
-  if (tab && tab.dirty !== dirty) { ws = LoroWorkspace.markDirty(ws, id, dirty); renderTabs(); }
+  if (tab && tab.dirty !== dirty) {
+    ws = LoroWorkspace.markDirty(ws, id, dirty); renderTabs();
+    if (ws.activeId === id) paintEditFoot(ws.tabs.find((x) => x.id === id), true);
+  }
 }
 
 // ADR-0008/0009: the first time a pessoal/ (personal) draft is edited, surface a
@@ -3755,7 +4779,14 @@ async function saveTab(id, value) {
     savedById.set(id, value);
     ws = LoroWorkspace.markDirty(ws, id, false);
     renderTabs();
+    if (ws.activeId === id) paintEditFoot(ws.tabs.find((x) => x.id === id), true);
     toast(t("salvo"));
+    // N14 · refreshTools() caches a habilidade's `description:`/`fonte:` behind a
+    // signature made of FILE NAMES only, so editing a habilidade left the picker
+    // offering yesterday's skill for the whole session — against ADR-0005 §2
+    // ("quem edita a habilidade para acrescentar uma fonte a vê no seletor").
+    // The app just wrote the file: it is the one moment it KNOWS the cache is stale.
+    if (isHabilidadeRel(tab.rel)) toolsSig = "";
     sideSig = ""; brainRefresh();
   } catch (e) { toast(tErr(String(e))); clog("save doc error: " + e); }
 }
@@ -3781,6 +4812,23 @@ function saveActive() {
   if (!t || t.rel === HOME_REL) return;
   const h = cmById.get(t.id);
   if (h) saveTab(t.id, h.getValue());
+}
+// O rodapé de edição (#bEditFoot) nascia `hidden` e NINGUÉM o mostrava: os dois
+// handlers wired nele eram inalcançáveis por clique e o modo editar ficava sem
+// nenhuma ação primária — o único caminho de salvar era o ⌘S, que a interface não
+// documenta em lugar nenhum. Este é o pintor único do rodapé.
+function paintEditFoot(tab, editing) {
+  const foot = $("bEditFoot");
+  if (!foot) return;
+  foot.hidden = !editing;
+  if (!editing) return;
+  const save = $("bSaveVersion");
+  // "Salvar versão" é um commit no histórico do projeto. Um rascunho pessoal é
+  // gitignorado: ali não existe versão a salvar, só o arquivo — o rótulo diz
+  // exatamente o que o clique vai fazer.
+  if (save) save.textContent = tab && tab.kind === "context" ? t("Salvar versão") : t("Salvar");
+  const note = $("bEditNote");
+  if (note) note.textContent = tab && tab.dirty ? t("mudanças não salvas") : t("salvo");
 }
 async function mountEditor(tab, stale) {
   let h = cmById.get(tab.id);
@@ -3808,6 +4856,102 @@ async function mountEditor(tab, stale) {
   cmById.forEach((hh, id) => { hh.view.dom.style.display = id === tab.id ? "" : "none"; });
   requestAnimationFrame(() => h.focus());
 }
+// ---- B5 · a vista de uma IDEIA -------------------------------------------
+// Clicar numa ideia abria `brainstorming/<slug>/indice.md`: o artefato do digest
+// cuja UI a ADR-0020 revogou. O usuário caía num documento quase vazio, sem a
+// lista de reuniões, sem contagem e sem próximo passo — exatamente o "arrow into
+// an empty list" que o DESIGN.md §1 nomeia. O ARQUIVO continua sendo um
+// documento comum (a ADR-0020 revogou o fluxo, não o material do usuário: o modo
+// editar segue abrindo o texto). O que muda é a VISTA: a ideia mostra o que ela
+// já tem e o que fazer com ela.
+function ideaSlugOf(rel) {
+  const m = /^brainstorming\/([^/]+)\/indice\.md$/.exec(String(rel == null ? "" : rel));
+  return m ? m[1] : null;
+}
+// Decisão pura: quantas peças a ideia tem e, quando não tem nenhuma, qual é a
+// frase que orienta o passo seguinte (nunca uma lista vazia calada).
+function ideaMaterialCount(counts) {
+  const c = counts || {};
+  return (Number(c.reunioes) || 0) + (Number(c.notas) || 0) + (Number(c.anexos) || 0);
+}
+function ideaSectionHtml(title, rows, emptyMsg) {
+  return `<h2>${esc(title)} <span class="mono">(${rows.length})</span></h2>` +
+    (rows.length ? `<ul>${rows.join("")}</ul>` : `<p class="bempty">${esc(emptyMsg)}</p>`);
+}
+// Um <button class="link"> em vez de um <a> sem href: uma linha da ideia é
+// alcançável pelo teclado e anunciada como controle (WCAG 2.1.1 / 4.1.2).
+function ideaRowHtml(rel, label) {
+  return `<li><button class="link" data-open="${esc(rel)}">${esc(label)}</button></li>`;
+}
+// N17 · a superfície da ideia era o único leitor que mandava o arquivo CRU para o
+// mdRender: o front-matter saía como prosa entre dois <hr> ("loro: 1 id: … refs:
+// []") e o `# <nome>` do indice.md repetia o h1 da própria superfície — dois h1
+// numa região e um h1 depois de três h2 (WCAG 1.3.1). renderView e
+// paintMeetingSurface já separam o front-matter (ADR-0009); esta faz o mesmo e
+// ainda tira o título duplicado.
+function ideaBodyMarkdown(raw) {
+  const split = R.splitFrontMatter(String(raw || ""));
+  const body = split && split.body != null ? split.body : String(raw || "");
+  return body.replace(/^\s*#\s+[^\n]*\n?/, "");
+}
+async function renderIdeaSurface(slug, tab, stale) {
+  B.editHost.hidden = true;
+  B.editBar.hidden = true;
+  B.doc.hidden = false;
+  B.wsBody.classList.remove("editing");
+  fmById.set(tab.id, null);
+  let meetings = [], notas = [], anexos = [], nome = slug, body = "";
+  try { meetings = (await invoke("brain_list_meetings", { slug })) || []; } catch (_) {}
+  try { notas = ((await invoke("brain_list_dir", { rel: `brainstorming/${slug}/notas` })) || []).filter((f) => !f.dir); } catch (_) {}
+  try { anexos = ((await invoke("brain_list_dir", { rel: `brainstorming/${slug}/anexos` })) || []).filter((f) => !f.dir); } catch (_) {}
+  try {
+    const temas = (await invoke("brain_list_brainstorms")) || [];
+    const found = temas.find((b) => b && b.slug === slug);
+    if (found && found.nome) nome = found.nome;
+  } catch (_) {}
+  // um buffer editado e não salvo vence o disco, e NÃO reescreve o último salvo
+  // (era o que fazia o pontinho de "não salvo" mentir ao voltar para visualizar)
+  const h = cmById.get(tab.id);
+  if (h) body = h.getValue();
+  else {
+    try { body = await readDoc(tab.rel); } catch (_) {}
+    if (stale && stale()) return; // a newer render won the race
+    savedById.set(tab.id, body);
+  }
+  const total = ideaMaterialCount({ reunioes: meetings.length, notas: notas.length, anexos: anexos.length });
+  const mtgRows = meetings.map((m) => {
+    const title = LM.meetingTitleFromManifest({ titulo: m.titulo }, m.id);
+    const label = title === m.id ? LM.meetingLabel(m.id, settings.uiLang) : title;
+    return ideaRowHtml(`${m.rel}/reuniao.md`, label);
+  });
+  const notaRows = notas.map((f) => ideaRowHtml(f.path, shortName(f.name)));
+  const anexoRows = anexos.map((f) => ideaRowHtml(f.path, shortName(f.name)));
+  // uma ação primária (gravar aqui) + a outra porta real como secundária; o
+  // vazio diz o que fazer em vez de descrever a própria vacuidade (§5)
+  const acts =
+    `<div class="mtg-offer"><button class="btn solid" data-idea="rec">● ${t("gravar reunião aqui")}</button> ` +
+    `<button class="btn" data-idea="nota">＋ ${t("nova nota")}</button>` +
+    `<p class="mtg-preview">${total
+      ? t("o que valer virar conhecimento do time você envia para organizar.")
+      : t("nada aqui ainda — grave uma reunião ou escreva uma nota; a transcrição fica na sua máquina.")}</p></div>`;
+  B.doc.innerHTML =
+    `<h1>${esc(nome)}</h1>` + acts +
+    ideaSectionHtml(t("reuniões"), mtgRows, t("nenhuma reunião ainda")) +
+    ideaSectionHtml(t("notas"), notaRows, t("nenhuma nota ainda")) +
+    ideaSectionHtml(t("anexos"), anexoRows, t("nenhum anexo ainda")) +
+    // o texto do próprio indice.md continua visível: é material, e a ADR-0020
+    // aposentou o fluxo do digest, não o arquivo. Sem `.annotatable`: anotar
+    // depende de decorateAnnotations para PINTAR a marca, e uma anotação que
+    // nunca aparece seria um controle mentindo.
+    (ideaBodyMarkdown(body).trim() ? mdRender(ideaBodyMarkdown(body)) : "");
+  wireDocLinks();
+  B.doc.querySelectorAll("[data-open]").forEach((b) => (b.onclick = () => openDoc(b.dataset.open, { preview: false })));
+  const rec = B.doc.querySelector('[data-idea="rec"]');
+  if (rec) rec.onclick = () => startMeetingFlow(slug);
+  const nota = B.doc.querySelector('[data-idea="nota"]');
+  if (nota) nota.onclick = () => promptNewNota(slug, nota);
+}
+
 async function renderView(tab, stale) {
   const h = cmById.get(tab.id);
   let raw;
@@ -3819,7 +4963,7 @@ async function renderView(tab, stale) {
     savedById.set(tab.id, raw);
   }
   const fallback = tab.rel === GUIDE_REL
-    ? t("_Sem instruções ainda. Escreva orientações que o loop seguirá antes de processar a fila._")
+    ? t("_Sem instruções ainda. Escreva orientações que o loop seguirá antes de organizar o que você capturou._")
     : "";
   B.editHost.hidden = true;
   B.editBar.hidden = true;
@@ -3926,24 +5070,53 @@ function renderIfLiving(id) {
 
 function paintMeetingSurface(id, raw, manifest, status, artefatos, rel, stale) {
   const body = LM.stripMarker(R.splitFrontMatter ? R.splitFrontMatter(raw || "").body : (raw || ""));
+  // R19 · o manifest não sabe que o app foi fechado no meio: quem grava é a
+  // reunião viva. Tudo abaixo lê o estado EFETIVO.
+  const eff = meetingEffectiveStatus(status, id, meeting);
   // ADR-0012: mostra o status do pseudo-stream enquanto grava (preview ao vivo),
   // para o problema "não aparece nada" ser diagnosticável sem olhar logs.
-  const preview = status === "recording" && meeting.id === id && meeting.tailStatus
+  const preview = eff === "recording" && meeting.id === id && meeting.tailStatus
     ? `<p class="mtg-preview mono">${esc(meeting.tailStatus)}</p>` : "";
-  const emptyMsg = status === "recording"
+  const emptyMsg = eff === "recording"
     ? `<p class="bempty">${t("gravando — o preview ao vivo aparece a cada ~18s conforme houver fala.")}</p>`
+    : eff === "interrupted"
+    // "não houve fala capturada" seria um palpite: o que se sabe é que a gravação
+    // não chegou ao fim.
+    ? `<p class="bempty">${t("sem transcrição — a gravação foi interrompida antes de transcrever alguma fala.")}</p>`
     : `<p class="bempty">${t("sem transcrição — não houve fala capturada nesta reunião.")}</p>`;
+  // ADR-0018: a análise É a saída da reunião. Encerrada, o único convite era um
+  // toast que expira — depois dele a aba ficava com o selo CONCLUÍDA e nenhuma
+  // porta para o passo seguinte. DESIGN.md §1: "a finished meeting with no
+  // analysis shows ✦ analisar". A oferta é UMA ação, só quando a reunião terminou
+  // e ainda não há nada em notas/ (a mesma decisão pura que barra o envio para a
+  // fila) — enquanto grava, nenhum cromo novo entra.
+  const semAnalise = eff === "done" && !!LM.meetingQueueBlock((artefatos || []).length);
+  // R19 · numa reunião interrompida a ação que falta não é analisar: é encerrar.
+  // Uma ação primária por tela, e a frase diz o que aconteceu e o que se ganha.
+  const offer = eff === "interrupted"
+    ? `<div class="mtg-offer"><button class="btn solid" data-mtg="close">■ ${t("encerrar reunião")}</button>` +
+      `<p class="mtg-preview">${t("a reunião foi interrompida — encerre para liberar analisar, enviar para organizar e mover")}</p></div>`
+    : semAnalise
+    ? `<div class="mtg-offer"><button class="btn solid" data-mtg="analyse">✦ ${t("analisar")}</button>` +
+      `<p class="mtg-preview">${t("a IA lê a transcrição e escreve a análise")}</p></div>`
+    : "";
   // ADR-0007: the transcript body is annotatable (append-only, so anchors stay
   // valid as new lines arrive); the status bar/preview stay outside .annotatable.
+  const badge = meetingBadgeStatus(eff, !!state.paused && meeting.id === id);
+  // N18 · o corpo de toda reunião começa com o título semeado por meeting.rs: é a
+  // fala transcrita — não o arquivo — que decide se há transcrição.
+  const spoken = LM.transcriptText(body).trim();
   B.doc.innerHTML =
     `<div class="mtg-surface">` +
-      `<div class="mtg-doc">${meetingStatusBar(status)}${preview}` +
-        (body.trim() ? `<div class="annotatable transcript">${colorSpeakers(mdRender(body))}</div>` : emptyMsg) +
+      `<div class="mtg-doc">${meetingStatusBar(badge)}${preview}${offer}` +
+        (spoken
+          ? `<div class="annotatable transcript">${colorSpeakers(mdRender(body))}</div>`
+          : `${body.trim() ? mdRender(body) : ""}${emptyMsg}`) +
       `</div>` +
     `</div>`;
   wireMeetingSurface(id);
   wireDocLinks();
-  if (body.trim() && rel) decorateAnnotations(rel, stale);
+  if (spoken && rel) decorateAnnotations(rel, stale);
 }
 
 
@@ -3959,9 +5132,49 @@ function colorSpeakers(html) {
 }
 
 function meetingStatusBar(status) {
-  const map = { recording: [t("gravando"), "rec"], transcribing: [t("transcrevendo…"), "warn"], done: [t("concluída"), "ok"] };
+  const map = {
+    recording: [t("gravando"), "rec"],
+    // ADR-0022 §19 · pausada tem selo próprio: o ponto para de pulsar (.warn não
+    // anima) porque a captura parou de verdade.
+    paused: [t("pausada"), "warn"],
+    // R19 · vermelho é gravação em curso (DESIGN.md §3): uma reunião interrompida
+    // é pendência, e pendência é âmbar — que também não pulsa.
+    interrupted: [t("interrompida"), "warn"],
+    transcribing: [t("transcrevendo…"), "warn"],
+    done: [t("concluída"), "ok"],
+  };
   const [txt, cls] = map[status] || [t("concluída"), "ok"];
   return `<div class="mtg-status ${cls}"><span class="mtg-statusdot"></span><span class="mono">${esc(txt)}</span></div>`;
+}
+// O manifest só sabe "recording": a pausa é estado da janela. Sem isto o selo da
+// superfície ficava byte-a-byte igual ao de gravando, ao lado do rodapé dizendo
+// "nada está sendo gravado" — a mesma tela afirmando e negando o mesmo fato.
+function meetingBadgeStatus(status, paused) {
+  return status === "recording" && paused ? "paused" : status;
+}
+// R19 · O manifest fica em "recording" enquanto a reunião grava — e CONTINUA nele
+// se o app foi fechado (ou caiu) no meio. Depois disso a reunião era um beco sem
+// saída: selo vermelho "● gravando" com nada gravando, um ▸ que abria o vazio, e
+// analisar / enviar / mover desabilitados "quando a reunião terminar" — sem
+// nenhum jeito de terminá-la. Só apagar (destruir o material) estava habilitado.
+// Quem grava é a reunião VIVA, e o app sabe qual é: "recording" em qualquer outra
+// é uma reunião INTERROMPIDA, e isso é o que a tela passa a dizer.
+function meetingEffectiveStatus(status, id, live) {
+  if (status !== "recording") return status;
+  return live && live.active && live.id === id ? "recording" : "interrupted";
+}
+// A saída: encerrar de verdade, com o comando que já existe (ele só troca o
+// status no manifest — a transcrição, as notas e os anexos ficam onde estão).
+async function finishInterruptedMeeting(id, rel) {
+  try {
+    await invoke("brain_meeting_finish", { id });
+    pessoalSig = ""; refreshPessoal();
+    if (rel) refreshTabFromDisk(`${rel}/reuniao.md`);
+    toast(t("reunião encerrada — a transcrição foi mantida"));
+  } catch (e) {
+    toast(t("não encerrei a reunião") + ": " + tErr(String(e)));
+    clog("finish interrupted meeting error: " + e);
+  }
 }
 
 // ============================ anotações (ADR-0007) ============================
@@ -3980,16 +5193,44 @@ function annotPop() {
     _annotPop = document.createElement("div");
     _annotPop.className = "annot-pop";
     _annotPop.hidden = true;
+    // N10 · era um <div> nu: sem papel, sem nome, sem Escape e sem foco — a
+    // camada de anotações existia só para o mouse (WCAG 4.1.2 / 2.1.1).
+    _annotPop.setAttribute("aria-label", t("ações do trecho"));
     _annotPop.addEventListener("mousedown", (e) => e.stopPropagation());
     document.body.appendChild(_annotPop);
   }
   return _annotPop;
 }
-function hideAnnotPop() { if (_annotPop) _annotPop.hidden = true; }
+let _annotReturnFocus = null;
+function hideAnnotPop() {
+  if (_annotPop) _annotPop.hidden = true;
+  // quem abriu volta a dizer que está fechado — uma marca "expandida" sobre um
+  // popover invisível é estado mentindo (4.1.2)
+  if (_annotReturnFocus && _annotReturnFocus.setAttribute) _annotReturnFocus.setAttribute("aria-expanded", "false");
+}
+// Escape / Tab: fecha E devolve o foco a quem abriu (a marca grifada, quando havia
+// uma). As ações não passam por aqui — cada uma leva o foco para o seu destino.
+function closeAnnotPop() {
+  const back = _annotReturnFocus;
+  hideAnnotPop();
+  _annotReturnFocus = null;
+  if (back && back.focus) back.focus();
+}
+// O popover é um menu flutuante como os outros 14: o teclado dele vem do helper
+// único (F17) — role=menu com menuitem de verdade, setas, Home/End, uma entrada de
+// foco só, e Escape/Tab que fecham. Antes ele declarava role="menu" com <button>s
+// soltos: um menu de ZERO itens para quem lê a tela, sem setas.
+function focusAnnotPop(returnTo) {
+  _annotReturnFocus = returnTo || null;
+  wireFloatMenu(annotPop(), returnTo, closeAnnotPop);
+}
 function annotBtn(a, label, extra) { return `<button class="annot-act${extra ? " " + extra : ""}" data-a="${a}">${esc(label)}</button>`; }
 
 function positionPop(rect) {
   const pop = annotPop();
+  // o nome do popover é reescrito a cada abertura: criado uma vez, ele não passa
+  // pelo aplicador de idioma (o mesmo motivo do data-i18n-dyn)
+  pop.setAttribute("aria-label", t("ações do trecho"));
   pop.hidden = false;
   const h = pop.offsetHeight || 40, w = pop.offsetWidth || 220;
   let top = rect.top - h - 8;
@@ -4045,10 +5286,20 @@ async function decorateAnnotations(rel, stale) {
 function wireMarks(container) {
   container.querySelectorAll("mark.annot[data-annot-id]").forEach((m) => {
     m.onclick = (e) => {
-      e.stopPropagation();
+      if (e && e.stopPropagation) e.stopPropagation();
       const a = (annotState.list || []).find((x) => x.id === m.getAttribute("data-annot-id"));
-      if (a) openMarkPopover(a, m.getBoundingClientRect());
+      if (a) openMarkPopover(a, m.getBoundingClientRect(), m);
     };
+    // N10 · a marca é a única porta para comentar/perguntar/analisar/desgrifar:
+    // sem tabindex/role/nome ela era invisível ao teclado e ao leitor de tela.
+    m.setAttribute("tabindex", "0");
+    m.setAttribute("role", "button");
+    m.setAttribute("aria-label", `${t("trecho grifado")}: ${m.textContent}`);
+    // o Enter abre um menu: dizê-lo ANTES do primeiro toque é o que o leitor de
+    // tela precisa para saber que existe algo a abrir (4.1.2)
+    m.setAttribute("aria-haspopup", "true");
+    m.setAttribute("aria-expanded", "false");
+    wireActivateKeys(m);
   });
 }
 
@@ -4080,7 +5331,7 @@ function rangeLenTo(container, node, offset) {
   return r.toString().length;
 }
 
-function openSelectionPopover(anchor, rect) {
+function openSelectionPopover(anchor, rect, returnTo) {
   const pop = annotPop();
   pop.innerHTML =
     annotBtn("grifar", "✎ " + t("grifar")) +
@@ -4094,14 +5345,59 @@ function openSelectionPopover(anchor, rect) {
   pop.querySelector('[data-a="analisar"]').onclick = () => { hideAnnotPop(); runExcerptSkill("loro-analyse.md", anchor); };
   pop.querySelector('[data-a="slack"]').onclick = () => { hideAnnotPop(); runExcerptSkill("loro-slack.md", anchor); };
   positionPop(rect);
+  focusAnnotPop(returnTo);
 }
 
-function openMarkPopover(a, rect) {
+// N10 · o único caminho para criar uma anotação era um arrasto de mouse real
+// (`annotOnMouseUp`): num documento de leitura o teclado não tem cursor de
+// texto, então grifar/comentar/perguntar não existiam sem mouse. Aqui o trecho
+// é DITO — escrito ou colado — e o resto do fluxo é o mesmo popover.
+function excerptRangeIn(text, needle) {
+  const hay = String(text || ""), q = String(needle || "").trim();
+  if (!q) return null;
+  let i = hay.indexOf(q);
+  if (i < 0) i = hay.toLowerCase().indexOf(q.toLowerCase());
+  return i < 0 ? null : { start: i, end: i + q.length };
+}
+function promptAnnotateExcerpt() {
+  const container = annotContainer();
+  if (!container) { toast(t("abra um documento de leitura para grifar um trecho")); return; }
+  openModal(
+    t("Grifar um trecho"),
+    `<p class="pmnote mono">${t("escreva ou cole o trecho exato do documento — o grifo abre as ações do trecho.")}</p>` +
+      `<label class="wfield"><span class="mono">${t("trecho")}</span>` +
+      `<input id="annotExcerpt" type="text" spellcheck="false"></label>`,
+    t("grifar"),
+    async () => {
+      const q = (($("annotExcerpt") && $("annotExcerpt").value) || "").trim();
+      const box = annotContainer();
+      if (!box) { toast(t("abra um documento de leitura para grifar um trecho")); return; }
+      const range = excerptRangeIn(box.textContent, q);
+      if (!range) { toast(t("não encontrei esse trecho no documento")); return; }
+      const anchor = window.LoroAnnotate.makeAnchor(box.textContent, range.start, range.end);
+      // N11 · o id da anotação nova voltava daqui e era descartado; o foco ia
+      // para `querySelector("mark.annot")`, que é o PRIMEIRO grifo do documento.
+      // Como o Enter dali abre ✕ desgrifar, o caminho de teclado apagava uma
+      // passagem que o usuário não tocou (WCAG 2.1.1/4.1.2).
+      const id = await ensureHighlight(anchor);
+      if (!id) return;
+      // a marca recém-pintada é o controle: o foco vai para ela, e dali o Enter
+      // abre comentar / perguntar / analisar / Slack / desgrifar
+      const cont = annotContainer();
+      const mark = cont && cont.querySelector(`mark.annot[data-annot-id="${CSS.escape(id)}"]`);
+      if (mark && mark.focus) mark.focus();
+    }
+  );
+}
+
+function openMarkPopover(a, rect, returnTo) {
   const pop = annotPop();
   const rel = annotState.rel;
   const comments = (a.comentarios || []).map((c) => `<div class="annot-cmt">${esc(c.texto)}</div>`).join("") ||
     `<div class="annot-none mono">${t("sem comentários")}</div>`;
-  pop.innerHTML = `<div class="annot-cmts">${comments}</div>` +
+  // os comentários são leitura, não uma ação: role=presentation os mantém fora da
+  // contagem de itens do menu (o mesmo tratamento que .fhead recebe)
+  pop.innerHTML = `<div class="annot-cmts" role="presentation">${comments}</div>` +
     annotBtn("comentar", "💬 " + t("comentar")) +
     annotBtn("perguntar", "? " + t("perguntar")) +
     annotBtn("analisar", "✦ " + t("analisar")) +
@@ -4121,11 +5417,15 @@ function openMarkPopover(a, rect) {
     catch (e) { toast(tErr(String(e))); }
   };
   positionPop(rect);
+  focusAnnotPop(returnTo);
 }
 
 function useExcerptTool(name, alvo) {
   const rel = toolRelByName(name);
-  if (!rel) { toast("Slack / " + t("habilidade indisponível")); return; }
+  // N15 · the refusal was hand-written for Slack and served ALL THREE actions:
+  // clicking "perguntar" named a product the user never chose. The name comes from
+  // the same label the clicked row shows (DESIGN.md §4).
+  if (!rel) { toast(habilidadeLabel({ name }) + " — " + t("habilidade indisponível")); return; }
   promptUseTool(rel, alvo);
 }
 
@@ -4199,8 +5499,15 @@ B.doc.addEventListener("mouseup", annotOnMouseUp);
 document.addEventListener("mousedown", (e) => { if (!_annotPop || _annotPop.hidden) return; if (!_annotPop.contains(e.target)) hideAnnotPop(); });
 B.wsBody.addEventListener("scroll", hideAnnotPop, { passive: true });
 
-function wireMeetingSurface() {
+function wireMeetingSurface(id) {
   // O controle da gravação vive no rodapé compartilhado (#recFoot), não aqui.
+  // O que vive aqui é a oferta de análise de uma reunião concluída (ADR-0018):
+  // o MESMO caminho das habilidades, não um segundo.
+  const go = B.doc.querySelector('[data-mtg="analyse"]');
+  if (go) go.onclick = () => runMeetingSkill("analyse", id);
+  // R19 · a saída de uma reunião interrompida
+  const close = B.doc.querySelector('[data-mtg="close"]');
+  if (close) close.onclick = () => finishInterruptedMeeting(id, currentMeetingDir(id));
 }
 
 // Resolve the acervo-relative meeting dir for a skill run: the active living/
@@ -4218,13 +5525,15 @@ function currentMeetingDir(id) {
 // meeting's notas/; we refresh the tree afterwards so the new
 // files surface (the skill never touches manifest.json, so the rail's artefatos
 // list only reflects app-written artifacts).
-function runMeetingSkill(kind, id, question, dirOverride) {
+async function runMeetingSkill(kind, id, question, dirOverride) {
   const dir = dirOverride || currentMeetingDir(id);
   if (!dir) { toast(t("abra a reunião para analisar")); return; }
   const cmd = LM.meetingSkillCmd(kind, dir, question);
   if (!cmd) { toast(t("digite uma pergunta")); return; }
-  runAiCommand(cmd);
-  toast(kind === "question" ? t("pergunta enviada ao agente") : t("análise enviada ao agente"), 4000);
+  // "análise enviada ao agente" saía antes do envio e sem dizer onde olhar: o
+  // chat logo abaixo dizia "nada foi enviado".
+  const done = `${kind === "question" ? t("pergunta enviada") : t("análise enviada")} — ${aiTargetHint()}`;
+  if (!await dispatchAi(cmd, done)) return;
   // A skill write is async and IPC-free (no pessoal-changed event), so nudge a
   // couple of tree/surface refreshes to reveal the artefatos it produces.
   scheduleMeetingSkillRefresh(id);
@@ -4319,14 +5628,22 @@ async function mtgOpenExternal(rel) {
 // ADR-0010: delete one audio track (mic/system/completo). Guarded by a confirm
 // (destructive, and BR-1 makes it local-only — there is no copy elsewhere), then
 // repaints the living surface from the manifest the backend returns.
-async function mtgDeleteAudio(id, which) {
+function mtgDeleteAudio(id, which) {
   const label = { completo: t("áudio completo"), mic: t("microfone"), system: t("sistema") }[which] || t("áudio");
-  if (!window.confirm(`${t("Apagar o")} ${label} ${t("desta reunião? Esta ação não pode ser desfeita.")}`)) return;
-  try {
-    await invoke("brain_meeting_delete_audio", { input: { id, which } });
-    toast(`${label} ${t("apagado")}`);
-    refreshLivingInPlace(id); // repinta a partir do manifest atualizado
-  } catch (e) { toast(t("não apaguei o áudio") + ": " + tErr(String(e))); clog("delete_audio error: " + e); }
+  // N23 · mesma folha, mesmo vocabulário das outras exclusões (BR-1: a única cópia
+  // é local, então não há de onde recuperar)
+  openModal(
+    `${t("Apagar o")} ${label}?`,
+    `<p class="pmnote">${t("desta reunião? Esta ação não pode ser desfeita.")}</p>`,
+    t("apagar"),
+    async () => {
+      try {
+        await invoke("brain_meeting_delete_audio", { input: { id, which } });
+        toast(`${label} ${t("apagado")}`);
+        refreshLivingInPlace(id); // repinta a partir do manifest atualizado
+      } catch (e) { toast(t("não apaguei o áudio") + ": " + tErr(String(e))); clog("delete_audio error: " + e); }
+    }
+  );
 }
 function mtgShowImage(rel, mime, base64) {
   openModal(String(rel).split("/").pop(), `<div class="mtg-imgwrap"><img alt="" src="data:${mime};base64,${base64}"></div>`, null, null);
@@ -4356,7 +5673,7 @@ function pickMeeting(temas, presetTema, opts2) {
     // "novo tema" field here). With none yet, a single name field bootstraps one.
     // Fields use the app's canonical `.wfield` pattern (same as the setup wizard).
     const temaField = (temas && temas.length) || allowLoose
-      ? `<label class="wfield"><span class="mono">${allowLoose ? t("onde salvar") : "brainstorming"}</span>` +
+      ? `<label class="wfield"><span class="mono">${allowLoose ? t("onde salvar") : t("ideia")}</span>` +
           `<select id="mtgTema">${loose}${opts}</select></label>`
       : `<label class="wfield"><span class="mono">brainstorming</span>` +
           `<input id="mtgNovoTema" type="text" placeholder="${t("ex.: frota 2026")}" spellcheck="false"></label>`;
@@ -4371,11 +5688,9 @@ function pickMeeting(temas, presetTema, opts2) {
       const tema = selEl ? selEl.value : novo;
       const titulo = (($("mtgTitulo") && $("mtgTitulo").value) || "").trim();
       // the modal closes on confirm regardless; abort (never hang) if no brainstorming
-      if (!tema && !allowLoose) { toast(t("escolha ou nomeie um brainstorming")); finish(null); return; }
+      if (!tema && !allowLoose) { toast(t("escolha ou nomeie uma ideia")); finish(null); return; }
       finish({ tema: tema || null, titulo: titulo || null });
-    });
-    PM.cancel.addEventListener("click", () => finish(null), { once: true });
-    PM.close.addEventListener("click", () => finish(null), { once: true });
+    }, () => finish(null)); // cancelar, ×, Escape ou clique fora: todos respondem
   });
 }
 
@@ -4413,6 +5728,7 @@ async function renderActive() {
   el.surface.hidden = true;   // abrir um documento sai da vista de gravação
   B.docWrap.hidden = false;
   $("bDraftNote").hidden = true;   // the first-edit note is one-time; reset per render
+  paintEditFoot(null, false);      // o rodapé de edição é reaberto abaixo, se for o caso
   closeFind();
   B.crumb.textContent = isGuide ? t("instruções do loop")
     : tab.rel === MANUAL_REL ? t("manual de uso")
@@ -4445,9 +5761,15 @@ async function renderActive() {
   B.modes.hidden = !textFile;
   B.viewBtn.classList.toggle("on", tab.mode !== "edit");
   B.editBtn2.classList.toggle("on", tab.mode === "edit");
-  if (textFile && tab.mode === "edit") await mountEditor(tab, stale);
+  const editing = textFile && tab.mode === "edit";
+  // B5 · uma ideia abre a SUA vista, não o indice.md quase vazio. Editar continua
+  // valendo: o arquivo é um documento comum (ADR-0020).
+  const idea = !editing ? ideaSlugOf(tab.rel) : null;
+  if (idea) await renderIdeaSurface(idea, tab, stale);
+  else if (editing) await mountEditor(tab, stale);
   else await renderView(tab, stale);
   if (stale()) return;
+  paintEditFoot(tab, editing);
   updatePromotedBadge(tab);
   B.wsBody.scrollTop = 0;
   markSel();
@@ -4495,7 +5817,10 @@ function renderDocRail(tab, isGuide) {
   }));
   const all = $("pAllSkills");
   if (all) {
-    all.textContent = `${t("todas as habilidades de IA")} (${lastToolFiles.length}) ▸`;
+    // N15 · o rótulo contava ARQUIVOS e o menu lista ENTRADAS (loro-sync abre em
+    // 4 fontes, a aposentada loro-digest sai): 12 no rótulo, 14 no menu. Uma
+    // contagem só pode vir da lista que o controle abre.
+    all.textContent = `${t("todas as habilidades de IA")} (${allHabilidadeEntries("doc").length}) ▸`;
     all.onclick = (e) => { e.stopPropagation(); openHabilidadeMenu(tab.rel, all, true, "doc"); };
   }
   renderPanelTimeline(tab);
@@ -4519,17 +5844,51 @@ function anexosDirFor(rel) {
 }
 
 // LINHA DO TEMPO (1d): agora · última versão salva · histórico.
+// N7 · a linha "última versão salva" era empurrada SEM CONDIÇÃO: aparecia num
+// projeto sem nenhum commit (o selo ao lado dizia "sem versão salva", na mesma
+// tela) e no manual, que não pode ter versão. A verdade é o histórico do
+// documento — é ele que decide se essa linha existe. Decisão pura:
+// `versions` = quantas versões o brain_timeline devolveu para este documento.
+function timelineRows(o) {
+  const rows = [];
+  if (o.dirty) rows.push({ cls: "now", label: t("mudanças não salvas"), meta: t("agora") });
+  if (o.kind !== "context") {
+    rows.push({ cls: "draft", label: t("rascunho — não versionado"), meta: t("só na sua máquina") });
+    return rows;
+  }
+  if (o.versions > 0) rows.push({ cls: "saved", label: t("última versão salva"), meta: o.when || t("no histórico do projeto") });
+  else rows.push({ cls: "none", label: t("sem versão salva ainda"), meta: t("salvar versão guarda a primeira") });
+  return rows;
+}
+function paintTimelineRows(rows) {
+  const tl = $("pTimeline");
+  if (!tl) return;
+  tl.innerHTML = rows.map((r) =>
+    `<div class="tl ${r.cls}"><span class="tldot"></span><span>${esc(r.label)}<span class="tlmeta">${esc(r.meta)}</span></span></div>`).join("");
+}
 function renderPanelTimeline(tab) {
   const tl = $("pTimeline");
   if (!tl) return;
   const dirty = !!tab.dirty || !!gitFiles[tab.rel];
-  const rows = [];
-  if (dirty) rows.push({ cls: "now", label: t("mudanças não salvas"), meta: t("agora") });
-  rows.push({ cls: "saved", label: t("última versão salva"), meta: tab.kind === "context" ? t("no histórico do projeto") : t("rascunho — não versionado") });
-  tl.innerHTML = rows.map((r) =>
-    `<div class="tl ${r.cls}"><span class="tldot"></span><span>${esc(r.label)}<span class="tlmeta">${esc(r.meta)}</span></span></div>`).join("");
   const hist = $("pHistory");
-  if (hist) hist.onclick = () => showTimeline(tab.rel);
+  // o histórico ainda não chegou: pinta o que já se sabe sem afirmar versão
+  paintTimelineRows(timelineRows({ dirty, kind: tab.kind, versions: 0 }));
+  if (hist) { hist.hidden = true; hist.onclick = () => showTimeline(tab.rel); }
+  if (tab.kind !== "context") return;
+  const rel = tab.rel;
+  invoke("brain_timeline", { rel }).then((items) => {
+    const cur = activeTab();
+    if (!cur || cur.rel !== rel) return; // outro documento venceu a corrida
+    const list = items || [];
+    const last = list[0];
+    const when = last && last.when
+      ? new Date(last.when).toLocaleString(uiLocale(), { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })
+      : "";
+    paintTimelineRows(timelineRows({ dirty: !!tab.dirty || !!gitFiles[rel], kind: tab.kind, versions: list.length, when }));
+    // um "ver histórico completo" que só pode dizer "(sem versões ainda)" é um
+    // controle que não faz nada
+    if (hist) hist.hidden = list.length === 0;
+  }).catch(() => {});
 }
 
 // TIME (1d): rascunho de trabalho + enviar para revisão. Só faz sentido no
@@ -4538,6 +5897,50 @@ function renderPanelTeam(tab, isGuide) {
   const versionable = !isGuide && tab.kind === "context";
   const sec = $("proposeBtn") && $("proposeBtn").closest(".psec");
   if (sec) sec.hidden = !versionable;
+  renderPanelTeamNote();
+}
+// N6 · a nota prometia "abre um pedido de revisão no GitHub; quando o time aprova,
+// vira oficial" mesmo sem versionamento configurado — com os dois botões
+// escondidos, era uma promessa sem controle e sem caminho. Ou a promessa vale, ou
+// a nota diz onde se liga (o mesmo padrão do card "abra a aba Terminal").
+// N6 · a seção TIME é a única cópia que o usuário lê antes de pagar o preço, e
+// ela prometia a revisão sem nenhum controle na tela. Três estados, um por
+// verdade: sem git no sistema (nem histórico local existe), git sem GitHub
+// conectado (o local funciona, o time não), e conectado.
+function renderPanelTeamNote() {
+  const note = $("pTeamNote"), fix = $("pTeamFix");
+  if (!note) return;
+  const on = !!(envDoctor && envDoctor.versioningEnabled);
+  if (!gitAvailable) {
+    note.textContent = t("sem o git instalado, este computador não guarda histórico de versões.");
+    if (fix) { fix.hidden = false; fix.textContent = t("ver o que falta em Configurações"); }
+    return;
+  }
+  // N6 · o app sabia que a REDE tinha falhado e acusava a configuração: com git,
+  // gh, login e repositório todos certos, cinco minutos offline pintavam "falta
+  // conectar o GitHub" e escondiam o botão de revisão. Sem rede é um terceiro
+  // estado, e o remédio dele é tentar de novo — não ir a Configurações.
+  if (!on && envDoctor && envDoctor.offline) {
+    note.textContent = t("sem conexão agora — salvar versão funciona local; a revisão do time volta quando a rede voltar.");
+    if (fix) { fix.hidden = false; fix.textContent = t("verificar de novo"); }
+    return;
+  }
+  note.textContent = on
+    ? t("a versão guarda o projeto inteiro num rascunho separado e abre um pedido de revisão no GitHub; quando o time aprova, vira oficial.")
+    : t("salvar versão funciona local; para enviar ao time falta conectar o GitHub.");
+  if (fix) {
+    fix.hidden = on;
+    fix.textContent = t("conectar o GitHub em Configurações");
+  }
+}
+{
+  const f = $("pTeamFix");
+  // o mesmo link carrega dois remédios porque a nota carrega dois estados: sem
+  // rede, o passo é refazer a checagem; sem configuração, é ir a Configurações
+  if (f) f.addEventListener("click", async () => {
+    if (envDoctor && envDoctor.offline && !envDoctor.versioningEnabled) return void refreshEnv(true);
+    await openCfg(); showCfgSection("git");
+  });
 }
 
 // ADR-0009: a persistent "promovido → <contexto>" badge, read from the source
@@ -4557,7 +5960,7 @@ function updatePromotedBadge(tab) {
     } catch (_) { promo = null; }
   }
   const para = promo && (promo.para || (typeof promo === "string" ? promo : ""));
-  if (para) { badge.hidden = false; badge.textContent = t("promovido") + " → " + para; }
+  if (para) { badge.hidden = false; badge.textContent = t("juntado ao conhecimento") + " → " + para; }
   else badge.hidden = true;
 }
 
@@ -4717,6 +6120,19 @@ async function openDoc(relPath, opts) {
 const IS_MAC = /mac/i.test(navigator.platform || "");
 const comboLabel = (c) =>
   c.combo || (c.code ? (IS_MAC ? "⌘⌥" : "Ctrl+Alt+") + c.code.replace(/^(Key|Digit)/, "") : "");
+// Os gates dos comandos de documento: a mesma verdade que os manipuladores
+// consultam antes de desistir em silêncio (N9).
+const hasDoc = () => !!currentRel();
+const hasClosedTab = () => !!(ws && ws.closed && ws.closed.length);
+// N8 · a screen hides a control by hiding the SECTION it lives in (the TIME
+// `.psec`, `#pDocSecs` with no document): the button's own `hidden` stays false,
+// so a gate that read only the button kept offering it in ⌘K — and the global
+// shortcut kept firing it — for a control the screen had removed. On screen
+// means neither the control nor any ancestor is hidden.
+function controlOnScreen(el) {
+  for (let n = el; n; n = n.parentElement) if (n.hidden) return false;
+  return !!el;
+}
 // 1k — a paleta é a documentação viva dos atalhos: cada comando mostra o seu.
 // `group` é o cabeçalho sob o qual a linha aparece (ir para · gravar · criar ·
 // documento · fazer), na ordem em que os grupos são declarados aqui.
@@ -4738,18 +6154,41 @@ const COMMANDS = [
   { group: "criar", label: "Novo caderno de notas", code: "KeyK", run: () => promptNewNotebook() },
   { group: "criar", label: "Novo tema", code: "KeyC", run: () => promptNewContext() },
 
-  { group: "documento", label: "Alternar visualizar/editar", combo: IS_MAC ? "⌘E" : "Ctrl+E", run: () => toggleActiveMode() },
-  { group: "documento", label: "Salvar versão", combo: IS_MAC ? "⌘S" : "Ctrl+S", run: () => B.gitBtn.click() },
-  { group: "documento", label: "Enviar para revisão do time", code: "KeyP", run: () => B.proposeBtn.click() },
-  { group: "documento", label: "Buscar no documento", combo: IS_MAC ? "⌘F" : "Ctrl+F", run: () => openFind() },
-  { group: "documento", label: "Fechar aba", combo: IS_MAC ? "⌘W" : "Ctrl+W", run: () => closeActiveTab() },
-  { group: "documento", label: "Reabrir aba", combo: IS_MAC ? "⇧⌘T" : "Ctrl+Shift+T", run: () => reopenClosedTab() },
+  // N9 · estas quatro linhas eram oferecidas em Início, sem documento nenhum
+  // aberto: os manipuladores davam `return` no primeiro if e a paleta fechava
+  // sem dizer nada — quatro controles que não fazem nada na tela de entrada
+  // (DESIGN.md §1). `hasDoc` é a MESMA verdade que os manipuladores consultam.
+  { group: "documento", label: "Alternar visualizar/editar", combo: IS_MAC ? "⌘E" : "Ctrl+E", when: hasDoc, run: () => toggleActiveMode() },
+  // ⌘S grava o ARQUIVO (saveActive); "Salvar versão" é o commit. Anunciar o mesmo
+  // atalho nos dois ensinava um mapeamento que o app não implementa — e a paleta
+  // é a documentação viva dos atalhos.
+  { group: "documento", label: "Salvar", combo: IS_MAC ? "⌘S" : "Ctrl+S", when: hasDoc, run: () => saveActive() },
+  // N6 · a paleta é uma lista estática: oferecia "Enviar para revisão do time"
+  // (e o atalho global) com o botão escondido e o ambiente não conectado — a
+  // recusa só vinha DEPOIS de escrever a proposta inteira. `when` é o mesmo gate
+  // da tela, então a paleta nunca oferece um controle que não existe.
+  { group: "documento", label: "Salvar versão do projeto", when: () => controlOnScreen(B.gitBtn) && !B.gitBtn.disabled, run: () => B.gitBtn.click() },
+  { group: "documento", label: "Enviar para revisão do time", code: "KeyP", when: () => controlOnScreen(B.proposeBtn), run: () => B.proposeBtn.click() },
+  { group: "documento", label: "Buscar no documento", combo: IS_MAC ? "⌘F" : "Ctrl+F", when: hasDoc, run: () => openFind() },
+  // N10 · sem esta linha, grifar/comentar só existiam para o arrasto do mouse
+  { group: "documento", label: "Grifar um trecho…", run: () => promptAnnotateExcerpt() },
+  { group: "documento", label: "Fechar aba", combo: IS_MAC ? "⌘W" : "Ctrl+W", when: hasDoc, run: () => closeActiveTab() },
+  { group: "documento", label: "Reabrir aba", combo: IS_MAC ? "⇧⌘T" : "Ctrl+Shift+T", when: hasClosedTab, run: () => reopenClosedTab() },
 
   { group: "fazer", label: "Executar habilidade…", run: () => openHabilidadeMenu(currentRel(), $("aiPanelBtn"), true, "doc") },
+  // N5 · a outra metade do fluxo (o que o time mandou revisar) só tinha porta
+  // num toast que expira e numa faixa que se dispensa: aqui ela é permanente.
+  { group: "fazer", label: "Ver revisões do time", when: () => !!(envDoctor && envDoctor.versioningEnabled), run: () => openReviewsSheet() },
   { group: "fazer", label: "Perguntar ao projeto", code: "KeyQ", run: () => askAcervo() },
   { group: "fazer", label: "Transformar em conhecimento", run: () => genContextNow() },
   { group: "fazer", label: "Ajustar instruções da IA", code: "KeyI", run: () => openGuideDoc() },
 ];
+// Os comandos com gate (`when`) só entram na paleta quando o controle
+// correspondente existe na tela — e o atalho global lê a MESMA lista, para não
+// haver uma tecla que faz o que a paleta não oferece.
+function availableCommands() {
+  return COMMANDS.filter((c) => typeof c.when !== "function" || c.when());
+}
 let cmdkMode = "file";     // "file" | "command"
 let cmdkIndex = 0;         // highlighted row
 let cmdkRows = [];         // current result rows (file hits or commands)
@@ -4766,9 +6205,14 @@ function openPalette(mode) {
       .catch((e) => { paletteIndex = []; renderPalette(); clog("brain_list_all error: " + e); });
   }
   renderPalette();
-  B.cmdkInput.focus(); B.cmdkInput.select();
+  enterOverlay(B.cmdk, B.cmdkInput, closePalette);
+  B.cmdkInput.select();
 }
-function closePalette() { B.cmdk.hidden = true; cmdkRows = []; cmdkIndex = 0; }
+function closePalette() {
+  B.cmdk.hidden = true; cmdkRows = []; cmdkIndex = 0;
+  B.cmdkInput.removeAttribute("aria-activedescendant");
+  leaveOverlay(B.cmdk);
+}
 
 // most-recently-used doc rels from ws.mru (empty query in file mode)
 function mruRecents() {
@@ -4788,7 +6232,7 @@ function renderPalette() {
   const query = isCmd ? raw.replace(/^>\s*/, "") : raw;
   // ⌘K é uma paleta só (1k): arquivos E comandos na mesma lista, agrupados.
   // O prefixo "›" continua funcionando para quem quer só comandos.
-  const cmdRows = LoroFuzzy.filter(query, COMMANDS, (c) => t(c.label))
+  const cmdRows = LoroFuzzy.filter(query, availableCommands(), (c) => t(c.label))
     .map((c) => ({ kind: "cmd", group: c.group, label: t(c.label), run: c.run, combo: comboLabel(c) }));
   let fileRows = [];
   if (!isCmd) {
@@ -4805,21 +6249,43 @@ function renderPalette() {
   let lastGroup = null;
   B.cmdkList.innerHTML = cmdkRows.length
     ? cmdkRows.map((r, i) => {
-        const head = r.group !== lastGroup ? `<li class="cmdk-group">${esc(t(r.group))}</li>` : "";
+        // o título de grupo não é uma opção: role=presentation o mantém fora da
+        // contagem que o leitor de tela anuncia
+        const head = r.group !== lastGroup ? `<li class="cmdk-group" role="presentation">${esc(t(r.group))}</li>` : "";
         lastGroup = r.group;
         const sub = r.sub ? `<span class="cmdk-sub mono">${esc(r.sub)}</span>` : "";
         const kbd = r.combo ? `<span class="cmdk-k mono">${esc(r.combo)}</span>` : "";
-        return `${head}<li class="cmdk-item${i === 0 ? " on" : ""}" data-i="${i}"><span class="cmdk-l">${esc(r.label)}</span>${sub}${kbd}</li>`;
+        return `${head}<li class="cmdk-item${i === 0 ? " on" : ""}" id="cmdk-opt-${i}" role="option"` +
+          ` aria-selected="${i === 0}" data-i="${i}"><span class="cmdk-l">${esc(r.label)}</span>${sub}${kbd}</li>`;
       }).join("")
-    : `<li class="cmdk-empty mono">${t("nada encontrado")}</li>`;
+    : `<li class="cmdk-empty mono" role="presentation">${t("nada encontrado")}</li>`;
   B.cmdkList.querySelectorAll("[data-i]").forEach((li) => {
     li.onmousemove = () => setCmdkIndex(Number(li.dataset.i));
     li.onclick = () => { setCmdkIndex(Number(li.dataset.i)); runPalette(); };
   });
+  setCmdkIndex(0);
+  // F8 · quantos resultados apareceram é um status: era desenhado e nunca dito,
+  // e "nada encontrado" também não (WCAG 4.1.3).
+  announce(cmdkRows.length
+    ? `${cmdkRows.length} ${cmdkRows.length > 1 ? t("resultados") : t("resultado")}`
+    : t("nada encontrado"));
 }
 function setCmdkIndex(i) {
   cmdkIndex = i;
-  B.cmdkList.querySelectorAll(".cmdk-item").forEach((li, k) => li.classList.toggle("on", k === i));
+  B.cmdkList.querySelectorAll(".cmdk-item").forEach((li, k) => {
+    const on = k === i;
+    li.classList.toggle("on", on);
+    // o realce era SÓ visual: o foco fica no campo, então quem lê a tela nunca
+    // soube em que opção estava (aria-activedescendant é o que diz)
+    li.setAttribute("aria-selected", String(on));
+  });
+  const cur = B.cmdkList.querySelector(".cmdk-item.on");
+  if (cur) {
+    B.cmdkInput.setAttribute("aria-activedescendant", cur.id);
+    // N9 · a lista rola por dentro (46vh ≈ 11 linhas de 26): a linha escolhida
+    // ficava fora da vista e o Enter rodava um comando que não estava na tela.
+    if (cur.scrollIntoView) cur.scrollIntoView({ block: "nearest" });
+  } else B.cmdkInput.removeAttribute("aria-activedescendant");
 }
 function runPalette() {
   const row = cmdkRows[cmdkIndex];
@@ -4866,7 +6332,7 @@ window.addEventListener("keydown", (e) => {
   // every palette command answers to mod+alt+<code> — app-level chords, so they
   // win even over the terminal (the shell has no claim on ⌘⌥ combos)
   if (mod && e.altKey && !e.repeat) {
-    const cmd = COMMANDS.find((c) => c.code === e.code);
+    const cmd = availableCommands().find((c) => c.code === e.code);
     if (cmd) { own(); cmd.run(); return; }
   }
   if (termHasFocus()) return;  // route everything else to the shell
@@ -4885,7 +6351,7 @@ window.addEventListener("keydown", (e) => {
 // ---- seletor de acervo (projetos) ----
 function renderSwitch() {
   const cur = acervos.find((a) => a.id === activeAcervo);
-  B.acervoName.textContent = cur ? cur.name : t("acervo");
+  B.acervoName.textContent = cur ? cur.name : t("projeto");
   // com o wizard à vista o accent é o preview da cor escolhida nele — sem o
   // desvio, este poll (10s) revertia o preview para a cor do acervo ativo
   applyAccent(!B.setup.hidden ? wizColor : (cur ? cur.color : ""));
@@ -4896,7 +6362,7 @@ B.acervoBtn.addEventListener("click", (e) => {
   B.acervoMenu.innerHTML =
     acervos.map((a) => `<div class="fitem2${a.id === activeAcervo ? " on" : ""}" data-acervo="${esc(a.id)}">
         <span class="fn">${esc(a.name)}</span>${a.autoContext ? '<span class="pill">auto</span>' : ""}
-        <button class="rowmenu" data-rmacervo="${esc(a.id)}" title="${t("remover projeto do Loro (a pasta é preservada)")}">×</button></div>`).join("") +
+        <button class="rowmenu" data-rmacervo="${esc(a.id)}" title="${t("remover projeto do Loro (a pasta é preservada)")}" aria-label="${t("remover projeto do Loro (a pasta é preservada)")}: ${esc(a.name)}">×</button></div>`).join("") +
     `<div class="fsep"></div><div class="fitem2 add" data-newacervo="1">＋ ${t("novo projeto")}</div>`;
   B.acervoMenu.querySelectorAll("[data-acervo]").forEach((el2) => (el2.onclick = async (e) => {
     if (e.target.closest("[data-rmacervo]")) return;
@@ -4910,6 +6376,7 @@ B.acervoBtn.addEventListener("click", (e) => {
   }));
   B.acervoMenu.querySelector("[data-newacervo]").onclick = () => { closeFloat(); openNewAcervo(); };
   B.acervoMenu.hidden = false;
+  wireFloatMenu(B.acervoMenu, B.acervoBtn);
 });
 
 // remover projeto: tira o acervo do Loro (a pasta no disco é preservada)
@@ -4938,22 +6405,28 @@ function openConfirmRemoveAcervo(anchor, id) {
   B.bMenu.style.left = Math.min(r.left, window.innerWidth - 260) + "px";
   B.bMenu.style.top = r.bottom + 4 + "px";
   B.bMenu.hidden = false;
+  wireFloatMenu(B.bMenu, anchor);
 }
 
 // Preparo único dos campos do wizard, usado pelos DOIS caminhos de entrada:
 // openNewAcervo (menu "novo projeto") e o primeiro uso via brainRefresh. Só o
 // primeiro caminho preparava — numa instalação nova o seletor "como o time
 // trabalha" e a paleta de cores ficavam vazios.
-let wizInited = false, wizDefaultDir = "";
+let wizInited = false, wizDefaultDir = "", wizDirDirty = false;
 function resetWizardFields() {
   wizInited = true;
-  B.nameInput.value = ""; B.ctxInput.value = ""; brainDir = "";
-  // a pasta padrão REAL aparece antes de qualquer escolha — é a mesma para a
-  // qual o brain_setup cai quando o campo fica vazio (nada de "…" mudo)
-  B.dirBtn.textContent = wizDefaultDir || t("escolher pasta…");
+  B.nameInput.value = ""; B.ctxInput.value = ""; wizDirDirty = false;
+  // a pasta padrão REAL aparece antes de qualquer escolha, DENTRO do campo — é a
+  // mesma para a qual o brain_setup cai quando o campo fica vazio, e agora ela
+  // pode ser editada em vez de só substituída pelo diálogo do sistema
+  // …e, num projeto NOVO, uma pasta que ainda não é de ninguém: oferecer a pasta
+  // já tomada abria o formulário numa recusa em vermelho (N19)
+  setWizDir(freeAcervoDir(wizDefaultDir, acervos, creatingNew));
   invoke("default_acervo_dir").then((d) => {
     wizDefaultDir = d || "";
-    if (!brainDir && wizDefaultDir) B.dirBtn.textContent = wizDefaultDir;
+    // só repõe o padrão se o usuário ainda não escreveu nada: a resposta é
+    // assíncrona e chegava depois de a pessoa começar a digitar
+    if (!wizDirDirty && wizDefaultDir) setWizDir(freeAcervoDir(wizDefaultDir, acervos, creatingNew));
   }).catch(() => {});
   B.gitInput.checked = true;
   B.agentInput.value = "claude";
@@ -4984,14 +6457,14 @@ function resetWizardFields() {
 }
 function openNewAcervo() {
   creatingNew = true;
-  B.wizTitle.textContent = t("Novo projeto (acervo)");
+  B.wizTitle.textContent = t("Novo projeto");
   resetWizardFields();
   B.cancelBtn.hidden = false;
   B.setup.hidden = false; B.shell.hidden = true;
   B.nameInput.focus();
 }
 function drawWizColors() {
-  renderSwatches($("wizColors"), wizColor, (hex) => { wizColor = hex; drawWizColors(); applyAccent(hex); });
+  renderSwatches($("wizColors"), wizColor, (id) => { wizColor = id; drawWizColors(); applyAccent(id); });
 }
 
 // ---- usage template picker (ADR-0003): builtins + ~/.loro/templates --------
@@ -5031,7 +6504,7 @@ function drawWizHint() {
   hint.innerHTML = "";
   if (wizTemplate === AUTO_TEMPLATE_ID) {
     hint.hidden = false;
-    hint.textContent = t("o loop cria e atribui contexto sozinho ao processar a fila — você não precisa definir contextos agora (dá para desligar depois em Configurações).");
+    hint.textContent = t("o loop cria e escolhe o tema sozinho ao organizar — você não precisa definir temas agora (dá para desligar depois em Configurações).");
     return;
   }
   const sel = wizTemplates.find((x) => x.id === wizTemplate);
@@ -5065,26 +6538,169 @@ if (B.wizLang) B.wizLang.addEventListener("change", async (e) => {
   applyI18n(); rerenderForLang();
   // o applyI18n acima re-traduz o título estático a partir do HTML ("Crie seu
   // primeiro projeto") — se estamos no fluxo "novo projeto", repõe o certo
-  if (creatingNew) B.wizTitle.textContent = t("Novo projeto (acervo)");
-  if (!brainDir) B.dirBtn.textContent = wizDefaultDir || t("escolher pasta…");
+  if (creatingNew) B.wizTitle.textContent = t("Novo projeto");
+  // o caminho é do usuário (não é msgid): só a frase abaixo dele muda de idioma
+  paintWizDirNote();
   // os nomes dos modelos vêm do backend já localizados: re-busca, não só redesenha
   loadWizTemplates();
 });
 
+// ---- onde guardar: um caminho DIGITÁVEL, com o picker ao lado ---------------
+// O campo obrigatório do primeiro uso só existia como botão que abre o diálogo
+// do macOS: não dava para completar o primeiro uso pelo teclado, não dava para
+// colar um caminho que você já sabe, e nenhuma verificação automatizada
+// conseguia criar um projeto. Agora o caminho é texto — e é validado do mesmo
+// jeito que o backend o usa, com o preço dito na cópia em vez de falhar calado.
+//
+// O backend compara a pasta com as dos projetos existentes por STRING EXATA
+// (resolve_acervo_slot) e monta o caminho com PathBuf::from, então normalizar
+// aqui não é cosmético: "…/Loro/" ou "…//Loro" passariam pela porta que recusa
+// uma pasta já tomada, e um caminho relativo cairia no diretório de trabalho do
+// processo — que não é lugar nenhum que o usuário possa apontar.
+function normalizeAcervoDir(raw) {
+  const s = String(raw == null ? "" : raw).trim().replace(/\/{2,}/g, "/");
+  // a raiz ("/") e a raiz de um volume no Windows ("C:\") SÃO a pasta: cortar a
+  // barra final delas produziria um caminho que não existe
+  if (s.length <= 1 || /:[\\/]?$/.test(s)) return s;
+  return s.replace(/[\\/]+$/, "");
+}
+function isAbsoluteAcervoDir(dir) {
+  return dir.startsWith("/") || /^[A-Za-z]:[\\/]/.test(dir);
+}
+// Devolve { dir, err, note }: `dir` é o que vai para o brain_setup, `err` é o
+// msgid da recusa (vazio quando serve) e `note` é o que vai acontecer com ele.
+// Pura: os projetos existentes entram como lista, não como estado global.
+function validateAcervoDir(raw, defaultDir, acervos, expectNew) {
+  const typed = normalizeAcervoDir(raw);
+  const dir = typed || normalizeAcervoDir(defaultDir);
+  // N20 · `usedDefault` travels with the refusals too: a refusal that says "esta
+  // pasta" over an empty field points at nothing on screen, and the painter has to
+  // know the path is not visible in order to say it.
+  const usedDefault = !typed;
+  if (!dir) return { dir: "", err: "escreva o caminho da pasta ou use escolher pasta…", usedDefault };
+  if (dir.startsWith("~")) {
+    return { dir, err: "escreva o caminho completo, sem ~ (ou use escolher pasta…)", usedDefault };
+  }
+  if (!isAbsoluteAcervoDir(dir)) {
+    return { dir, err: "escreva o caminho completo da pasta, começando na raiz (ou use escolher pasta…)", usedDefault };
+  }
+  if (dir.split(/[\\/]/).includes("..")) {
+    return { dir, err: "escreva o caminho sem “..” — ele precisa apontar direto para a pasta", usedDefault };
+  }
+  const taken = (acervos || []).find((a) => a && normalizeAcervoDir(a.dir) === dir);
+  // a MESMA recusa que o backend dá na porta (ADR-0024), dita antes da viagem:
+  // o código err.* já tem as duas línguas e nomeia o projeto que mora ali
+  if (taken && expectNew) return { dir, err: "err.acervo_dir_taken:" + (taken.name || ""), usedDefault };
+  return {
+    dir,
+    err: "",
+    // apagar o campo é legítimo (o backend cai na pasta padrão) — mas então a
+    // tela tem de dizer QUAL pasta vai ser usada, em vez de ficar em branco
+    usedDefault,
+    // a pasta pode não existir ainda: o brain_setup a cria. Dizer isso é o que
+    // evita a leitura "digitei errado" diante de um caminho perfeitamente válido.
+    note: !typed ? "vazio: vamos usar a pasta padrão"
+      : taken ? "esta pasta já é este projeto — o conteúdo é mantido"
+      : "a pasta é criada se ainda não existir",
+  };
+}
+// The field's effective value (empty = the folder the wizard offered).
+// N20 · the field is prefilled with the FREE folder (freeAcervoDir), and clearing
+// it fell back to the backend's raw constant — which, from the second project on,
+// is the first project's folder. The refusal then named another project for an
+// empty field. The empty field means the same folder the wizard prefilled.
+function wizDirState() {
+  return validateAcervoDir(
+    B.dirInput ? B.dirInput.value : "",
+    freeAcervoDir(wizDefaultDir, acervos, creatingNew),
+    acervos, creatingNew);
+}
+// N19 · `default_acervo_dir` é uma CONSTANTE (~/Documents/Loro), e o wizard a
+// oferecia sempre: para todo segundo projeto o formulário abria já em vermelho,
+// acusando a pasta que o próprio app sugeriu. A sugestão passa a ser uma pasta
+// livre — o mesmo padrão, com sufixo, ao lado da primeira. Pura.
+function freeAcervoDir(defaultDir, acervos, expectNew) {
+  const base = normalizeAcervoDir(defaultDir);
+  if (!base || !expectNew) return base;
+  const taken = new Set((acervos || []).map((a) => normalizeAcervoDir(a && a.dir)));
+  if (!taken.has(base)) return base;
+  for (let n = 2; n < 100; n++) {
+    const cand = `${base}-${n}`;
+    if (!taken.has(cand)) return cand;
+  }
+  return base;
+}
+// `reject` (opcional): a recusa que o backend acabou de dar para ESTE caminho. Sem
+// ela a nota seguia prometendo "a pasta é criada se ainda não existir" para o
+// caminho que o sistema de arquivos tinha acabado de negar (N20).
+function paintWizDirNote(reject) {
+  const note = B.dirNote;
+  if (!note) return;
+  if (reject) {
+    // a região viva é revelada ANTES de receber o texto (N22/F6)
+    note.hidden = false;
+    note.classList.add("err");
+    note.textContent = reject;
+    return;
+  }
+  // a pasta padrão vem do backend por promessa: enquanto ela não chega e ninguém
+  // digitou nada, não há o que dizer — "escreva o caminho da pasta" seria uma
+  // acusação em vermelho antes do primeiro toque no formulário
+  const typed = (B.dirInput && B.dirInput.value.trim()) || "";
+  if (!typed && !wizDirDirty && !wizDefaultDir) { note.hidden = true; note.textContent = ""; return; }
+  const st = wizDirState();
+  let msg = st.err ? checkHint(st.err) : (st.note ? t(st.note) : "");
+  // the path is a value, not a msgid: it goes beside the sentence.
+  // N20 · the refusal also talks about ONE folder ("esta pasta já é o projeto X")
+  // and the path was appended only on the success branch, so with an empty field
+  // "esta pasta" pointed at nothing. The app knows the folder — so it says it.
+  if (st.usedDefault && st.dir) msg += " — " + st.dir;
+  // N22 · a ORDEM importa: uma região viva só é lida quando o texto muda com ela
+  // já na árvore visível — escrever e só então revelar não anuncia nada. A regra
+  // é a mesma que a suíte de a11y guarda para o toast e para o #brainSetupErr.
+  note.hidden = !msg;
+  note.classList.toggle("err", !!st.err);
+  note.textContent = msg;
+}
+function setWizDir(dir) {
+  if (B.dirInput) B.dirInput.value = dir || "";
+  paintWizDirNote();
+}
+if (B.dirInput) B.dirInput.addEventListener("input", () => { wizDirDirty = true; paintWizDirNote(); });
 // setup / criar acervo
 B.dirBtn.addEventListener("click", async () => {
-  try { const d = await invoke("pick_folder"); if (d) { brainDir = d; B.dirBtn.textContent = d; } }
-  catch (e) { clog("pick_folder error: " + e); }
+  try {
+    const d = await invoke("pick_folder");
+    if (d) { wizDirDirty = true; setWizDir(d); }
+  } catch (e) { clog("pick_folder error: " + e); }
 });
 B.createBtn.addEventListener("click", async () => {
   const contexts = B.ctxInput.value.split(",").map((s) => s.trim()).filter(Boolean);
   B.setupErr.hidden = true;
+  // o caminho digitado é recusado ANTES do estado pendente: um campo que só
+  // falha depois de "criando…" faz o usuário esperar por uma recusa que o app
+  // já sabia dar (DESIGN.md §1)
+  const dirSt = wizDirState();
+  paintWizDirNote();
+  if (dirSt.err) {
+    B.setupErr.hidden = false; B.setupErr.textContent = checkHint(dirSt.err);
+    if (B.dirInput) B.dirInput.focus();
+    return;
+  }
+  // DESIGN.md §5 · estado pendente: brain_setup semeia a pasta e roda `git init`
+  // (processos filhos). Sem isto a única ação primária da primeira tela não dava
+  // resposta nenhuma e continuava clicável — um segundo clique re-semeava tudo.
+  if (B.createBtn.disabled) return;
+  const label = B.createBtn.textContent;
+  B.createBtn.disabled = true;
+  B.createBtn.classList.add("pending");
+  B.createBtn.textContent = t("criando…");
   try {
     // ADR-0005: automático is a synthetic picker option → autoContext + generico
     // seeding; any real template = manual (autoContext off).
     const auto = wizTemplate === AUTO_TEMPLATE_ID;
     const av = await invoke("brain_setup", {
-      dir: brainDir, contexts,
+      dir: dirSt.dir, contexts,
       name: B.nameInput.value.trim() || null,
       autoContext: auto,
       gitInit: B.gitInput.checked,
@@ -5094,6 +6710,10 @@ B.createBtn.addEventListener("click", async () => {
       // ADR-0005 §6 (revises ADR-0002 §1): the acervo's generation language is
       // an explicit wizard choice, not implicitly the UI language.
       lang: B.wizLang ? B.wizLang.value : null,
+      // "novo projeto" x reconfigurar o mesmo: sem essa intenção, o backend
+      // reaproveitava a entrada da pasta e o projeto novo tomava o lugar do que
+      // já morava ali — dois domínios de conhecimento numa pasta só.
+      expectNew: creatingNew,
     });
     acervos = av.acervos || []; activeAcervo = av.active || "";
     creatingNew = false;
@@ -5101,7 +6721,16 @@ B.createBtn.addEventListener("click", async () => {
     settings.saveDir = ""; persistSettings();
     setupWorkspace(); sideSig = ""; brainRefresh();
   } catch (e) {
-    B.setupErr.textContent = tErr(String(e)); B.setupErr.hidden = false;
+    // role="alert" só fala o que muda com o nó já na árvore: revelar primeiro
+    const msg = tErr(String(e));
+    B.setupErr.hidden = false; B.setupErr.textContent = msg;
+    // N20 · a nota do campo seguia prometendo "a pasta é criada se ainda não
+    // existir" para o caminho que o sistema de arquivos acabou de recusar
+    paintWizDirNote(msg);
+  } finally {
+    B.createBtn.disabled = false;
+    B.createBtn.classList.remove("pending");
+    B.createBtn.textContent = label;
   }
 });
 
@@ -5109,75 +6738,236 @@ B.createBtn.addEventListener("click", async () => {
 // O Git fica escondido: o usuário só "versiona" e depois "propõe a mudança".
 // Extraída para função (ADR-0005): o mesmo botão "versionar" também aparece
 // no rail lateral de um documento de contexto, não só no cabeçalho da acervo.
-function promptVersionar() {
-  openEditor(
-    t("Versionar mudança — descreva em uma linha"),
-    "",
-    async (desc) => {
-      const message = (desc || "").trim();
-      if (!message) throw t("descreva a mudança");
-      const r = await invoke("brain_version", { slug: message, message });
-      toast(`${t("versionado em")} ${r.branch}`);
+// N1 · a descrição da versão NÃO é o nome do rascunho. `brain_version` escolhe o
+// branch pelo slug, então mandar a descrição como slug fazia cada versão nascer
+// num rascunho novo, criado A PARTIR do principal: a versão anterior saía do
+// documento aberto (e, com o mesmo arquivo sujo, o checkout abortava com o texto
+// cru do git). O rascunho se troca no ⎇ (openBranchPicker) — aqui só se descreve
+// o que mudou, e a versão cai no rascunho em que o usuário já está.
+function draftSlugFromBranch(current, def) {
+  const cur = String(current || "");
+  if (!cur || cur === (def || "main")) return null;
+  // brain_version endereça o rascunho por SLUG e o backend o resolve como
+  // rfc/<slug>: um branch de outra origem não é endereçável assim, então dizer
+  // que a versão cai nele seria mentira — nesse caso ela nasce num rascunho novo.
+  if (!cur.startsWith("rfc/")) return null;
+  return cur.slice(4) || null;
+}
+async function currentDraftSlug() {
+  try {
+    const info = await invoke("git_branches");
+    return draftSlugFromBranch(info && info.current, info && info.default);
+  } catch (_) { return null; }
+}
+async function promptVersionar() {
+  const draft = await currentDraftSlug();
+  openModal(
+    t("Salvar versão"),
+    // N5 · a seção é por documento, mas a versão é do acervo todo: o preço tem de
+    // estar dito na cópia, antes do clique.
+    `<p class="pmnote mono">${t("guarda o projeto inteiro — todos os temas, não só o documento aberto.")}</p>` +
+      (draft
+        ? `<div class="wfield"><span class="mono">${t("rascunho")}</span><span class="lockval mono">⎇ rfc/${esc(draft)}</span></div>`
+        : `<p class="pmnote mono">${t("esta descrição também nomeia o rascunho de trabalho que vai receber a versão.")}</p>`) +
+      `<label class="wfield"><span class="mono">${t("o que mudou")}</span>` +
+      `<input id="versionMsg" type="text" placeholder="${t("ex.: política de frota revisada")}" spellcheck="false"></label>`,
+    t("salvar versão"),
+    async () => {
+      const message = (($("versionMsg") && $("versionMsg").value) || "").trim();
+      if (!message) { toast(t("descreva a mudança")); return; }
+      const r = await invoke("brain_version", { slug: draft || message, message });
+      // N3 · o resultado voltava e era descartado: com a árvore limpa o backend
+      // não versionava nada e a tela anunciava "versão salva" mesmo assim.
+      if (!r || !r.saved) { toast(t("nada mudou desde a última versão — nenhuma versão foi criada")); return; }
+      toast(t("versão salva"));
       // sync degraded (offline / diverged main): tell the user, don't block
-      if (r.warn) toast(tErr(r.warn), 5000);
+      if (r && r.warn) toast(tErr(r.warn), 5000);
+      // N3 · o ⎇ e a contagem do botão ficavam parados até o tique de 10s
+      brainRefresh();
     }
   );
 }
 B.gitBtn.addEventListener("click", promptVersionar);
 
+// N2 (round 3) · what a switch COSTS, decided before the click. Clicking the
+// "(principal)" row used to take the whole project off the disk in silence: on
+// a project that only started versioning after setup, the baseline commit
+// carries no file at all, so that branch is an empty room and every document
+// lives on the draft. git keeps the content safe on the draft's commit — what
+// was missing is the screen saying the price, saying nothing was deleted, and
+// saying the way back (DESIGN.md §1). `leaving` and `docs` come counted from
+// git_branches; a switch that removes nothing has no price to declare.
+function switchPrice(stand, from) {
+  const leaving = (stand && stand.leaving) || 0;
+  if (!leaving) return null;
+  return { leaving, targetEmpty: !(stand && stand.docs), from: from || "" };
+}
+function holdsLabel(docs) {
+  return docs ? `${docs} ${docs > 1 ? t("documentos") : t("documento")}` : t("nada guardado ainda");
+}
+// The switch already happened: the toast is the only place that can say where
+// the material went. It used to say "⎇ main" and nothing else, while the tabs
+// closed and the sidebar emptied.
+function afterSwitch(branch, price) {
+  const kept = price
+    ? ` · ${price.leaving} ${price.leaving > 1 ? t("documentos ficaram no rascunho anterior") : t("documento ficou no rascunho anterior")}`
+    : "";
+  toast("⎇ " + branch + kept, price ? 6000 : undefined);
+  // the disk changed under the open tabs — reset to Home (acervo-switch pattern)
+  setupWorkspace(); sideSig = ""; brainRefresh();
+}
+// The price, stated before the click, with the way back named.
+function confirmSwitchBranch(branch, price) {
+  openModal(
+    t("Trocar de rascunho"),
+    `<p class="pmnote mono">${price.leaving} ${price.leaving > 1 ? t("documentos saem da tela") : t("documento sai da tela")}` +
+      (price.targetEmpty ? ` — ${t("lá ainda não há nenhum documento — a tela vai ficar vazia.")}` : "") +
+      `</p>` +
+      `<p class="pmnote mono">${t("nada é apagado: eles continuam guardados no rascunho atual.")}</p>` +
+      (price.from
+        ? `<div class="wfield"><span class="mono">${t("volta para")}</span><span class="lockval mono">⎇ ${esc(price.from)}</span></div>`
+        : ""),
+    t("trocar mesmo assim"),
+    async () => {
+      try { afterSwitch(await invoke("git_switch_branch", { branch }), price); }
+      catch (e) { toast(tErr(String(e)), 5000); }
+    }
+  );
+}
 // ADR-0002 §2 — branch picker: see the current branch, switch to another local
 // branch or create a new rfc/. Switching with a dirty tree is blocked by the
 // backend (err.working_tree_dirty); the remedy is the Versionar button itself.
 async function openBranchPicker() {
   let info;
   try { info = await invoke("git_branches"); } catch (e) { toast(tErr(String(e))); return; }
-  const afterSwitch = (branch) => {
-    toast("⎇ " + branch);
-    // the disk changed under the open tabs — reset to Home (acervo-switch pattern)
-    setupWorkspace(); sideSig = ""; brainRefresh();
-  };
+  // N8 · as linhas eram <div> com onclick: trocar de rascunho era impossível pelo
+  // teclado (WCAG 2.1.1) e o leitor de tela as anunciava como texto (4.1.2).
   const rows = (info.branches || []).map((b) => {
-    const cur = b === info.current, def = b === info.default;
-    return `<div class="fitem2${cur ? " on" : ""}" data-branch="${esc(b)}"><span class="fn mono">${cur ? "● " : ""}${esc(b)}${def ? ` (${t("principal")})` : ""}</span></div>`;
+    const cur = b.name === info.current, def = b.name === info.default;
+    const holds = holdsLabel(b.docs);
+    const name = `${esc(b.name)}${def ? ` (${t("principal")})` : ""}`;
+    return `<div class="fitem2${cur ? " on" : ""}" role="button" tabindex="0" data-branch="${esc(b.name)}"` +
+      `${cur ? ' aria-current="true"' : ""} aria-label="${esc(b.name)}${def ? ", " + t("principal") : ""} — ${esc(holds)}">` +
+      `<span class="fn mono">${cur ? "● " : ""}${name}</span><span class="fmeta">${esc(holds)}</span></div>`;
   }).join("");
   const body = openModal(
-    t("Branch de trabalho"),
-    `<div class="fitem2 muted fstatic">${t("mudanças de conhecimento nascem em branches rfc/ — a principal é protegida")}</div>` +
+    t("Rascunho de trabalho"),
+    `<div class="fitem2 muted fstatic">${t("uma mudança de conhecimento nasce num rascunho de trabalho — o conhecimento oficial fica protegido")}</div>` +
       rows +
-      `<div class="fsep"></div><div class="fitem2 add" data-newbranch>＋ ${t("nova branch…")}</div>`,
+      `<div class="fsep"></div><div class="fitem2 add" data-newbranch>＋ ${t("novo rascunho…")}</div>`,
     null,
     null
   );
-  body.querySelectorAll("[data-branch]").forEach((el2) => (el2.onclick = async () => {
-    closeModal();
-    const b = el2.dataset.branch;
-    if (b === info.current) return;
-    try { afterSwitch(await invoke("git_switch_branch", { branch: b })); }
-    catch (e) { toast(tErr(String(e)), 5000); }
-  }));
+  body.querySelectorAll("[data-branch]").forEach((el2) => {
+    el2.onclick = async () => {
+      closeModal();
+      const b = el2.dataset.branch;
+      if (b === info.current) return;
+      const stand = (info.branches || []).find((x) => x.name === b);
+      const price = switchPrice(stand, info.current);
+      if (price) return confirmSwitchBranch(b, price);
+      try { afterSwitch(await invoke("git_switch_branch", { branch: b }), null); }
+      catch (e) { toast(tErr(String(e)), 5000); }
+    };
+    wireActivateKeys(el2);
+  });
   const nb = body.querySelector("[data-newbranch]");
-  if (nb) nb.onclick = () => {
-    closeModal();
-    openEditor(t("Nova branch — descreva a mudança em uma linha"), "", async (desc) => {
-      const slug = (desc || "").trim();
-      if (!slug) throw t("descreva a mudança");
-      afterSwitch(await invoke("git_create_branch", { slug }));
-    });
-  };
+  if (nb) {
+    nb.setAttribute("role", "button");
+    nb.setAttribute("tabindex", "0");
+    nb.onclick = () => {
+      closeModal();
+      openEditor(t("Novo rascunho — descreva a mudança em uma linha"), "", async (desc) => {
+        const slug = (desc || "").trim();
+        if (!slug) throw t("descreva a mudança");
+        // a brand-new draft starts from the work in front of the user: nothing
+        // leaves the screen, so there is no price to declare
+        afterSwitch(await invoke("git_create_branch", { slug }), null);
+      });
+    };
+    wireActivateKeys(nb);
+  }
 }
 if (B.branchBtn) B.branchBtn.addEventListener("click", openBranchPicker);
 
 B.proposeBtn.addEventListener("click", () => {
   openEditor(
-    t("Propor mudança (RFC) — corpo do Pull Request"),
-    t("## Resumo da mudança\n\n\n## Contexto afetado\n\n\n## Riscos e pendências\n"),
+    t("Enviar para revisão do time — descreva a mudança"),
+    t("## Resumo da mudança\n\n\n## Conhecimento afetado\n\n\n## Riscos e pendências\n"),
     async (body) => {
-      const title = (body || "").split("\n").map((l) => l.replace(/^#+\s*/, "").trim()).find(Boolean) || "RFC";
+      // o título vai para a revisão no GitHub: sem primeira linha, o assunto é a
+      // própria mudança de conhecimento — nunca a sigla interna
+      const title = (body || "").split("\n").map((l) => l.replace(/^#+\s*/, "").trim()).find(Boolean)
+        || t("mudança de conhecimento");
       const pr = await invoke("brain_propose_change", { title, body });
-      toast(pr.number ? `PR #${pr.number} ${t("aberto")}` : t("mudança proposta"));
+      // N4 · a url voltava do backend e era jogada fora: quem acabou de propor
+      // não tinha por onde chegar à própria revisão. O número não é um endereço.
+      lastProposalUrl = (pr && pr.url) || "";
+      const msg = pr && pr.number ? `${t("enviado para revisão do time")} · #${pr.number}` : t("enviado para revisão do time");
+      const acts = [];
+      if (lastProposalUrl) acts.push({ label: t("abrir a revisão"), run: () => openProposalUrl(lastProposalUrl) });
+      acts.push({ label: t("ver revisões"), run: () => openReviewsSheet() });
+      toastAction(msg, acts);
+      maybeRefreshNotifications(true);
     }
   );
 });
+
+// N4 · a metade da revisão não tinha superfície: `gh_pr_list` existia no contrato
+// e nenhum caller no frontend, então "2 aguardam sua revisão" era um número sem
+// porta. A folha lista as revisões abertas, ABRE cada uma no navegador (onde a
+// revisão de fato acontece) e ainda entrega o endereço para compartilhar.
+let lastProposalUrl = "";
+async function copyProposalUrl(url) {
+  toast((await copyToClipboard(url)) ? t("link copiado") : t("não consegui copiar"));
+}
+// A revisão acontece no navegador, e o app tinha o endereço e nenhuma porta:
+// copiar o link era consolo, não ação. Vai pelo mesmo caminho estreito de uma
+// referência externa — `brain_open_link` só aceita http(s), sem shell, e nenhum
+// token passa por aqui (BR-9).
+async function openProposalUrl(url) {
+  if (!url) return;
+  try { await invoke("brain_open_link", { url }); }
+  catch (e) { toast(t("não abri a revisão no navegador")); clog("open_link error: " + e); }
+}
+async function openReviewsSheet() {
+  let prs = null;
+  try { prs = await invoke("gh_pr_list"); }
+  catch (e) { toast(tErr(String(e)), 5000); return; }
+  const list = prs || [];
+  const rows = list.map((p, i) => {
+    // o que o revisor precisa saber é a DECISÃO (aprovada, ajustes pedidos); o
+    // estado do PR é o que sobra quando ainda não houve decisão
+    const st = p.reviewDecision || p.state || "";
+    const num = esc(String(p.number || ""));
+    // o nome acessível de cada ação carrega o número: "abrir"/"copiar link"
+    // repetidos em N linhas não dizem QUAL revisão (WCAG 2.4.6)
+    const acts = p.url
+      ? `<button class="mini act" data-propen="${i}" aria-label="${t("abrir a revisão")} #${num}">${t("abrir")}</button>` +
+        `<button class="mini act" data-prurl="${i}" aria-label="${t("copiar link")} #${num}">⧉ ${t("copiar link")}</button>`
+      : "";
+    return `<div class="fitem2 fstatic"><span class="fn">#${num} ${esc(p.title || "")}` +
+    `${st ? ` <span class="mono muted">${esc(String(st).toLowerCase().replace(/_/g, " "))}</span>` : ""}</span>` +
+    acts + `</div>`;
+  }).join("");
+  const body = openModal(
+    t("Revisões abertas"),
+    list.length
+      ? `<p class="pmnote mono">${t("a revisão acontece no GitHub — “abrir” leva você até ela no navegador.")}</p>${rows}`
+      : `<p class="pmnote mono">${t("nenhuma revisão aberta ainda — envie uma mudança para revisão do time.")}</p>`,
+    null,
+    null
+  );
+  body.querySelectorAll("[data-propen]").forEach((b) => (b.onclick = () => {
+    const p = list[Number(b.dataset.propen)];
+    closeModal();
+    if (p) openProposalUrl(p.url);
+  }));
+  body.querySelectorAll("[data-prurl]").forEach((b) => (b.onclick = () => {
+    const p = list[Number(b.dataset.prurl)];
+    if (p && p.url) copyProposalUrl(p.url);
+  }));
+}
 
 // ============================ produção: modal genérico (ADR-0009) ============================
 // One reusable confirm sheet drives the promotion picker and the migration
@@ -5187,25 +6977,73 @@ const PM = {
   confirm: $("pmConfirm"), cancel: $("pmCancel"), close: $("pmClose"),
 };
 let pmOnConfirm = null;
-function openModal(title, bodyHtml, confirmLabel, onConfirm) {
+let pmOnDismiss = null;
+// Which sheet is on screen. A confirm handler may open the NEXT sheet while the
+// first one is still awaiting (the branch picker does); the counter is how the
+// pending state knows the sheet it belongs to is gone and must not be touched.
+let pmGen = 0;
+// A sheet can be dismissed five ways (confirmar, cancelar, ×, Escape, clique
+// fora). Quem ESPERA uma resposta da folha precisa ser avisado por TODAS elas:
+// pickMeeting resolvia só nos cliques de cancelar/×, então Escape e o clique fora
+// deixavam a promessa pendente para sempre e o ● Gravar ficava travado em
+// "iniciando…", desabilitado, até reiniciar o app. O aviso mora aqui, no fechador
+// único, e não em cada caminho de saída.
+function openModal(title, bodyHtml, confirmLabel, onConfirm, onDismiss) {
+  pmGen++;
   PM.title.textContent = title;
   PM.body.innerHTML = bodyHtml;
   PM.confirm.textContent = confirmLabel || t("confirmar");
   PM.confirm.hidden = !onConfirm;
+  // a sheet reused right after a pending confirm must not inherit its state
+  PM.confirm.disabled = false;
+  PM.confirm.removeAttribute("aria-busy");
   pmOnConfirm = onConfirm || null;
+  pmOnDismiss = onDismiss || null;
   PM.wrap.hidden = false;
+  // o foco entra na folha: o primeiro campo do corpo, ou o confirmar
+  enterOverlay(PM.wrap, () => PM.body.querySelector("input, select, textarea, button")
+    || (PM.confirm.hidden ? PM.close : PM.confirm), closeModal);
   return PM.body;
 }
-function closeModal() { PM.wrap.hidden = true; pmOnConfirm = null; }
+function closeModal() {
+  const dismissed = pmOnDismiss;
+  PM.wrap.hidden = true;
+  pmOnConfirm = null;
+  pmOnDismiss = null;
+  leaveOverlay(PM.wrap);
+  if (dismissed) dismissed();
+}
 PM.close.addEventListener("click", closeModal);
 PM.cancel.addEventListener("click", closeModal);
 PM.wrap.addEventListener("click", (e) => { if (e.target === PM.wrap) closeModal(); });
 PM.confirm.addEventListener("click", async () => {
   if (!pmOnConfirm) return closeModal();
-  try { const fn = pmOnConfirm; closeModal(); await fn(); }
+  // confirmar NÃO é desistir: o onConfirm é que vai responder a quem espera
+  pmOnDismiss = null;
+  // N8 · the sheet used to vanish BEFORE the await: "salvar versão" runs a
+  // `git fetch` that can take ~10s, and the screen said nothing at all in the
+  // meantime. The primary action carries the pending state, and the sheet only
+  // closes once the work it started has an outcome (DESIGN.md §1: every action
+  // has feedback). `gen` is the sheet this click belongs to — a handler that
+  // opened the next sheet has already replaced both the label and the state.
+  const fn = pmOnConfirm;
+  const gen = pmGen;
+  const label = PM.confirm.textContent;
+  pmOnConfirm = null;
+  PM.confirm.disabled = true;
+  PM.confirm.setAttribute("aria-busy", "true");
+  PM.confirm.textContent = t("um momento…");
+  try { await fn(); }
   catch (e) { toast(tErr(String(e))); clog("modal confirm error: " + e); }
+  finally {
+    if (gen === pmGen) {
+      PM.confirm.disabled = false;
+      PM.confirm.removeAttribute("aria-busy");
+      PM.confirm.textContent = label;
+      closeModal();
+    }
+  }
 });
-window.addEventListener("keydown", (e) => { if (e.key === "Escape" && !PM.wrap.hidden) closeModal(); });
 
 // drop a tab's cached editor/buffer so the next render re-reads it from disk
 // (brain_promote stamps the source file's front-matter without moving it).
@@ -5224,7 +7062,7 @@ function promptNewTema() {
   bsEditing = true;
   const inp = document.createElement("input");
   inp.className = "bnewctx";
-  inp.placeholder = t("nome do brainstorming (Enter) · ex.: frota 2026");
+  inp.placeholder = t("nome da ideia (Enter) · ex.: frota 2026");
   B.navPessoal.before(inp); inp.focus();
   const done = () => { inp.remove(); bsEditing = false; };
   inp.addEventListener("keydown", async (e) => {
@@ -5271,10 +7109,10 @@ function promotionPreview(fm) {
   return out;
 }
 async function startPromotion(sourceRel) {
-  if (!sourceRel) { toast(t("abra um caderno pessoal para promover")); return; }
-  if (!sourceRel.startsWith("pessoal/")) { toast(t("apenas itens pessoais podem ser promovidos")); return; }
+  if (!sourceRel) { toast(t("abra um caderno pessoal para juntar a um conhecimento")); return; }
+  if (!sourceRel.startsWith("pessoal/")) { toast(t("só um item pessoal pode ser juntado a um conhecimento")); return; }
   const ctxs = lastSt ? lastSt.contexts.map((c) => c.name) : [];
-  if (!ctxs.length) { toast(t("crie um contexto antes de promover")); return; }
+  if (!ctxs.length) { toast(t("crie um tema de conhecimento primeiro")); return; }
   // pre-read the source front-matter for the preview (best-effort)
   let fm = null;
   try {
@@ -5285,18 +7123,18 @@ async function startPromotion(sourceRel) {
   const previewItems = promotionPreview(fm);
   const preview = previewItems.length
     ? previewItems.map((l) => "• " + esc(l)).join("<br>")
-    : t("sem anexos — apenas o texto será mesclado no context.md");
+    : t("sem anexos — apenas o texto será mesclado no conhecimento");
   const opts = ctxs.map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join("");
   const html =
     `<p class="pmnote mono">${t("não destrutivo — o original permanece no seu espaço pessoal (rascunho). Áudio nunca é copiado; vira referência em texto.")}</p>` +
     `<label class="pmfield"><span class="mono">${t("de")}</span><span class="mono pmsrc">${esc(sourceRel)}</span></label>` +
     `<label class="pmfield"><span class="mono">${t("destino")}</span><select id="pmDest" class="mini-select">${opts}</select></label>` +
-    `<div class="pmphead mono">${t("será preparado (staged) em referencias/ e mesclado no context.md:")}</div>` +
+    `<div class="pmphead mono">${t("o que será juntado ao conhecimento do tema:")}</div>` +
     `<div class="pmpreview mono">${preview}</div>`;
-  openModal(t("Promover para contexto"), html, t("promover"), async () => {
+  openModal(t("Juntar a um conhecimento"), html, t("juntar"), async () => {
     const destContext = $("pmDest").value;
     const r = await invoke("brain_promote", { sourceRel, destContext, mode: "merge" });
-    toast(`${t("promovido")} → ${destContext}`);
+    toast(`${t("juntado ao conhecimento")} → ${destContext}`);
     refreshTabFromDisk(sourceRel);
     sideSig = ""; pessoalSig = ""; brainRefresh(); refreshPessoal();
     offerPropose(r, destContext);
@@ -5307,9 +7145,9 @@ function offerPropose(r, destContext) {
   const files = (r && r.stagedFiles) || [];
   const entry = r && r.changelogEntry ? `<div class="pmphead mono">CHANGELOG: ${esc(String(r.changelogEntry))}</div>` : "";
   const html =
-    `<p class="pmnote mono">${t("promovido para")} <b>${esc(destContext)}</b> — ${t("nada foi versionado ainda (não destrutivo).")}</p>` +
+    `<p class="pmnote mono">${t("juntado ao conhecimento")} <b>${esc(destContext)}</b> — ${t("nenhuma versão foi salva ainda — nada foi destruído.")}</p>` +
     `<div class="pmpreview mono">${files.length ? files.map((f) => "• " + esc(f)).join("<br>") : t("context.md atualizado")}</div>${entry}`;
-  openModal(t("Mudança pronta"), html, t("propor mudança agora"), async () => { B.gitBtn.click(); });
+  openModal(t("Mudança pronta"), html, t("salvar versão agora"), async () => { B.gitBtn.click(); });
 }
 
 // ---- migrar acervo (simulação → aplicar) — estende brain_migrate (ADR-0004/0009) ----
@@ -5327,7 +7165,7 @@ async function runMigration() {
   let rep;
   try { rep = await invoke("brain_migrate", { apply: false }); }
   catch (e) { toast(t("falha ao planejar migração")); clog("migrate error: " + e); return; }
-  openModal(t("Migrar acervo (simulação)"), migrationBodyHtml(rep), t("aplicar migração"), async () => {
+  openModal(t("Migrar projeto (simulação)"), migrationBodyHtml(rep), t("aplicar migração"), async () => {
     await invoke("brain_migrate", { apply: true });
     toast(t("migração aplicada"));
     sideSig = ""; pessoalSig = ""; brainRefresh(); refreshPessoal();
@@ -5343,7 +7181,7 @@ listen("pessoal-changed", () => { pessoalSig = ""; refreshPessoal(); });
 listen("tema-changed", () => { pessoalSig = ""; refreshPessoal(); });
 listen("promotion-done", (e) => {
   const p = (e && e.payload) || {};
-  toast(p.destContext ? `${t("promovido")} → ${p.destContext}` : t("promoção concluída"));
+  toast(p.destContext ? `${t("juntado ao conhecimento")} → ${p.destContext}` : t("juntado ao conhecimento"));
   sideSig = ""; pessoalSig = ""; brainRefresh(); refreshPessoal();
   const tb = activeTab(); if (tb && tb.rel !== HOME_REL) renderActive();
 });
@@ -5357,47 +7195,142 @@ async function refreshEnv(force) {
   try { envDoctor = await invoke("env_doctor"); }
   catch (_) { envDoctor = null; }
   renderGhCard();
-  refreshNotifications();
+  maybeRefreshNotifications(true);
+}
+// C9 · a dica de um check chega em DOIS formatos no mesmo campo: um código
+// `err.*` estável e uma frase pt-BR (que é o msgid). A tela imprimia o campo
+// cru, então a linha que diz o que falta para conectar o GitHub aparecia como
+// "err.git_remote_required" e as frases nunca traduziam (CLAUDE.md §6).
+function checkHint(hint) {
+  const h = String(hint || "");
+  if (!h) return "";
+  return h.startsWith("err.") ? tErr(h) : t(h);
+}
+// N4 · a linha do check mostrava `detail || hint`, e detail vencia: para o
+// remoto inalcançável o usuário via a URL certa e o MOTIVO ("verifique o acesso")
+// era calculado e jogado fora; para git/gh abaixo do piso, detail é a versão, e
+// "atualize o git" nunca chegava à tela. Valor e motivo são duas coisas, e a
+// interface sabe as duas (DESIGN.md §1).
+function checkSay(c) {
+  const detail = (c && c.detail) || "";
+  const hint = c && !c.ok ? checkHint(c.hint) : "";
+  return [detail, hint].filter(Boolean).join(" — ");
 }
 function renderGhCard() {
   const d = envDoctor;
   B.proposeBtn.hidden = !(d && d.versioningEnabled);
-  // opt-in: só mostra o card quando o usuário caminha p/ colaboração (gh instalado
-  // ou já há um remoto). Sem isso, o fluxo segue 100% local, sem ruído.
-  const heading = d && (d.gh.detail || d.remote.detail);
-  if (!heading) { B.ghCard.hidden = true; return; }
+  // N5 · a porta permanente para a outra metade do fluxo (as revisões abertas)
+  const rev = $("pReviewsBtn");
+  if (rev) rev.hidden = !(d && d.versioningEnabled);
+  renderPanelTeamNote();
+  // N6 · o card sumia inteiro quando o gh não estava instalado — exatamente na
+  // máquina em que o usuário mais precisa do diagnóstico. Esta seção mora em
+  // Configurações (ADR-0020 §7): chegar até ela já é o opt-in, e uma seção que
+  // desaparece deixa a promessa da revisão sem remédio nenhum.
+  if (!d) { B.ghCard.hidden = true; return; }
   B.ghCard.hidden = false;
-  B.ghState.textContent = d.versioningEnabled ? `${t("conectado")}${d.account ? " · @" + d.account : ""}` : "local";
+  // N6 · sem rede o ambiente não está "local": está configurado e inalcançável.
+  B.ghState.textContent = d.versioningEnabled
+    ? `${t("conectado")}${d.account ? " · @" + d.account : ""}`
+    : (d.offline ? t("sem rede") : "local");
   B.ghState.className = "mono badge " + (d.versioningEnabled ? "ok" : "ro");
   const rows = [
-    ["git", d.git], ["gh (GitHub CLI)", d.gh], [t("autenticação"), d.ghAuth],
-    [t("identidade git"), d.gitIdentity], [t("repositório remoto"), d.remote],
+    ["git", d.git, ""], ["gh (GitHub CLI)", d.gh, ""], [t("autenticação"), d.ghAuth, "gh auth login"],
+    [t("identidade git"), d.gitIdentity, ""], [t("repositório remoto"), d.remote, ""],
   ];
-  B.ghChecks.innerHTML = rows.map(([label, c]) => {
+  B.ghChecks.innerHTML = rows.map(([label, c, cmd]) => {
     const fix = c.fixable && !c.ok ? ` <button class="mini act" data-fix="identity">${t("corrigir")}</button>` : "";
+    // N6 · o remédio deste bloqueio era a frase "gh auth login" para o usuário
+    // digitar em algum lugar. O app já tem o padrão certo para a mesma classe de
+    // falha (o card do chat com "Abrir o Terminal"): o comando roda no terminal
+    // embutido, que é onde o login interativo do gh acontece.
+    const run = cmd && !c.ok
+      ? ` <button class="mini act" data-runterm="${esc(cmd)}">${t("autenticar no Terminal")}</button>` : "";
+    // N4 · o único bloqueio que sobra depois de todo mundo autenticar não tinha
+    // remédio nenhum — só a palavra "origin" (o remédio de um
+    // bloqueio é um botão). Só quando não há repositório nenhum conectado: com
+    // um remoto configurado e fora do ar o remédio é a rede voltar.
+    const connect = c === d.remote && !c.ok && !c.detail
+      ? ` <button class="mini act" data-connect>${t("conectar")}</button>` : "";
     return `<li class="ghchk ${c.ok ? "on" : "off"}"><span>${c.ok ? "✓" : "•"} ${esc(label)}</span>` +
-      `<span class="ghhint mono">${esc(c.detail || c.hint || "")}</span>${fix}</li>`;
+      `<span class="ghhint mono">${esc(checkSay(c))}</span>${fix}${run}${connect}</li>`;
   }).join("");
   B.ghChecks.querySelectorAll("[data-fix]").forEach((b) => (b.onclick = fixIdentity));
+  B.ghChecks.querySelectorAll("[data-connect]").forEach((b) => (b.onclick = promptConnectRemote));
+  B.ghChecks.querySelectorAll("[data-runterm]").forEach((b) => (b.onclick = () => {
+    closeCfg();
+    termRun(b.dataset.runterm);
+    toast(t("siga o login no Terminal — depois use “verificar”"), 6000);
+  }));
 }
+// N4 · conectar o projeto a um repositório do time é o passo que destrava a
+// revisão — e é o único que tira conhecimento desta máquina, então o preço vem
+// escrito antes do clique (DESIGN.md §1). O comando roda no terminal embutido,
+// onde o gh já faz o login: nenhum token passa pelo app (BR-9).
+function promptConnectRemote() {
+  openModal(
+    t("conectar um repositório do time"),
+    `<p class="pmnote mono">${t("o conhecimento salvo em versões passa a ter uma cópia no GitHub, privada, na sua conta. reuniões, notas e itens para organizar continuam só neste computador.")}</p>`,
+    t("conectar no Terminal"),
+    () => {
+      closeCfg();
+      termRun("gh repo create --source . --private --remote origin --push");
+      toast(t("siga os passos no Terminal — depois use “verificar”"), 6000);
+    }
+  );
+}
+// N3 · o campo vinha PRÉ-PREENCHIDO com "Seu Nome/seu@email" como valor, e a
+// checagem era só "não vazio": clicar em salvar gravava "seu@email" como e-mail.
+// Exemplo é placeholder; um e-mail que não é e-mail é recusado antes da viagem.
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 async function fixIdentity() {
-  openEditor(t("Identidade do git — nome e e-mail (uma linha cada)"), t("Seu Nome\nseu@email"), async (v) => {
-    const [name, email] = (v || "").split("\n").map((s) => s.trim());
-    if (!name || !email) throw t("informe nome e e-mail");
-    await invoke("env_set_identity", { name, email });
-    refreshEnv(true);
-  });
+  openModal(
+    t("Identidade do git"),
+    `<p class="pmnote mono">${t("é o nome que assina cada versão salva — o time vê isso no histórico.")}</p>` +
+      `<label class="wfield"><span class="mono">${t("nome")}</span>` +
+      `<input id="gitIdName" type="text" placeholder="${t("ex.: Ana Souza")}" spellcheck="false"></label>` +
+      `<label class="wfield"><span class="mono">${t("e-mail")}</span>` +
+      `<input id="gitIdEmail" type="text" placeholder="ana@exemplo.com" spellcheck="false"></label>`,
+    t("salvar"),
+    async () => {
+      const name = (($("gitIdName") && $("gitIdName").value) || "").trim();
+      const email = (($("gitIdEmail") && $("gitIdEmail").value) || "").trim();
+      if (!name || !email) { toast(t("informe nome e e-mail")); return; }
+      if (!EMAIL_RE.test(email)) { toast(t("informe um e-mail válido")); return; }
+      await invoke("env_set_identity", { name, email });
+      toast(t("identidade salva"));
+      refreshEnv(true);
+    }
+  );
 }
-B.ghCheck.addEventListener("click", () => refreshEnv(true));
+// N6 · "verificar" subia cinco processos (e ia à rede quando autenticado) e não
+// pintava nada: o usuário não tinha como saber que rodou. Um estado pendente
+// enquanto roda, uma frase quando termina.
+async function ghCheckRun() {
+  const btn = B.ghCheck;
+  const label = btn ? btn.textContent : "";
+  if (btn) { btn.disabled = true; btn.classList.add("pending"); btn.textContent = t("verificando…"); }
+  announce(t("verificando o ambiente…"));
+  try { await refreshEnv(true); }
+  finally {
+    if (btn) { btn.disabled = false; btn.classList.remove("pending"); btn.textContent = label; }
+  }
+  const d = envDoctor;
+  toast(d && d.versioningEnabled ? t("ambiente verificado — pronto para revisão do time") : t("ambiente verificado — ainda falta algo abaixo"));
+}
+B.ghCheck.addEventListener("click", ghCheckRun);
 
 // Notificações (colaboração): derivadas dos PRs abertos. Sem GitHub → oculto.
 // ADR-0020 §7: o ghCard saiu da home, MAS o aviso não some — realocado para o
 // topo de Conhecimento (1c) como uma faixa dispensável.
-let notifDismissed = false;
+// N4 · dispensar guardava um flag de SESSÃO: um × calava todo aviso futuro até
+// reiniciar o app. Agora a dispensa vale para aquele aviso (a assinatura dos
+// contadores); um aviso diferente volta a aparecer.
+let notifDismissedSig = "";
+let notifCheckedAt = 0;
 async function refreshNotifications() {
   const bar = $("ghNotifBar");
   const hide = () => { if (bar) bar.hidden = true; };
-  if (notifDismissed) return hide();
   if (!envDoctor || !envDoctor.versioningEnabled) return hide();
   let n;
   try { n = await invoke("brain_notifications"); } catch (_) { return hide(); }
@@ -5407,30 +7340,60 @@ async function refreshNotifications() {
   if (n.awaitingApproval.length) parts.push(`${n.awaitingApproval.length} ${t("aguardando aprovação")}`);
   if (n.changesPending.length) parts.push(`${n.changesPending.length} ${t("com ajustes pedidos")}`);
   if (n.recentlyApproved.length) parts.push(`✓ ${n.recentlyApproved.length} ${t("aprovadas")}`);
-  B.ghNotif.textContent = parts.join(" · ");
-  if (bar) bar.hidden = parts.length === 0;
+  const sig = parts.join(" · ");
+  if (!sig || sig === notifDismissedSig) return hide();
+  B.ghNotif.textContent = sig;
+  if (bar) bar.hidden = false;
+}
+// A faixa era viva só no papel: refreshNotifications só rodava dentro do
+// refreshEnv, que se auto-trava por acervo — o contador só mudava ao trocar de
+// projeto ou apertar "verificar". `gh` é processo + rede, então o tique é lento.
+const NOTIF_EVERY_MS = 120000;
+function maybeRefreshNotifications(force) {
+  const now = Date.now();
+  if (!force && now - notifCheckedAt < NOTIF_EVERY_MS) return;
+  notifCheckedAt = now;
+  refreshNotifications();
 }
 
 // Timeline: navegar versões do conhecimento sem expor commits/hashes/branches.
 // Acionada pelo selo de versionamento do documento aberto.
+// N8 · era um openEditor: o histórico do time (leitura) abria como CM6 editável,
+// com barra de markdown e um "salvar" cheio que DESCARTAVA em silêncio. Uma folha
+// de leitura não tem ação primária de escrita.
 function showTimeline(rel) {
   invoke("brain_timeline", { rel }).then((items) => {
-    const body = items.length
-      ? items.map((c) => {
-          const when = c.when ? new Date(c.when).toLocaleString(uiLocale(), { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
-          return `• ${when} — ${c.label}${c.author ? ` (${c.author})` : ""}`;
-        }).join("\n")
-      : t("(sem versões anteriores ainda)");
-    openEditor(`${t("Histórico")} — ${rel}`, body, null);
+    const rows = (items || []).map((c) => {
+      const when = c.when ? new Date(c.when).toLocaleString(uiLocale(), { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
+      return `<div class="fitem2 fstatic"><span class="fn">${esc(when)} — ${esc(c.label || "")}</span>` +
+        (c.author ? `<span class="mono muted">${esc(c.author)}</span>` : "") + `</div>`;
+    }).join("");
+    openModal(
+      `${t("Histórico")} — ${rel}`,
+      rows || `<p class="pmnote mono">${t("(sem versões anteriores ainda)")}</p>`,
+      null,
+      null
+    );
   }).catch((e) => { toast(t("sem histórico")); clog("timeline error: " + e); });
 }
-B.gitBadge.addEventListener("click", () => { const rel = currentRel(); if (rel) showTimeline(rel); });
+// N8 · o selo era um <span> com listener: invisível ao teclado e anunciado como
+// texto estático, embora seja a única porta para o histórico com o painel fechado.
+function openTimelineForCurrent() {
+  const rel = currentRel();
+  if (rel) showTimeline(rel);
+}
+B.gitBadge.addEventListener("click", openTimelineForCurrent);
+B.gitBadge.addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" && e.key !== " " && e.key !== "Spacebar") return;
+  e.preventDefault();
+  openTimelineForCurrent();
+});
 
 // ---- confirmação destrutiva EXPLÍCITA (nada de "confirmar?" escondido) ----
 function openConfirmDelete(anchor, name) {
   B.acervoMenu.hidden = true;
   B.bMenu.innerHTML =
-    `<div class="fhead">${t("apagar da fila")}</div>
+    `<div class="fhead">${t("apagar de para organizar")}</div>
      <div class="fitem2 muted fstatic">“${esc(name)}” ${t("não será processado pelo loop")}</div>
      <div class="confirm-actions">
        <button class="btn-danger" data-yes>${t("apagar")}</button>
@@ -5450,6 +7413,7 @@ function openConfirmDelete(anchor, name) {
   B.bMenu.style.left = Math.min(r.left, window.innerWidth - 240) + "px";
   B.bMenu.style.top = r.bottom + 4 + "px";
   B.bMenu.hidden = false;
+  wireFloatMenu(B.bMenu, anchor);
 }
 
 // ---- menu agrupado do item da fila: mover / apagar ----
@@ -5485,6 +7449,8 @@ function placeMenu(anchor) {
     : Math.max(pad, r.top - m.height - 4);
   B.bMenu.style.left = left + "px";
   B.bMenu.style.top = top + "px";
+  // TODOS os 14 menus passam por aqui: é o lugar único onde eles ganham teclado.
+  wireFloatMenu(B.bMenu, anchor);
 }
 
 // áreas/pastas do projeto (prefixos-pai dos contextos existentes)
@@ -5582,8 +7548,8 @@ function openMoveCtxMenu(anchor, name, isFolder) {
 // deletar contexto/pasta: destrutivo, com confirmação explícita
 function openConfirmDeleteCtx(anchor, name, isFolder) {
   B.bMenu.innerHTML =
-    `<div class="fhead">${t("deletar")} ${isFolder ? t("pasta") : t("contexto")}</div>
-     <div class="fitem2 muted fstatic">“${esc(name)}” ${isFolder ? t("e todos os subcontextos serão apagados") : t("será apagado")} ${t("do disco (se o projeto é versionado, o histórico git preserva)")}</div>
+    `<div class="fhead">${t("deletar")} ${isFolder ? t("pasta") : t("tema")}</div>
+     <div class="fitem2 muted fstatic">“${esc(name)}” ${isFolder ? t("e todos os subtemas serão apagados") : t("será apagado")} ${t("do disco (se o projeto é versionado, o histórico git preserva)")}</div>
      <div class="confirm-actions">
        <button class="btn-danger" data-yes>${t("deletar")}</button>
        <button class="link mono muted" data-no>${t("cancelar")}</button>
@@ -5609,8 +7575,8 @@ function openMoveFileMenu(anchorEl, rel) {
   B.bMenu.innerHTML =
     `<div class="fhead">${t("mover para referências de")}</div>` +
     (ctxs.length ? ctxs.map((c) => `<div class="fitem2" data-ref="${esc(c)}"><span class="fn">→ ${esc(c)}</span></div>`).join("")
-                 : `<div class="fitem2 muted fstatic">${t("sem contextos")}</div>`) +
-    `<div class="fsep"></div><div class="fitem2" data-ref=""><span class="fn">→ ${t("notas (sem contexto)")}</span></div>`;
+                 : `<div class="fitem2 muted fstatic">${t("sem temas")}</div>`) +
+    `<div class="fsep"></div><div class="fitem2" data-ref=""><span class="fn">→ ${t("notas (sem tema)")}</span></div>`;
   B.bMenu.querySelectorAll("[data-ref]").forEach((el2) => (el2.onclick = async () => {
     closeFloat();
     try {
@@ -5631,7 +7597,7 @@ function openMoveMenu(anchor, fileName) {
   B.bMenu.innerHTML =
     `<div class="fhead">${t("rotear neste projeto")}</div>` +
     (cur.length ? cur.map((c) => `<div class="fitem2" data-ctx="${esc(c)}"><span class="fn">→ ${esc(c)}</span></div>`).join("")
-                : `<div class="fitem2 muted">${t("sem contextos")}</div>`) +
+                : `<div class="fitem2 muted">${t("sem temas")}</div>`) +
     (others.length ? `<div class="fhead">${t("mover para outro projeto")}</div>` +
       others.map((a) => `<div class="fitem2" data-to="${esc(a.id)}"><span class="fn">⇢ ${esc(a.name)}</span></div>`).join("")
       : "");
@@ -5652,13 +7618,14 @@ function openMoveMenu(anchor, fileName) {
   B.bMenu.style.left = Math.min(r.left, window.innerWidth - 230) + "px";
   B.bMenu.style.top = r.bottom + 4 + "px";
   B.bMenu.hidden = false;
+  wireFloatMenu(B.bMenu, anchor);
 }
 // enviar arquivos p/ a fila (com direcionamento opcional)
 $("brainImport").addEventListener("click", async () => {
   const ctx = $("importCtx").value || null;
   try {
     const n = await invoke("brain_import", { context: ctx });
-    if (n > 0) { toast(`${n} ${n > 1 ? t("arquivos na fila") : t("arquivo na fila")}`); sideSig = ""; brainRefresh(); }
+    if (n > 0) { toast(`${n} ${n > 1 ? t("arquivos para organizar") : t("arquivo para organizar")}`); sideSig = ""; brainRefresh(); }
   } catch (e) { toast(tErr(String(e))); clog("brain_import error: " + e); }
 });
 // novo contexto (input inline no cabeçalho da lateral)
@@ -5669,7 +7636,7 @@ function promptNewContext() {
   ctxEditing = true;
   const inp = document.createElement("input");
   inp.className = "bnewctx";
-  inp.placeholder = t("nome-do-contexto (Enter) · ex.: engenharia/qa");
+  inp.placeholder = t("nome-do-tema (Enter) · ex.: engenharia/qa");
   B.navCtx.before(inp); inp.focus();
   const done = () => { inp.remove(); ctxEditing = false; };
   inp.addEventListener("keydown", async (e) => {
@@ -5684,6 +7651,16 @@ function promptNewContext() {
 // ============================ terminal embutido (PTY) ============================
 // xterm.js (vendorizado) na frente + portable-pty no backend — a pilha do VSCode.
 let term = null, fit = null, termReady = false, termSize = { cols: 0, rows: 0 };
+// N24 · com o painel fora da tela, o terminal roteado para ele não tinha como
+// aparecer — e o ⇆ que o traria de volta mora DENTRO dele. Sem painel desenhado, a
+// doca de baixo é a única casa possível.
+function routeTerminalToDock() {
+  if (!settings.termSide) return false;
+  settings.termSide = false;
+  persistSettings();
+  applyTermLayout();
+  return true;
+}
 function setTermPanel(open) {
   $("termPanel").hidden = !open;
   const dock = $("termDock");
@@ -5692,7 +7669,15 @@ function setTermPanel(open) {
   if (open) {
     if (settings.termSide) {
       settings.aiPanelOpen = true; LoroShell.setPanelOpen(true);
-      settings.aiPanelTab = "term"; LoroShell.setPanelTab("term");
+      // o painel foi aberto: se a folha de estilo NÃO o desenha nesta largura, o
+      // terminal ficaria montado num nó invisível — vai para a doca de baixo
+      if (!panelRendered()) {
+        panelUnavailable();
+        routeTerminalToDock();
+        if (dock) dock.hidden = false;
+      } else {
+        settings.aiPanelTab = "term"; LoroShell.setPanelTab("term");
+      }
       persistSettings();
     }
     if (!term) initTerm();
@@ -5743,13 +7728,31 @@ async function restartTerm() {
   initTerm();
 }
 listen("term-output", (e) => { if (term) term.write(e.payload); });
-listen("term-exit", () => { if (term) term.write(`\r\n\x1b[2m[${t("processo encerrado — 'reiniciar' para abrir de novo")}]\x1b[0m\r\n`); termReady = false; });
+listen("term-exit", () => {
+  if (term) term.write(`\r\n\x1b[2m[${t("processo encerrado — 'reiniciar' para abrir de novo")}]\x1b[0m\r\n`);
+  termReady = false;
+  // O "Instalar agora" do banner roda brew/curl AQUI: o fim do processo é o único
+  // sinal que o app tem de que as dependências podem ter chegado. Sem esta
+  // re-sondagem o banner seguia dizendo que faltam, instaladas ou não.
+  checkSetup();
+});
 $("termClear").addEventListener("click", restartTerm);
 window.addEventListener("resize", fitTerm);
+// N24/N26 · a janela muda de tamanho (meia tela, monitor externo, restart noutra
+// máquina) e nada relia as larguras guardadas nem o painel: o app abria com a
+// coluna de conteúdo em 0px, ou com o chat e o terminal inalcançáveis.
+window.addEventListener("resize", () => {
+  reclampPanes();
+  applySideWidth(); applyPanelWidth(); applyTermHeight();
+  if (panelDropped()) { panelUnavailable(); routeTerminalToDock(); }
+});
 // Orientação: lateral (aba Terminal do painel direito, padrão do redesign) ou
 // embaixo, ancorado no rodapé da coluna de conteúdo. O ⇆ alterna; o MESMO
 // elemento #termPanel é movido entre os dois pontos de montagem.
 function applyTermLayout() {
+  // o painel ABERTO mas não desenhado (janela estreita) não pode hospedar o
+  // terminal — fechado ele continua sendo casa válida (N24)
+  if (settings.termSide && panelDropped()) settings.termSide = false;
   const side = !!settings.termSide;
   LoroShell.mountTerminal(side);
   applyTermHeight();
@@ -5758,12 +7761,70 @@ function applyTermLayout() {
     LoroShell.setPanelOpen(true);
     settings.aiPanelTab = "term";
     LoroShell.setPanelTab("term");
+  } else if (!side && settings.aiPanelTab === "term") {
+    // N11/N28 · ao mover o terminal para a doca de baixo a aba Terminal continuava
+    // aria-selected sobre um painel VAZIO de 419px. A aba do painel só pode
+    // continuar escolhida se o terminal morar nela.
+    settings.aiPanelTab = LoroShell.setPanelTab("doc");
   }
+  paintPanelTermPlaceholder();
+  paintTermSideBtn();
   requestAnimationFrame(fitTerm);
+}
+// O painel guarda a aba Terminal mesmo quando o terminal está embaixo: em vez de
+// um vazio mudo, ela diz onde ele está e oferece a volta (DESIGN.md §5 — todo
+// vazio orienta o passo seguinte; §8 mantém a visibilidade no painel).
+// N10 · o ramo montado removia só o BOTÃO e deixava a caixa: com o terminal
+// trazido para o painel, "o terminal está na doca embaixo" continuava impressa,
+// em negrito, por cima do terminal vivo (DESIGN.md §1 — o estado não mente).
+// Uma remoção só, usada pelos dois ramos.
+function removePanelTermPlaceholder(host) {
+  const box = host.querySelector(".pempty");
+  if (box) box.remove();
+}
+function paintPanelTermPlaceholder() {
+  const host = $("panelTerm");
+  if (!host) return;
+  const panel = $("termPanel");
+  if (panel && panel.parentElement === host) {
+    removePanelTermPlaceholder(host);
+    return;
+  }
+  removePanelTermPlaceholder(host);
+  // fechado é diferente de "está lá embaixo": cada estado diz o que É e oferece a
+  // ação que falta
+  const closed = !panel || panel.hidden;
+  const box = document.createElement("div");
+  box.className = "pempty";
+  box.innerHTML = `<b>${closed ? t("o terminal está fechado") : t("o terminal está na doca embaixo")}</b>` +
+    `<button class="btn" data-termback>${closed ? t("abrir o terminal") : t("trazer para o painel")}</button>`;
+  host.appendChild(box);
+  box.querySelector("[data-termback]").onclick = () => {
+    settings.termSide = true; persistSettings(); applyTermLayout(); setTermPanel(true);
+  };
+}
+// N11 · o nome acessível do ⇆ era o próprio glifo: nunca dizia em qual dos dois
+// estados está (4.1.2), enquanto o #sideToggle ao lado faz isso certo.
+function paintTermSideBtn() {
+  const b = $("termSide");
+  if (!b) return;
+  const label = t(settings.termSide ? "mover o terminal para baixo" : "mover o terminal para o painel");
+  b.setAttribute("aria-label", label);
+  b.title = label;
+  // no painel, quem manda na visibilidade é a aba (DESIGN.md §8): o × existe só
+  // na doca de baixo, onde nada mais controla o terminal
+  const hide = $("termHide");
+  if (hide) hide.hidden = !!settings.termSide;
 }
 $("termSide").addEventListener("click", () => {
   settings.termSide = !settings.termSide; persistSettings(); applyTermLayout();
 });
+// N11 · na doca de baixo nem a aba do painel nem um × controlavam a visibilidade:
+// o terminal ficava ocupando ~34vh sem porta de saída.
+{
+  const hide = $("termHide");
+  if (hide) hide.addEventListener("click", () => { setTermPanel(false); paintPanelTermPlaceholder(); });
+}
 
 // roda um comando de SHELL no terminal embutido (abre o painel e digita)
 function termRun(cmd) {
@@ -5819,7 +7880,7 @@ function scheduleActionRefresh(ms = 600000) {
 // into a bare shell.
 async function termRunAgent(cmd) {
   const cfg = await invoke("brain_get_config").catch(() => null);
-  if (!cfg || !cfg.brainDir) { toast(tErr("err.acervo_not_configured")); return; }
+  if (!cfg || !cfg.brainDir) { toast(tErr("err.acervo_not_configured")); return false; }
   const agent = await invoke("term_agent").catch(() => "claude");
   const line = LoroPresets.agentInvocation(agent, cmd);
   setTermPanel(true);
@@ -5830,7 +7891,7 @@ async function termRunAgent(cmd) {
       await new Promise((r) => setTimeout(r, tries === 0 ? 0 : 800)); // settle a fresh TUI
       await invoke("term_input", { data: line + "\n" }).catch(() => {});
       scheduleActionRefresh(); // the skill writes files the sidebar must show
-      return;
+      return true;
     }
     // ADR-0005: term_open already typed the launch line — a fresh session
     // reports agentRunning:false for a few polls simply because `ps` hasn't
@@ -5845,25 +7906,62 @@ async function termRunAgent(cmd) {
   }
   toast(t("não foi possível abrir o agente no terminal — verifique se o CLI configurado está instalado"), 5000);
   clog("termRunAgent: agent did not come up; command not injected");
+  return false;
 }
 
 // ---- setup guiado: o Loro verifica dependências e resolve pelo terminal ----
 const MODEL_URL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin";
+// O que a ÚLTIMA sondagem viu. O banner era avaliado uma vez no boot e nada
+// podia limpá-lo: depois de instalar tudo pelo terminal ele seguia afirmando
+// "faltam dependências" pelo resto da sessão (DESIGN.md §1 — o estado mente).
+// Guardar o resultado separa a sondagem (checkSetup) da pintura
+// (paintSetupBanner), então uma troca de idioma repinta sem re-sondar.
+let setupMissing = null;   // null = ainda não sondado · [] = tudo pronto
+// A sondagem guarda CHAVES e a pintura traduz: uma troca de idioma repinta o
+// banner sem sondar de novo.
+const SETUP_DEP_LABEL = {
+  whisper: () => t("whisper (motor de transcrição)"),
+  model: () => t("modelo de voz"),
+  ffmpeg: () => t("ffmpeg (conversão de áudio)"),
+};
+// O nó #setupMsg é data-i18n-dyn: a lista do que falta entra no texto, e
+// applyI18n a reduzia de volta a "faltam dependências" sem dizer o quê.
+function setupMissingLabel() {
+  return t("faltam dependências") + ": " +
+    (setupMissing || []).map((k) => (SETUP_DEP_LABEL[k] ? SETUP_DEP_LABEL[k]() : k)).join(" · ");
+}
+function paintDepBanner(banner, msg, missing, text) {
+  if (!banner) return;
+  if (!missing) { banner.hidden = true; return; }
+  if (msg) msg.textContent = text;
+  banner.hidden = false;
+}
+// A MESMA verdade em duas casas: Início (com o instalador, porque o terminal
+// existe) e o primeiro uso. O banner do wizard era markup morto — nunca era
+// exibido e o seu "Instalar agora" não tinha handler nenhum —, então uma
+// instalação nova sem whisper montava o projeto sem nunca dizer que a
+// transcrição não ia funcionar.
+function paintSetupBanner() {
+  const missing = !!(setupMissing && setupMissing.length);
+  const label = missing ? setupMissingLabel() : "";
+  paintDepBanner($("setupBanner"), $("setupMsg"), missing, label);
+  paintDepBanner($("wizDeps"), $("wizDepsMsg"), missing,
+    label + " — " + t("a transcrição só funciona depois disso; o Loro instala para você em Início, ao criar o projeto."));
+}
 async function checkSetup() {
   try {
     const d = await invoke("doctor");
     hostOs = d.os || hostOs; // antes de qualquer early-return: guia o áudio do sistema
     applySourceAvailability();
     const missing = [];
-    if (!d.whisper_stream) missing.push(t("whisper (motor de transcrição)"));
-    if (!d.models || d.models.length === 0) missing.push(t("modelo de voz"));
+    if (!d.whisper_stream) missing.push("whisper");
+    if (!d.models || d.models.length === 0) missing.push("model");
     // ffmpeg entra na conta: o modo gravar-e-transcrever converte para WAV 16kHz
     // com ele, então sem ffmpeg esse modo falha em runtime e não no setup.
-    if (!d.ffmpeg) missing.push(t("ffmpeg (conversão de áudio)"));
-    const banner = $("setupBanner");
-    if (!missing.length) { banner.hidden = true; return; }
-    $("setupMsg").textContent = t("faltam dependências") + ": " + missing.join(" · ");
-    banner.hidden = false;
+    if (!d.ffmpeg) missing.push("ffmpeg");
+    setupMissing = missing;
+    paintSetupBanner();
+    if (!missing.length) return true;
     $("setupRun").onclick = async () => {
       // O Windows não tem whisper-stream pré-compilado (o modo ao vivo precisa
       // de SDL2), então um script embutido compila o motor. No macOS vem do brew.
@@ -5885,8 +7983,29 @@ async function checkSetup() {
       termRun(parts.join(" && "));
       toast(t("instalando no terminal — acompanhe abaixo"), 4000);
     };
-  } catch (_) {}
+    return false;
+  } catch (_) { return null; }
 }
+
+// A instalação acontece FORA do app (brew/curl no terminal embutido): o app não
+// tem como observar o fim dela, então oferece a re-verificação em vez de deixar
+// o banner afirmando para sempre que as dependências faltam. Mesmo padrão do
+// "verificar" do card de ambiente.
+async function recheckSetup() {
+  const b = $("setupCheck");
+  if (b && b.disabled) return;
+  const label = b ? b.textContent : "";
+  if (b) { b.disabled = true; b.classList.add("pending"); b.textContent = t("verificando…"); }
+  try {
+    const ok = await checkSetup();
+    if (ok === true) toast(t("tudo pronto — as dependências estão instaladas"), 5000);
+    else if (ok === false) toast(setupMissingLabel(), 5000);
+    else toast(t("não consegui verificar as dependências"), 5000);
+  } finally {
+    if (b) { b.disabled = false; b.classList.remove("pending"); b.textContent = label; }
+  }
+}
+$("setupCheck").addEventListener("click", recheckSetup);
 
 // fluxo guiado do áudio do sistema; os passos mudam por plataforma (ADR-0012).
 // No Windows não há pacote instalável por linha de comando: ou o driver de áudio
@@ -5913,19 +8032,39 @@ function openSystemAudioSetup() {
   B.bMenu.style.left = Math.max(10, r.left - 200) + "px";
   B.bMenu.style.top = (r.top - 150) + "px";
   B.bMenu.hidden = false;
+  wireFloatMenu(B.bMenu, null);
 }
 
 // ---- arrastar arquivos do SISTEMA para a fila (Tauri drag-drop) ----
 // um ou mais arquivos soltos na janela (na aba acervo) entram na fila do acervo ativo
+// C6 · `_prompt.md` é o arquivo de INSTRUÇÕES do loop (GUIDE_REL), não um item:
+// importado, ele sobrescreve o guia — que não é versionado, então não há volta —
+// e `list_queue` o filtra da listagem, de modo que o toast contava um item que a
+// tela nunca mostrava. Os importadores do backend ainda não checam o nome (ver o
+// contrato em notes), então a porta que a interface possui recusa aqui e diz por quê.
+function isQueueGuidePath(p) {
+  const leaf = String(p || "").replace(/\\/g, "/").split("/").pop() || "";
+  return leaf.toLowerCase() === "_prompt.md";
+}
+function splitQueueGuideDrop(paths) {
+  return {
+    ok: paths.filter((p) => !isQueueGuidePath(p)),
+    guides: paths.filter(isQueueGuidePath).length,
+  };
+}
 listen("tauri://drag-drop", async (e) => {
   if (!brainTab) return;
-  const paths = (e.payload && e.payload.paths) || [];
-  if (!paths.length) return;
+  const dropped = (e.payload && e.payload.paths) || [];
+  if (!dropped.length) return;
   document.getElementById("app").classList.remove("dropping");
+  const { ok: paths, guides } = splitQueueGuideDrop(dropped);
   try {
-    const n = await invoke("brain_import_paths", { paths, context: null });
-    if (n > 0) { toast(`${n} ${n > 1 ? t("arquivos na fila") : t("arquivo na fila")}`); sideSig = ""; brainRefresh(); }
+    const n = paths.length ? await invoke("brain_import_paths", { paths, context: null }) : 0;
+    if (n > 0) { toast(`${n} ${n > 1 ? t("arquivos para organizar") : t("arquivo para organizar")}`); sideSig = ""; brainRefresh(); }
   } catch (err) { toast(tErr(String(err))); clog("import_paths error: " + err); }
+  // a recusa fala por último e fica mais tempo: é ela que explica o arquivo que
+  // NÃO entrou (antes ele entrava, por cima do guia, e a contagem o incluía)
+  if (guides) toast(t("_prompt.md é o arquivo de instruções do loop — renomeie antes de importar"), 6000);
 });
 listen("tauri://drag-enter", () => { if (brainTab) document.getElementById("app").classList.add("dropping"); });
 listen("tauri://drag-leave", () => document.getElementById("app").classList.remove("dropping"));
@@ -6009,15 +8148,19 @@ $("aiPanelBtn").addEventListener("click", () => {
   persistSettings();
   LoroShell.setPanelOpen(settings.aiPanelOpen);
   applyPanelWidth();
+  // N24 · numa janela estreita o painel não é desenhado: o botão ficava cheio e
+  // aria-expanded="true" mostrando NADA. Ou o painel aparece, ou a tela diz por quê.
+  if (settings.aiPanelOpen && !panelRendered()) { panelUnavailable(); routeTerminalToDock(); return; }
   if (settings.aiPanelOpen && settings.aiPanelTab === "term") requestAnimationFrame(fitTerm);
 });
 document.querySelectorAll("#panelTabs .ptab").forEach((b) => b.addEventListener("click", () => {
   settings.aiPanelTab = LoroShell.setPanelTab(b.dataset.ptab);
+  // N11 · clicar na aba Terminal invertia settings.termSide em SILÊNCIO (e o
+  // persist rodava antes da inversão, então nem era gravada). Quem decide a doca
+  // é o ⇆ / o botão do vazio: aqui a aba só liga o terminal onde ele já mora.
+  if (settings.aiPanelTab === "term" && settings.termSide) setTermPanel(true);
+  paintPanelTermPlaceholder();
   persistSettings();
-  if (settings.aiPanelTab === "term") {
-    settings.termSide = true; LoroShell.mountTerminal(true);
-    setTermPanel(true);
-  }
 }));
 // pill "gravando · mm:ss" no cabeçalho: volta para a aba/vista da gravação
 $("headRec").addEventListener("click", () => {
@@ -6030,6 +8173,20 @@ function toggleSidebar(force) {
   settings.sidebarCollapsed = force === undefined ? !settings.sidebarCollapsed : !!force;
   persistSettings();
   LoroShell.setSidebarCollapsed(settings.sidebarCollapsed);
+  paintSideToggle();
+}
+// O alternador é só um ícone (o <svg> é aria-hidden), então o nome acessível
+// vinha do `title` — que dizia "recolher barra lateral" nos DOIS estados. Um nome
+// que não acompanha o estado nomeia a ação errada metade do tempo; e como este nó
+// está sob o applyI18n, o dono do texto tem de traduzir também (F25).
+function paintSideToggle() {
+  const st = $("sideToggle");
+  if (!st) return;
+  const collapsed = !!settings.sidebarCollapsed;
+  const label = t(collapsed ? "expandir barra lateral" : "recolher barra lateral");
+  st.setAttribute("aria-expanded", String(!collapsed));
+  st.setAttribute("aria-label", label);
+  st.title = label;
 }
 $("sideToggle").addEventListener("click", () => toggleSidebar());
 document.querySelectorAll("#sideMini .minibtn").forEach((b) => b.addEventListener("click", () => {
@@ -6051,6 +8208,8 @@ function applySideSections() {
   document.querySelectorAll("[data-sect]").forEach((btn) => {
     const off = closed.has(btn.dataset.sect);
     btn.classList.toggle("closed", off);
+    // a seta era o único sinal: quem lê a tela não sabia se a seção está aberta
+    btn.setAttribute("aria-expanded", String(!off));
     const body = document.querySelector(`[data-sectbody="${btn.dataset.sect}"]`);
     if (body) body.hidden = off;
   });
@@ -6087,6 +8246,9 @@ function openChatComposer() {
   settings.aiPanelTab = LoroShell.setPanelTab("chat");
   persistSettings();
   applyPanelWidth();
+  // N24 · o foco caía dentro de uma subárvore display:none (focus() falha em
+  // silêncio) e o card "Perguntar à IA" simplesmente não fazia nada
+  if (!panelRendered()) { panelUnavailable(); return; }
   const box = document.querySelector(".composerbox");
   const inp = $("chatInput");
   if (box) { box.classList.remove("flash"); void box.offsetWidth; box.classList.add("flash"); }
@@ -6145,14 +8307,32 @@ async function promptSaveScratch(text) {
 $("homePendingGo").addEventListener("click", () => goDest("organize"));
 
 // ---- 1c · Conhecimento ------------------------------------------------------
-$("ghNotifClose").addEventListener("click", () => { notifDismissed = true; $("ghNotifBar").hidden = true; });
+// dispensar é sobre ESTE aviso: a assinatura dispensada some, um aviso novo volta
+$("ghNotifClose").addEventListener("click", () => {
+  notifDismissedSig = B.ghNotif ? B.ghNotif.textContent : "";
+  $("ghNotifBar").hidden = true;
+});
+$("ghNotifOpen").addEventListener("click", () => openReviewsSheet());
+{
+  // N5 · a porta que não expira nem se dispensa
+  const rev = $("pReviewsBtn");
+  if (rev) rev.addEventListener("click", () => openReviewsSheet());
+}
 
 // ---- 1d/1e · documento ------------------------------------------------------
 // "Aprovar" é o gesto humano obrigatório: nada da IA vira oficial sem ele.
 $("bApproveBtn").addEventListener("click", () => { $("bApprove").hidden = true; $("bProposal").hidden = true; B.gitBtn.click(); });
 $("bApproveEdit").addEventListener("click", () => setActiveMode("edit"));
 $("bApproveAsk").addEventListener("click", () => { const r = currentRel(); if (r) promptNoteAI(r, true); });
-$("bSaveVersion").addEventListener("click", () => { saveActive(); B.gitBtn.click(); });
+// O buffer PRIMEIRO: B.gitBtn versiona o que está em DISCO, então commitar antes
+// de gravar deixaria a edição de fora do commit. Num rascunho pessoal
+// (gitignorado) não há versão a salvar — o rótulo do botão diz isso e o clique
+// para no arquivo.
+$("bSaveVersion").addEventListener("click", () => {
+  const tab = activeTab();
+  saveActive();
+  if (tab && tab.kind === "context") B.gitBtn.click();
+});
 $("bDiscardEdit").addEventListener("click", async () => {
   const tab = activeTab();
   if (!tab) return;
@@ -6164,7 +8344,14 @@ $("bDiscardEdit").addEventListener("click", async () => {
 // ---- 1f · gravação ----------------------------------------------------------
 $("recFinish").addEventListener("click", () => {
   setRecPending("stopping");
-  Promise.resolve(stopSession()).finally(() => {});
+  // O finally vazio deixava o cromo em "encerrando…" para sempre (com o ●
+  // desabilitado) sempre que o encerramento voltava sem nada a fazer. Enquanto a
+  // reunião ainda está fechando, o pendente é a verdade e quem o desfaz é
+  // finishMeetingAfterTranscription; se nada ficou em curso, ele sai já — e uma
+  // falha aparece em vez de silenciar.
+  Promise.resolve(stopSession())
+    .catch((e) => { toast(t("não encerrei a reunião") + ": " + tErr(String(e))); clog("recFinish error: " + e); })
+    .finally(() => { if (!meeting.active) setRecPending(null); });
 });
 $("recPause").addEventListener("click", () => (state.paused ? resumeMeeting() : pauseMeeting()));
 $("recMark").addEventListener("click", () => markMeeting());
@@ -6233,11 +8420,15 @@ function aiTargetHint() {
 }
 
 let chatLastPrompt = null;
+// Devolve uma promessa de BOOLEANO: o pedido saiu ou não. Antes não devolvia
+// nada, e quem chamava anunciava "enviada" na linha seguinte — o chat então dizia
+// "nada foi enviado" (DESIGN.md §1: um despacho que pode falhar não relata
+// sucesso antes de saber).
 function runAiCommand(cmd, label) {
-  if (!cmd) return;
+  if (!cmd) return Promise.resolve(false);
   // recusar ANTES de empilhar a bolha: senão cada clique repetido deixava um
   // pedido órfão na conversa seguido de um aviso de recusa
-  if (settings.actionMode !== "term" && chatBusy) { toast(tErr("err.chat_busy")); return; }
+  if (settings.actionMode !== "term" && chatBusy) { toast(tErr("err.chat_busy")); return Promise.resolve(false); }
   chatLastPrompt = cmd;
   if (settings.actionMode === "term") return termRunAgent(cmd);
   openChatComposer();
@@ -6249,7 +8440,7 @@ function runAiCommand(cmd, label) {
   // (LoroPresets.agentInvocation) — sem isto, com `ollama run llama3` toda ação
   // de IA mandava a barra crua e o modelo respondia bobagem, em silêncio. E o
   // agente é lido AGORA: trocá-lo em Configurações valia só no próximo boot.
-  currentChatAgent()
+  return currentChatAgent()
     .then((agent) => invoke("chat_send", {
       input: {
         prompt: LoroPresets.agentInvocation(agent, cmd),
@@ -6257,15 +8448,33 @@ function runAiCommand(cmd, label) {
         permission: settings.chatPermission, fresh: chatFresh,
       },
     }))
-    .then(() => { chatFresh = false; })
-    .catch((e) => chatSendFailed(e));
+    .then(() => { chatFresh = false; return true; })
+    .catch((e) => { chatSendFailed(e); return false; });
+}
+// O par despachar → relatar tem um dono só. A falha já está na tela (a linha de
+// erro do chat ou o toast do terminal), então aqui só o sucesso fala — e diz
+// ONDE a resposta vai aparecer, que era exatamente o que faltava.
+async function dispatchAi(cmd, doneMsg, label) {
+  const sent = await runAiCommand(cmd, label);
+  if (sent) toast(doneMsg || aiTargetHint(), 4000);
+  return sent;
+}
+// N8 · a sheet now holds its pending state until the work it started answers.
+// An AI dispatch HANDS the work to another surface — the chat, or the terminal
+// the dispatch itself opens BEHIND the sheet — and that surface carries the
+// feedback ("pensando…", the terminal's own output). So this one gets out of the
+// way immediately instead of covering its own destination.
+function dispatchAiFromSheet(cmd, doneMsg, label) {
+  closeModal();
+  return dispatchAi(cmd, doneMsg, label);
 }
 // O comando do agente é por acervo (ADR-0003) e editável em Configurações, então
 // não pode ser lido uma vez no boot: `chat_status` devolve o que vale agora.
 async function currentChatAgent() {
   try {
     const st = await invoke("chat_status");
-    if (st && st.agent) chatAgent = st.agent;
+    // trocar o agente em Configurações vale já: o pill do painel acompanha
+    if (st && st.agent) { chatAgent = st.agent; paintChatMode(); }
   } catch (_) { /* sem backend: fica o último conhecido */ }
   return chatAgent;
 }
@@ -6278,9 +8487,10 @@ let chatArmed = null;
 function renderChatChips() {
   const chips = $("chatChips");
   if (!chips) return;
-  const top = allHabilidadeEntries("doc").slice(0, 3);
+  const todas = allHabilidadeEntries("doc");
+  const top = todas.slice(0, 3);
   chips.innerHTML = top.map((e, i) => `<button class="chip" data-chip="${i}">${esc(e.label)}</button>`).join("") +
-    `<button class="chip" data-chipall>${t("todas")} (${lastToolFiles.length}) ▸</button>`;
+    `<button class="chip" data-chipall>${t("todas")} (${todas.length}) ▸</button>`;
   chips.querySelectorAll("[data-chip]").forEach((b) => (b.onclick = () => armChat(top[Number(b.dataset.chip)])));
   const all = chips.querySelector("[data-chipall]");
   if (all) all.onclick = (e) => { e.stopPropagation(); openHabilidadeMenu(currentRel(), all, true, "doc"); };
@@ -6351,6 +8561,9 @@ function chatThinking(on) {
   const th = $("chatThread");
   if (!th) return;
   let node = th.querySelector(".chatthinking");
+  // F6 · o mesmo sinal para quem não vê os três pontinhos. É dito nas duas
+  // transições (começou a pensar / terminou), nunca a cada delta.
+  if (!!on !== !!node) announce(on ? t("pensando…") : t("resposta pronta"));
   if (!on) { if (node) node.remove(); return; }
   if (!node) {
     node = document.createElement("div");
@@ -6476,6 +8689,7 @@ function chatSendFailed(e) {
   if (msg.startsWith("err.chat_busy")) { toast(tErr(msg)); return; }
   setChatBusy(false);
   chatTurn = null; chatBuf = "";
+  if (agentAuthFailure(msg)) return chatAuthBlock();
   chatPush("chatfail", esc(t("não consegui falar com o agente") + ": " + tErr(msg)));
 }
 // O prompt de uma habilidade armada: a mesma invocação que o terminal usaria
@@ -6498,20 +8712,109 @@ listen("chat-tool", (e) => {
   chatStep(e.payload || {});
 });
 listen("chat-tool-result", (e) => chatStepResult(e.payload || {}));
+// B13 · A saída de um agente que não está autenticado é a saída de um PROCESSO,
+// não uma resposta: "Not logged in · Please run /login" ia para dentro da bolha
+// da resposta, em inglês, numa UI em pt-BR, sem dizer o que falhou nem como sair.
+// A comparação é feita sobre o turno inteiro e só quando ele é curto — uma
+// resposta de verdade tem corpo, então um texto que FALA de login não é
+// confundido com um turno que MORREU por login.
+function agentAuthFailure(text) {
+  const s = String(text || "").trim();
+  if (!s || s.length > 400) return false;
+  return /\bnot logged in\b|please run \/login|\blogin required\b|\bplease log in\b|\binvalid api key\b|authentication[_ -]?(error|failed)|\bunauthorized\b/i.test(s);
+}
 listen("chat-done", (e) => {
   const p = (e && e.payload) || {};
   setChatBusy(false);
+  if (agentAuthFailure(p.detail || chatBuf)) return chatAuthBlock();
   if (p.ok) {
     // uma habilidade escreve arquivos NOVOS; as assinaturas de cache não os
     // veem, e os filhos de cada reunião são carregados sob demanda. Forçar o
     // recarregamento é o que evita ter de abrir e fechar as pastas na mão.
     refreshAfterSkill();
+    offerCreatedFiles(chatBuf);
     return;
   }
   if (p.permission) return chatPermissionBlock();
   chatBuf += (chatBuf ? "\n\n" : "") + (p.detail || tErr(p.error || "err.chat_agent_failed"));
   chatPaint();
 });
+
+// ---- B15 · o arquivo que o chat acabou de criar --------------------------
+// Uma habilidade termina dizendo "✅ apresentação criada: <caminho>" — e o chat
+// parava aí: o caminho é TEXTO, não um controle, então o usuário lia o nome do
+// arquivo e tinha de ir procurá-lo na lateral. DESIGN.md §1: ofereça a ação.
+// A oferta é verificada contra o disco antes de aparecer: um botão que abre um
+// arquivo que não existe é pior que nenhum botão.
+function filesNamedInAnswer(text) {
+  const out = [];
+  // o lookbehind barra o que só PARECE um caminho do projeto: uma URL
+  // (…/contextos/x.md) ou um caminho absoluto não é um rel que openDoc abre
+  const re = /(?<![\w./-])(?:brainstorming|contextos|inbox|processed|referencias)\/[A-Za-z0-9._\-/]+\.(?:md|txt)\b/g;
+  for (const m of String(text == null ? "" : text).matchAll(re)) {
+    if (!out.includes(m[0])) out.push(m[0]);
+  }
+  // três é o teto: a conversa não vira um gerenciador de arquivos (§5)
+  return out.slice(0, 3);
+}
+async function relExistsOnDisk(rel) {
+  const i = String(rel).lastIndexOf("/");
+  if (i < 0) return false;
+  const dir = rel.slice(0, i), name = rel.slice(i + 1);
+  try {
+    const entries = (await invoke("brain_list_dir", { rel: dir })) || [];
+    return entries.some((f) => !f.dir && f.name === name);
+  } catch (_) { return false; }
+}
+async function offerCreatedFiles(answer) {
+  const th = $("chatThread");
+  if (!th) return;
+  const found = [];
+  for (const rel of filesNamedInAnswer(answer)) {
+    if (await relExistsOnDisk(rel)) found.push(rel);
+  }
+  if (!found.length) return;
+  const box = document.createElement("div");
+  box.className = "toolsrow";
+  box.innerHTML = found.map((rel) =>
+    `<button class="btn sm" data-openrel="${esc(rel)}" title="${esc(rel)}">${t("abrir")} ${esc(shortName(rel.split("/").pop()))}</button>`).join("");
+  th.appendChild(box);
+  th.scrollTop = th.scrollHeight;
+  box.querySelectorAll("[data-openrel]").forEach((b) =>
+    (b.onclick = () => openDoc(b.dataset.openrel, { preview: false })));
+}
+
+// B13 · O agente não está conectado à conta do usuário. O texto cru do processo
+// sai da conversa e entra um estado de erro na voz do app, que NOMEIA a
+// recuperação — a mesma forma do bloco de permissão (DESIGN.md §5: a recusa não
+// mora dentro do conteúdo).
+// BR-9: o Loro nunca guarda credencial. Quem se autentica é o agente do usuário,
+// no terminal dele; o app só abre a porta e diz o comando.
+function chatAuthBlock() {
+  const th = $("chatThread");
+  if (!th) return;
+  // C25 · o despacho tinha dado certo (o agente subiu) e o toast disse "enviada";
+  // a recusa de login só aparece aqui, no fim do turno. As duas frases não podem
+  // coexistir na tela: quem descobre que nada foi enviado apaga a que sobrou.
+  clearToast();
+  // o turno morto não pode ficar como se fosse a resposta
+  if (chatTurn) { chatTurn.remove(); chatTurn = null; }
+  chatBuf = "";
+  const box = document.createElement("div");
+  box.className = "chatperm";
+  box.innerHTML =
+    `<b>${esc(t("o agente de IA não está conectado à sua conta"))}</b>` +
+    `<span>${esc(t("nada foi enviado. abra a aba Terminal e rode /login no seu agente — o Loro nunca guarda a sua credencial."))}</span>` +
+    `<span class="row"><button class="btn sm" data-term>${esc(t("Abrir o Terminal"))}</button></span>`;
+  th.appendChild(box);
+  th.scrollTop = th.scrollHeight;
+  announce(t("o agente de IA não está conectado à sua conta"));
+  box.querySelector("[data-term]").onclick = () => {
+    settings.aiPanelTab = LoroShell.setPanelTab("term"); persistSettings();
+    setTermPanel(true);
+    box.remove();
+  };
+}
 
 // ADR-0021: negação de permissão não é um erro seco — é uma escolha. O bloco
 // âmbar oferece liberar a pasta (e repetir) ou continuar no terminal, onde o
@@ -6558,11 +8861,35 @@ $("chatInput").addEventListener("input", (e) => {
   e.target.style.height = Math.min(e.target.scrollHeight, 120) + "px";
 });
 let chatFresh = true, chatAgent = "claude";
+// C28 · o pill nomeia o agente que vai rodar. Ele estava sob applyI18n, que
+// congela o msgid do boot ("modo aberto") e o reescreve a cada troca de idioma:
+// o painel perdia para sempre a única informação de QUEM responde. Mesmo remédio
+// do selo de privacidade (F25): o nó é data-i18n-dyn e quem escreve em tempo de
+// execução também traduz, a partir de rerenderForLang.
+function paintChatMode() {
+  const pill = $("chatMode");
+  if (!pill) return;
+  pill.textContent = chatAgent;
+  pill.title = t("o agente configurado para este projeto");
+}
+// C4 · a frase morava em TRÊS lugares (boot, reiniciar e mais nada que a
+// repintasse): trocar de idioma deixava a conversa vazia no idioma anterior.
+// Um escritor só, chamado também de rerenderForLang.
+function paintChatEmpty() {
+  const th = $("chatThread");
+  const p = th && th.querySelector(".chatempty");
+  if (p) p.textContent = t("pergunte qualquer coisa — a resposta vem primeiro do que o projeto já sabe.");
+}
+function resetChatThread() {
+  const th = $("chatThread");
+  if (!th) return;
+  th.innerHTML = `<p class="chatempty"></p>`;
+  paintChatEmpty();
+}
 $("chatReset").addEventListener("click", async () => {
   try { await invoke("chat_reset"); } catch (_) {}
   chatFresh = true; chatTurn = null; chatBuf = ""; chatSteps.clear(); setChatBusy(false);
-  const th = $("chatThread");
-  if (th) th.innerHTML = `<p class="chatempty">${t("pergunte qualquer coisa — a resposta vem primeiro do que o projeto já sabe.")}</p>`;
+  resetChatThread();
   armChat(null);
 });
 $("chatModel").addEventListener("click", (e) => {
@@ -6593,8 +8920,7 @@ function paintRecordingChrome() {
   // parado é o estado normal: sem gravação, um tick não toca no DOM
   if (!on && !recChromeWasOn) return;
   recChromeWasOn = on;
-  const label = $("recLabel");
-  if (label && !recPending) label.textContent = on ? t("Parar") : t("Gravar");
+  paintRecControl();
   el.toggle.classList.toggle("recording", on);
   const pill = $("headRec");
   const away = on && el.surface.hidden && !(meeting.active && currentRel() === meeting.livingRel);
@@ -6615,6 +8941,15 @@ function paintRecordingChrome() {
   if (pau) {
     const showPause = meeting.active && (meeting.phase === "recording" || state.paused);
     if (pau.hidden === showPause) { pau.hidden = !showPause; paintPauseBtn(); }
+  }
+  // C27 · "Marcar momento" grava um marcador no manifest da reunião e "Anexar
+  // imagem" escreve em <reunião>/anexos: fora de uma reunião os dois só sabiam
+  // RECUSAR ("nenhuma reunião em andamento") — com o relógio da transcrição
+  // avulsa correndo na frente do usuário. DESIGN.md §1: nunca um controle que
+  // não faz nada. Eles existem exatamente enquanto a reunião existe.
+  for (const id of ["recMark", "recImage"]) {
+    const b = $(id);
+    if (b) b.hidden = !meeting.active;
   }
   if (on) requestAnimationFrame(() => resizeWave());
 }
@@ -6639,7 +8974,6 @@ applySettings();
     }
   } catch (_) { /* no backend (tests/dev server): localStorage value stands */ }
 })();
-B.dirBtn.textContent = t("escolher pasta…");
 // o cabeçalho mostra a versão (o "100% local" vive no manual e no seletor de fonte)
 invoke("app_version").then((v) => { const n = $("appVersion"); if (n) n.textContent = "v" + v; }).catch(() => {});
 resizeWave();
@@ -6653,14 +8987,14 @@ chatPrefs.model = settings.chatModel; chatPrefs.effort = settings.chatEffort;
 paintChatPrefs();
 // o chat sobrevive a um reload da janela: o turno roda no backend, então a
 // interface recupera o estado em vez de fingir que não há nada em andamento
+paintChatMode();
 invoke("chat_status").then((st) => {
   chatAgent = (st && st.agent) || "claude";
-  const pill = $("chatMode");
-  if (pill) { pill.textContent = chatAgent; pill.title = t("o agente configurado para este projeto"); }
+  paintChatMode();
   chatFresh = !(st && st.hasSession);
   if (st && st.running) setChatBusy(true);
 }).catch(() => {});
-$("chatThread").innerHTML = `<p class="chatempty">${t("pergunte qualquer coisa — a resposta vem primeiro do que o projeto já sabe.")}</p>`;
+resetChatThread();
 paintRecordingChrome();
 setupWorkspace();   // ADR-0008: Home é a primeira aba fixa (não fechável)
 initBrain();   // acervo é a tela principal (sem abas)
@@ -6685,3 +9019,4 @@ invoke("selftest_enabled").then((on) => {
     }, 7000);
   });
 }).catch((e) => clog("selftest_enabled error: " + e));
+

@@ -1,6 +1,6 @@
 # {{CONTEXT}} — context
 
-_Official source of truth for this context (business-readable markdown). It evolves via RFC (branch + PR) reviewed by the context owners._
+_Official source of truth for this topic (business-readable markdown). Every change is sent for the team's review before it becomes official._
 
 ## 1 · Overview
 

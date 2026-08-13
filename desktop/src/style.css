@@ -16,25 +16,57 @@
   --ink: #201d18;
   --ink2: #3d3a34;
   --ink3: #6f6b62;
-  --muted: #97938a;
+  --muted: #757169;
   --ghost: #c9c5bc;
   --line-strong: #e2ded5;
   --line: #e9e6de;
   --line-soft: #efece5;
   --line-dash: #d5d2ca;
+  /* WCAG 1.4.11: a text field's box IS its affordance, so its boundary needs
+     3:1 against the surface it sits on — the hairline tokens above are
+     separators (1.2:1) and cannot carry a control. */
+  --line-control: #8f8880;
   /* plumagem */
-  --red: #e5484d;
+  --red: #c92a2f;
   --danger: #b04a4e;
   --yellow: #dd9c00;
-  --yellow-ink: #a87a08;
-  --teal: #0e8c86;
+  --yellow-ink: #8a6207;
+  --teal: #0b736e;
+  --green: #1a7f37;
+  /* a filled surface always carries the ink its own lightness allows: white on
+     the deep teal and the deep red, the dark paper on the light amber. */
   --on-teal: #ffffff;
-  --on-solid: #ffffff;
+  --on-solid: #211e19;
+  --on-red: #ffffff;
   --live: var(--red);
+  /* acento por projeto (R1/R5): CADA cor que o usuário pode escolher é um par —
+     o preenchimento e a tinta que a lightness dele suporta — e tem valor por
+     tema, como qualquer outro token. Antes a paleta eram cinco hexes crus no
+     app.js, sem valor no escuro e sem tinta própria: escolher âmbar deixava o
+     ÚNICO botão primário do app a 3,14:1 e a linha selecionada da lateral a
+     2,67:1. Aqui a identidade é a mesma (teal · azul · roxo · âmbar · verde ·
+     rosa); o que muda por tema é a lightness. tokens.test.js mede os seis, como
+     preenchimento sob a sua tinta e como texto em cada superfície. */
+  --accent-teal: var(--teal);
+  --accent-blue: #165ae0;
+  --accent-purple: #783ee1;
+  --accent-amber: #865f00;
+  --accent-green: #207437;
+  --accent-pink: #b23073;
+  /* toda cor da paleta é escura no claro e clara no escuro, exatamente como o
+     --teal, então carrega a mesma tinta que ele. Uma cor futura que inverta essa
+     relação declara a sua própria aqui — o par é medido por swatch. */
+  --on-accent-teal: var(--on-teal);
+  --on-accent-blue: var(--on-teal);
+  --on-accent-purple: var(--on-teal);
+  --on-accent-amber: var(--on-teal);
+  --on-accent-green: var(--on-teal);
+  --on-accent-pink: var(--on-teal);
   /* terminal (mesma cor nos dois temas) */
   --term-bg: #26231d;
   --term-fg: #d8d3c8;
-  --term-dim: #8b8579;
+  --term-dim: #9a938a;
+  --term-danger: #e08488;
   --term-ok: #2fc7bf;
   --term-cur: #e6b13a;
   /* sombras */
@@ -57,19 +89,29 @@
   --ink: #f0ede5;
   --ink2: #d8d3c8;
   --ink3: #a29d92;
-  --muted: #8b8579;
+  --muted: #9a938a;
   --ghost: #5c574d;
   --line-strong: #3a362e;
   --line: #35312a;
   --line-soft: #35312a;
   --line-dash: #4a453b;
-  --red: #e5484d;
+  --line-control: #847d73;
+  --red: #ee6469;
   --danger: #e08488;
   --yellow: #e6b13a;
-  --yellow-ink: #e6b13a;
+  --yellow-ink: #f0c05a;
   --teal: #2fc7bf;
+  --green: #4fc463;
   --on-teal: #211e19;
   --on-solid: #211e19;
+  --on-red: #211e19;
+  /* a paleta escura segue quente: as mesmas seis identidades, clareadas até a
+     tinta do papel escuro poder pousar em cima delas */
+  --accent-blue: #7aa3f2;
+  --accent-purple: #b494ee;
+  --accent-amber: #d79800;
+  --accent-green: #33ba58;
+  --accent-pink: #e089b6;
   --sh-card: 0 4px 18px rgba(0, 0, 0, .3);
   --sh-card2: 0 4px 18px rgba(0, 0, 0, .3);
   --sh-menu: 0 10px 30px rgba(0, 0, 0, .45);
@@ -129,6 +171,13 @@ body {
 }
 .glyph:hover, .glyph:focus-visible { color: var(--ink); }
 :focus-visible { outline: 1.5px solid var(--accent); outline-offset: 2px; }
+/* WCAG 1.4.11: o anel de foco fica FORA do controle (outline-offset), logo ele
+   contrasta com a superfície de trás. Duas superfícies são invertidas — o
+   terminal é escuro nos dois temas e o toast é pintado com --ink — e nelas o
+   acento não alcança 3:1 (2.76:1 no terminal claro, 1.79:1 no toast escuro).
+   Cada uma empresta o anel da sua própria paleta. */
+.termpanel :focus-visible { outline-color: var(--term-ok); }
+.toast :focus-visible, .toastbtn:focus-visible { outline-color: var(--paper); }
 
 /* ---- superfície / herói ---- */
 .surface { flex: 1; overflow-y: auto; padding: clamp(18px, 4vw, 30px); }
@@ -141,7 +190,7 @@ body {
 .empty-parrot {
   border-radius: 15px;
   filter: saturate(.9);
-  box-shadow: 0 4px 18px rgba(0, 0, 0, .10);
+  box-shadow: var(--sh-card2);
 }
 .kbd {
   border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px;
@@ -150,6 +199,14 @@ body {
 .doc {
   max-width: 640px; margin: 0 auto;
   font-size: clamp(15px, 1.2vw + 11px, 17px); line-height: 1.7;
+  /* A knowledge document is full of unbreakable tokens — URLs, paths, ids. Without
+     a break opportunity the longest of them sets the column's min-content width,
+     and in a stacked layout (≤900px, where .docbody is a column) the reading
+     column then grows PAST the card that contains it: measured 559.5px of reader
+     inside 519px of card at an 880px window, 9.5px over its right border. Reading
+     prose must never need horizontal scrolling (WCAG 1.4.10, DESIGN.md §7); a
+     token too long for the column wraps instead. */
+  overflow-wrap: break-word;
 }
 .doc p { margin: 0 0 .6em; }
 .doc p.new { animation: fade .4s ease; }
@@ -231,7 +288,7 @@ body {
   position: absolute; right: 10px; top: 46px; z-index: 20;
   background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
   padding: 6px; min-width: 216px; max-width: calc(100vw - 20px);
-  box-shadow: 0 10px 32px rgba(0, 0, 0, .14);
+  box-shadow: var(--sh-menu);
 }
 .opt {
   display: flex; align-items: center; gap: 9px; padding: 8px 10px;
@@ -247,13 +304,13 @@ body {
 }
 .field select {
   font-family: var(--sans); font-size: 13px; background: var(--paper);
-  color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px;
+  color: var(--ink); border: 1px solid var(--line-control); border-radius: 6px; padding: 3px 6px;
   max-width: 150px;
 }
 .dirbtn {
   max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   direction: rtl; text-align: right;   /* mostra o FIM do caminho */
-  border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px;
+  border: 1px solid var(--line-control); border-radius: 6px; padding: 3px 8px;
 }
 .dirbtn:hover { border-color: var(--muted); }
 
@@ -267,7 +324,7 @@ body {
   font-family: var(--mono); font-size: 11px; letter-spacing: .05em;
   color: var(--muted); padding: 3px 12px; border-radius: 999px;
 }
-.tab.on { background: var(--panel); color: var(--ink); box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+.tab.on { background: var(--panel); color: var(--ink); box-shadow: var(--sh-card); }
 .tab:hover:not(.on) { color: var(--ink); }
 @media (max-width: 430px) { .tabs { display: none; } }  /* live-only em janelas mínimas */
 
@@ -276,15 +333,21 @@ body {
   max-width: 460px; margin: clamp(4vh, 8vh, 12vh) auto 0; text-align: center;
   display: flex; flex-direction: column; gap: 14px; align-items: center;
 }
-.wizard-icon { border-radius: 13px; box-shadow: 0 4px 18px rgba(0,0,0,.10); }
+.wizard-icon { border-radius: 13px; box-shadow: var(--sh-card2); }
 .wizard h1 { font-size: 20px; font-weight: 650; }
 .wizard .lead { color: var(--muted); font-size: 14px; line-height: 1.6; }
 .wfield {
   width: 100%; display: flex; align-items: center; gap: 12px;
-  border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px;
+  border: 1px solid var(--line-control); border-radius: 10px; padding: 10px 14px;
   background: var(--panel); text-align: left;
 }
 .wfield > span { flex: none; width: 78px; }
+/* o rótulo do campo é PROSA ("nome do projeto"), não um valor da máquina: mono
+   fica para caminhos, relógios, contadores e selos (DESIGN.md §3). O valor
+   travado (.lockval, um caminho) continua mono. */
+.wfield > span:first-child, .field > .mono:first-child {
+  font: 600 12.5px var(--sans); letter-spacing: normal;
+}
 .wfield input,
 .wfield select,
 .wfield textarea {
@@ -301,7 +364,9 @@ body {
 .wfield textarea { resize: vertical; font-family: var(--mono); font-size: 12px; line-height: 1.5; }
 .wfield:has(textarea) { align-items: flex-start; }
 .wfield .dirbtn { flex: 1; max-width: none; border: none; padding: 0; }
-.hint { font-family: var(--mono); font-size: 10.5px; color: var(--muted); letter-spacing: .03em; }
+/* a frase de ajuda é prosa: sans, uma declaração só (estava declarada duas
+   vezes, em dois tamanhos, e em mono — DESIGN.md §3) */
+.hint { font: 11.5px/1.5 var(--sans); color: var(--muted); letter-spacing: normal; }
 .hint.err { color: var(--red); }
 .primary {
   background: var(--ink); color: var(--paper); border: none; cursor: pointer;
@@ -351,7 +416,7 @@ body {
 }
 .row:hover { color: var(--accent); }
 .row .when { font-family: var(--mono); font-size: 10.5px; color: var(--muted); flex: none; }
-.row .flag { font-family: var(--mono); font-size: 9.5px; color: var(--yellow); flex: none;
+.row .flag { font-family: var(--mono); font-size: 9.5px; color: var(--yellow-ink); flex: none;
   border: 1px solid color-mix(in srgb, var(--yellow) 55%, transparent); border-radius: 999px; padding: 1px 7px; }
 .activity {
   font-family: var(--mono); font-size: 11px; color: var(--muted);
@@ -362,9 +427,11 @@ body {
 #ctxAdd { margin-top: 10px; display: inline-block; }
 .importbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: -6px 0 4px; }
 .mini-select {
-  font-family: var(--mono); font-size: 10.5px; letter-spacing: .04em;
+  /* o que este seletor mostra é uma frase ("destino: a IA decide"), não um valor
+     da máquina: prosa em --sans (DESIGN.md §3/§5) */
+  font: 11px var(--sans); letter-spacing: normal;
   color: var(--muted); background: var(--panel);
-  border: 1px solid var(--line); border-radius: 999px; padding: 3px 8px; max-width: 200px;
+  border: 1px solid var(--line-control); border-radius: 999px; padding: 3px 8px; max-width: 200px;
 }
 
 /* ---- acervo: file tree strip (reader) ---- */
@@ -385,10 +452,36 @@ body {
 .doc h3 { font-size: 1.05em; margin: .8em 0 .3em; }
 .doc ul { margin: .4em 0 .8em 1.2em; }
 .doc li { margin: .2em 0; }
-.doc pre { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; overflow: auto; font-size: .85em; }
+/* N23 · o bloco tinha o MESMO preenchimento do cartão do documento (--panel
+   sobre --panel, 1,00:1) e por única fronteira uma régua de 1,15–1,25:1: um
+   contêiner de rolagem que o leitor não acha, então a última linha cortada lia
+   como conteúdo quebrado em vez de conteúdo que rola (DESIGN.md §7). Ganha a
+   tinta que o chat já usa para o mesmo conteúdo e uma borda de controle (3:1),
+   que é o que torna a caixa achável — e declara --mono: só o <code> filho
+   resolvia a família, o pre computava o `monospace` genérico do navegador. */
+.doc pre {
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
+  border: 1px solid var(--line-control); border-radius: 8px;
+  padding: 12px 14px; overflow: auto; font-family: var(--mono); font-size: .85em;
+}
 .doc hr { border: 0; border-top: 1px solid var(--line); margin: 16px 0; }
-.doc a { color: var(--accent); cursor: pointer; text-decoration: none; }
-.doc a:hover { text-decoration: underline; }
+/* R3 · a reference inside a document was identified by COLOUR ALONE: the accent
+   against the --ink prose around it is 2.95:1 in light and 1.79:1 in dark, under
+   the 3:1 that WCAG G183 asks of a colour-only cue, so in dark a link inside a
+   paragraph was indistinguishable from ordinary text. The underline is therefore
+   permanent, not a hover reveal — and hover/focus THICKEN it, because the cue
+   used to exist only on :hover, so a keyboard reader never saw it (2.4.7). */
+.doc a {
+  color: var(--accent); cursor: pointer;
+  text-decoration: underline; text-decoration-thickness: 1px;
+  /* the underline IS the cue, so it is measured like one: 80% of the accent still
+     clears 3:1 on paper (3.71:1 claro · 5.53:1 escuro), where 60% did not */
+  text-decoration-color: color-mix(in srgb, var(--accent) 80%, transparent);
+  text-underline-offset: .16em;
+}
+.doc a:hover, .doc a:focus-visible {
+  text-decoration-thickness: 2px; text-decoration-color: var(--accent);
+}
 
 /* modo acervo esconde a faixa de controles do live */
 
@@ -402,17 +495,22 @@ body {
   width: min(400px, calc(100vw - 32px)); max-height: calc(100vh - 60px);
   overflow-y: auto; background: var(--paper);
   border: 1px solid var(--line); border-radius: 14px;
-  box-shadow: 0 18px 60px rgba(0, 0, 0, .22);
+  box-shadow: var(--sh-modal);
   padding: 14px 18px 20px;
 }
 .sheet-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px; }
-.sheet-title { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink); }
+/* A sheet's title is a whole sentence the product wrote ("Novo rascunho — descreva
+   a mudança em uma linha", "Como funciona o Loro"), and the markup carries `.mono`
+   on it, so it inherited the machine's font and was uppercased on top of that:
+   prose is --sans and is never shouted (DESIGN.md §3, §5). It is the title of a
+   card, so it takes the card-title step. */
+.sheet-title { font: 600 14px var(--sans); letter-spacing: normal; text-transform: none; color: var(--ink); }
 .sheet .sect { margin: 18px 0 6px; color: var(--accent); }
 .sheet .field {
-  border: 1px solid var(--line); border-radius: 8px; background: var(--panel);
+  border: 1px solid var(--line-control); border-radius: 8px; background: var(--panel);
   margin: 6px 0; padding: 9px 12px;
 }
-.sheet .field > .mono:first-child { width: 64px; flex: none; }
+.sheet .field > .mono:first-child { width: 64px; flex: none; font: 600 12.5px var(--sans); letter-spacing: normal; }
 .sheet .field select { flex: 1; max-width: none; border: none; background: none; }
 .sheet .opt { padding: 8px 2px; }
 .sheet .hint { margin: 2px 2px 0; }
@@ -436,8 +534,6 @@ body {
   padding: 10px 8px 24px;
   background: color-mix(in srgb, var(--panel) 55%, var(--paper));
 }
-.sidegrip { cursor: col-resize; background: var(--line); opacity: .5; }
-.sidegrip:hover, .sidegrip.dragging { opacity: 1; background: var(--acc, #2bc5b4); }
 /* wide sidebar: full names wrap and the metadata line appears */
 .bmeta { display: none; }
 .bside.wide .bn { white-space: normal; overflow: visible; text-overflow: unset; }
@@ -452,7 +548,7 @@ body {
 .sidefilter {
   display: block; width: calc(100% - 16px); margin: 0 8px 6px;
   padding: 5px 8px; font-size: 11.5px; font-family: var(--sans);
-  border: 1px solid var(--line); border-radius: 6px;
+  border: 1px solid var(--line-control); border-radius: 6px;
   background: var(--panel); color: var(--ink);
 }
 .sidefilter:focus { outline: none; border-color: var(--accent); }
@@ -482,7 +578,7 @@ body {
   border: 1px solid var(--line); border-radius: 10px;
   padding: 9px 11px; font-size: 11px; line-height: 1.55;
   letter-spacing: .02em; text-transform: none;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, .18);
+  box-shadow: var(--sh-menu);
   user-select: text;
 }
 .bitem {
@@ -532,10 +628,10 @@ body {
 /* CTA do fluxo (gerar contexto · enviar para a fila): o passo seguinte é o único
    botão "cheio" da vizinhança — hierarquia por cor, não por tamanho. */
 .abtn.cta {
-  background: var(--accent, var(--teal)); border-color: transparent; color: var(--paper);
+  background: var(--accent); border-color: transparent; color: var(--on-accent);
   font-weight: 600;
 }
-.abtn.cta:hover { opacity: .85; color: var(--paper); }
+.abtn.cta:hover { opacity: .85; color: var(--on-accent); }
 .abtn.cta:disabled {
   background: color-mix(in srgb, var(--ink) 12%, transparent);
   color: var(--muted); cursor: not-allowed; opacity: 1;
@@ -544,12 +640,12 @@ body {
 .crumbpath { font-size: 10.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
 .badge.ro { color: var(--muted); }
 .badge.ok { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
-.badge.warn2 { color: var(--yellow); border-color: color-mix(in srgb, var(--yellow) 50%, transparent); }
+.badge.warn2 { color: var(--yellow-ink); border-color: color-mix(in srgb, var(--yellow) 50%, transparent); }
 .tabs.small { margin-left: auto; }
 .tabs.small .tab { font-size: 10px; padding: 2px 10px; }
 /* editor fiel CodeMirror 6 (ADR-0008): o CM6 injeta seus próprios estilos-base
    via StyleModule e o tema mapeia os tokens do Loro; aqui só o host. */
-.edithost { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--panel); }
+.edithost { border: 1px solid var(--line-control); border-radius: 8px; overflow: hidden; background: var(--panel); }
 .edithost .cm-editor { height: 100%; min-height: 60vh; }
 
 /* ADR-0016: barra de formatação markdown. `flex-wrap: wrap` é requisito, não
@@ -613,7 +709,15 @@ body {
 .docmain { flex: 1 1 auto; min-width: 0; }
 .doc-rail { flex: 0 0 220px; display: flex; flex-direction: column; gap: 14px; position: sticky; top: 0; }
 @media (max-width: 900px) {
-  .docbody { flex-direction: column; }
+  /* Stacking the rail turns .docbody into a COLUMN, and in a column the children's
+     width is the cross axis: with the inherited `align-items: flex-start` the reader
+     became shrink-to-fit and grew past the card that contains it — 559.5px of reader
+     inside 519px of card at an 880px window, 9.5px over its right border, with the
+     card itself overflowing (scrollWidth 590 vs clientWidth 579) and the code block
+     no longer scrolling inside its own container. The rail already said `width: 100%`
+     here; the reader has to say the same thing (DESIGN.md §7, WCAG 1.4.10). */
+  .docbody { flex-direction: column; align-items: stretch; }
+  .docmain { width: 100%; }
   .doc-rail { flex-basis: auto; width: 100%; position: static; }
 }
 .rail-sec { display: flex; flex-direction: column; gap: 6px; }
@@ -633,18 +737,18 @@ body {
   padding: 8px 10px; cursor: pointer; width: 100%;
 }
 .railbtn:hover { border-color: var(--accent); color: var(--accent); }
-.railbtn.cta { background: var(--accent, var(--teal)); border-color: transparent; color: var(--paper); font-weight: 600; }
+.railbtn.cta { background: var(--accent); border-color: transparent; color: var(--on-accent); font-weight: 600; }
 .railbtn.icon { width: 34px; flex: none; padding: 8px; }
 /* input dentro do menu flutuante (renomear/mover contexto) */
 .menuinput { width: calc(100% - 16px); margin: 4px 8px 2px; }
 
 /* barra de busca no documento */
 .findbar { display: flex; align-items: center; gap: 6px; margin-bottom: 10px;
-  border: 1px solid var(--line); border-radius: 8px; padding: 5px 8px; background: var(--panel); }
+  border: 1px solid var(--line-control); border-radius: 8px; padding: 5px 8px; background: var(--panel); }
 .findbar input { flex: 1; border: none; background: none; color: var(--ink); font-size: 13px; outline: none; }
 .findbar .mono { flex: none; }
 .doc mark.hl { background: color-mix(in srgb, var(--yellow) 40%, transparent); color: inherit; border-radius: 2px; }
-.doc mark.hl.cur { background: var(--accent); color: var(--panel); }
+.doc mark.hl.cur { background: var(--accent); color: var(--on-accent); }
 
 /* ---- anotações: grifos, comentários, popover (ADR-0007) ---- */
 /* the rendered body is selectable again (body sets user-select:none globally) */
@@ -662,7 +766,7 @@ body {
 .annot-pop {
   position: fixed; z-index: 60; display: flex; flex-wrap: wrap; gap: 4px;
   max-width: 280px; padding: 6px; border: 1px solid var(--line); border-radius: 10px;
-  background: var(--panel); box-shadow: 0 10px 32px rgba(0, 0, 0, .18); user-select: none;
+  background: var(--panel); box-shadow: var(--sh-menu); user-select: none;
 }
 .annot-act {
   border: 1px solid var(--line); background: var(--paper); color: var(--ink);
@@ -676,10 +780,10 @@ body {
 
 /* ADR-0011: indice.md staleness nudge — a quiet amber (brainstorming world) bar */
 .digest-banner { display: flex; align-items: center; gap: 10px; justify-content: space-between;
-  margin: 0 0 16px; padding: 8px 12px; font-size: 12px; color: var(--yellow);
+  margin: 0 0 16px; padding: 8px 12px; font-size: 12px; color: var(--yellow-ink);
   border: 1px solid color-mix(in srgb, var(--yellow) 45%, transparent); border-radius: 10px;
   background: color-mix(in srgb, var(--yellow) 9%, transparent); }
-.digest-banner .link { color: var(--yellow); font-family: var(--mono); font-size: 12px; white-space: nowrap; }
+.digest-banner .link { color: var(--yellow-ink); font-family: var(--mono); font-size: 12px; white-space: nowrap; }
 .annot-panel { margin: 18px 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: color-mix(in srgb, var(--accent) 4%, transparent); }
 .annot-panel > summary { cursor: pointer; color: var(--accent); font-size: 13px; user-select: none; }
 .annot-prow { margin: 8px 0; }
@@ -693,7 +797,12 @@ body {
 .doc h5, .doc h6 { font-size: .85em; margin: .6em 0 .25em; font-weight: 650; color: var(--muted); }
 .doc ol { margin: .4em 0 .8em 1.4em; }
 .doc table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: .92em; display: block; overflow-x: auto; }
-.doc th { font-family: var(--mono); font-size: 10.5px; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); text-align: left; }
+/* N24 · the header was the AUTHOR's text rewritten by the stylesheet: 10.5px
+   mono, force-uppercased, at --muted, inside a document. DESIGN.md §3 is explicit
+   ("mono is never prose", and 10.5px is the machine label's step) — a table header
+   a person wrote is prose, and the casing they chose is content. It stays a header
+   through weight and ink, on the cell's own step. */
+.doc th { font-weight: 650; color: var(--ink); text-align: left; }
 .doc th, .doc td { padding: 7px 10px; border-bottom: 1px solid var(--line); }
 .doc blockquote {
   border-left: 3px solid var(--accent);
@@ -701,10 +810,18 @@ body {
   border-radius: 0 8px 8px 0; padding: 8px 14px; margin: 10px 0;
 }
 .doc blockquote p { margin: .25em 0; }
+/* N25 · a knowledge document's open point (`[!HOTSPOT]`, templates.rs) is a quote
+   with a title: the marker left the text (text.js), so what identifies it is the
+   form — its first line is the point's title. */
+.doc blockquote.hotspot .hstitle { font-weight: 650; color: var(--ink); }
 .doc del { color: var(--muted); }
 .doc input[type="checkbox"] { accent-color: var(--accent); margin-right: 4px; }
 .doc img { max-width: 100%; border-radius: 8px; }
-.doc pre code { display: block; }
+/* `.doc pre` is already .85em of the reader; `.doc code` is another .85em, and the
+   two MULTIPLY — the code inside a code block computed 10.4762px (measured), under
+   every step of DESIGN.md §3 that is meant to be read and at the 10.5px the scale
+   reserves for a micro-label. A code block is content: it keeps the pre's step. */
+.doc pre code { display: block; font-size: 1em; }
 
 /* ---- acervo: seletor de projeto (switcher) ---- */
 .switch { position: relative; margin-bottom: 10px; }
@@ -720,7 +837,7 @@ body {
 .switchmenu {
   position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 40;
   background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, .16); padding: 5px;
+  box-shadow: var(--sh-menu); padding: 5px;
 }
 .fitem2 {
   display: flex; align-items: center; gap: 8px; padding: 7px 9px; border-radius: 7px;
@@ -730,13 +847,18 @@ body {
 .fitem2.on { color: var(--accent); }
 .fitem2 .fn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fitem2 .pill { margin-left: auto; }
+/* N2 · o que a linha guarda — um contador, o papel de 10.5px mono do §3 */
+.fitem2 .fmeta {
+  margin-left: auto; flex: none;
+  font-family: var(--mono); font-size: 10.5px; color: var(--muted);
+}
 .fitem2.add { color: var(--accent); font-family: var(--mono); font-size: 11px; }
 .fitem2.muted { color: var(--muted); cursor: default; }
 .fsep { height: 1px; background: var(--line); margin: 4px 0; }
 .floatmenu {
   position: fixed; z-index: 60; min-width: 190px; max-width: 230px;
   background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, .18); padding: 5px;
+  box-shadow: var(--sh-menu); padding: 5px;
 }
 .fhead {
   font-family: var(--mono); font-size: 9px; letter-spacing: .1em; text-transform: uppercase;
@@ -760,12 +882,12 @@ body {
 .fitem2.fstatic:hover { background: none; }
 .confirm-actions { display: flex; align-items: center; gap: 10px; padding: 6px 9px 8px; }
 .btn-danger {
-  background: var(--red); color: #fff; border: none; border-radius: 7px;
+  background: var(--red); color: var(--on-red); border: none; border-radius: 7px;
   padding: 6px 14px; font-family: var(--mono); font-size: 11px; letter-spacing: .04em; cursor: pointer;
 }
 .btn-danger:hover { filter: brightness(1.08); }
 .btn-accent {
-  background: var(--accent); color: #fff; border: none; border-radius: 7px;
+  background: var(--accent); color: var(--on-accent); border: none; border-radius: 7px;
   padding: 6px 14px; font-family: var(--mono); font-size: 11px; letter-spacing: .04em; cursor: pointer;
 }
 .btn-accent:hover { filter: brightness(1.08); }
@@ -805,8 +927,16 @@ body {
   color: var(--accent); font-family: var(--mono); font-size: 11.5px;
 }
 .bitem.addctx:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
-/* acento por projeto: --accent cai no teal do tema quando não definido */
-:root { --accent: var(--teal); }
+/* Acento por projeto: o <html> recebe data-accent com a IDENTIDADE escolhida
+   (nunca um valor de cor), e o par preenchimento/tinta vem dos tokens de cada
+   tema. Sem data-accent — projeto novo, ou uma escolha que não existe mais na
+   paleta — o acento é o teal do tema. */
+:root { --accent: var(--accent-teal); --on-accent: var(--on-accent-teal); }
+:root[data-accent="blue"]   { --accent: var(--accent-blue);   --on-accent: var(--on-accent-blue); }
+:root[data-accent="purple"] { --accent: var(--accent-purple); --on-accent: var(--on-accent-purple); }
+:root[data-accent="amber"]  { --accent: var(--accent-amber);  --on-accent: var(--on-accent-amber); }
+:root[data-accent="green"]  { --accent: var(--accent-green);  --on-accent: var(--on-accent-green); }
+:root[data-accent="pink"]   { --accent: var(--accent-pink);   --on-accent: var(--on-accent-pink); }
 .iconbtn { display: grid; place-items: center; width: 30px; height: 30px; border: none; background: none; cursor: pointer; color: var(--muted); border-radius: 7px; }
 .iconbtn:hover { color: var(--accent); background: color-mix(in srgb, var(--ink) 6%, transparent); }
 .iconbtn svg { width: 18px; height: 18px; fill: currentColor; }
@@ -825,17 +955,19 @@ body {
 .qrow.unsynced { border-left: 2px solid var(--yellow); padding-left: 8px; }
 .bitem.on > .nico, .bitem.on > .bn { color: var(--accent); }
 /* versionamento (estilo VSCode): novo=verde · modificado=âmbar · apagado=vermelho */
-.g-new > .bn, .g-new > .nico { color: #3fb950; }
-.g-mod > .bn, .g-mod > .nico { color: var(--yellow); }
+.g-new > .bn, .g-new > .nico { color: var(--green); }
+.g-mod > .bn, .g-mod > .nico { color: var(--yellow-ink); }
 /* indicador de mudança não commitada num contexto (ADR-0005) */
-.bitem .gdot { color: var(--yellow); font-size: 9px; line-height: 1; opacity: .9; }
+.bitem .gdot { color: var(--yellow-ink); font-size: 9px; line-height: 1; opacity: .9; }
 .g-del > .bn, .g-del > .nico { color: var(--red); text-decoration: line-through; }
 .g-new > .bn::after { content: "U"; }
 .g-mod > .bn::after { content: "M"; }
 .g-new > .bn::after, .g-mod > .bn::after {
   font-family: var(--mono); font-size: 8.5px; margin-left: 6px; opacity: .7; vertical-align: super;
 }
-.pill.soft { background: color-mix(in srgb, var(--ink) 7%, transparent); color: var(--muted); }
+/* o rótulo tem 10px: 4.5:1 vale sem isenção. Com --muted sobre 7% de tinta o
+   selo dava 4.15:1 — uma tinta mais leve e o passo de texto acima resolvem. */
+.pill.soft { background: color-mix(in srgb, var(--ink) 5%, transparent); color: var(--ink3); }
 .abtn.ghost { border-style: dashed; }
 /* botão de envio = mesmo componente ghost tracejado, largura total */
 .abtn.dropfull { display: block; width: 100%; text-align: center; margin: 10px 0 2px; color: var(--muted); }
@@ -864,7 +996,7 @@ body {
 /* ---- acervo: visão geral (home) ---- */
 .bhero { display: flex; align-items: center; gap: 14px; margin-bottom: 20px; flex-wrap: wrap; }
 .bhero .gitbtn { margin-left: auto; }
-.bhero-icon { border-radius: 11px; box-shadow: 0 3px 14px rgba(0, 0, 0, .10); flex: none; }
+.bhero-icon { border-radius: 11px; box-shadow: var(--sh-card2); flex: none; }
 .bhero-txt h1 { font-size: 19px; font-weight: 650; line-height: 1.1; }
 .bhero-txt p { font-size: 10px; color: var(--muted); margin-top: 3px; max-width: 46ch;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
@@ -872,7 +1004,7 @@ body {
   margin-left: auto; font-size: 10.5px; color: var(--muted);
   border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px; background: var(--panel);
 }
-.pulse.warm { color: var(--yellow); border-color: color-mix(in srgb, var(--yellow) 45%, transparent); }
+.pulse.warm { color: var(--yellow-ink); border-color: color-mix(in srgb, var(--yellow) 45%, transparent); }
 .hgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 12px; margin-top: 18px; }
 .hcard {
   border: 1px solid var(--line); border-radius: 12px; background: var(--panel);
@@ -918,8 +1050,12 @@ body {
 .toast {
   position: absolute; left: 50%; bottom: 72px; transform: translateX(-50%);
   background: var(--ink); color: var(--paper);
-  font-family: var(--mono); font-size: 11px; letter-spacing: .04em;
-  padding: 8px 14px; border-radius: 999px; z-index: 30; max-width: 84%;
+  /* R7 · o toast é o ÚNICO canal de retorno do app (DESIGN.md §5) e o que ele
+     carrega são FRASES ("permita a Gravação de Tela…"): prosa nunca é mono
+     (§3). A varredura anterior arrumou os rótulos de campo e esqueceu a
+     superfície que carrega quase toda a prosa do app. */
+  font: 11.5px/1.45 var(--sans); letter-spacing: normal;
+  padding: 9px 14px; border-radius: 999px; z-index: 30; max-width: 84%;
   text-align: center;
 }
 /* ADR-0018: o toast do fim de reunião carrega a oferta de analisar — uma ação
@@ -927,9 +1063,12 @@ body {
 .toastbtn {
   margin-left: 10px; padding: 2px 10px; border-radius: 999px;
   border: 1px solid var(--paper); background: transparent; color: var(--paper);
-  font-family: inherit; font-size: inherit; letter-spacing: inherit; cursor: pointer;
+  font: 600 11.5px var(--sans); letter-spacing: normal; cursor: pointer;
 }
 .toastbtn:hover { background: var(--paper); color: var(--ink); }
+/* R15/R23 · a saída de um toast sem prazo: o × é do tamanho de um alvo de
+   clique e não empurra o texto (o toast já centraliza o conteúdo) */
+.toastclose { font: 600 14px var(--sans); line-height: 1; padding: 2px 8px; margin-left: 8px; }
 
 /* linha de pendente: só o nome navega; botões à direita */
 .row.nohover:hover { color: inherit; }
@@ -983,7 +1122,8 @@ body {
   color: var(--muted); font-size: 14px; line-height: 1; padding: 0 2px; border-radius: 4px; opacity: .5;
 }
 .wstab:hover .wsclose { opacity: 1; }
-.wstab .wsclose:hover { color: var(--red); background: color-mix(in srgb, var(--red) 12%, transparent); }
+/* 12% de vermelho sob o × derrubava o próprio × para 4.33:1 */
+.wstab .wsclose:hover { color: var(--red); background: color-mix(in srgb, var(--red) 8%, transparent); }
 .wstab.home { color: var(--accent); }
 /* dois mundos legíveis: contexto = versionado (acento) · produção = rascunho (âmbar) */
 .wstab--context { border-left-color: color-mix(in srgb, var(--accent) 55%, transparent); }
@@ -999,7 +1139,7 @@ body {
 .cmdk-box {
   width: min(560px, calc(100vw - 40px));
   background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, .28); overflow: hidden;
+  box-shadow: var(--sh-modal); overflow: hidden;
 }
 .cmdk-input {
   width: 100%; border: none; outline: none; background: none; color: var(--ink);
@@ -1018,22 +1158,22 @@ body {
   border-radius: 999px; padding: 1px 7px;
 }
 .cmdk-w.context { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
-.cmdk-w.personal { color: var(--yellow); background: color-mix(in srgb, var(--yellow) 14%, transparent); }
+.cmdk-w.personal { color: var(--yellow-ink); background: color-mix(in srgb, var(--yellow) 14%, transparent); }
 .cmdk-empty { padding: 12px 10px; color: var(--muted); }
 
 /* ================= produção (mundo pessoal) + referências — ADR-0009 =================
    A produção é o mundo NÃO versionado; seu acento é o âmbar (--yellow), o mesmo
    de .wstab--personal, para diferenciá-la do mundo dos contextos (--accent). */
-.bgroup.pessoal > span:first-child { color: var(--yellow); }
-#navPessoal .nico.ac { color: var(--yellow); }
-#navPessoal .bitem.on { background: color-mix(in srgb, var(--yellow) 14%, transparent); color: var(--yellow); }
-#navPessoal .bitem.file.on, #navPessoal .bitem.file:hover { color: var(--yellow); }
-#navPessoal .bitem.on > .nico, #navPessoal .bitem.on > .bn { color: var(--yellow); }
+.bgroup.pessoal > span:first-child { color: var(--yellow-ink); }
+#navPessoal .nico.ac { color: var(--yellow-ink); }
+#navPessoal .bitem.on { background: color-mix(in srgb, var(--yellow) 14%, transparent); color: var(--yellow-ink); }
+#navPessoal .bitem.file.on, #navPessoal .bitem.file:hover { color: var(--yellow-ink); }
+#navPessoal .bitem.on > .nico, #navPessoal .bitem.on > .bn { color: var(--yellow-ink); }
 #navPessoal .bitem.addctx {
-  border-color: color-mix(in srgb, var(--yellow) 55%, transparent); color: var(--yellow);
+  border-color: color-mix(in srgb, var(--yellow) 55%, transparent); color: var(--yellow-ink);
 }
 #navPessoal .bitem.addctx:hover { background: color-mix(in srgb, var(--yellow) 8%, transparent); }
-#navPessoal .rowmenu:hover { color: var(--yellow); border-color: var(--yellow); }
+#navPessoal .rowmenu:hover { color: var(--yellow-ink); border-color: var(--yellow); }
 .rowmenu.danger:hover { color: var(--red); border-color: var(--red); }
 
 /* painel "Referências" (colapsável) no topo do leitor */
@@ -1057,7 +1197,7 @@ body {
 .reftipo {
   flex: none; font-size: 9px; letter-spacing: .04em; text-transform: uppercase;
   border-radius: 999px; padding: 1px 7px;
-  color: var(--yellow); background: color-mix(in srgb, var(--yellow) 14%, transparent);
+  color: var(--yellow-ink); background: color-mix(in srgb, var(--yellow) 14%, transparent);
 }
 .refname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
@@ -1082,17 +1222,18 @@ body {
 
 /* modal de promoção / migração (reutiliza .sheet-wrap/.sheet/.editbar) */
 .pmbody { padding: 4px 2px 2px; display: flex; flex-direction: column; gap: 10px; }
+/* as três frases do modal de promoção são prosa (DESIGN.md §3) */
 .pmnote {
-  font-size: 11px; color: var(--muted); margin: 0;
+  font: 11.5px/1.5 var(--sans); color: var(--muted); margin: 0;
   border-left: 3px solid color-mix(in srgb, var(--yellow) 55%, transparent);
   padding-left: 8px;
 }
 .pmfield { display: flex; align-items: center; gap: 10px; font-size: 12px; }
 .pmfield > span:first-child { flex: none; width: 56px; color: var(--muted); }
 .pmsrc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pmphead { font-size: 10.5px; color: var(--muted); }
+.pmphead { font: 600 11.5px/1.45 var(--sans); color: var(--muted); }
 .pmpreview {
-  font-size: 11px; line-height: 1.6; color: var(--ink);
+  font: 12px/1.6 var(--sans); color: var(--ink);
   border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px;
   max-height: 30vh; overflow-y: auto; background: var(--panel);
 }
@@ -1180,7 +1321,7 @@ body {
 }
 /* third-sink disclosure: visível só com a nuvem ligada (ADR-0011). */
 .mtg-sink {
-  font-size: 10px; line-height: 1.45; color: var(--yellow);
+  font-size: 10px; line-height: 1.45; color: var(--yellow-ink);
   margin: -2px 0 8px; padding-left: 2px;
 }
 /* "o que saiu desta máquina": leitura da auditoria local (ADR-0011). */
@@ -1202,8 +1343,8 @@ body {
   z-index: 5; cursor: pointer;
   border: 1px solid var(--accent); border-radius: 999px;
   padding: 5px 14px; font-family: var(--mono); font-size: 11px; letter-spacing: .04em;
-  color: var(--panel); background: var(--accent);
-  box-shadow: 0 3px 12px rgba(0, 0, 0, .18);
+  color: var(--on-accent); background: var(--accent);
+  box-shadow: var(--sh-menu);
 }
 .mtgpill:hover { filter: brightness(1.05); }
 
@@ -1269,7 +1410,7 @@ body {
 /* meeting ⋯ menu: emphasized primary action, disabled entries with a reason */
 .fitem2.strong .fn { color: var(--accent); }
 .fitem2.off { opacity: .45; pointer-events: none; }
-.fnote { padding: 2px 10px 6px; font-size: 10px; color: var(--muted); }
+.fnote { padding: 2px 10px 6px; font: 11px/1.45 var(--sans); color: var(--muted); }
 .fsep { border-top: 1px solid var(--line); margin: 4px 0; }
 
 /* first-launch welcome tour */
@@ -1280,10 +1421,19 @@ body {
 .modelrow { display: flex; align-items: center; justify-content: space-between; gap: 10px;
   padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
 .modelinfo { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+/* R6 · o nome e o selo são UMA linha (o markup já os emitia como se fossem):
+   soltos dentro de .modelinfo, que é uma coluna flex, o selo esticava para a
+   largura do container. */
+.modelhead { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
 .modelname { color: var(--ink); font-size: 12px; letter-spacing: .03em; }
-.modelnote { font-family: var(--mono); font-size: 10px; color: var(--muted); letter-spacing: .02em; }
+.modelnote { font: 11.5px/1.5 var(--sans); color: var(--muted); letter-spacing: normal; }
+/* R6 · a etiqueta é filha de .modelinfo (flex-direction: column), então esticava
+   para a largura da coluna — 371px de caixa arredondada para nove caracteres, com
+   a mesma forma dos campos vazios duas linhas acima. Um selo tem a largura do seu
+   texto (DESIGN.md §5: mono, 999px, cor semântica). */
 .modeltag { font-family: var(--mono); font-size: 9px; text-transform: uppercase; color: var(--teal);
-  border: 1px solid var(--teal); border-radius: 6px; padding: 0 4px; margin-left: 6px; vertical-align: middle; }
+  border: 1px solid var(--teal); border-radius: 999px; padding: 1px 8px;
+  align-self: start; width: fit-content; }
 .modelaction { flex: none; }
 .modeldl { padding: 6px 10px; font-size: 10.5px; white-space: nowrap; }
 .modelok { font-family: var(--mono); font-size: 10.5px; color: var(--teal); letter-spacing: .03em; }
@@ -1309,11 +1459,16 @@ body { background: var(--paper); color: var(--ink); }
   cursor: pointer; white-space: nowrap;
 }
 .btn:hover { border-color: var(--teal); color: var(--teal); }
+/* N3 · "tudo salvo ✓" É o estado, e o mesmo controle abria a folha de salvar
+   assim mesmo. Desabilitado ele precisa PARECER desabilitado — e o hover não
+   pode continuar prometendo uma ação (o texto fica em --ink3: 4,9:1). */
+.btn:disabled { color: var(--ink3); cursor: default; }
+.btn:disabled:hover { border-color: var(--line); color: var(--ink3); }
 .btn.solid {
-  background: var(--accent, var(--teal)); border-color: transparent; color: var(--on-teal);
-  box-shadow: 0 2px 10px rgba(14, 140, 134, .25);
+  background: var(--accent); border-color: transparent; color: var(--on-accent);
+  box-shadow: 0 2px 10px color-mix(in srgb, var(--accent) 25%, transparent);
 }
-.btn.solid:hover { filter: brightness(1.06); color: var(--on-teal); }
+.btn.solid:hover { filter: brightness(1.06); color: var(--on-accent); }
 .btn.solid:disabled { background: color-mix(in srgb, var(--ink) 10%, transparent); color: var(--muted); box-shadow: none; cursor: not-allowed; }
 .btn.solid.amber { background: var(--yellow); color: var(--on-solid); box-shadow: none; }
 .btn.sm { padding: 7px 14px; font-size: 12px; }
@@ -1354,12 +1509,21 @@ body { background: var(--paper); color: var(--ink); }
   font: 600 12.5px var(--sans); color: var(--ink3); background: none;
 }
 .dest:hover { color: var(--ink); }
-.dest.on { background: var(--teal); color: #fff; }
-.dest[data-dest="home"].on { background: var(--ink); color: var(--paper); }
+/* R12 · "este destino está ativo" é UM estado, então tem UMA aparência: o
+   Início vinha pintado com --ink e os outros dois com o teal fixo, e num projeto
+   de cor própria a pílula ficava teal enquanto o botão primário e a linha
+   selecionada viravam azuis — três cores de "ativo" na mesma tela. O acento é a
+   cor do que está ativo/primário, e ele acompanha o projeto. */
+.dest.on { background: var(--accent); color: var(--on-accent); }
 .destbadge, .cbadge {
-  font: 600 10px var(--mono); color: #fff; background: var(--yellow);
+  font: 600 10px var(--mono); color: var(--on-solid); background: var(--yellow);
   border-radius: 999px; padding: 1px 6px; flex: none;
 }
+/* Em cima do destino ativo o contador troca de par: o âmbar sobre o acento
+   desapareceria justamente quando o projeto escolhe âmbar como cor. Sobre um
+   preenchimento, a leitura garantida é a tinta dele com o acento por cima —
+   o mesmo par que o botão primário usa, invertido. */
+.dest.on .destbadge { background: var(--on-accent); color: var(--accent); }
 .headrec {
   display: inline-flex; align-items: center; gap: 7px; cursor: pointer;
   border: 1.5px solid var(--red); border-radius: 999px; padding: 5px 13px;
@@ -1371,12 +1535,12 @@ body { background: var(--paper); color: var(--ink); }
 @media (max-width: 900px) { .localtag { display: none; } }
 .recbtn {
   display: inline-flex; align-items: center; gap: 8px;
-  border: none; background: var(--red); color: #fff; border-radius: 999px;
+  border: none; background: var(--red); color: var(--on-red); border-radius: 999px;
   padding: 8px 18px; font: 600 13px var(--sans); cursor: pointer;
-  box-shadow: 0 2px 10px rgba(229, 72, 77, .3);
+  box-shadow: 0 2px 10px color-mix(in srgb, var(--red) 30%, transparent);
 }
 .recbtn:hover { filter: brightness(1.05); }
-.recbtn .rec-glyph { width: 10px; height: 10px; border-radius: 50%; background: #fff; transition: border-radius .15s, width .15s, height .15s; }
+.recbtn .rec-glyph { width: 10px; height: 10px; border-radius: 50%; background: currentColor; transition: border-radius .15s, width .15s, height .15s; }
 .recbtn.recording { background: var(--ink); color: var(--paper); box-shadow: none; }
 .recbtn.recording .rec-glyph { width: 9px; height: 9px; border-radius: 2px; background: currentColor; }
 .aibtn {
@@ -1391,10 +1555,16 @@ body { background: var(--paper); color: var(--ink); }
 .mainrow { flex: 1; min-height: 0; display: flex; flex-direction: row; }
 .bwrap { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 
-/* regra nº 1: a sidebar sobe até o header e a faixa de abas começa à direita dela */
+/* regra nº 1: a sidebar sobe até o header e a faixa de abas começa à direita dela.
+   The stored width is clamped to 45% of the COLUMN the sidebar lives in — the same
+   ceiling DESIGN.md §2 documents for the drag, but read against the space that
+   actually exists: with a wide ✦ IA panel open, a sidebar clamped to 45vw was wider
+   than its own grid and 80px of it (the ＋ buttons and the collapse control) was cut
+   by `overflow: hidden`, while the content column measured 0px. */
 .bshell {
   flex: 1; min-height: 0;
-  display: grid; grid-template-columns: var(--side-w, var(--side-w-default)) 5px minmax(0, 1fr);
+  display: grid;
+  grid-template-columns: minmax(0, min(var(--side-w, var(--side-w-default)), 45%)) 5px minmax(0, 1fr);
 }
 .bshell.collapsed { grid-template-columns: 60px 0 minmax(0, 1fr); }
 .bshell.collapsed .sidegrip { display: none; }
@@ -1434,11 +1604,18 @@ body { background: var(--paper); color: var(--ink); }
 .footrow .n { margin-left: auto; font: 10.5px var(--mono); color: var(--muted); }
 .footrow .qm { width: 14px; text-align: center; font: 600 13px var(--sans); color: var(--muted); }
 .sidefoot-row { display: flex; gap: 6px; margin-top: 6px; }
+/* A lateral cede sua fatia primeiro (34% da coluna abaixo de 900px): no piso de
+   860px que o tauri.conf permite, com o painel ✦ IA aberto, isso dá 178,5px e esta
+   linha pedia 184px de min-content — o #sideToggle terminava em x=184 dentro de um
+   painel que corta em x=179, e `.bside` tem overflow:hidden, então 5px de um CONTROLE
+   sumiam sem nada para rolar. DESIGN.md §2.9: a frase trunca, o controle nunca é
+   cortado — `flex: 1` sozinho mantém min-width:auto e não trunca nada. */
 .footcfg {
-  flex: 1; display: flex; align-items: center; gap: 8px;
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px;
   padding: 8px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel);
   font: 600 12.5px var(--sans); color: var(--ink); cursor: pointer;
 }
+.footcfg span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .footcfg:hover, .footside:hover { border-color: var(--teal); color: var(--teal); }
 .footside {
   flex: none; width: 36px; border: 1px solid var(--line); border-radius: 9px;
@@ -1466,11 +1643,11 @@ body { background: var(--paper); color: var(--ink); }
 .minisep { width: 28px; height: 1px; background: var(--line); flex: none; }
 .minibadge {
   position: absolute; top: -3px; right: -3px;
-  font: 600 9px var(--mono); color: #fff; background: var(--yellow);
+  font: 600 9px var(--mono); color: var(--on-solid); background: var(--yellow);
   border: 2px solid var(--paper); border-radius: 999px; padding: 0 4px;
 }
 .sidegrip { cursor: col-resize; background: var(--line); opacity: .35; }
-.sidegrip:hover, .sidegrip.dragging { opacity: 1; background: var(--accent, var(--teal)); }
+.sidegrip:hover, .sidegrip.dragging { opacity: 1; background: var(--accent); }
 
 /* ---- faixa de abas: só documentos abertos (regra nº 2) ---- */
 .wstabs {
@@ -1492,7 +1669,7 @@ body { background: var(--paper); color: var(--ink); }
   background: var(--paper); color: var(--ink); margin-bottom: -1px;
 }
 .wstab.preview .wsn { font-style: italic; }
-.wstab .wsclose { color: var(--ghost); font-size: 14px; opacity: 1; }
+.wstab .wsclose { color: var(--ink3); font-size: 14px; opacity: 1; }
 .wstab--context { border-left-color: transparent; }
 .wstab .wstime { font: 10.5px var(--mono); color: var(--muted); }
 .wstab .wsrecdot { width: 8px; height: 8px; border-radius: 50%; background: var(--red); flex: none; }
@@ -1506,16 +1683,32 @@ body { background: var(--paper); color: var(--ink); }
 .wsbody { flex: 1; min-height: 0; overflow-y: auto; padding: 0; }
 
 /* ============ PAINEL DIREITO (330px) ============ */
+/* The width is PERSISTED and was applied verbatim: dragged to 60vw of a 2560px
+   display (1536px) and reopened on a 1512px laptop, the panel ended 29px past the
+   window edge, `<body>` scrolled sideways (scrollWidth 1541 vs 1512, forbidden by
+   DESIGN.md §7), the send button was clipped, and the sidebar AND the document were
+   0px wide (measured). The ceiling in DESIGN.md §2 is 60vw, so it is a ceiling here
+   too — the drag clamp decides the width, the sheet decides that no stored width
+   can outgrow the window it is applied in. */
 .aipanel {
-  flex: none; width: var(--panel-w); min-width: var(--panel-w);
+  flex: none; width: min(var(--panel-w), 60vw); min-width: min(var(--panel-w), 60vw);
   display: flex; flex-direction: column; min-height: 0;
   background: var(--panel); border-left: 1px solid var(--line-soft);
 }
 /* as três abas somam exatamente 330px — nada mais entra nesta linha */
-.paneltabs { flex: none; display: flex; gap: 2px; padding: 10px 14px 8px; }
+/* The strip carries three labelled tabs, so it can want more width than the
+   panel's floor gives it. DESIGN.md §7: wide content scrolls inside its own
+   container and the page body never scrolls horizontally — without min-width:0
+   the strip pushed the third tab past the window edge and <body> scrolled. */
+.paneltabs {
+  flex: none; display: flex; gap: 2px; padding: 10px 12px 8px;
+  min-width: 0; overflow-x: auto; scrollbar-width: none;
+}
+.paneltabs::-webkit-scrollbar { display: none; }
 .ptab {
+  flex: none;
   display: inline-flex; align-items: center; gap: 6px;
-  border: none; background: none; border-radius: 8px; padding: 7px 13px;
+  border: none; background: none; border-radius: 8px; padding: 7px 10px;
   font: 600 12.5px var(--sans); color: var(--ink3); cursor: pointer;
 }
 .ptab .ic { width: 14px; height: 14px; }
@@ -1554,9 +1747,16 @@ body { background: var(--paper); color: var(--ink); }
   font: 10.5px var(--mono); color: var(--muted); white-space: nowrap; padding-bottom: 2px;
 }
 .chatpill { border: 1px solid var(--line); border-radius: 999px; padding: 2px 8px; }
-.chatthread { flex: 1; min-height: 80px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
-.chatmsg { align-self: flex-end; max-width: 90%; background: var(--paper); border: 1px solid var(--line); border-radius: 12px; padding: 8px 12px; font: 13px/1.5 var(--sans); color: var(--ink); }
-.chatans { font: 13px/1.6 var(--sans); color: var(--ink2); }
+/* DESIGN.md §7 · the conversation carries what the user pastes and what the agent
+   answers: URLs, ids, one-line shell commands. `max-width: 90%` bounds the BOX and
+   said nothing about an unbreakable token inside it, so a 70-character token gave
+   the bubble scrollWidth 616 in 265px — 351px of the message drawn outside the
+   panel and outside the window — and the thread scrolled sideways with every bubble
+   in it (647 vs 297, measured). A bubble is not a horizontal scroller: the token
+   breaks, and the thread is allowed to be narrower than its widest child. */
+.chatthread { flex: 1; min-width: 0; min-height: 80px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
+.chatmsg { align-self: flex-end; max-width: 90%; min-width: 0; overflow-wrap: anywhere; background: var(--paper); border: 1px solid var(--line); border-radius: 12px; padding: 8px 12px; font: 13px/1.5 var(--sans); color: var(--ink); }
+.chatans { font: 13px/1.6 var(--sans); color: var(--ink2); min-width: 0; overflow-wrap: anywhere; }
 .chatans .src { display: block; font: 11px var(--mono); color: var(--teal); margin-top: 4px; }
 .chatempty { font: 12px/1.6 var(--sans); color: var(--muted); }
 .composer { flex: none; display: flex; flex-direction: column; gap: 7px; }
@@ -1576,7 +1776,7 @@ body { background: var(--paper); color: var(--ink); }
 .armedchip button { border: none; background: none; color: inherit; cursor: pointer; font-size: 13px; line-height: 1; }
 .composerbox {
   display: flex; align-items: flex-end; gap: 8px;
-  border: 1px solid var(--line); border-radius: 12px; background: var(--paper); padding: 8px 8px 8px 12px;
+  border: 1px solid var(--line-control); border-radius: 12px; background: var(--paper); padding: 8px 8px 8px 12px;
 }
 .composerbox textarea {
   flex: 1; border: none; background: none; outline: none; resize: none;
@@ -1584,7 +1784,7 @@ body { background: var(--paper); color: var(--ink); }
 }
 .sendbtn {
   flex: none; width: 34px; height: 34px; border-radius: 50%;
-  border: none; background: var(--accent, var(--teal)); color: var(--on-teal);
+  border: none; background: var(--accent); color: var(--on-accent);
   font-size: 15px; cursor: pointer;
 }
 .sendbtn:hover { filter: brightness(1.06); }
@@ -1606,12 +1806,6 @@ body { background: var(--paper); color: var(--ink); }
 .termstrip #termSide { margin-left: auto; }
 .termview { flex: 1; min-height: 0; padding: 6px 8px; }
 .termview .xterm { height: 100%; }
-.termfoot {
-  flex: none; display: flex; align-items: center; gap: 10px;
-  padding: 6px 12px; font-size: 11px; color: var(--term-dim);
-  border-top: 1px solid rgba(255, 255, 255, .07);
-}
-.termfoot .ulink.danger { color: #b04a4e; margin-left: auto; }
 
 /* ============ 1a · INÍCIO ============ */
 .dest-view { padding: 34px 44px 28px; }
@@ -1633,6 +1827,14 @@ body { background: var(--paper); color: var(--ink); }
 .herotxt span { font: 13px/1.5 var(--sans); color: var(--ink3); }
 .heroarrow { margin-left: auto; font-size: 16px; color: var(--ghost); }
 .herogrid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-bottom: 28px; }
+/* Os três cartões respondem à COLUNA, não à janela (DESIGN.md §7). A trilha `1fr` é
+   minmax(auto,1fr): ela não encolhe abaixo do min-content, e os três juntos pedem
+   367px. Com o painel ✦ IA aberto a coluna tem 360px numa janela de 950px, e o
+   cartão "Perguntar à IA" era desenhado 43px FORA dela (92px a 901px), com a coluna
+   de conteúdo rolando de lado — enquanto a media query de janela só resgatava isso
+   abaixo de 900px, largura em que o painel FECHADO deixa 645px de sobra. A coluna
+   precisa de 460px (367 + os 72px de recuo do destino, com folga) para os três. */
+@container (max-width: 460px) { .herogrid { grid-template-columns: 1fr; } }
 .minicard {
   display: flex; flex-direction: column; gap: 5px; text-align: left;
   background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
@@ -1663,7 +1865,7 @@ body { background: var(--paper); color: var(--ink); }
 .orgrow:last-child { border-bottom: none; }
 .orgrow input[type="checkbox"] { accent-color: var(--teal); flex: none; margin: 0; }
 .orgrow .oname { font: 600 14px var(--sans); color: var(--ink); cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.orgrow .ometa { font: 11.5px var(--mono); color: var(--muted); }
+.orgrow .ometa { font: 11.5px/1.5 var(--sans); color: var(--muted); }
 .orgrow .ometa i { font-style: normal; color: var(--teal); }
 .orgrow .ocol { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
 .orgrow .oact { margin-left: auto; display: flex; align-items: center; gap: 8px; flex: none; }
@@ -1690,7 +1892,11 @@ body { background: var(--paper); color: var(--ink); }
 }
 .notifbar > span { flex: 1; color: var(--ink2); font-size: 11.5px; }
 .knowgrid { max-width: 760px; display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-@media (max-width: 1050px) { .knowgrid { grid-template-columns: 1fr; } }
+/* mesma regra, mesmo motivo (DESIGN.md §7): dois cartões pedem 433px de min-content,
+   e a media query de 1050px não vê o painel ✦ IA. Medido numa janela de 1051px com o
+   painel aberto: coluna de 461px, dois cartões terminando em x=732 com a coluna
+   terminando em x=716 e .wsbody rolando de lado (477 contra 461). */
+@container (max-width: 540px) { .knowgrid { grid-template-columns: 1fr; } }
 .knowcard {
   position: relative; display: flex; flex-direction: column; gap: 8px;
   border: 1px solid var(--line); border-left: 3px solid var(--teal); border-radius: 12px;
@@ -1734,15 +1940,27 @@ body { background: var(--paper); color: var(--ink); }
 .doccard .tabs.small { margin-left: auto; border-color: var(--line); }
 .doccard .tabs.small .tab.on { background: var(--ink); color: var(--paper); box-shadow: none; }
 .doc.reader { max-width: none; margin: 0; font: 14.5px/1.7 var(--sans); color: var(--ink2); }
+/* N22 · a escada parava no h2: h3 e h4 caíam no `em` herdado com o bold do
+   navegador, então o h3 saía 0,775px menor que o h2 e 50 unidades MAIS pesado —
+   o nível mais fundo lia mais forte que o pai — e ficava a 0,725px de uma frase
+   em negrito, mesma cor e mesmo peso. O h4 rendia 13,775px, MENOR que os 14,5px
+   da prosa que ele apresenta. A escada inteira é declarada aqui: tamanho, peso e
+   tinta, sempre descendo (DESIGN.md §3). */
 .doc.reader h1 { font: 650 23px var(--sans); color: var(--ink); margin: .2em 0 .5em; }
-.doc.reader h2 { font: 650 16px var(--sans); color: var(--ink); border: none; margin: 1.3em 0 .4em; }
+.doc.reader h2 { font: 650 18px var(--sans); color: var(--ink); border: none; margin: 1.3em 0 .4em; }
+.doc.reader h3 { font: 650 15.5px var(--sans); color: var(--ink); margin: 1.4em 0 .3em; }
+.doc.reader h4 { font: 600 14.5px var(--sans); color: var(--ink); margin: 1.1em 0 .25em; }
+.doc.reader h5, .doc.reader h6 { font: 600 13px var(--sans); color: var(--ink3); margin: .9em 0 .25em; }
 .approvebar { display: flex; align-items: center; gap: 10px; margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--line-soft); }
 .editfoot { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
 .editfoot .btn { flex: none; white-space: nowrap; }
 .editnote { flex: 1; font: 11px var(--mono); color: var(--muted); }
 
-/* barra markdown + editor: um card contínuo (1e) */
-.mdbar { border-radius: 10px 10px 0 0; border-bottom: none; margin-bottom: 0; background: var(--panel); }
+/* barra markdown + editor: um card contínuo (1e) — e o contorno desse card é a
+   afordância da superfície de escrita, então ele é --line-control (3:1) e não
+   uma régua de 1,2:1: a barra é a metade de cima da mesma caixa que o
+   .edithost fecha embaixo (DESIGN.md §5, WCAG 1.4.11). */
+.mdbar { border-radius: 10px 10px 0 0; border-color: var(--line-control); border-bottom: none; margin-bottom: 0; background: var(--panel); }
 .mdbar button { font: 600 12.5px var(--mono); color: var(--ink3); }
 .edithost { border-radius: 0 0 10px 10px; background: var(--panel); }
 /* Editar usa o MESMO cartão centralizado do visualizar (pedido do dono,
@@ -1753,11 +1971,13 @@ body { background: var(--paper); color: var(--ink); }
 #wsBody.editing .doccard { display: flex; flex-direction: column; flex: 1; min-height: 0; width: 100%; max-width: 700px; margin: 0 auto; padding: 20px 30px 18px; }
 #wsBody.editing .docbody { flex: 1; min-height: 0; }
 #wsBody.editing .mdbar { flex: none; margin: 0; }
-#wsBody.editing .edithost { flex: 1; min-height: 0; border: 1px solid var(--line); border-top: none; border-radius: 0 0 10px 10px; background: var(--panel); }
+/* o modo de ESCREVER não pode ter a borda mais fraca que o de ler: a mesma caixa,
+   a mesma cor de controle (a barra markdown fecha o topo dela) */
+#wsBody.editing .edithost { flex: 1; min-height: 0; border: 1px solid var(--line-control); border-top: none; border-radius: 0 0 10px 10px; background: var(--panel); }
 #wsBody.editing .findbar { margin: 0 0 8px; }
 
 /* busca no documento (1k) */
-.findbar { border-radius: 999px; padding: 8px 14px; background: var(--panel); border-color: var(--line); gap: 8px; }
+.findbar { border-radius: 999px; padding: 8px 14px; background: var(--panel); border-color: var(--line-control); gap: 8px; }
 .findbar .ic { color: var(--muted); }
 .doc mark.hl { background: color-mix(in srgb, var(--yellow) 18%, transparent); }
 .doc mark.hl.cur { background: color-mix(in srgb, var(--yellow) 35%, transparent); color: inherit; }
@@ -1770,9 +1990,16 @@ body { background: var(--paper); color: var(--ink); }
   background: color-mix(in srgb, var(--yellow) 8%, var(--panel));
   border-radius: 12px; padding: 13px 18px;
 }
-.endtxt { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.endbar { flex-wrap: wrap; }
+/* R20 · a frase explicativa tem uma largura mínima em que ainda se lê: antes ela
+   era a única coisa flexível da barra (flex:1, basis 0) contra três botões
+   flex:none, então com o painel ✦ IA aberto (coluna de 600px) sobrava menos de
+   100px para ela. Agora ela pede 260px e, quando a coluna não os tem, o grupo de
+   botões desce inteiro para a linha seguinte. */
+.endtxt { flex: 1 1 260px; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.endacts { flex: none; display: flex; align-items: center; gap: 8px; margin-left: auto; }
 .endtxt b { font: 600 13.5px var(--sans); color: var(--ink); }
-.endtxt span { font: 11.5px var(--mono); color: var(--muted); }
+.endtxt span { font: 11.5px/1.5 var(--sans); color: var(--muted); }
 .recacts { flex: none; display: flex; align-items: center; gap: 8px; padding: 18px 34px 12px; flex-wrap: wrap; }
 .recacts .mini-select { margin-left: auto; }
 .recscroll { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 34px 20px; }
@@ -1786,7 +2013,6 @@ body { background: var(--paper); color: var(--ink); }
 .recfoot .timer { font-variant-numeric: tabular-nums; color: var(--ink3); font-size: 12px; }
 .recfoot .wave { flex: 1; min-width: 40px; height: 26px; display: block; }
 .recnote { font-size: 11px; color: var(--muted); white-space: nowrap; }
-@media (max-width: 1150px) { .recnote { display: none; } }
 .privacypill {
   display: inline-flex; align-items: center; gap: 6px; flex: none;
   border: 1px solid color-mix(in srgb, var(--teal) 40%, transparent);
@@ -1828,7 +2054,7 @@ body { background: var(--paper); color: var(--ink); }
 .cfgcard .opt:hover { background: none; }
 .cfgcard .hint { margin: 0; }
 .cfgcard input[type="text"] {
-  flex: 1; border: 1px solid var(--line); border-radius: 8px; background: var(--paper);
+  flex: 1; border: 1px solid var(--line-control); border-radius: 8px; background: var(--paper);
   color: var(--ink); font: 13px var(--sans); padding: 6px 10px; outline: none;
 }
 .segrow { display: inline-flex; gap: 2px; border: 1px solid var(--line); border-radius: 999px; padding: 3px; background: var(--paper); }
@@ -1865,10 +2091,17 @@ body { background: var(--paper); color: var(--ink); }
 .cmdk-field { display: flex; align-items: center; gap: 10px; padding: 0 14px; border-bottom: 1px solid var(--line); }
 .cmdk-field .ic { color: var(--muted); }
 .cmdk-input { border-bottom: none; padding: 14px 0; }
-.cmdk-esc { flex: none; font-size: 10px; color: var(--ghost); }
+.cmdk-esc { flex: none; font-size: 10px; color: var(--muted); }
 .cmdk-group { font: 600 10px var(--mono); letter-spacing: .09em; text-transform: uppercase; color: var(--muted); padding: 10px 10px 4px; }
-.cmdk-item.on { background: color-mix(in srgb, var(--teal) 8%, transparent); }
-.cmdk-k { color: var(--ghost); border: none; font-size: 10px; }
+/* The arrow-key selection was invisible: an 8% teal wash composites to 1.12:1
+   against the rows around it in light and 1.15:1 in dark (measured), and focus
+   stays in the input, so no ring lands on the row either — Enter ran a command the
+   user could not see selected. "Selected" is a UI component state and needs 3:1
+   (WCAG 1.4.11), so the cue is a BAR in the accent; the wash (the 14% of
+   .cmdk-item.on above, the same tint the selected sidebar row uses) is what makes
+   it read as a row rather than as a border, never the cue on its own. */
+.cmdk-item.on { box-shadow: inset 3px 0 0 var(--accent); }
+.cmdk-k { color: var(--muted); border: none; font-size: 10px; }
 
 /* ============ ajustes finos nos componentes herdados ============ */
 .bitem { font-size: 13px; padding: 7px 8px; border-radius: 7px; }
@@ -1885,8 +2118,8 @@ body { background: var(--paper); color: var(--ink); }
 .bitem.addctx { border-radius: 8px; font-family: var(--sans); font-size: 11.5px; }
 .badge { border-radius: 999px; font-size: 10px; }
 .mini-select {
-  font: 11px var(--mono); color: var(--ink3); background: var(--panel);
-  border: 1px solid var(--line); border-radius: 999px; padding: 5px 10px;
+  font: 11.5px var(--sans); color: var(--ink3); background: var(--panel);
+  border: 1px solid var(--line-control); border-radius: 999px; padding: 5px 10px;
 }
 .floatmenu { width: 196px; min-width: 196px; max-width: 196px; border-color: var(--line-dash); border-radius: 10px; box-shadow: var(--sh-menu); padding: 5px; }
 .fitem2 { padding: 7px 9px; border-radius: 7px; font-size: 12.5px; }
@@ -1898,7 +2131,6 @@ body { background: var(--paper); color: var(--ink); }
 .mtgpill { bottom: 60px; }
 .tabs { border-color: var(--line); background: var(--paper); }
 .tab.on { background: var(--ink); color: var(--paper); box-shadow: none; }
-.hint { font: 11px/1.5 var(--mono); color: var(--muted); }
 .draftnote { border-radius: 10px; }
 .wave { display: block; }
 .mtg-surface { display: block; }
@@ -1914,15 +2146,27 @@ body { background: var(--paper); color: var(--ink); }
 .nico.amber { color: var(--yellow-ink); }
 
 /* Janela de referência do redesign: 1280 × 830 (laptop). Abaixo disso a
-   anatomia cede na ordem em que dói menos — o painel de 330px some antes de a
-   barra lateral apertar, e a coluna de conteúdo nunca fica menor que ~400px. */
+   anatomia cede na ordem em que dói menos — o painel para de crescer antes de a
+   barra lateral apertar. Medido, com o painel aberto: 690px de coluna de conteúdo a
+   1280, 434px a 1024 e 341px no piso de 860 da janela.
+   `display: none` was the wrong way to do that: at 1024px (half-tiling on any Mac
+   lands there, and tauri.conf allows 860) the panel was gone while ✦ IA still
+   carried its 12% fill and `aria-expanded="true"`, the Home card still focused a
+   composer inside a display:none subtree, the terminal — which is mounted in the
+   panel by default — became unreachable with no way back, and the drag grip was
+   still painted at the window's edge for a panel that did not exist. A width may
+   take a pane's SPACE; it may not take the pane. So the panel keeps existing and
+   yields width instead: below the reference window it may not be wider than 45vw,
+   whatever was persisted, and the sidebar gives up its share next (≤900px). The
+   anatomy is the same at every width — the same three panes, the same toggle telling
+   the truth — which is also why the panel does not become a drawer over the
+   document: a pane that covers the reader reads as a clipped document. */
 @media (max-width: 1040px) {
-  .aipanel { display: none; }
+  .aipanel { width: min(var(--panel-w), 45vw); min-width: min(var(--panel-w), 45vw); }
 }
 @media (max-width: 900px) {
-  .bshell { grid-template-columns: minmax(0, min(var(--side-w, var(--side-w-default)), 34vw)) 5px minmax(0, 1fr); }
+  .bshell { grid-template-columns: minmax(0, min(var(--side-w, var(--side-w-default)), 34%)) 5px minmax(0, 1fr); }
   .dest { padding: 6px 11px; }
-  .herogrid { grid-template-columns: 1fr; }
   .dest-view { padding: 26px 22px 24px; }
   .recacts, .recscroll, .recfoot, .endbar { padding-left: 22px; padding-right: 22px; }
   .endbar { margin-left: 22px; margin-right: 22px; }
@@ -1937,25 +2181,41 @@ body { background: var(--paper); color: var(--ink); }
   flex: none; width: 5px; cursor: col-resize;
   background: var(--line); opacity: .35;
 }
-.aigrip:hover, .aigrip.dragging { opacity: 1; background: var(--accent, var(--teal)); }
+.aigrip:hover, .aigrip.dragging { opacity: 1; background: var(--accent); }
 .termgrip {
   flex: none; height: 5px; cursor: row-resize;
   background: var(--line); opacity: .35;
 }
-.termgrip:hover, .termgrip.dragging { opacity: 1; background: var(--accent, var(--teal)); }
+.termgrip:hover, .termgrip.dragging { opacity: 1; background: var(--accent); }
 /* enquanto arrasta, nada mais captura o ponteiro (iframes/canvas/xterm) */
 body.resizing { cursor: col-resize; user-select: none; }
 body.resizing.rowwise { cursor: row-resize; }
 body.resizing #mainRow * { pointer-events: none; }
-.termdock { height: var(--term-h, 34vh); }
+/* Same story as the panel's width, in the other axis: dragged to 75vh of a 1440px
+   display (1080px) and reopened on a 917px window, the dock ended 309px below the
+   window edge — its prompt line included — and the document above it had 0px of
+   height (measured). The floor and the ceiling of DESIGN.md §2's table hold on
+   apply, not only while dragging. */
+.termdock { height: clamp(120px, var(--term-h, 34vh), 75vh); }
 
 /* ---- chat: resposta, passos e o bloco de permissão (ADR-0021) ---- */
 .chatans { font: 13px/1.6 var(--sans); color: var(--ink2); }
 .chatans > *:first-child { margin-top: 0; }
 .chatans h1, .chatans h2, .chatans h3 { font: 650 13.5px var(--sans); color: var(--ink); margin: .9em 0 .3em; border: none; }
 .chatans ul, .chatans ol { margin: .3em 0 .6em 1.1em; }
-.chatans pre { font-size: 11px; padding: 8px 10px; margin: .5em 0; }
-.chatans code { font-size: 11.5px; }
+/* An answer's code block had no overflow rule of its own and no family of its own:
+   it computed the UA's generic `monospace` (the one reading surface off the type
+   system, DESIGN.md §3) and was drawn 417px past the window edge — its <code> ended
+   at x=1929 in a 1512px window (measured). It is the same box `details.chatstep pre`
+   already got right: it scrolls inside itself, and a long token breaks. */
+.chatans pre {
+  font: 11px/1.5 var(--mono); padding: 8px 10px; margin: .5em 0;
+  max-width: 100%; overflow: auto; word-break: break-word;
+  /* a scroll container with no box gives the reader no edge to notice, so the block
+     borrows the tint details.chatstep pre already uses for the same content */
+  background: color-mix(in srgb, var(--ink) 4%, transparent); border-radius: 6px;
+}
+.chatans code { font-family: var(--mono); font-size: 11.5px; }
 .chatans p { margin: 0 0 .5em; }
 .chatperm {
   display: flex; flex-direction: column; gap: 6px;
@@ -1985,23 +2245,45 @@ body.resizing #mainRow * { pointer-events: none; }
 .cfgcard .field > .mono:first-child,
 .wizcard .wfield > span:first-child {
   width: auto; justify-self: start; align-self: center; line-height: 1.3;
+  font: 600 12.5px var(--sans); letter-spacing: normal;
 }
 .cfgcard .field > *:last-child, .wizcard .wfield > *:last-child { justify-self: stretch; min-width: 0; }
 .cfgcard .field select, .wizcard .wfield select,
 .cfgcard .field input[type="text"], .wizcard .wfield input {
   width: 100%; max-width: none; justify-self: stretch;
   font: 13px var(--sans); color: var(--ink);
-  background: var(--paper); border: 1px solid var(--line);
+  background: var(--paper); border: 1px solid var(--line-control);
   border-radius: 8px; padding: 7px 10px; outline: none;
 }
 .cfgcard .field select:focus, .wizcard .wfield select:focus,
-.cfgcard .field input:focus, .wizcard .wfield input:focus { border-color: var(--teal); }
+.cfgcard .field input:focus, .wizcard .wfield input:focus { border-color: var(--accent); }
+/* R14 · dentro de uma folha o anel de foco simplesmente não existia: a regra
+   `.wfield input, .wfield select, .wfield textarea { outline: none }` (0,1,1)
+   vence o `:focus-visible` global (0,1,0) nos dois sentidos, e um <select> não
+   tem cursor de texto para sobrar como pista — o controle que decide ONDE a
+   gravação vai morar ficava pixel a pixel igual ao não focado (WCAG 2.4.7).
+   Numa folha a caixa visível do controle é a linha inteira, então é ela que
+   recebe o anel; onde o campo tem caixa própria (Configurações, primeiro uso), o
+   anel é do campo. */
+.sheet .wfield:focus-within { outline: 1.5px solid var(--accent); outline-offset: 2px; }
+.cfgcard .field select:focus-visible, .wizcard .wfield select:focus-visible,
+.cfgcard .field input:focus-visible, .wizcard .wfield input:focus-visible,
+.cfgcard .field .dirinfo:focus-visible, .wizcard .wfield .dirbtn:focus-visible,
+.cfgcard input[type="text"]:focus-visible, .sidefilter:focus-visible {
+  outline: 1.5px solid var(--accent); outline-offset: 2px;
+}
+/* Two more boxes had switched the global ring off and painted nothing in its place,
+   so the caret was the only sign of focus and the Tab stop before it (the find bar's
+   own controls, the send button) had none at all: the find bar and the chat composer
+   are single boxes with more than one focusable child, so the BOX takes the ring —
+   the same rule .sheet .wfield:focus-within already follows (WCAG 2.4.7). */
+.findbar:focus-within, .composerbox:focus-within { outline: 1.5px solid var(--accent); outline-offset: 2px; }
 /* controles que não são campo de texto não devem esticar */
 .cfgcard .field .segrow, .cfgcard .field .swatches,
 .wizcard .wfield .swatches { justify-self: start; }
 .cfgcard .field .dirinfo, .wizcard .wfield .dirbtn {
   justify-self: stretch; text-align: left; direction: ltr;
-  border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px;
+  border: 1px solid var(--line-control); border-radius: 8px; padding: 7px 10px;
   background: var(--paper); font: 12px var(--mono); color: var(--ink3);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
@@ -2039,6 +2321,21 @@ body.resizing #mainRow * { pointer-events: none; }
 .manualmodal p, .manualmodal ul, .manualmodal ol { margin: 6px 0; }
 .manualmodal li { margin: 3px 0 3px 16px; }
 .manualmodal code { font-family: var(--mono); font-size: 11.5px; }
+/* N26 · the sheet declared headings, paragraphs and `code` — and neither `pre`
+   nor `table`. A code block in the manual therefore computed the UA's generic
+   monospace with no box at all, and a wide block pushed the WHOLE sheet sideways
+   instead of scrolling inside itself (DESIGN.md §7). This is the first reading
+   surface after install: it decides the block the way the other two do. */
+.manualmodal pre {
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
+  border: 1px solid var(--line-control); border-radius: 8px;
+  padding: 10px 12px; margin: 8px 0; overflow-x: auto;
+  font-family: var(--mono); font-size: 11.5px; line-height: 1.5;
+}
+.manualmodal pre code { display: block; font-size: 1em; }
+.manualmodal table { border-collapse: collapse; width: 100%; margin: 8px 0; display: block; overflow-x: auto; }
+.manualmodal th { font-weight: 650; color: var(--ink); text-align: left; }
+.manualmodal th, .manualmodal td { padding: 6px 8px; border-bottom: 1px solid var(--line); }
 /* o toggle do git segue o mesmo ritmo e a mesma coluna das outras linhas */
 .wizcard .wtoggle { padding: 12px 0 12px 182px; }
 @media (max-width: 1080px) {
@@ -2086,6 +2383,8 @@ body.resizing #mainRow * { pointer-events: none; }
   0% { border-color: var(--teal); box-shadow: 0 0 0 3px color-mix(in srgb, var(--teal) 22%, transparent); }
   100% { border-color: var(--line); box-shadow: none; }
 }
+/* the resting .composerbox border already IS the static end state */
+@media (prefers-reduced-motion: reduce) { .composerbox.flash { animation: none; } }
 
 /* ---- painel Documento: estado vazio único ---- */
 .pempty {
@@ -2141,6 +2440,14 @@ body.resizing #mainRow * { pointer-events: none; }
   font: 600 10.5px var(--sans); cursor: pointer;
 }
 .rowgen:hover { background: color-mix(in srgb, var(--teal) 16%, transparent); }
+/* R19 · encerrar uma reunião interrompida é PENDÊNCIA, não IA: âmbar é a cor de
+   "precisa de você" (DESIGN.md §3), e o teal ficaria dizendo "isto é a IA". */
+.rowgen.warn {
+  border-color: color-mix(in srgb, var(--yellow) 55%, transparent);
+  background: color-mix(in srgb, var(--yellow) 10%, transparent);
+  color: var(--yellow-ink);
+}
+.rowgen.warn:hover { background: color-mix(in srgb, var(--yellow) 18%, transparent); }
 
 /* o terminal perdeu o ×: quem governa a visibilidade é a aba ✦ IA */
 .termstrip #termSide { margin-left: auto; }
@@ -2192,7 +2499,7 @@ details.chatstep > summary {
 }
 details.chatstep > summary::-webkit-details-marker { display: none; }
 details.chatstep > summary::after {
-  content: "▸"; margin-left: auto; font-size: 9px; color: var(--ghost);
+  content: "▸"; margin-left: auto; font-size: 9px; color: var(--ink3);
   transition: transform .12s ease;
 }
 details.chatstep[open] > summary::after { transform: rotate(90deg); }
@@ -2201,7 +2508,10 @@ details.chatstep .dot { width: 5px; height: 5px; border-radius: 50%; background:
 details.chatstep .nm { font-weight: 600; }
 details.chatstep .st { color: var(--teal); font-size: 10px; }
 details.chatstep.failed { border-color: color-mix(in srgb, var(--yellow) 45%, transparent); }
-details.chatstep.failed .dot, details.chatstep.failed .st { background: var(--yellow); color: var(--yellow-ink); }
+/* the shared declaration painted the "!" amber ON amber — 1.00:1. The dot is
+   the fill, the glyph is the ink; they are not the same property. */
+details.chatstep.failed .dot { background: var(--yellow); }
+details.chatstep.failed .st { color: var(--yellow-ink); }
 details.chatstep .io { border-top: 1px solid var(--line); padding: 8px 10px; display: grid; gap: 4px; }
 details.chatstep .lbl {
   font: 600 9.5px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted);
@@ -2218,20 +2528,61 @@ details.chatstep pre {
    limitar às bordas da janela ele saía cortado. */
 .floatmenu { max-height: min(60vh, 420px); overflow-y: auto; }
 
+/* B17 · a floating PICKER is a 196px column of names, and the destructive
+   confirmation borrows the same box to carry a SENTENCE and a PATH. At 196px the
+   sentence broke into a two-word column and the path — one unbreakable token —
+   needed 297px in a 184px box: the menu's content was 302px wide inside 194px,
+   so the only copy that says what will be destroyed was cut off (measured).
+   DESIGN.md §5: a menu clamps to the viewport, it is not clipped. The
+   confirmation gets a width a sentence can be read at, still within the 260px
+   its caller reserves so it can never cross the right edge, and the path wraps
+   instead of overflowing. */
+.floatmenu:has(.confirm-actions) {
+  width: auto; min-width: 240px; max-width: min(260px, calc(100vw - 24px));
+}
+.floatmenu .fstatic {
+  display: block; min-width: 0;
+  white-space: normal; overflow-wrap: anywhere; line-height: 1.45;
+}
+
 /* O rodapé de gravação é uma linha que precisa CABER na coluna de conteúdo —
    que encolhe quando o painel ✦ IA está aberto. Sem isso os itens da direita
    (o selo de privacidade e o "encerrar") transbordavam para fora da coluna e
    ficavam invisíveis. A ordem do sacrifício é deliberada: a frase explicativa
-   encolhe primeiro, depois a onda; relógio, selo e botão nunca. */
+   encolhe primeiro, depois a onda; relógio, selo e botão nunca.
+
+   B6 · that order was right and still ended in a clipped CONTROL, because the
+   row could not wrap: with the ✦ IA panel open in a 1080px window the column is
+   490px, the four controls that never shrink need 446px of it plus the padding,
+   and `overflow: hidden` simply cut the last of them — the privacy seal, 38.6px
+   past the edge (measured; the seal is the one claim BR-8 exists to make). The
+   sacrifice order is now complete, and it ends in a second LINE rather than in a
+   clip: the sentence truncates, the sentence goes, the wave gives up its width,
+   and only then does a control wrap. It reads the COLUMN and never the window
+   (DESIGN.md §7) — the panel is what takes the column away. */
 .recfoot { min-width: 0; overflow: hidden; }
 .recfoot .timer, .recfoot .privacypill, .recfoot .btn { flex: none; }
+.recfoot .privacypill { margin-left: auto; }
 .recfoot .recnote {
   flex: 0 1 auto; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .recfoot .wave { flex: 1 1 60px; min-width: 0; }
 /* numa coluna estreita a frase some inteira antes de espremer os controles */
-@container (max-width: 640px) { .recfoot .recnote { display: none; } }
+@container (max-width: 640px) {
+  .recfoot .recnote { display: none; }
+  /* the wave asks for no width of its own, so it is spent before a control has
+     to move; and if the controls still do not fit, they wrap instead of being cut */
+  .recfoot .wave { flex: 1 1 0; }
+  .recfoot { flex-wrap: wrap; row-gap: 8px; }
+}
+/* O fim da gravação responde à COLUNA, não à janela (DESIGN.md §7): com o painel
+   de IA aberto a barra tem ~600px, e é aí que ela precisa virar duas linhas —
+   texto em cima, ações embaixo. Uma media query de janela não veria isso. */
+@container (max-width: 660px) {
+  .endbar { flex-direction: column; align-items: stretch; }
+  .endacts { margin-left: 0; flex-wrap: wrap; }
+}
 .bmain { container-type: inline-size; }
 
 /* Os três destinos ficam no CENTRO da janela, não colados no seletor de
