@@ -1355,8 +1355,15 @@ fn purge_audio_core(dir: &Path) -> Result<Manifest, String> {
         for entry in entries.flatten() {
             let name = entry.file_name();
             let name = name.to_string_lossy();
+            // BR-8: TODO artefato do caminho ao vivo é transitório. Os três últimos
+            // são restos de uma transcrição interrompida no meio (app fechado,
+            // whisper morto) — e desde que os nomes são únicos (ADR-0025 §28) eles
+            // acumulam em vez de se sobrescrever, então deixar de limpá-los seria
+            // áudio guardado sem ninguém ter pedido.
             let transiente = (name.starts_with("system-") && name.ends_with(".wav"))
-                || name.starts_with(".tail.snapshot."); // carve interrompido
+                || name.starts_with(".tail.snapshot.")
+                || name.starts_with(".window-")
+                || name.starts_with(".seg.");
             if transiente && entry.path().is_file() {
                 std::fs::remove_file(entry.path()).map_err(|e| e.to_string())?;
             }
@@ -1578,7 +1585,12 @@ fn transcribe_segment_blocking(input: TranscribeSegmentInput) -> Result<Transcri
     }
     let audio_dir = dir.join("audio");
     std::fs::create_dir_all(&audio_dir).map_err(|e| e.to_string())?;
-    let seg = audio_dir.join(".seg.webm");
+    // Nome ÚNICO por chamada, pela mesma razão do corte de janela (ADR-0025 §28) e
+    // do snapshot (ADR-0022 §407): dois segmentos de microfone podem estar em voo ao
+    // mesmo tempo — o despejo do último segmento ao pausar/encerrar acontece junto
+    // com uma rotação — e com nome fixo o primeiro a terminar apaga o arquivo
+    // debaixo do outro.
+    let seg = audio_dir.join(format!(".seg.{}.webm", crate::epoch_millis()));
     std::fs::write(&seg, &input.data).map_err(|e| e.to_string())?;
     let ffmpeg = which("ffmpeg").ok_or_else(ffmpeg_not_found_err)?;
     let cli = crate::paths::whisper_cli_bin();
@@ -2069,7 +2081,20 @@ mod tests {
         let base = tmp("purge-segments");
         let c = seed(&base);
         let audio = c.dir.join("audio");
-        for f in ["system.wav", "system-2.wav", "system-3.wav", "mic.webm"] {
+        for f in [
+            "system.wav",
+            "system-2.wav",
+            "system-3.wav",
+            "mic.webm",
+            // BR-8 — TODO artefato transitório do caminho ao vivo tem de sair. Um
+            // corte de janela ou um segmento de microfone interrompido no meio
+            // (app fechado, whisper morto) sobrevivia ao purge, e desde a ADR-0025
+            // §28 os nomes são únicos, então acumulavam em vez de se sobrescrever.
+            ".tail.snapshot.123.wav",
+            ".window-0-7.wav",
+            ".window-18000-8.wav",
+            ".seg.1786628048016.webm",
+        ] {
             std::fs::write(audio.join(f), b"x").unwrap();
         }
         purge_audio_core(&c.dir).unwrap();

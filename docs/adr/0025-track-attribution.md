@@ -226,6 +226,43 @@ its own:
 2. **Physics decides the label** — invariants 3 and 4, with the thresholds measured
    rather than guessed (see the amendment above).
 
+## §28 — Follow-up (2026-08-13): the first 18 seconds were empty on BOTH tracks
+
+Reported from a real meeting right after the two PRs landed: from 00:00 to 00:18
+nothing was recorded — both tracks showed a single whisper silence-hallucination
+("Obrigado.") — while everything from 00:18 on was correct, with per-utterance
+timecodes 2 seconds apart. The second window even started mid-sentence, proving the
+audio of the first window existed and its transcription was lost, not absent.
+
+**Mechanism.** `transcribe_wav_window` carved into
+`<src dir>/.window-<from_ms>.wav`. The tail's source is
+`<meeting>/audio/.tail.snapshot.<nanos>.wav` and the mic segment's is
+`<meeting>/audio/.seg.webm`, so both resolve to the same directory — and on the
+FIRST tick both carve with `from_ms = 0`, i.e. into the SAME `.window-0.wav`, from
+two `spawn_blocking` threads. Two ffmpeg processes writing one path, and the first
+to finish deletes it under the other. From the second tick on the tail's offset is
+18000, 36000, … so the names stop colliding and the defect vanishes — which is
+exactly the shape of the report.
+
+This is the **third** appearance of this bug class, and the mechanism is what
+generalises: ADR-0022 §407 made the *snapshot* name unique and stopped there; the
+*carve* destination and `.seg.webm` were left on fixed names. Both are unique per
+call now — the carve by a process counter rather than the clock, because the two
+carves start in the same instant and nanoseconds can tie.
+
+**Found on the way, and worse in kind:** `purge_audio_core` cleaned `system-N.wav`
+and `.tail.snapshot.*` but never `.window-*` or `.seg*`. A transcription interrupted
+mid-flight (app closed, whisper killed) left audio behind that the purge would never
+remove — a BR-8 leak, and with unique names it accumulates instead of overwriting.
+The purge now covers every transient artifact of the live path, and the test seeds
+all of them.
+
+**Not fixed here, because it is the owner's call:** whisper writes "Obrigado." (and
+"Obrigado por assistir") over silence in Portuguese, and `filterHallucinations` does
+not list it. Adding it would delete a real "Obrigado." too — a legitimate utterance
+in a meeting — which is why it is not being added without a decision. With the carve
+collision fixed, windows mostly carry real audio, so the symptom should become rare.
+
 ## What the tests hold
 
 - The **invariant** directly: a system utterance is never dropped because of the
@@ -241,3 +278,8 @@ its own:
 - The anchor's cross-language contract (Swift prints what Rust reads), because a
   mismatch would degrade silently.
 - The final system flush happens **before** `brain_meeting_stop`.
+- Two carves at the same offset never share a file (§28), and the purge leaves
+  **nothing** behind — every transient name of the live path is seeded in the test.
+- The parser against **real** whisper-cli output, and that a carved window's
+  timestamps restart at zero (verified by running ffmpeg and whisper, not by reading
+  their docs).

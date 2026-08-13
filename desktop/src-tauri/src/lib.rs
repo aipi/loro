@@ -870,6 +870,23 @@ pub(crate) fn wav_duration_ms_from_bytes(b: &[u8]) -> Option<u64> {
     None
 }
 
+// Where a window is carved before whisper reads it. UNIQUE per call, and that is
+// the whole point: the meeting's two tracks rotate on the same 18s tick, so on the
+// FIRST tick both carve with from_ms=0, into the same meeting's audio dir. With the
+// offset alone in the name they landed on ONE file from two threads — two ffmpeg
+// processes writing it and the first to finish deleting it under the other. The
+// first 18 seconds of a meeting came out empty on BOTH tracks, and only the first,
+// because from the second tick on the offsets differ. Same bug class as the
+// snapshot in ADR-0022 §407.
+//
+// The id is a process counter, not the clock: the two carves start in the same
+// instant, so nanoseconds can tie.
+fn window_carve_path(src: &Path, from_ms: u64) -> PathBuf {
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let id = N.fetch_add(1, Ordering::Relaxed);
+    src.with_file_name(format!(".window-{from_ms}-{id}.wav"))
+}
+
 // Transcribe just the window [from_ms, to_ms] of an already-16k-or-any WAV and
 // RETURN its timed segments (no global event). The caller owns any overlap
 // (~1.5s) and the offset bookkeeping. Additive sibling of transcribe_wav.
@@ -889,7 +906,7 @@ pub(crate) fn transcribe_wav_window(
     from_ms: u64,
     to_ms: Option<u64>,
 ) -> Result<Vec<SpokenSegment>, String> {
-    let dst = src.with_file_name(format!(".window-{from_ms}.wav"));
+    let dst = window_carve_path(src, from_ms);
     let carve = proc::command(ffmpeg)
         .args(window_ffmpeg_args(src, &dst, from_ms, to_ms))
         .output()
@@ -5649,6 +5666,36 @@ mod tests {
         let b = window_ffmpeg_args(src, dst, 1_500, None);
         assert!(b.windows(2).any(|w| w[0] == "-ss" && w[1] == "1.500"));
         assert!(!b.iter().any(|s| s == "-to"));
+    }
+
+    // ADR-0025 §28 — reported from a real meeting: from 00:00 to 00:18 NOTHING was
+    // recorded on either track (both showed a whisper silence-hallucination), while
+    // everything from 00:18 on was perfect. The two tracks rotate on the SAME 18s
+    // tick, and on the FIRST tick both carve with from_ms=0 — into the same
+    // `.window-0.wav`, in the same meeting's audio dir, from two spawn_blocking
+    // threads. Two ffmpeg processes writing one path, and the first to finish
+    // deletes it under the other. From the second tick on the tail's offset is
+    // 18000, 36000, … so the names stop colliding and the defect disappears — which
+    // is exactly the shape of the report. Same bug class as the snapshot in
+    // ADR-0022 §407: that name was made unique, this one was not.
+    #[test]
+    fn two_carves_at_the_same_offset_never_share_a_file() {
+        let tail = Path::new("/m/audio/.tail.snapshot.123.wav");
+        let mic = Path::new("/m/audio/.seg.456.webm");
+        // as duas trilhas, no primeiro tique, com o MESMO from_ms
+        let a = window_carve_path(tail, 0);
+        let b = window_carve_path(mic, 0);
+        assert_ne!(a, b, "as duas trilhas cortariam para o mesmo arquivo");
+        // e nem duas chamadas idênticas se cruzam
+        assert_ne!(window_carve_path(tail, 0), window_carve_path(tail, 0));
+        // continua ao lado do arquivo de origem (quarentena sob pessoal/)
+        assert_eq!(a.parent(), Some(Path::new("/m/audio")));
+        assert!(a
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with(".window-"));
+        assert_eq!(a.extension().unwrap(), "wav");
     }
 
     // ADR-0025 — the anchor's contract spans two languages: Swift prints it, Rust
