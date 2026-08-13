@@ -208,6 +208,49 @@
     return blockMs(segStartEpoch, offsetMs, originEpoch, segPausedMs);
   }
 
+  // ---- parágrafos: como as falas são ESCRITAS (ADR-0025 §29) -----------------
+  // O timestamp por fala é o que faz a atribuição funcionar — sem ele a decisão de
+  // quem falou volta a raciocinar em blocos de 18s. Mas um bloco POR FALA deixa o
+  // texto picado: uma janela virava cinco blocos, cada um com o rótulo
+  // `[mm:ss · fonte]` no meio de uma frase.
+  //
+  // Então o tempo de cada fala continua decidindo de quem ela é, e o agrupamento
+  // acontece só na ESCRITA: falas seguidas da mesma trilha viram um parágrafo,
+  // carimbado no tempo real da primeira. Não é volta ao bloco de 18s — antes o
+  // carimbo era o início da JANELA (errado pela defasagem dos relógios) e a
+  // atribuição não tinha nada mais fino que ele.
+  //
+  // Uma pausa quebra o parágrafo: sem isso o carimbo mentiria sobre a segunda metade
+  // do bloco, que é exatamente o que se estava consertando.
+  //
+  // O limiar é apertado, e a razão é medida: numa fala contínua os segmentos do
+  // whisper se ENCOSTAM — o seguinte começa onde o anterior acaba (0 → 5,780 →
+  // 6,780 numa captura real) —, então qualquer folga acima de ~1s já é pausa de
+  // verdade. Apertado também preserva melhor a ordem da conversa, porque uma pausa
+  // numa trilha costuma ser a OUTRA trilha falando: um parágrafo que atravessa essa
+  // pausa passa a ordenar antes da fala que o interrompeu.
+  const PARAGRAPH_GAP_MS = 2000;
+  function speechParagraphs(utterances, gapMs) {
+    const list = Array.isArray(utterances) ? utterances : [];
+    const gap = gapMs == null ? PARAGRAPH_GAP_MS : gapMs;
+    const out = [];
+    for (let i = 0; i < list.length; i++) {
+      const u = list[i];
+      if (!u) continue;
+      const tMs = u.tMs || 0;
+      const endMs = u.endMs == null ? tMs : u.endMs;
+      const prev = out[out.length - 1];
+      if (prev && tMs - prev.endMs <= gap) {
+        prev.text += " " + u.text;
+        if (endMs > prev.endMs) prev.endMs = endMs;
+      } else {
+        // cópia: quem chamou continua usando as falas soltas para o eco
+        out.push({ tMs: tMs, endMs: endMs, text: u.text });
+      }
+    }
+    return out;
+  }
+
   // ---- o dono da junção (ADR-0025) ------------------------------------------
   // Antes as duas trilhas eram dois appendadores INDEPENDENTES competindo pelo
   // mesmo arquivo, e era a corrida entre eles que decidia o rótulo. Agora existe um
@@ -475,7 +518,7 @@
     stripMarker, transcriptText, acervoJoin, aiStatusLine, MARKER,
     isHallucination, filterHallucinations,
     speechTokens, tokenContainment, leakCoverage, micLeakOfSystem, partialCrossTalk,
-    sysBlockMs, micBlockMs, coverageGate,
+    sysBlockMs, micBlockMs, coverageGate, speechParagraphs,
     meetingTitleFromManifest, meetingLabel,
   };
 });

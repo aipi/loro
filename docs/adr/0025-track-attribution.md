@@ -263,6 +263,43 @@ not list it. Adding it would delete a real "Obrigado." too — a legitimate utte
 in a meeting — which is why it is not being added without a decision. With the carve
 collision fixed, windows mostly carry real audio, so the symptom should become rare.
 
+## §29 — Follow-up (2026-08-13): timing per utterance, writing per paragraph
+
+Owner report on the same capture: keeping each utterance as its own block made the
+text **choppy**. One window became five blocks, each carrying a
+`[mm:ss · fonte]` label in the middle of a sentence:
+
+```
+[00:18 · sistema] modelo, e aí dando tudo
+[00:20 · sistema] certo, depois eu apresento pra vocês
+```
+
+The owner asked for the old grouping back. The distinction that makes both things
+possible: **the per-utterance time is what the attribution needs; the paragraph is
+what the reader needs.** So the timing stays and the grouping moves to the write:
+consecutive utterances of the same track become one block, stamped at the real time
+of the first one.
+
+This is *not* a return to the 18s block. Before, the stamp was the start of the
+**window** — wrong by the clock skew — and the attribution had nothing finer than
+that to reason with. Now the leak is decided utterance by utterance, on intervals,
+and only then is the surviving text joined. A test asserts that order, because doing
+it the other way round would silently restore the coarse granularity this ADR exists
+to remove.
+
+A pause breaks the paragraph, and the threshold is tight (2s) for a measured reason:
+in continuous speech whisper's segments **touch** — the next starts where the previous
+ends (0 → 5.780 → 6.780 in a real capture) — so any gap above ~1s is a real pause.
+Tight also preserves conversation order better, because a pause in one track is
+often the *other* track speaking.
+
+**The price, stated:** a paragraph can span up to a window, so a short interjection
+by the other track sorts *after* the paragraph it interrupted. It cannot be fixed by
+splitting on the other track's speech, because the join deliberately writes the
+system window **before** the mic's utterances for that interval exist — splitting on
+what has arrived would make the output depend on arrival order, which is the very
+thing this ADR removed.
+
 ## What the tests hold
 
 - The **invariant** directly: a system utterance is never dropped because of the

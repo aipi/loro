@@ -191,6 +191,20 @@ test("ADR-0025 — as duas trilhas convertem pela MESMA linha do tempo", () => {
 // O dono da junção. O portão em si é puro e testado em meeting.test.js; aqui o que
 // se prende é a FIAÇÃO dele — que a espera aconteça no lugar certo e que ninguém
 // fique preso nela. Uma espera que nunca é liberada seria pior que a corrida.
+// §29 — o agrupamento é de ESCRITA. Se ele acontecesse antes do teste de vazamento,
+// a atribuição voltaria a comparar parágrafos de 18s: exatamente a granularidade
+// grossa que este ADR existe para acabar.
+test("ADR-0025 — agrupar em parágrafo não custa precisão na atribuição", () => {
+  const body = fnBody("appendMeetingSpeech");
+  const testa = body.indexOf("LM.micLeakOfSystem(");
+  const registra = body.indexOf("meeting.appended.push");
+  const agrupa = body.indexOf("LM.speechParagraphs(");
+  const escreve = body.indexOf('invoke("brain_meeting_append_timed"');
+  assert.ok(testa < agrupa, "o vazamento é decidido fala por fala, antes de juntar");
+  assert.ok(registra < agrupa, "a lista de comparação guarda as falas SOLTAS");
+  assert.ok(agrupa < escreve, "e o arquivo recebe o parágrafo");
+});
+
 test("ADR-0025 — a fala do microfone espera a junção antes de ser resolvida", () => {
   const body = fnBody("onPreviewSegment");
   const espera = body.indexOf("awaitAttribution(");

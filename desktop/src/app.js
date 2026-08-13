@@ -1090,9 +1090,14 @@ async function appendMeetingSpeech(id, utterances, source) {
     fresh.push(chunk);
   }
   if (!fresh.length) return { appended: 0, dropped: dropped };
+  // ADR-0025 §29: as falas soltas ficam em `meeting.appended` — é com elas, uma a
+  // uma, que o vazamento é decidido. O que vai para o arquivo são PARÁGRAFOS: falas
+  // seguidas juntas num bloco, carimbado no tempo real da primeira. Um bloco por
+  // fala punha um rótulo `[mm:ss · fonte]` no meio de cada frase.
+  const blocks = LM.speechParagraphs(fresh);
   try {
     await invoke("brain_meeting_append_timed", {
-      input: { id, blocks: fresh.map((c) => ({ tMs: c.tMs, source: source, chunk: c.text })) },
+      input: { id, blocks: blocks.map((b) => ({ tMs: b.tMs, source: source, chunk: b.text })) },
     });
   } catch (e) {
     // não ficou no arquivo: sair da lista para não barrar o gêmeo legítimo

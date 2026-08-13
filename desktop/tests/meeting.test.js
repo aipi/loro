@@ -413,6 +413,62 @@ test("vazamento em OUTRO instante não é sinalizado — o empurrãozinho não p
   assert.strictEqual(LM.partialCrossTalk(fala(PARC_MIC, 60000, 75000, "mic"), recent), false);
 });
 
+// ADR-0025 §29 — relatado em uso real, com captura: o timestamp por fala deixou o
+// texto PICADO. Uma janela de 18s virava cinco blocos, cada um com seu rótulo
+// `[mm:ss · fonte]` no meio de uma frase:
+//   [00:18 · sistema] modelo, e aí dando tudo
+//   [00:20 · sistema] certo, depois eu apresento pra vocês
+// O tempo de cada fala é o que faz a atribuição funcionar e não pode sair; o que
+// muda é como o resultado é ESCRITO. Falas seguidas da mesma trilha viram um
+// parágrafo, carimbado no tempo REAL da primeira delas.
+test("falas seguidas da mesma trilha viram um parágrafo só", () => {
+  const janela = [
+    { tMs: 18000, endMs: 20000, text: "modelo, e aí dando tudo" },
+    { tMs: 20000, endMs: 22000, text: "certo, depois eu apresento pra vocês" },
+    { tMs: 22000, endMs: 24000, text: "aí como é que tá o projeto," },
+  ];
+  const blocos = LM.speechParagraphs(janela);
+  assert.strictEqual(blocos.length, 1, "cinco rótulos no meio de uma frase é o defeito");
+  assert.strictEqual(blocos[0].tMs, 18000, "carimbado no início da PRIMEIRA fala");
+  assert.strictEqual(blocos[0].endMs, 24000, "e cobrindo até o fim da última");
+  assert.strictEqual(blocos[0].text,
+    "modelo, e aí dando tudo certo, depois eu apresento pra vocês aí como é que tá o projeto,");
+});
+
+test("um silêncio longo quebra o parágrafo, e a segunda metade guarda o tempo dela", () => {
+  const blocos = LM.speechParagraphs([
+    { tMs: 0, endMs: 3000, text: "Bom dia a todos." },
+    // dez segundos de silêncio: juntar faria o carimbo do bloco mentir sobre a
+    // segunda metade dele, que é justamente o que se queria consertar
+    { tMs: 13000, endMs: 16000, text: "Vamos começar então." },
+  ]);
+  assert.strictEqual(blocos.length, 2);
+  assert.strictEqual(blocos[0].tMs, 0);
+  assert.strictEqual(blocos[1].tMs, 13000);
+});
+
+// A propriedade que faz o agrupamento funcionar com o whisper de verdade: numa fala
+// contínua os segmentos se ENCOSTAM (medido: 0 → 5,780 → 6,780), então a fala
+// corrida vira um parágrafo por construção, com qualquer limiar razoável.
+test("fala contínua do whisper encosta, então junta sempre", () => {
+  const real = [
+    { tMs: 0, endMs: 5780, text: "Bom dia a todos, vamos revisar os custos da frota hoje, depois eu mando os números" },
+    { tMs: 5780, endMs: 6780, text: "do fornecedor." },
+  ];
+  const blocos = LM.speechParagraphs(real);
+  assert.strictEqual(blocos.length, 1);
+  assert.ok(blocos[0].text.endsWith("os números do fornecedor."));
+});
+
+test("agrupar não inventa nem perde fala", () => {
+  assert.deepStrictEqual(LM.speechParagraphs([]), []);
+  assert.deepStrictEqual(LM.speechParagraphs(null), []);
+  const uma = [{ tMs: 5000, endMs: 6000, text: "Obrigado." }];
+  assert.deepStrictEqual(LM.speechParagraphs(uma), [{ tMs: 5000, endMs: 6000, text: "Obrigado." }]);
+  // e não muta a entrada (o chamador ainda usa as falas soltas para o eco)
+  assert.strictEqual(uma[0].text, "Obrigado.");
+});
+
 // ADR-0025 · o dono da junção. Antes as duas trilhas eram dois appendadores
 // correndo para o mesmo arquivo, e a corrida decidia o rótulo. A trilha de sistema
 // escreve na hora (ela nunca é descartada, não tem o que esperar); a fala do
