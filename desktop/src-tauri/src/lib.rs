@@ -5682,14 +5682,29 @@ mod tests {
     // timecode and cross-track comparison had nothing finer than the window.
     #[test]
     fn parse_whisper_segments_keeps_the_time_of_each_utterance() {
+        // Saída REAL do whisper-cli (v1.8, modelo small, pt) sobre 7s de fala. Foi
+        // colhida rodando a ferramenta, não escrita à mão: é o formato de linha que
+        // sustenta todo o resto, e 7 segundos já rendem DUAS falas com tempos
+        // próprios — a granularidade que a janela de 18s jogava fora.
+        let real = "\n[00:00:00.000 --> 00:00:05.780]   Bom dia a todos, vamos revisar os custos da frota hoje, depois eu mando os números\n\
+            [00:00:05.780 --> 00:00:06.780]   do fornecedor.\n";
+        let segs = parse_whisper_segments(real);
+        assert_eq!(segs.len(), 2);
+        assert_eq!(segs[0].t_ms, 0);
+        assert_eq!(segs[0].end_ms, 5_780);
+        assert!(segs[0].text.starts_with("Bom dia a todos"));
+        assert_eq!(segs[1].t_ms, 5_780);
+        assert_eq!(segs[1].end_ms, 6_780);
+        assert_eq!(segs[1].text, "do fornecedor.");
+
+        // e o ruído em volta continua fora
         let stdout = "### START | t0 = 0 ms\n\
             [00:00:00.000 --> 00:00:02.000]   Bom dia a todos\n\
             [00:00:02.000 --> 00:00:03.000]   [Start speaking]\n\
             [00:00:03.500 --> 00:00:05.000]   vamos revisar os custos\n\
             linha sem timestamp\n";
-        let segs = parse_whisper_segments(stdout);
         assert_eq!(
-            segs,
+            parse_whisper_segments(stdout),
             vec![
                 SpokenSegment {
                     t_ms: 0,
@@ -5703,6 +5718,23 @@ mod tests {
                 },
             ]
         );
+    }
+
+    // A janela é cortada com `-ss`, que é seek de ENTRADA: os timestamps de saída
+    // voltam a zero, e é por isso que o tail soma o `from_ms` de volta. Verificado
+    // rodando ffmpeg+whisper de verdade — cortando fala.wav a partir de 4s, o
+    // whisper devolveu "[00:00:00.000 --> 00:00:02.000] depois eu mando os números
+    // do fornecedor", isto é, o áudio do segundo 4 carimbado em zero. Sem essa
+    // soma, toda janela depois da primeira cairia no começo da reunião.
+    #[test]
+    fn a_carved_window_restarts_at_zero_so_the_caller_adds_its_offset() {
+        let carved =
+            "[00:00:00.000 --> 00:00:02.000]   depois eu mando os números do fornecedor.\n";
+        let seg = &parse_whisper_segments(carved)[0];
+        assert_eq!(seg.t_ms, 0);
+        let from_ms = 4_000;
+        assert_eq!(seg.t_ms + from_ms, 4_000);
+        assert_eq!(seg.end_ms + from_ms, 6_000);
     }
 
     // ONE parser for both paths (the streaming/file paths only need the text).
