@@ -1,4 +1,4 @@
-# ADR-0025 — The quality gauntlet: what eight rounds against the bar decided
+# ADR-0025 — Quality gauntlet: eight rounds against the bar
 
 - Status: accepted
 - Date: 2026-08-12
