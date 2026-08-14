@@ -53,13 +53,13 @@ test("parseFrontMatter: inline-object refs list", () => {
     "tema: cobranca",
     "refs:",
     "  - {id: r1, tipo: image, caminho: acervo://pessoal/temas/cobranca/img/a.png}",
-    "  - {id: r2, tipo: doc, caminho: acervo://contextos/cobranca/context.md}",
+    "  - {id: r2, tipo: doc, caminho: acervo://contexts/cobranca/context.md}",
   ].join("\n");
   const o = Refs.parseFrontMatter(fm);
   assert.strictEqual(Array.isArray(o.refs), true);
   assert.strictEqual(o.refs.length, 2);
   assert.deepStrictEqual(o.refs[0], { id: "r1", tipo: "image", caminho: "acervo://pessoal/temas/cobranca/img/a.png" });
-  assert.strictEqual(o.refs[1].caminho, "acervo://contextos/cobranca/context.md");
+  assert.strictEqual(o.refs[1].caminho, "acervo://contexts/cobranca/context.md");
 });
 
 test("parseFrontMatter: block-item refs list", () => {
@@ -67,7 +67,7 @@ test("parseFrontMatter: block-item refs list", () => {
     "refs:",
     "  - id: r1",
     "    tipo: audio",
-    "    caminho: acervo://pessoal/temas/x/reunioes/2026-07-27-a/reuniao.wav",
+    "    caminho: acervo://pessoal/temas/x/meetings/2026-07-27-a/reuniao.wav",
     "  - id: r2",
     "    tipo: doc",
     "    caminho: acervo://pessoal/avulso/2026-07-27-nota.md",
@@ -82,7 +82,7 @@ test("parseFrontMatter: block-item refs list", () => {
 test("parseFrontMatter: audio list + promovido nested map", () => {
   const fm = [
     "audio:",
-    "  - {id: a1, tipo: audio, caminho: acervo://pessoal/temas/x/reunioes/r/reuniao.wav}",
+    "  - {id: a1, tipo: audio, caminho: acervo://pessoal/temas/x/meetings/r/reuniao.wav}",
     "promovido:",
     "  para: cobranca",
     "  branch: rfc/cobranca-x",
@@ -114,20 +114,20 @@ test("parseFrontMatter: null/undefined input yields {} (never throws)", () => {
 // ---- parseRef ----
 
 test("parseRef: acervo:// anchored form", () => {
-  assert.deepStrictEqual(Refs.parseRef("acervo://contextos/x.md"), { scheme: "acervo", path: "contextos/x.md" });
+  assert.deepStrictEqual(Refs.parseRef("acervo://contexts/x.md"), { scheme: "acervo", path: "contexts/x.md" });
 });
 
 test("parseRef: anything else is relative", () => {
   assert.deepStrictEqual(Refs.parseRef("../img/a.png"), { scheme: "relative", path: "../img/a.png" });
   assert.deepStrictEqual(Refs.parseRef("./sibling.md"), { scheme: "relative", path: "./sibling.md" });
-  assert.deepStrictEqual(Refs.parseRef("notas/a.md"), { scheme: "relative", path: "notas/a.md" });
+  assert.deepStrictEqual(Refs.parseRef("notes/a.md"), { scheme: "relative", path: "notes/a.md" });
 });
 
 // ---- resolveRelative ----
 
 test("resolveRelative: resolves against the source file's directory", () => {
   assert.strictEqual(
-    Refs.resolveRelative("pessoal/temas/x/notas/a.md", "../img/chart.png"),
+    Refs.resolveRelative("pessoal/temas/x/notes/a.md", "../img/chart.png"),
     "pessoal/temas/x/img/chart.png",
   );
 });
@@ -138,13 +138,13 @@ test("resolveRelative: collapses ./ and current dir", () => {
 });
 
 test("resolveRelative: escape ABOVE root is clamped to root (never yields a ../)", () => {
-  const out = Refs.resolveRelative("pessoal/temas/x/notas/a.md", "../../../../../../etc/passwd");
+  const out = Refs.resolveRelative("pessoal/temas/x/notes/a.md", "../../../../../../etc/passwd");
   assert.strictEqual(out.includes(".."), false);
   assert.strictEqual(out, "etc/passwd");
 });
 
 test("resolveRelative: a leading slash is treated as acervo-root-relative", () => {
-  assert.strictEqual(Refs.resolveRelative("pessoal/avulso/n.md", "/contextos/x.md"), "contextos/x.md");
+  assert.strictEqual(Refs.resolveRelative("pessoal/avulso/n.md", "/contexts/x.md"), "contexts/x.md");
 });
 
 // ---- tipoFromExt ----

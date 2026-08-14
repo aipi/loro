@@ -19,16 +19,46 @@
   // Two versioned worlds must be legible at the tab level (ADR-0008).
   function deriveKind(rel) {
     const s = String(rel);
-    if (s.startsWith("contextos/")) return "context";
+    if (s.startsWith("contexts/")) return "context";
     if (s.startsWith("pessoal/")) return "personal";
     return "other";
+  }
+
+  // ADR-0026 §12 — the tab says WHERE you are. Every document of the acervo is
+  // called `context.md`, `CHANGELOG.md` or `reuniao.md`, so a basename title made
+  // three open themes into three identical tabs reading "context.md": the strip
+  // stopped being a map, and an untranslated file name became the only visible
+  // identity. The name comes from the PATH, which already carries the identity —
+  // no lookup, no IPC, still a pure reducer.
+  // O reducer é puro e não conhece o i18n do app; quem o carrega no navegador
+  // injeta o tradutor. Em teste (e sem tradutor) o msgid pt-BR é a própria string.
+  const tr = (m) => (typeof root !== "undefined" && root.LoroI18n ? root.LoroI18n.t(m) : m);
+
+  function tabTitleFor(rel) {
+    const s = String(rel);
+    const ctx = /^contexts\/(.+)\/([^/]+)$/.exec(s);
+    if (ctx) {
+      const [, theme, file] = ctx;
+      if (file === "context.md") return theme;
+      // os rótulos são msgid: com a UI em inglês a faixa dizia "frota · histórico"
+      if (file === "CHANGELOG.md") return theme + " · " + tr("histórico");
+      if (file === "CODEOWNERS") return theme + " · " + tr("donos");
+      return theme + " · " + file;
+    }
+    // brainstorming/<tema>/meetings/<AAAA-MM-DD-HHMM-reuniao>/<arquivo>
+    const mtg = /^brainstorming\/([^/]+)\/meetings\/(\d{4}-\d{2}-\d{2})-(\d{2})(\d{2})-[^/]*\/[^/]+$/.exec(s);
+    if (mtg) {
+      const [, theme, day, hh, mm] = mtg;
+      return `${theme} · ${day} ${hh}:${mm}`;
+    }
+    return basename(rel);
   }
 
   function makeTab(id, rel, preview) {
     return {
       id,
       rel,
-      title: basename(rel),
+      title: tabTitleFor(rel),
       kind: deriveKind(rel),
       mode: "view",
       pinned: false,
@@ -148,7 +178,7 @@
 
   function renameTab(ws, id, rel) {
     return ws.tabs.some((t) => t.id === id)
-      ? patchTab(ws, id, { rel, title: basename(rel), kind: deriveKind(rel) })
+      ? patchTab(ws, id, { rel, title: tabTitleFor(rel), kind: deriveKind(rel) })
       : ws;
   }
 
@@ -183,6 +213,5 @@
     renameTab,
     closeByRel,
     nextMru,
-    activeTab,
-  };
+    activeTab, tabTitleFor,};
 });

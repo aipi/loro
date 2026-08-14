@@ -57,7 +57,7 @@ test("C24 — a nota criada recebe a transcrição e é aberta para o usuário a
 
 test("C24 — nada é escrito no mundo versionado: uma ideia é o único destino", () => {
   const body = fnBody("save");
-  assert.ok(!/contextos\//.test(body),
+  assert.ok(!/contexts\//.test(body),
     "BR-8 — uma transcrição crua não entra em conhecimento (versionado)");
 });
 

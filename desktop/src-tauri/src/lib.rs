@@ -1345,7 +1345,7 @@ fn context_file(dir: &Path) -> Option<PathBuf> {
 }
 
 fn seed_context(base: &Path, name: &str, lang: &str, mold: Option<&str>) -> Result<(), String> {
-    let d = base.join("contextos").join(name);
+    let d = crate::paths::contexts_dir(base).join(name);
     std::fs::create_dir_all(&d).map_err(|e| folder_write_error(&e))?;
     let ch = d.join("CHANGELOG.md");
     if !ch.exists() {
@@ -1391,7 +1391,7 @@ fn ctx_child_dirs(dir: &Path) -> Vec<String> {
         .unwrap_or_default()
 }
 
-// Contexts derived from disk. A directory under contextos/ is a CONTEXT when it
+// Contexts derived from disk. A directory under contexts/ is a CONTEXT when it
 // has a context.md (or legacy guia.md) OR it is a leaf (no context children) — so
 // a folder the user creates by hand is mapped even before it has one. Dirs that only
 // group sub-contexts are treated as folders (not listed here). Hierarchical
@@ -1416,7 +1416,7 @@ fn list_contexts(base: &Path) -> Vec<String> {
         }
     }
     let mut out = Vec::new();
-    walk(&base.join("contextos"), "", 1, &mut out);
+    walk(&crate::paths::contexts_dir(base), "", 1, &mut out);
     out.sort();
     out.dedup();
     out
@@ -1477,16 +1477,23 @@ fn ensure_acervo_structure(
     // First setup = no loop state yet. The queue guide (inbox/_prompt.md) is
     // consumed by the loop, so re-materializations must never re-inject it.
     let first_setup = !base.join(".brain/state.json").exists();
-    for sub in [
-        "inbox",
-        "processed",
-        "reunioes",
-        "notas",
-        ".brain",
-        "contextos",
-        ".claude/commands",
-    ] {
+    for sub in ["inbox", "processed", ".brain", ".claude/commands"] {
         std::fs::create_dir_all(base.join(sub)).map_err(|e| folder_write_error(&e))?;
+    }
+    // ADR-0026 §14 — as três pastas renomeadas nascem pelo nome que o DISCO já usa.
+    // Criá-las pelo nome novo sem olhar fazia um acervo não migrado ganhar
+    // `contexts/` vazia ao lado da `contextos/` cheia: como a resolução prefere a
+    // que existe, todo o conhecimento sumia da tela — e a migração passava a
+    // reportar "conflito: as duas coexistem" para sempre, sem conserto possível
+    // sem apagar pasta na mão. Aqui a estrutura ACOMPANHA o acervo; quem renomeia
+    // é a migração, que é um ato do dono.
+    for (current, legacy) in [
+        ("meetings", "reunioes"),
+        ("notes", "notas"),
+        ("contexts", "contextos"),
+    ] {
+        let dir = crate::paths::acervo_dir(base, current, legacy);
+        std::fs::create_dir_all(&dir).map_err(|e| folder_write_error(&e))?;
     }
     // /loro-context is the thin Claude adapter for the queue -> context loop
     // (ADR-0013); analyse/answer are the meeting-AI skills the terminal Claude runs
@@ -1575,6 +1582,9 @@ fn ensure_acervo_structure(
         };
         std::fs::write(&index, body).map_err(|e| folder_write_error(&e))?;
     }
+    // ADR-0026 §18 — the índice remissivo is born with the acervo, so a fresh
+    // project already opens with both entry documents instead of one.
+    let _ = crate::acervo::write_terms(base, lang);
     // Collaboration scaffolding (opt-in): CODEOWNERS defines who approves each
     // context; the PR template is the RFC body. Non-destructive — never touch an
     // existing CODEOWNERS/template (users curate owners by hand).
@@ -1756,6 +1766,7 @@ fn brain_setup(
             lang,
             template,
             agent,
+            ticket_base: String::new(),
         });
         id
     };
@@ -1798,6 +1809,22 @@ fn brain_set_agent(agent: String) -> Result<(), String> {
     let normalized = normalize_agent(&agent);
     if let Some(a) = cfg.acervos.iter_mut().find(|a| a.dir == dir) {
         a.agent = normalized;
+    }
+    write_loro_config(&cfg)
+}
+
+// ADR-0026 §2: where this project's external locators live. Normalized on the
+// way in, so a value that is not http(s) is stored as empty and the reader keeps
+// the id as a plain locator instead of linking somewhere nobody asked for.
+#[tauri::command]
+fn brain_set_ticket_base(base: String) -> Result<(), String> {
+    let mut cfg = read_loro_config();
+    let dir = active_acervo(&cfg)
+        .map(|a| a.dir.clone())
+        .ok_or("acervo not configured")?;
+    let normalized = normalize_ticket_base(&base);
+    if let Some(a) = cfg.acervos.iter_mut().find(|a| a.dir == dir) {
+        a.ticket_base = normalized;
     }
     write_loro_config(&cfg)
 }
@@ -1876,12 +1903,12 @@ fn brain_add_context(name: String) -> Result<(), String> {
     seed_context(Path::new(&cfg.brain_dir), &slug, &lang, mold.as_deref())
 }
 
-// Pure, testable core: delete a context/folder dir under contextos/.
+// Pure, testable core: delete a context/folder dir under contexts/.
 fn delete_context_dir(base: &Path, name: &str) -> Result<(), String> {
     if !valid_context(name) {
         return Err("err.invalid_name".into());
     }
-    let src = base.join("contextos").join(name);
+    let src = crate::paths::contexts_dir(base).join(name);
     if !src.is_dir() {
         return Err("err.context_not_found".into());
     }
@@ -1896,7 +1923,7 @@ fn brain_delete_context(name: String) -> Result<(), String> {
     delete_context_dir(Path::new(&cfg.brain_dir), &name)
 }
 
-// Pure, testable core: rename/move a context dir within contextos/.
+// Pure, testable core: rename/move a context dir within contexts/.
 fn rename_context_dir(base: &Path, from: &str, to: &str) -> Result<(), String> {
     let to = to.trim().to_lowercase().replace(' ', "-");
     if !valid_context(from) || !valid_context(&to) {
@@ -1905,7 +1932,7 @@ fn rename_context_dir(base: &Path, from: &str, to: &str) -> Result<(), String> {
     if from == to {
         return Ok(());
     }
-    let root = base.join("contextos");
+    let root = crate::paths::contexts_dir(base);
     let src = root.join(from);
     if !src.is_dir() {
         return Err("err.context_not_found".into());
@@ -1948,12 +1975,12 @@ fn brain_move_context_to_acervo(name: String, target_id: String) -> Result<(), S
     if target == active {
         return Err("err.already_in_acervo".into());
     }
-    let src = PathBuf::from(&active).join("contextos").join(&name);
+    let src = crate::paths::contexts_dir(Path::new(&active)).join(&name);
     if !src.is_dir() {
         return Err("err.context_not_found".into());
     }
     let leaf = name.rsplit('/').next().unwrap_or(&name);
-    let dest = PathBuf::from(&target).join("contextos").join(leaf);
+    let dest = crate::paths::contexts_dir(Path::new(&target)).join(leaf);
     if dest.exists() {
         return Err("err.context_exists_in_target".into());
     }
@@ -2211,7 +2238,7 @@ fn gh_pr_status(number: u64) -> Result<PrInfo, String> {
 }
 
 // Abstracted history for the timeline UI: a simple list of versions. `rel` scopes
-// it to one knowledge file (e.g. "contextos/frota/context.md"); None = the acervo.
+// it to one knowledge file (e.g. "contexts/frota/context.md"); None = the acervo.
 #[tauri::command]
 fn brain_timeline(rel: Option<String>) -> Vec<Commit> {
     let Some(cfg) = read_brain_config() else {
@@ -2480,6 +2507,11 @@ fn brain_migrate(apply: Option<bool>) -> Result<MigrationReport, String> {
 }
 
 fn migrate_acervo(base: &Path, apply: bool, lang: &str) -> Result<MigrationReport, String> {
+    // ADR-0026 §14 — the folders are renamed FIRST: everything below reads the
+    // acervo by its current (English) names, so a legacy tree has to become one
+    // before the rest of the migration looks at it.
+    let mut folder_moves = Vec::new();
+    rename_acervo_folders(base, apply, &mut folder_moves)?;
     let ctxs = list_contexts(base);
     let mut report = MigrationReport {
         dry_run: !apply,
@@ -2491,12 +2523,14 @@ fn migrate_acervo(base: &Path, apply: bool, lang: &str) -> Result<MigrationRepor
         renamed_world: vec![],
     };
 
+    report.renamed_world.extend(folder_moves);
+
     // ADR-0013: rename the legacy non-versioned world before folding incubadora, so
     // both land in the new brainstorming/ tree.
     rename_personal_world(base, apply, &mut report.renamed_world)?;
 
     for c in &ctxs {
-        let cdir = base.join("contextos").join(c);
+        let cdir = crate::paths::contexts_dir(base).join(c);
         let guia = cdir.join("guia.md");
         let ctx = cdir.join("context.md");
         if guia.is_file() && ctx.is_file() {
@@ -2506,8 +2540,8 @@ fn migrate_acervo(base: &Path, apply: bool, lang: &str) -> Result<MigrationRepor
             if apply {
                 migrate_rename(
                     base,
-                    &format!("contextos/{c}/guia.md"),
-                    &format!("contextos/{c}/context.md"),
+                    &format!("contexts/{c}/guia.md"),
+                    &format!("contexts/{c}/context.md"),
                 )?;
             }
         }
@@ -2631,7 +2665,7 @@ fn migrate_acervo(base: &Path, apply: bool, lang: &str) -> Result<MigrationRepor
 
     // ADR-0013: fold a legacy top-level incubadora/ into the non-versioned
     // brainstorming/ world. Non-destructive — files are COPIED (the original stays
-    // on disk; a later commit simply untracks brainstorming/); notas/ is left
+    // on disk; a later commit simply untracks brainstorming/); notes/ is left
     // versioned and untouched. Reports every planned move; never deletes.
     fold_incubadora(base, apply, &mut report.incubated)?;
 
@@ -2641,8 +2675,129 @@ fn migrate_acervo(base: &Path, apply: bool, lang: &str) -> Result<MigrationRepor
     Ok(report)
 }
 
+// ADR-0026 §14 — the acervo's folders, in English. Same posture as the pessoal/
+// rename that came before it: rename (atomic, same volume), never clobber a
+// destination that exists, and idempotent so a second pass is a no-op. `anexos`
+// is nested inside each context, so it is renamed by walking the tree after the
+// root folders moved.
+const FOLDER_RENAMES: [(&str, &str); 3] = [
+    ("contextos", "contexts"),
+    ("reunioes", "meetings"),
+    ("notas", "notes"),
+];
+const NESTED_RENAMES: [(&str, &str); 3] = [
+    ("reunioes", "meetings"),
+    ("notas", "notes"),
+    ("anexos", "attachments"),
+];
+
+fn rename_acervo_folders(base: &Path, apply: bool, out: &mut Vec<String>) -> Result<(), String> {
+    for (legacy, current) in FOLDER_RENAMES {
+        let from = base.join(legacy);
+        let to = base.join(current);
+        if !from.is_dir() {
+            continue;
+        }
+        if to.exists() {
+            out.push(format!(
+                "conflito: {legacy}/ e {current}/ coexistem — nada movido"
+            ));
+            continue;
+        }
+        out.push(format!("{legacy}/ -> {current}/"));
+        if apply {
+            std::fs::rename(&from, &to).map_err(|e| e.to_string())?;
+        }
+    }
+    // The FILES too, or an acervo migrates half-way: English folders holding
+    // Portuguese documents is a tree nobody can reason about. Same posture as the
+    // folders — never clobber a destination that already exists.
+    let file_renames = [
+        ("reuniao.md", crate::meeting::LIVING_FILE),
+        ("indice.md", crate::acervo::TOPIC_DOC),
+        ("auditoria.jsonl", "audit.jsonl"),
+        ("marcadores.jsonl", "markers.jsonl"),
+    ];
+    // Só o mundo do brainstorming e a raiz: um `indice.md` que a PESSOA escreveu
+    // dentro de contexts/ (ou um arquivo esperando em inbox/) não é artefato
+    // gerado, e renomeá-lo quebraria o link que aponta para ele — numa migração
+    // cuja postura declarada é não destruir nada.
+    let mut pending = vec![base.join("brainstorming"), base.join("pessoal")];
+    while let Some(dir) = pending.pop() {
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for e in rd.flatten() {
+            let path = e.path();
+            let name = e.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') {
+                continue;
+            }
+            if path.is_dir() {
+                pending.push(path);
+                continue;
+            }
+            let Some((_, current)) = file_renames.iter().find(|(legacy, _)| *legacy == name) else {
+                continue;
+            };
+            let to = path.with_file_name(current);
+            if to.exists() {
+                out.push(format!("conflito: {} ja existe", to.display()));
+                continue;
+            }
+            out.push(format!("{name} -> {current}"));
+            if apply {
+                std::fs::rename(&path, &to).map_err(|e| e.to_string())?;
+            }
+        }
+    }
+
+    // These folders also live NESTED — a meeting has its own notes/ and
+    // attachments/, a context has attachments/, a topic has all three. Renaming
+    // only the root ones left half the tree in Portuguese. Deepest first, so a
+    // parent never moves out from under a child still queued.
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    let mut pending = vec![base.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for e in rd.flatten().filter(|e| e.path().is_dir()) {
+            let name = e.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') {
+                continue;
+            }
+            dirs.push(e.path());
+            pending.push(e.path());
+        }
+    }
+    dirs.sort_by_key(|p| std::cmp::Reverse(p.components().count()));
+    for path in dirs {
+        let name = match path.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+        let Some((_, current)) = NESTED_RENAMES.iter().find(|(legacy, _)| *legacy == name) else {
+            continue;
+        };
+        if !path.is_dir() {
+            continue; // the parent already moved: this path is stale
+        }
+        let to = path.with_file_name(current);
+        if to.exists() {
+            out.push(format!("conflito: {} ja existe", to.display()));
+            continue;
+        }
+        out.push(format!("{name}/ -> {current}/"));
+        if apply {
+            std::fs::rename(&path, &to).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
 // ADR-0013: rename the legacy non-versioned world pessoal/ -> brainstorming/.
-// pessoal/temas/<slug> -> brainstorming/<slug> (and tema.md -> indice.md);
+// pessoal/temas/<slug> -> brainstorming/<slug> (and tema.md -> index.md, ADR-0026 §14);
 // pessoal/avulso and any other pessoal/<x> -> brainstorming/<x>. If brainstorming/
 // already exists, report a conflict and DO NOT clobber. Prefer rename (atomic,
 // same volume); on failure copy the tree and KEEP the original (non-destructive).
@@ -2694,11 +2849,11 @@ fn rename_personal_world(base: &Path, apply: bool, out: &mut Vec<String>) -> Res
                 copy_tree(&fp, &tp)?; // cross-device fallback; original kept
             }
         }
-        // tema.md -> indice.md inside each migrated brainstorming
+        // tema.md -> the topic document inside each migrated brainstorming
         if let Ok(rd) = std::fs::read_dir(&target) {
             for e in rd.flatten().filter(|e| e.path().is_dir()) {
                 let old = e.path().join("tema.md");
-                let new = e.path().join("indice.md");
+                let new = crate::acervo::topic_doc_of(&e.path());
                 if old.is_file() && !new.exists() {
                     let _ = std::fs::rename(&old, &new);
                 }
@@ -2858,7 +3013,7 @@ fn move_queue_item(
     std::fs::rename(&src, &dest).map_err(|e| e.to_string())
 }
 
-// Move any acervo file into a context's `referencias/` (or to `notas/` when no
+// Move any acervo file into a context's `referencias/` (or to `notes/` when no
 // context is given) — lets the user remanage documents/notes across contexts.
 #[tauri::command]
 fn brain_move(rel: String, dest_context: String) -> Result<String, String> {
@@ -2880,12 +3035,14 @@ fn brain_move(rel: String, dest_context: String) -> Result<String, String> {
         .to_string();
     let dc = dest_context.trim();
     let destdir = if dc.is_empty() {
-        base.join("notas")
+        base.join("notes")
     } else {
         if !valid_context(dc) {
             return Err("err.invalid_context".into());
         }
-        base.join("contextos").join(dc).join("referencias")
+        crate::paths::contexts_dir(&base)
+            .join(dc)
+            .join("referencias")
     };
     std::fs::create_dir_all(&destdir).map_err(|e| e.to_string())?;
     let target = destdir.join(&fname);
@@ -3157,7 +3314,7 @@ fn brain_write(rel: String, content: String) -> Result<(), String> {
     if !(rel.ends_with(".md") || rel.ends_with(".txt")) {
         return Err("err.text_files_only".into());
     }
-    // ADR-0009 write guard: meeting transcript/audit/audio never enters contextos/.
+    // ADR-0009 write guard: meeting transcript/audit/audio never enters contexts/.
     if is_versioning_denied(&rel) {
         return Err("err.meeting_into_versioned".into());
     }
@@ -3234,7 +3391,7 @@ const QUICKOPEN_EXTS: &[&str] = &[
 const QUICKOPEN_MAX_BYTES: u64 = 512 * 1024;
 
 fn quickopen_kind(rel: &str) -> &'static str {
-    if rel.starts_with("contextos/") {
+    if rel.starts_with("contexts/") {
         "context"
     } else if rel.starts_with("brainstorming/") || rel.starts_with("pessoal/") {
         // ADR-0013: the non-versioned world is `brainstorming/`; legacy `pessoal/`
@@ -3374,13 +3531,36 @@ struct BrainStatus {
     contexts: Vec<BrainCtx>,
     inbox: Vec<BrainFile>,
     processed: usize,
-    reunioes: Vec<BrainFile>,
-    notas: Vec<BrainFile>,
+    meetings: Vec<BrainFile>,
+    notes: Vec<BrainFile>,
     incubadora: Vec<BrainFile>,
+    // ADR-0026 — the acervo's entry documents (INDEX.md, TERMS.md). They live at
+    // the root, so the contexts tree never listed them: the file the protocol
+    // tells everyone to read first was reachable only by typing its name into ⌘K.
+    //
+    // The JSON key is spelled out because `BrainStatus` has no `rename_all`: every
+    // other field is a single word, so nobody noticed — and this one shipped as
+    // `entry_docs` while the reader asked for `entryDocs`, which is a row that
+    // never drew and a feature that never existed. A test pins both sides.
+    #[serde(rename = "entryDocs")]
+    entry_docs: Vec<BrainFile>,
+    // ADR-0026 §20: a estrutura é a antiga e a leitura seria ambígua — a tela
+    // para e oferece a migração em vez de mostrar meio acervo
+    #[serde(rename = "legacyLayout")]
+    legacy_layout: bool,
     activity: String,
 }
 
 fn list_files(base: &Path, sub: &str) -> Vec<BrainFile> {
+    list_files_filtered(base, sub, true)
+}
+
+// The same listing, given the resolved directory instead of a name — so a caller
+// that had to pick between two spellings (ADR-0026 §14) picks once, from disk.
+fn list_files_at(dir: &Path) -> Vec<BrainFile> {
+    let (Some(base), Some(sub)) = (dir.parent(), dir.file_name().and_then(|n| n.to_str())) else {
+        return Vec::new();
+    };
     list_files_filtered(base, sub, true)
 }
 
@@ -3437,9 +3617,11 @@ fn brain_status() -> BrainStatus {
             contexts: vec![],
             inbox: vec![],
             processed: 0,
-            reunioes: vec![],
-            notas: vec![],
+            meetings: vec![],
+            notes: vec![],
             incubadora: vec![],
+            entry_docs: vec![],
+            legacy_layout: false,
             activity: String::new(),
         };
     };
@@ -3447,7 +3629,7 @@ fn brain_status() -> BrainStatus {
     let contexts = list_contexts(&base)
         .iter()
         .map(|c| {
-            let cdir = base.join("contextos").join(c);
+            let cdir = crate::paths::contexts_dir(&base).join(c);
             let entries = std::fs::read_to_string(cdir.join("CHANGELOG.md"))
                 .map(|t| t.lines().filter(|l| l.starts_with("## ")).count())
                 .unwrap_or(0);
@@ -3488,17 +3670,57 @@ fn brain_status() -> BrainStatus {
                 .join("\n")
         })
         .unwrap_or_default();
+    // ADR-0026 §18 — o índice remissivo se mantém sozinho. FORA da thread
+    // principal: `brain_status` é um comando síncrono, e no Tauri v2 isso roda na
+    // main thread — varrer todos os contextos ali a cada poll é exatamente a
+    // classe de bug do ADR-0022 §28, que já custou três aparições. O trabalho é
+    // solto; a próxima leitura vê o resultado.
+    {
+        let base = base.clone();
+        let lang = crate::config::active_acervo_lang();
+        std::thread::spawn(move || crate::acervo::refresh_terms_if_changed(&base, &lang));
+    }
+
     BrainStatus {
         configured: true,
         dir: cfg.brain_dir.clone(),
         contexts,
         inbox: list_queue(&base),
         processed: list_files_filtered(&base, "processed", false).len(),
-        reunioes: list_files(&base, "reunioes"),
-        notas: list_files(&base, "notas"),
+        // ADR-0026 §14 — o nome vem do disco: um acervo não migrado ainda tem
+        // `reunioes/` e `notas/`, e ler só o nome novo mostrava tudo vazio
+        meetings: list_files_at(&crate::paths::acervo_dir(&base, "meetings", "reunioes")),
+        notes: list_files_at(&crate::paths::acervo_dir(&base, "notes", "notas")),
         incubadora: incub,
+        entry_docs: entry_docs(&base),
+        legacy_layout: crate::paths::is_legacy_layout(&base),
         activity,
     }
+}
+
+// Only files the acervo's own protocol names as a starting point, and only when
+// they exist on disk — a row for a document that is not there is a control that
+// does nothing (DESIGN.md §1).
+const ENTRY_DOC_NAMES: [&str; 2] = ["INDEX.md", crate::acervo::TERMS_FILE];
+
+fn entry_docs(base: &Path) -> Vec<BrainFile> {
+    ENTRY_DOC_NAMES
+        .iter()
+        .filter_map(|name| {
+            let p = base.join(name);
+            p.is_file().then(|| BrainFile {
+                name: (*name).to_string(),
+                path: (*name).to_string(),
+                mtime: p
+                    .metadata()
+                    .ok()
+                    .and_then(|m| m.modified().ok())
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0),
+            })
+        })
+        .collect()
 }
 
 // imported filename: the "<contexto>--" prefix steers the loop
@@ -3551,7 +3773,7 @@ fn import_into_inbox(
         // These bytes come from OUTSIDE the acervo, so a name collision is a
         // different file with the same name — and the item already in the fila may
         // have been edited there. Never overwritten, exactly as the sibling door
-        // `brain_import_files` treats anexos/.
+        // `brain_import_files` treats attachments/.
         let dest = crate::acervo::next_free_name(inbox, &name);
         std::fs::copy(src, &dest).map_err(|e| format!("{name}: {e}"))?;
         n += 1;
@@ -3579,13 +3801,13 @@ async fn brain_import(app: AppHandle, context: Option<String>) -> Result<usize, 
     import_into_inbox(&inbox, &srcs, context.as_deref())
 }
 
-// ADR-0005: import files from the computer straight into an anexos/ folder —
+// ADR-0005: import files from the computer straight into an attachments/ folder —
 // a brainstorming's OR a context's (owner request: "no contexto ... consiga
 // add a partir do computador"). Mirrors brain_import, but the destination is
-// an anexos/ folder (not the inbox), filenames are kept as-is (anexos are
+// an attachments/ folder (not the inbox), filenames are kept as-is (anexos are
 // arbitrary files — pdf/xlsx/images), and collisions get a numeric suffix
 // instead of clobbering. dest_rel is guarded by guarded_anexos_dir (only a
-// normalized brainstorming/contextos anexos path is accepted).
+// normalized brainstorming/contexts anexos path is accepted).
 #[tauri::command]
 async fn brain_import_files(app: AppHandle, dest_rel: String) -> Result<usize, String> {
     let cfg = read_brain_config().ok_or("err.acervo_not_configured")?;
@@ -4213,6 +4435,7 @@ pub fn run() {
             brain_list_acervos,
             brain_set_auto_context,
             brain_set_agent,
+            brain_set_ticket_base,
             chat::chat_send,
             chat::chat_cancel,
             chat::chat_reset,
@@ -4291,6 +4514,12 @@ pub fn run() {
             brain_annotation_update,
             brain_annotation_delete,
             brain_add_ref,
+            brain_knowledge_graph,
+            brain_backlinks,
+            brain_index_terms,
+            brain_index_write,
+            brain_pii_scan,
+            brain_topic_doc,
             brain_promote,
             brain_meeting_start,
             brain_meeting_stop,
@@ -4300,6 +4529,7 @@ pub fn run() {
             brain_meeting_append_timed,
             brain_meeting_write_artifact,
             brain_meeting_marker,
+            brain_meeting_set_origin,
             brain_meeting_set_consent,
             brain_meeting_manifest,
             brain_meeting_rename,
@@ -4353,6 +4583,7 @@ mod tests {
             lang: "pt".into(),
             template: "engenharia".into(),
             agent: "claude".into(),
+            ticket_base: String::new(),
         }];
         // asking for a NEW project on a taken folder is refused, with the name
         // of the project that owns it so the UI can say which one it is
@@ -4383,6 +4614,7 @@ mod tests {
             lang: "pt".into(),
             template: "engenharia".into(),
             agent: "claude".into(),
+            ticket_base: String::new(),
         }
     }
 
@@ -4775,10 +5007,10 @@ mod tests {
         // skipping hidden dirs (.git) and oversized/binary files.
         let root = std::env::temp_dir().join(format!("loro-la-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(root.join("contextos/a")).unwrap();
+        std::fs::create_dir_all(root.join("contexts/a")).unwrap();
         std::fs::create_dir_all(root.join("pessoal/temas/x")).unwrap();
         std::fs::create_dir_all(root.join(".git")).unwrap();
-        std::fs::write(root.join("contextos/a/context.md"), "# a").unwrap();
+        std::fs::write(root.join("contexts/a/context.md"), "# a").unwrap();
         std::fs::write(root.join("pessoal/temas/x/nota.md"), "nota").unwrap();
         std::fs::write(root.join(".git/config"), "[core]\n").unwrap();
         // oversized image (>512KB): allowed extension but skipped by the size guard
@@ -4786,7 +5018,7 @@ mod tests {
 
         let hits = list_all_in(&root);
         let rels: Vec<&str> = hits.iter().map(|h| h.rel.as_str()).collect();
-        assert!(rels.contains(&"contextos/a/context.md"));
+        assert!(rels.contains(&"contexts/a/context.md"));
         assert!(rels.contains(&"pessoal/temas/x/nota.md"));
         assert_eq!(
             hits.len(),
@@ -4796,7 +5028,7 @@ mod tests {
 
         let ctx = hits
             .iter()
-            .find(|h| h.rel == "contextos/a/context.md")
+            .find(|h| h.rel == "contexts/a/context.md")
             .unwrap();
         assert_eq!(ctx.kind, "context");
         assert_eq!(ctx.title, "context.md");
@@ -4837,7 +5069,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("loro-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         for c in ["frota", "engenharia/frontend", "engenharia/backend"] {
-            let d = root.join("contextos").join(c);
+            let d = root.join("contexts").join(c);
             std::fs::create_dir_all(&d).unwrap();
             std::fs::write(d.join("guia.md"), "x").unwrap();
         }
@@ -4856,7 +5088,7 @@ mod tests {
             "frota/eletrica/piloto/pods", // level 4 (beyond the old cap of 3) -> listed
         ];
         for c in with_ctx {
-            let d = root.join("contextos").join(c);
+            let d = root.join("contexts").join(c);
             std::fs::create_dir_all(&d).unwrap();
             std::fs::write(d.join("context.md"), "x").unwrap();
         }
@@ -4874,13 +5106,13 @@ mod tests {
         let root = ctx_fixture("mv");
         // move into a new area (creates the parent)
         rename_context_dir(&root, "frota", "operacoes/frota").unwrap();
-        assert!(!root.join("contextos/frota").exists());
-        assert!(root.join("contextos/operacoes/frota/guia.md").is_file());
+        assert!(!root.join("contexts/frota").exists());
+        assert!(root.join("contexts/operacoes/frota/guia.md").is_file());
         // renames a whole FOLDER (the subtree follows)
         rename_context_dir(&root, "engenharia", "eng").unwrap();
-        assert!(root.join("contextos/eng/frontend/guia.md").is_file());
+        assert!(root.join("contexts/eng/frontend/guia.md").is_file());
         // a collision is refused
-        std::fs::create_dir_all(root.join("contextos/frota2")).unwrap();
+        std::fs::create_dir_all(root.join("contexts/frota2")).unwrap();
         let err = rename_context_dir(&root, "operacoes/frota", "frota2").unwrap_err();
         assert_eq!(err, "err.context_exists");
         // an invalid name is refused
@@ -4892,10 +5124,10 @@ mod tests {
     fn delete_removes_context_and_folder() {
         let root = ctx_fixture("del");
         delete_context_dir(&root, "frota").unwrap();
-        assert!(!root.join("contextos/frota").exists());
+        assert!(!root.join("contexts/frota").exists());
         // whole folder (with subcontexts)
         delete_context_dir(&root, "engenharia").unwrap();
-        assert!(!root.join("contextos/engenharia").exists());
+        assert!(!root.join("contexts/engenharia").exists());
         // missing and invalid names are refused
         assert!(delete_context_dir(&root, "nada").is_err());
         assert!(delete_context_dir(&root, "../fora").is_err());
@@ -4931,8 +5163,8 @@ mod tests {
     fn codeowners_generates_commented_line_per_context() {
         let co = codeowners_template(&["frota".into(), "engenharia/frontend".into()], "pt");
         // commented lines: an unfilled CODEOWNERS never blocks GitHub
-        assert!(co.contains("# /contextos/frota/    @owner"));
-        assert!(co.contains("# /contextos/engenharia/frontend/    @owner"));
+        assert!(co.contains("# /contexts/frota/    @owner"));
+        assert!(co.contains("# /contexts/engenharia/frontend/    @owner"));
         assert!(co.contains("CODEOWNERS"));
     }
 
@@ -4970,9 +5202,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         ensure_acervo_structure(&root, &["frota".into()], "pt", None).unwrap();
         // the official source of truth is context.md; no guia.md nor brainstorming/
-        assert!(root.join("contextos/frota/context.md").is_file());
-        assert!(!root.join("contextos/frota/guia.md").exists());
-        assert!(!root.join("contextos/frota/brainstorming").exists());
+        assert!(root.join("contexts/frota/context.md").is_file());
+        assert!(!root.join("contexts/frota/guia.md").exists());
+        assert!(!root.join("contexts/frota/brainstorming").exists());
         // collaboration scaffolding
         assert!(root.join(".github/CODEOWNERS").is_file());
         assert!(root.join(".github/pull_request_template.md").is_file());
@@ -4981,6 +5213,131 @@ mod tests {
         // idempotent and non-destructive: running again does not break
         ensure_acervo_structure(&root, &["frota".into()], "pt", None).unwrap();
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ADR-0026 §20 — o portão. O estado meio-migrado é pior que qualquer um dos
+    // dois extremos, e foi ele que fez o conhecimento sumir da tela: o app
+    // reconhece a estrutura antiga e para, em vez de mostrar meio acervo.
+    #[test]
+    fn a_legacy_layout_is_reported_so_the_screen_can_stop() {
+        let root = std::env::temp_dir().join(format!("loro-gate-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("contextos/frota")).unwrap();
+        assert!(
+            crate::paths::is_legacy_layout(&root),
+            "contextos/ é a antiga"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("reunioes")).unwrap();
+        assert!(crate::paths::is_legacy_layout(&root), "reunioes/ também");
+
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("contexts/frota")).unwrap();
+        std::fs::create_dir_all(root.join("meetings")).unwrap();
+        assert!(
+            !crate::paths::is_legacy_layout(&root),
+            "um acervo migrado não é portão"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ADR-0026 §14 — the migration is user-triggered, so until it runs an existing
+    // acervo still has the Portuguese folders. Reading has to find them, or the
+    // upgrade looks like data loss: no themes, no meetings, no notes.
+    #[test]
+    fn an_acervo_that_has_not_migrated_still_opens() {
+        let root = std::env::temp_dir().join(format!("loro-legacy-open-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("contextos/frota")).unwrap();
+        std::fs::write(root.join("contextos/frota/context.md"), "# frota").unwrap();
+        std::fs::create_dir_all(root.join("reunioes")).unwrap();
+        std::fs::write(root.join("reunioes/r.md"), "# r").unwrap();
+        std::fs::create_dir_all(root.join("notas")).unwrap();
+        std::fs::write(root.join("notas/n.md"), "# n").unwrap();
+
+        assert_eq!(
+            list_contexts(&root),
+            vec!["frota".to_string()],
+            "os temas aparecem"
+        );
+        assert_eq!(
+            list_files_at(&crate::paths::acervo_dir(&root, "meetings", "reunioes")).len(),
+            1,
+            "as reuniões aparecem"
+        );
+        assert_eq!(
+            list_files_at(&crate::paths::acervo_dir(&root, "notes", "notas")).len(),
+            1,
+            "as notas aparecem"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ADR-0026 §16 — a NEW acervo is born with everything this ADR decided. Every
+    // rule here was applied by hand to one existing acervo during the work; a rule
+    // that only lives in a migration is a rule the next project will not have.
+    // This test is the guarantee, and it fails the day a convention is taught to
+    // the migration and forgotten in the generator.
+    #[test]
+    fn a_fresh_acervo_is_born_with_every_convention() {
+        for lang in ["pt", "en"] {
+            let root =
+                std::env::temp_dir().join(format!("loro-fresh-{lang}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&root);
+            ensure_acervo_structure(&root, &["frota".to_string()], lang, None).unwrap();
+
+            // §14 — the folders are English, and no Portuguese one is created
+            for dir in ["contexts", "meetings", "notes", "inbox", "processed"] {
+                assert!(root.join(dir).is_dir(), "[{lang}] missing {dir}/");
+            }
+            for legacy in ["contextos", "reunioes", "notas", "anexos"] {
+                assert!(!root.join(legacy).exists(), "[{lang}] created {legacy}/");
+            }
+
+            // the entry documents the protocol sends everyone to
+            assert!(root.join("INDEX.md").is_file(), "[{lang}] no INDEX.md");
+            assert!(
+                root.join("TERMS.md").is_file(),
+                "[{lang}] a fresh acervo has no índice remissivo"
+            );
+
+            let agents = std::fs::read_to_string(root.join("AGENTS.md")).unwrap();
+            let flat = agents.split_whitespace().collect::<Vec<_>>().join(" ");
+            // §1 — a cited context is a link, and a handoff carries its kind
+            assert!(flat.contains("](../"), "[{lang}] no relative-link rule");
+            for kind in ["upstream", "downstream"] {
+                assert!(flat.contains(kind), "[{lang}] no edge kind {kind}");
+            }
+            // §10 — the reading protocol lands on a section, not just a file
+            let facts = if lang == "en" {
+                "section 5"
+            } else {
+                "seção 5"
+            };
+            assert!(flat.contains(facts), "[{lang}] no facts-section rule");
+            // §15 — the hotspot id carries its date
+            let hotspot = if lang == "en" {
+                "H-YYYY-MM-DD-<slug>"
+            } else {
+                "H-AAAA-MM-DD-<apelido>"
+            };
+            assert!(flat.contains(hotspot), "[{lang}] hotspot id has no date");
+            // §11 — where a meeting came from, as an id
+            assert!(flat.contains("origem"), "[{lang}] no meeting-origin rule");
+
+            // the context mould itself carries the dated hotspot format
+            let ctx = std::fs::read_to_string(root.join("contexts/frota/context.md")).unwrap();
+            assert!(
+                ctx.contains("[!HOTSPOT] H-"),
+                "[{lang}] mould lost the hotspot"
+            );
+            assert!(
+                ctx.contains("MM-DD-"),
+                "[{lang}] the mould's hotspot id has no date"
+            );
+            let _ = std::fs::remove_dir_all(&root);
+        }
     }
 
     // ---- ADR-0003: usage templates seed AGENTS.md addendum, skills and the
@@ -5009,7 +5366,7 @@ mod tests {
             "# Guia da fila — teste\n"
         );
         // the vertical's own context.md mold, placeholder resolved
-        let ctx = std::fs::read_to_string(root.join("contextos/contas/context.md")).unwrap();
+        let ctx = std::fs::read_to_string(root.join("contexts/contas/context.md")).unwrap();
         assert!(ctx.starts_with("# contas — contexto"));
         assert!(ctx.contains("Molde da vertical"));
         // the loop consumed the guide; a re-materialization must NOT re-inject it
@@ -5056,7 +5413,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("loro-mig-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         // legacy acervo: guia.md + one loose idea in brainstorming/
-        let d = root.join("contextos/frota");
+        let d = root.join("contexts/frota");
         std::fs::create_dir_all(d.join("brainstorming")).unwrap();
         std::fs::write(d.join("guia.md"), "conhecimento").unwrap();
         std::fs::write(d.join("brainstorming/x.md"), "ideia").unwrap();
@@ -5096,13 +5453,13 @@ mod tests {
     #[test]
     fn migration_folds_legacy_incubadora_into_brainstorming_non_destructively() {
         // ADR-0013: legacy top-level incubadora/ folds into brainstorming/;
-        // notas/ stays versioned; nothing is ever deleted.
+        // notes/ stays versioned; nothing is ever deleted.
         let root = std::env::temp_dir().join(format!("loro-inc-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("incubadora/ideia-a")).unwrap();
-        std::fs::create_dir_all(root.join("notas")).unwrap();
+        std::fs::create_dir_all(root.join("notes")).unwrap();
         std::fs::write(root.join("incubadora/ideia-a/nota.md"), "rascunho").unwrap();
-        std::fs::write(root.join("notas/mantida.md"), "versionada").unwrap();
+        std::fs::write(root.join("notes/mantida.md"), "versionada").unwrap();
 
         // dry-run: lists the planned move, changes nothing
         let r = migrate_acervo(&root, false, "pt").unwrap();
@@ -5114,14 +5471,14 @@ mod tests {
             .join("brainstorming/incubadora/ideia-a/nota.md")
             .exists());
 
-        // apply: copies into brainstorming/, leaves the legacy original AND notas/ intact
+        // apply: copies into brainstorming/, leaves the legacy original AND notes/ intact
         let r = migrate_acervo(&root, true, "pt").unwrap();
         assert_eq!(r.incubated.len(), 1);
         assert!(root
             .join("brainstorming/incubadora/ideia-a/nota.md")
             .is_file());
         assert!(root.join("incubadora/ideia-a/nota.md").is_file()); // non-destructive
-        assert!(root.join("notas/mantida.md").is_file()); // notas/ stays
+        assert!(root.join("notes/mantida.md").is_file()); // notes/ stays
 
         // idempotent: the destination already exists → nothing to fold
         let r = migrate_acervo(&root, true, "pt").unwrap();
@@ -5131,15 +5488,15 @@ mod tests {
 
     #[test]
     fn migration_renames_pessoal_to_brainstorming_non_destructively() {
-        // ADR-0013: pessoal/temas/<slug> -> brainstorming/<slug>, tema.md -> indice.md;
+        // ADR-0013: pessoal/temas/<slug> -> brainstorming/<slug>, tema.md -> index.md;
         // dry-run changes nothing; a conflict (both worlds) moves nothing.
         let root = std::env::temp_dir().join(format!("loro-rw-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(root.join("pessoal/temas/frota/reunioes/r1")).unwrap();
+        std::fs::create_dir_all(root.join("pessoal/temas/frota/meetings/r1")).unwrap();
         std::fs::create_dir_all(root.join("pessoal/avulso")).unwrap();
         std::fs::write(root.join("pessoal/temas/frota/tema.md"), "# Frota").unwrap();
         std::fs::write(
-            root.join("pessoal/temas/frota/reunioes/r1/reuniao.md"),
+            root.join("pessoal/temas/frota/meetings/r1/reuniao.md"),
             "fala",
         )
         .unwrap();
@@ -5154,12 +5511,12 @@ mod tests {
         assert!(root.join("pessoal/temas/frota/tema.md").is_file());
         assert!(!root.join("brainstorming/frota").exists());
 
-        // apply: renamed on disk, tema.md -> indice.md, legacy pessoal/ gone
+        // apply: renamed on disk, tema.md -> index.md, legacy pessoal/ gone
         migrate_acervo(&root, true, "pt").unwrap();
-        assert!(root.join("brainstorming/frota/indice.md").is_file());
+        assert!(root.join("brainstorming/frota/index.md").is_file());
         assert!(!root.join("brainstorming/frota/tema.md").exists());
         assert!(root
-            .join("brainstorming/frota/reunioes/r1/reuniao.md")
+            .join("brainstorming/frota/meetings/r1/meeting.md")
             .is_file());
         assert!(root
             .join("brainstorming/avulso/2026-07-27-ideia.md")
@@ -5170,6 +5527,117 @@ mod tests {
         let r = migrate_acervo(&root, true, "pt").unwrap();
         assert!(r.renamed_world.is_empty());
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ADR-0026 §14 — the acervo's own folders are named in English too. The rename
+    // follows the pessoal/ precedent: non-destructive, idempotent, and it refuses
+    // to clobber a destination that already exists.
+    #[test]
+    fn migration_renames_the_acervo_folders_to_english() {
+        let root = std::env::temp_dir().join(format!("loro-dirs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("contextos/frota")).unwrap();
+        std::fs::write(root.join("contextos/frota/context.md"), "# frota").unwrap();
+        std::fs::create_dir_all(root.join("reunioes")).unwrap();
+        std::fs::create_dir_all(root.join("notas")).unwrap();
+        std::fs::create_dir_all(root.join("contextos/frota/anexos")).unwrap();
+
+        migrate_acervo(&root, true, "pt").unwrap();
+
+        assert!(root.join("contexts/frota/context.md").is_file());
+        assert!(root.join("meetings").is_dir());
+        assert!(root.join("notes").is_dir());
+        assert!(root.join("contexts/frota/attachments").is_dir());
+        assert!(!root.join("contextos").exists());
+        assert!(!root.join("reunioes").exists());
+        assert!(!root.join("notas").exists());
+
+        // idempotent
+        migrate_acervo(&root, true, "pt").unwrap();
+        assert!(root.join("contexts/frota/context.md").is_file());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // Half a migration is worse than none: English folders holding Portuguese
+    // documents is a tree nobody can reason about.
+    #[test]
+    fn migration_renames_the_generated_files_too() {
+        let root = std::env::temp_dir().join(format!("loro-files-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let mdir = root.join("brainstorming/frota/reunioes/r1");
+        std::fs::create_dir_all(&mdir).unwrap();
+        std::fs::write(mdir.join("reuniao.md"), "# transcricao").unwrap();
+        std::fs::write(mdir.join("auditoria.jsonl"), "{}\n").unwrap();
+        std::fs::write(mdir.join("marcadores.jsonl"), "{}\n").unwrap();
+        std::fs::write(root.join("brainstorming/frota/indice.md"), "# frota").unwrap();
+
+        migrate_acervo(&root, true, "pt").unwrap();
+
+        let m = root.join("brainstorming/frota/meetings/r1");
+        assert!(m.join("meeting.md").is_file(), "o arquivo vivo");
+        assert!(m.join("audit.jsonl").is_file());
+        assert!(m.join("markers.jsonl").is_file());
+        assert!(root.join("brainstorming/frota/index.md").is_file());
+        assert!(!m.join("reuniao.md").exists());
+        assert_eq!(
+            std::fs::read_to_string(m.join("meeting.md")).unwrap(),
+            "# transcricao",
+            "o conteudo e o mesmo — so o nome mudou"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn migration_never_clobbers_a_folder_that_already_exists() {
+        let root = std::env::temp_dir().join(format!("loro-dirs2-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("contextos/a")).unwrap();
+        std::fs::create_dir_all(root.join("contexts/b")).unwrap();
+        std::fs::write(root.join("contexts/b/context.md"), "novo").unwrap();
+
+        migrate_acervo(&root, true, "pt").unwrap();
+
+        assert!(
+            root.join("contextos/a").is_dir(),
+            "the legacy folder is kept"
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("contexts/b/context.md")).unwrap(),
+            "novo",
+            "the existing one is untouched"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // A chave é o contrato: serializa e confere, em vez de confiar no atributo.
+    #[test]
+    fn the_status_sends_the_entry_documents_under_the_key_the_screen_reads() {
+        let json = serde_json::to_string(&BrainStatus {
+            configured: true,
+            dir: String::new(),
+            contexts: vec![],
+            inbox: vec![],
+            processed: 0,
+            meetings: vec![],
+            notes: vec![],
+            incubadora: vec![],
+            entry_docs: vec![BrainFile {
+                name: "TERMS.md".into(),
+                path: "TERMS.md".into(),
+                mtime: 0,
+            }],
+            legacy_layout: false,
+            activity: String::new(),
+        })
+        .unwrap();
+        assert!(
+            json.contains(r#""entryDocs":[{"name":"TERMS.md""#),
+            "{json}"
+        );
+        assert!(
+            !json.contains("entry_docs"),
+            "a chave antiga não pode sobrar"
+        );
     }
 
     #[test]
@@ -5186,8 +5654,9 @@ mod tests {
         assert!(r.renamed_world.iter().any(|s| s.starts_with("conflito:")));
         // both worlds untouched
         assert!(root.join("pessoal/temas/x").is_dir());
+        // o documento do tema é renomeado junto (ADR-0026 §14); o CONTEÚDO é o teste
         assert_eq!(
-            std::fs::read_to_string(root.join("brainstorming/y/indice.md")).unwrap(),
+            std::fs::read_to_string(root.join("brainstorming/y/index.md")).unwrap(),
             "novo"
         );
         let _ = std::fs::remove_dir_all(&root);
@@ -5197,7 +5666,7 @@ mod tests {
     fn seed_context_never_overwrites_legacy_guia() {
         let root = std::env::temp_dir().join(format!("loro-legacy-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        let d = root.join("contextos/frota");
+        let d = root.join("contexts/frota");
         std::fs::create_dir_all(&d).unwrap();
         std::fs::write(d.join("guia.md"), "conhecimento legado").unwrap();
         seed_context(&root, "frota", "pt", None).unwrap();
@@ -5265,13 +5734,13 @@ mod tests {
 
     // Fixture: a brainstorming with one note per (name, body) pair.
     fn brainstorming_with(root: &Path, slug: &str, notes: &[(&str, String)]) -> Vec<String> {
-        let dir = root.join("brainstorming").join(slug).join("notas");
+        let dir = root.join("brainstorming").join(slug).join("notes");
         std::fs::create_dir_all(&dir).unwrap();
         notes
             .iter()
             .map(|(name, body)| {
                 std::fs::write(dir.join(name), body).unwrap();
-                format!("brainstorming/{slug}/notas/{name}")
+                format!("brainstorming/{slug}/notes/{name}")
             })
             .collect()
     }
@@ -5300,7 +5769,7 @@ mod tests {
             ],
         );
         let err = queue_files_into(&base, &rels, None).unwrap_err();
-        assert_eq!(err, "err.intake_secret:frota-notas-c.md");
+        assert_eq!(err, "err.intake_secret:frota-notes-c.md");
         let queued: Vec<String> = list_queue(&base).into_iter().map(|f| f.name).collect();
         assert!(
             queued.is_empty(),
@@ -5309,7 +5778,7 @@ mod tests {
 
         // and the clean part of the same selection goes through when it is the batch
         let names = queue_files_into(&base, &rels[..2], None).unwrap();
-        assert_eq!(names, ["frota-notas-a.md", "frota-notas-b.md"]);
+        assert_eq!(names, ["frota-notes-a.md", "frota-notes-b.md"]);
         assert_eq!(list_queue(&base).len(), 2);
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -5395,7 +5864,7 @@ mod tests {
     // imported bytes come from OUTSIDE the acervo, so a name collision is a
     // DIFFERENT file with the same name — and the item already in the fila may have
     // been edited there (`brain_write_inbox`). It gets a numeric suffix, the same
-    // judgment the sibling door `brain_import_files` already makes for anexos/.
+    // judgment the sibling door `brain_import_files` already makes for attachments/.
     #[test]
     fn an_import_never_overwrites_an_item_already_in_the_queue() {
         let root = std::env::temp_dir().join(format!("loro-imp-clash-{}", std::process::id()));
@@ -5541,16 +6010,16 @@ mod tests {
         let root = std::env::temp_dir().join(format!("loro-ctx-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         for c in ["frota", "engenharia/frontend", "engenharia/backend"] {
-            let d = root.join("contextos").join(c);
+            let d = root.join("contexts").join(c);
             std::fs::create_dir_all(&d).unwrap();
             std::fs::write(d.join("guia.md"), "x").unwrap();
         }
         // HAND-MADE folder without guia.md: must be mapped as a (leaf) context
-        std::fs::create_dir_all(root.join("contextos/vendas")).unwrap();
+        std::fs::create_dir_all(root.join("contexts/vendas")).unwrap();
         // a utility subfolder does NOT become a context
-        std::fs::create_dir_all(root.join("contextos/frota/brainstorming")).unwrap();
+        std::fs::create_dir_all(root.join("contexts/frota/brainstorming")).unwrap();
         // hidden/reserved folder is ignored
-        let arch = root.join("contextos/_arquivados/velho");
+        let arch = root.join("contexts/_arquivados/velho");
         std::fs::create_dir_all(&arch).unwrap();
         std::fs::write(arch.join("guia.md"), "x").unwrap();
         let ctxs = list_contexts(&root);

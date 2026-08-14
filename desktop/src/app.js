@@ -1843,6 +1843,8 @@ async function openCfg() {
     const cfg2 = await invoke("brain_get_config");
     const ai = $("cfgAgentInput");
     if (ai) ai.value = (cfg2 && cfg2.agent) || "";
+    const tb = $("cfgTicketBase");
+    if (tb) tb.value = ticketBase();
   } catch (_) {}
   refreshModelManager();
 }
@@ -2210,7 +2212,12 @@ function menuItems(menu) {
 // `close` é opcional: um menu flutuante que NÃO é o #bMenu/#acervoMenu (o popover
 // de anotação, ADR-0007) traz o seu próprio fechador, senão o Escape dele fecharia
 // outro menu e devolveria o foco a um controle que não abriu nada.
-function wireFloatMenu(menu, anchor, close) {
+// `opts.focus === false` abre o menu SEM levar o foco. Existe por um motivo
+// medido: focar um botão colapsa a seleção do documento, então o popover de
+// trecho — que nasce de uma seleção de mouse — apagava justamente o que o
+// usuário acabou de selecionar (sem Ctrl+C e sem marca visual). Quem abre pelo
+// teclado continua recebendo o foco, senão o menu fica intocável (N10).
+function wireFloatMenu(menu, anchor, close, opts) {
   if (!menu) return;
   const dismiss = typeof close === "function" ? close : closeFloat;
   menu.setAttribute("role", "menu");
@@ -2258,6 +2265,7 @@ function wireFloatMenu(menu, anchor, close) {
     else if (e.key === "Tab") dismiss();   // sair pelo Tab fecha e devolve o foco
   };
   // O foco ENTRA no menu — sem isto o teclado abria um menu que não podia tocar.
+  if (opts && opts.focus === false) return;
   const first = menu.querySelector("input, textarea") || items[0];
   if (first) { try { first.focus({ preventScroll: true }); } catch (_) { first.focus(); } }
 }
@@ -2400,7 +2408,7 @@ $("guideBtn").addEventListener("click", () => openGuideDoc());
 // guide plumbing (brain_read_guide/brain_write_guide) instead of new backend
 // surface; the loop already archives/clears _prompt.md after each run (step 0
 // of /loro-context), so this instruction is naturally one-shot.
-const ANEXOS_GUIDE_LINE = "Nesta rodada, copie os anexos referenciados pelos itens processados para contextos/<c>/anexos/ (por item, use o contexto de destino desse item).";
+const ANEXOS_GUIDE_LINE = "Nesta rodada, copie os anexos referenciados pelos itens processados para contexts/<c>/attachments/ (por item, use o contexto de destino desse item).";
 async function genContextNow() {
   // ADR-0002 §5: an empty queue is refused loudly here, not just by disabled
   // buttons — there is nothing to generate context FROM, and the user must know.
@@ -2478,8 +2486,20 @@ async function brainRefresh() {
     B.nameInput.focus();
   }
   if (!showWizard) wizInited = false;
+  // ADR-0026 §20 — estrutura antiga: a tela para aqui. Não desenhar o casco é o
+  // ponto: meio acervo na árvore é pior que uma tela que diz o que houve.
+  const legado = !showWizard && !!st.legacyLayout;
+  const gate = document.getElementById("brainLegacy");
+  if (gate) {
+    if (legado && gate.hidden) {
+      gate.innerHTML = legacyGateHtml();
+      const b = gate.querySelector("[data-migrate]");
+      if (b) b.onclick = () => runMigration();
+    }
+    gate.hidden = !legado;
+  }
   B.setup.hidden = !showWizard;
-  B.shell.hidden = showWizard;
+  B.shell.hidden = showWizard || legado;
   // 1j: sem projeto não há destinos, nem o que gravar, nem documento no painel
   document.getElementById("app").classList.toggle("firstrun", showWizard);
   renderSwitch();
@@ -2530,7 +2550,8 @@ async function brainRefresh() {
     st.contexts.map((c) => `<option value="${esc(c.name)}">${t("destino")}: ${esc(c.name)}</option>`).join("");
   sel.value = chosen && st.contexts.some((c) => c.name === chosen) ? chosen : "";
   // lateral: só re-renderiza quando os dados mudam (preserva expansões profundas)
-  const sig = JSON.stringify([st.inbox.map((f) => f.name), st.contexts, st.reunioes.length, st.notas.length]);
+  const sig = JSON.stringify([st.inbox.map((f) => f.name), st.contexts, st.meetings.length, st.notes.length,
+    (st.entryDocs || []).map((f) => f.name)]);
   if (sig !== sideSig) { sideSig = sig; renderSidebar(st); }
   refreshPessoal();   // ADR-0009: produção (mundo pessoal) — self-gated por assinatura
   refreshTools();     // ADR-0005: ferramentas customizadas — self-gated por assinatura
@@ -2553,7 +2574,7 @@ function renderHome(st) {
   // rodapé da lateral: contagens funcionais (não decorativas)
   const skills = $("footSkillsN"), srcs = $("footSourcesN");
   if (skills) skills.textContent = lastToolFiles.length || "";
-  if (srcs) srcs.textContent = st.reunioes.length + st.notas.length || "";
+  if (srcs) srcs.textContent = st.meetings.length + st.notes.length || "";
 }
 
 // 1a — a porta de entrada é gravar; a faixa âmbar é o único chamado secundário.
@@ -2635,7 +2656,7 @@ function renderDestKnowledge(st) {
   grid.querySelectorAll("[data-kctx]").forEach((el2) => {
     el2.onclick = (e) => {
       if (e.target.closest("[data-cmenu]")) return;
-      openDoc(`contextos/${el2.dataset.kctx}/context.md`, { preview: false });
+      openDoc(`contexts/${el2.dataset.kctx}/context.md`, { preview: false });
     };
     el2.onkeydown = (e) => {
       if (e.target !== el2) return;   // o ⋯ de dentro cuida das suas teclas
@@ -2647,6 +2668,64 @@ function renderDestKnowledge(st) {
   }));
   const add = grid.querySelector("[data-newctx]");
   if (add) add.onclick = promptNewContext;
+  // ADR-0026 · o mapa das ligações só faz sentido quando há conhecimento
+  const map = $("knowMap");
+  if (map) map.hidden = !st.contexts.length;
+  paintKnowledgeGaps();
+}
+
+// ADR-0026 — o que o próprio conhecimento denuncia: o tema que ninguém cita (quem
+// lê pelo mapa nunca chega até ele) e a ligação que aponta para um arquivo que não
+// existe. A ADR-0020 §4 tirou da Home a estatística sem pergunta e sem ação; a
+// diferença aqui é que cada linha É um defeito nomeado, com a porta do conserto
+// ao lado. O nome do tema é o que se lê; o caminho fica no atributo, para a ação.
+function knowledgeGapsHtml(graph) {
+  const orphans = ((graph && graph.orphans) || []).filter(Boolean);
+  const broken = ((graph && graph.broken) || []).filter((b) => b && b.from);
+  if (!orphans.length && !broken.length) return "";
+  const nameOf = (rel) => String(rel).replace(/^contexts\//, "").replace(/\/context\.md$/, "");
+  const act = (rel) => `<button class="mini act" data-gapopen="${esc(String(rel))}">${t("abrir")}</button>`;
+  let html = "";
+  if (orphans.length) {
+    html += `<h2 class="kmttl">${t("Conhecimento que ninguém cita")} <span class="mono">(${orphans.length})</span></h2>` +
+      `<p class="hint">${t("nenhum outro tema aponta para estes — quem lê seguindo as ligações não chega até eles. Abra e escreva a ligação a partir do tema que entrega o trabalho para este.")}</p>` +
+      `<ul class="gaplist">` + orphans.map((rel) =>
+        `<li class="gaprow"><span class="gapname">${esc(nameOf(rel))}</span>${act(rel)}</li>`).join("") +
+      `</ul>`;
+  }
+  if (broken.length) {
+    html += `<h2 class="kmttl">${t("Ligações quebradas")} <span class="mono">(${broken.length})</span></h2>` +
+      `<p class="hint">${t("o link aponta para um arquivo que não existe: quem clica chega a um beco sem saída. O conserto é no documento que cita.")}</p>` +
+      `<ul class="gaplist">` + broken.map((b) =>
+        `<li class="gaprow"><span class="gapname">${esc(nameOf(b.from))}</span>` +
+        `<span class="gaparrow" aria-hidden="true">→</span>` +
+        `<span class="gaptarget mono">${esc(String(b.target || ""))}</span>${act(b.from)}</li>`).join("") +
+      `</ul>`;
+  }
+  return html;
+}
+
+// Estado relatado é estado recalculado: o grafo é lido do disco a cada passada
+// (o backend revalida por mtime), e a assinatura evita repintar — o que apagaria
+// o foco de quem está usando o teclado — quando nada mudou.
+let gapsPainted = "";
+async function paintKnowledgeGaps() {
+  const box = $("knowGaps");
+  if (!box) return;
+  // varrer o disco por um destino que ninguém está vendo é gasto puro (o poll
+  // roda a cada 10s); entrar no destino repinta na hora, por goDest.
+  if (!window.LoroShell || LoroShell.destination() !== "knowledge") return;
+  let graph = null;
+  try { graph = await invoke("brain_knowledge_graph"); }
+  catch (e) { clog("brain_knowledge_graph error: " + e); }
+  // sem resposta, a seção some: os defeitos do projeto anterior não são deste.
+  const html = graph ? knowledgeGapsHtml(graph) : "";
+  const sig = activeAcervo + "|" + html;
+  if (sig === gapsPainted) return;
+  gapsPainted = sig;
+  box.innerHTML = html;
+  box.querySelectorAll("[data-gapopen]").forEach((b) =>
+    (b.onclick = () => openDoc(b.dataset.gapopen, { preview: false })));
 }
 
 const bWhen = (ms) => {
@@ -2684,7 +2763,7 @@ function ico(name, extra = "") {
 // classe de status git (estilo VSCode) para um caminho do acervo
 // há mudança não commitada em algum arquivo sob este contexto/subárvore?
 function ctxDirty(path) {
-  const pre = "contextos/" + path + "/";
+  const pre = "contexts/" + path + "/";
   return Object.keys(gitFiles).some((p) => p.startsWith(pre));
 }
 // ADR-0002 §6 — expanded sidebar rows: date + textual git status, rendered
@@ -2738,6 +2817,22 @@ function buildCtxTree(contexts) {
   }
   return root;
 }
+// Nome de usuário, não nome de arquivo (ADR-0020): quem lê a lateral procura
+// "o índice do projeto", não "INDEX.md" — o caminho continua no menu de cada
+// linha e no title, para quem precisa dele.
+function entryDocsHtml(files) {
+  const docs = [
+    { name: "INDEX.md", label: "índice do projeto" },
+    { name: "TERMS.md", label: "índice remissivo" },
+  ];
+  const present = new Set((files || []).filter((f) => f && !f.dir).map((f) => f.name));
+  return docs.filter((d) => present.has(d.name)).map((d) => {
+    const label = t(d.label);
+    return `<div class="bitem file ${gitClass(d.name)}" data-doc="${esc(d.name)}" title="${esc(d.name)}">` +
+      `${ico("file")}<span class="bn">${esc(label)}</span>${pathMenuBtnHtml(d.name, label)}</div>`;
+  }).join("");
+}
+
 function renderCtxForest(root) {
   return [...root.children.values()].sort((a, b) => a.seg.localeCompare(b.seg)).map(renderCtxNode).join("");
 }
@@ -2754,7 +2849,7 @@ function renderCtxNode(node) {
   const attr = node.isCtx ? `data-ctx="${esc(node.path)}"` : `data-fold="${esc(node.path)}"`;
   const kids = [...node.children.values()].sort((x, y) => x.seg.localeCompare(y.seg)).map(renderCtxNode).join("");
   // fill target only, NOT a tree level: the context's own files (contexto/
-  // histórico/anexos) are siblings of its subcontexts — a .bchild here would
+  // histórico/attachments) are siblings of its subcontexts — a .bchild here would
   // double-indent them and read as if they belonged to a subcontext.
   const holder = node.isCtx ? `<div data-ctxchild="${esc(node.path)}" ${open ? "" : "hidden"}></div>` : "";
   const arch = rowMenuHtml(`data-cmenu="${esc(node.path)}" data-isctx="${node.isCtx ? 1 : 0}"`,
@@ -2785,14 +2880,23 @@ function renderSidebar(st) {
     // ao lado (DESIGN.md §5 e §1). A lateral lista, o destino age — e o ⌘K
     // continua sendo o caminho de teclado.
     : `<div class="bempty">${t("nada para organizar — grave uma reunião, escreva uma nota ou traga arquivos")}</div>`;
+  // ADR-0026 · a porta de entrada do projeto. O `INDEX.md` é o documento por onde
+  // o protocolo manda TODO mundo começar — e foi o maior ganho isolado da
+  // medição (acerto de 0,17 para 0,50 ao descrever os 80 temas). Ele estava em
+  // disco, era reescrito pelo loop a cada passada e não aparecia em lugar nenhum
+  // da interface: a árvore desenha temas, e a raiz do acervo não é um tema. O
+  // único caminho era o ⌘K, para quem já soubesse o nome do arquivo — o app
+  // sabendo e não dizendo (DESIGN.md §1). Vem ANTES dos temas porque é por onde
+  // se começa, e some quando o arquivo não existe.
   // contextos como ÁRVORE: pastas/áreas agrupam; contextos reais abrem o guia.
   // Criação vive no ＋ do cabeçalho da seção (linhas cheias poluíam a árvore).
   B.navCtx.innerHTML =
-    st.contexts.length
+    entryDocsHtml(st.entryDocs) +
+    (st.contexts.length
       ? renderCtxForest(buildCtxTree(st.contexts))
-      : `<div class="bempty">${t("nenhum tema ainda — crie o primeiro para organizar o conhecimento")}</div>`;
+      : `<div class="bempty">${t("nenhum tema ainda — crie o primeiro para organizar o conhecimento")}</div>`);
   // fontes agrupadas por mês (escala p/ listas grandes)
-  B.navSources.innerHTML = [["reunioes", st.reunioes], ["notas", st.notas]].map(([kind, files]) => {
+  B.navSources.innerHTML = [["meetings", st.meetings], ["notes", st.notes]].map(([kind, files]) => {
     if (!files.length) return "";
     const kKey = "src:" + kind, kOpen = bOpen.has(kKey);
     const groups = groupMonths(files);
@@ -2805,7 +2909,7 @@ function renderSidebar(st) {
         `</div>`;
     }).join("");
     return `<div class="bitem ctx${kOpen ? " open" : ""}" data-toggle="${kKey}">
-        ${ico(kind === "reunioes" ? "meeting" : "note", "ac")}<span class="bn">${kind === "reunioes" ? t("reuniões") : t("notas")}</span><span class="pill">${files.length}</span></div>
+        ${ico(kind === "meetings" ? "meeting" : "note", "ac")}<span class="bn">${kind === "meetings" ? t("reuniões") : t("notas")}</span><span class="pill">${files.length}</span></div>
       <div class="bchild" ${kOpen ? "" : "hidden"}>${inner}</div>`;
   }).join("") || `<div class="bempty">${t("reuniões e notas aparecem aqui quando o loop organizar o que você capturou")}</div>`;
   wireSidebar();
@@ -2941,7 +3045,7 @@ function wireSidebar() {
       if (ctx && ctx.seeded === false) {
         try { await invoke("brain_add_context", { name }); } catch (_) {}
       }
-      openDoc(`contextos/${name}/context.md`);
+      openDoc(`contexts/${name}/context.md`);
     }
     sideSig = ""; renderSidebar(lastSt); markSel();
   }));
@@ -2980,7 +3084,7 @@ function wireSidebar() {
   B.navCtx.querySelectorAll("[data-ctxaddanexo]").forEach((el2) => (el2.onclick = (e) => {
     e.stopPropagation();
     const name = el2.dataset.ctxaddanexo;
-    importAnexoFromComputer(`contextos/${name}/anexos`, () => {
+    importAnexoFromComputer(`contexts/${name}/attachments`, () => {
       bOpen.add(`ctxfolder:${name}:anexos`); loadCtxChildren(name);
     });
   }));
@@ -3023,7 +3127,7 @@ async function loadCtxChildren(name) {
   const holder = [...B.navCtx.querySelectorAll("[data-ctxchild]")].find((h) => h.dataset.ctxchild === name);
   if (!holder) return;
   let entries = [];
-  try { entries = await invoke("brain_list_dir", { rel: "contextos/" + name }); } catch (_) { return; }
+  try { entries = await invoke("brain_list_dir", { rel: "contexts/" + name }); } catch (_) { return; }
   // subpastas que já são subdomínios (contextos) aparecem na ÁRVORE de contextos;
   // não as repetimos aqui como "pasta" — visualização única (ADR-0005).
   const ctxSet = new Set((lastSt && lastSt.contexts ? lastSt.contexts : []).map((c) => c.name));
@@ -3032,7 +3136,7 @@ async function loadCtxChildren(name) {
   entries.sort((a, b) => order(a.name) - order(b.name) || a.name.localeCompare(b.name));
   let html = "";
   for (const en of entries) {
-    if (en.name === "anexos") continue; // ADR-0005: renderizado explicitamente abaixo, sempre visível
+    if (en.name === "attachments") continue; // ADR-0005: renderizado explicitamente abaixo, sempre visível
     if (en.dir) {
       if (ctxSet.has(name + "/" + en.name)) continue; // subdomínio: já está na árvore
       let files = [];
@@ -3045,17 +3149,17 @@ async function loadCtxChildren(name) {
       html += `<div class="bitem file ${gitClass(en.path)}" data-doc="${esc(en.path)}">${ico(fileIcon(en.name, false))}<span class="bn">${esc(pretty[en.name] || en.name)}</span>${pathMenuBtnHtml(en.path, pretty[en.name] || en.name)}</div>`;
     }
   }
-  // ADR-0005: um contexto também tem uma pasta `anexos/` — sempre visível, com
+  // ADR-0005: um contexto também tem uma pasta `attachments/` — sempre visível, com
   // as mesmas ações de um brainstorming (＋ nova nota, ＋ do computador),
   // versionadas junto com o contexto.
   let anexos = [];
-  try { anexos = ((await invoke("brain_list_dir", { rel: `contextos/${name}/anexos` })) || []).filter((f) => !f.dir); }
+  try { anexos = ((await invoke("brain_list_dir", { rel: `contexts/${name}/attachments` })) || []).filter((f) => !f.dir); }
   catch (_) {}
   const anexRows = anexos.map((f) => `<div class="bitem file ${gitClass(f.path)}" data-doc="${esc(f.path)}" title="${esc(f.name)}">${ico("file")}<span class="bn">${esc(shortName(f.name))}</span>${pathMenuBtnHtml(f.path, shortName(f.name))}</div>`).join("");
   const anexActions =
     `<button class="bsaddbtn" data-ctxaddnota="${esc(name)}" title="${t("Escrever uma nota nos anexos deste tema")}">＋ ${t("nova nota")}</button>` +
     `<button class="bsaddbtn" data-ctxaddanexo="${esc(name)}" title="${t("Adicionar um arquivo do computador aos anexos deste tema")}">＋ ${t("do computador")}</button>`;
-  html += folderGroupHtml(`ctxfolder:${name}:anexos`, t("anexos"), anexos.length, anexRows, t("nenhum anexo ainda"), anexActions, `contextos/${name}/anexos`);
+  html += folderGroupHtml(`ctxfolder:${name}:anexos`, t("anexos"), anexos.length, anexRows, t("nenhum anexo ainda"), anexActions, `contexts/${name}/attachments`);
   holder.innerHTML = html || `<div class="bempty">${t("vazio")}</div>`;
   wireSidebar();
   markSel();
@@ -3067,7 +3171,7 @@ async function loadCtxChildren(name) {
 // Só re-renderiza quando os dados mudam (assinatura) — a expansão é preservada em bOpen.
 let pessoalSig = "";
 // ADR-0013: the non-versioned world is "Brainstorming" (disk: brainstorming/).
-// A brainstorming groups reuniões/notas/anexos; it can carry an
+// A brainstorming groups reuniões/notes/attachments; it can carry an
 // optional categoria (UI-only grouping). Selection of parts -> one consolidated
 // report -> the fila (see bsSelection / sendSelectionToQueue).
 // ADR-0005: above this many brainstormings the always-expanded tree gets hard
@@ -3187,18 +3291,18 @@ async function loadTemaChildren(slug) {
   let meetings = [];
   try { meetings = (await invoke("brain_list_meetings", { slug })) || []; } catch (_) {}
   let notas = [];
-  try { notas = ((await invoke("brain_list_dir", { rel: `brainstorming/${slug}/notas` })) || []).filter((f) => !f.dir); }
+  try { notas = ((await invoke("brain_list_dir", { rel: `brainstorming/${slug}/notes` })) || []).filter((f) => !f.dir); }
   catch (_) {}
-  // ADR-0005: three brainstorming folders — reunioes/, notas/, anexos/.
-  // anexos/ is fed by a habilidade (sincronizar, apresentação, artefato) or
+  // ADR-0005: three brainstorming folders — meetings/, notes/, attachments/.
+  // attachments/ is fed by a habilidade (sincronizar, apresentação, artefato) or
   // by the user dropping files straight into the real folder on disk — no
   // dedicated "importar" UI for that second path.
   let anexos = [];
-  try { anexos = ((await invoke("brain_list_dir", { rel: `brainstorming/${slug}/anexos` })) || []).filter((f) => !f.dir); }
+  try { anexos = ((await invoke("brain_list_dir", { rel: `brainstorming/${slug}/attachments` })) || []).filter((f) => !f.dir); }
   catch (_) {}
   let inner = "";
   // ADR-0005 (owner request): a pasta de verdade precisa estar visível na UI —
-  // três grupos com ícone de pasta (reuniões/notas/anexos), cada um
+  // três grupos com ícone de pasta (reuniões/notes/attachments), cada um
   // colapsável (mesmo padrão `data-pestoggle` já usado para "avulso"). Cada
   // pasta traz sua PRÓPRIA ação de criação no topo do corpo (owner request:
   // "cada botão poderá existir dentro de cada uma das pastas"):
@@ -3211,7 +3315,7 @@ async function loadTemaChildren(slug) {
     const label = title === m.id ? LM.meetingLabel(m.id, settings.uiLang) : title;
     const mkey = "mtg:" + m.id, mopen = bOpen.has(mkey);
     const mstatus = meetingEffectiveStatus(m.status, m.id, meeting);
-    reunioesRows += bsPartRow("reuniao", `${m.rel}/reuniao.md`, m.rel, label, m.id, true, m.id, mstatus, mopen, m.notas);
+    reunioesRows += bsPartRow("reuniao", livingRel(m.rel), m.rel, label, m.id, true, m.id, mstatus, mopen, m.notes);
     reunioesRows += `<div class="bchild" data-mtgchild="${esc(m.id)}" data-mtgrel="${esc(m.rel)}" ${mopen ? "" : "hidden"}></div>`;
     if (mopen) pendingMeetingFills.push([m.id, m.rel]);
   }
@@ -3224,21 +3328,21 @@ async function loadTemaChildren(slug) {
     `<button class="bsaddbtn" data-addanexo="${esc(slug)}" title="${t("Adicionar um arquivo do computador aos anexos deste tema")}">＋ ${t("do computador")}</button>`;
   // counts are suppressed in the brainstorming tree (0 = no pill) — owner
   // request; the contextos tree keeps its counts (loadCtxChildren).
-  inner += folderGroupHtml(`bsfolder:${slug}:reunioes`, t("reuniões"), 0, reunioesRows, t("nenhuma reunião ainda"), reunioesActions, `brainstorming/${slug}/reunioes`);
-  inner += folderGroupHtml(`bsfolder:${slug}:notas`, t("notas"), 0, notasRows, t("nenhuma nota ainda"), notasActions, `brainstorming/${slug}/notas`);
-  inner += folderGroupHtml(`bsfolder:${slug}:anexos`, t("anexos"), 0, anexosRows, t("nenhum anexo ainda"), anexosActions, `brainstorming/${slug}/anexos`);
+  inner += folderGroupHtml(`bsfolder:${slug}:reunioes`, t("reuniões"), 0, reunioesRows, t("nenhuma reunião ainda"), reunioesActions, `brainstorming/${slug}/meetings`);
+  inner += folderGroupHtml(`bsfolder:${slug}:notas`, t("notas"), 0, notasRows, t("nenhuma nota ainda"), notasActions, `brainstorming/${slug}/notes`);
+  inner += folderGroupHtml(`bsfolder:${slug}:anexos`, t("anexos"), 0, anexosRows, t("nenhum anexo ainda"), anexosActions, `brainstorming/${slug}/attachments`);
   holder.innerHTML = inner;
   // fillMeetingChild queries the live DOM — must run AFTER innerHTML is set,
   // not while `inner` is still a string (the container doesn't exist yet).
   // E wirePessoal() só DEPOIS dele: as linhas que ele injeta (as análises e
-  // relatórios em <reunião>/notas/) precisam ganhar o onclick também. Com o
+  // relatórios em <reunião>/notes/) precisam ganhar o onclick também. Com o
   // wire antes, toda análise dentro de uma reunião expandida ficava inerte —
   // clicar não abria nada. O handler do data-mtgtoggle já fazia nesta ordem.
   for (const [id, rel] of pendingMeetingFills) await fillMeetingChild(id, rel);
   wirePessoal();
   markSel();
 }
-// A collapsible folder group in the sidebar (reuniões/notas/anexos) — a real
+// A collapsible folder group in the sidebar (reuniões/notes/attachments) — a real
 // folder icon + label + count, expand/collapse via the same [data-pestoggle]
 // wiring already used for "avulso" (wirePessoal, no new JS needed there). The
 // folder's own creation action(s) sit at the top of its body, so each button
@@ -3256,10 +3360,10 @@ async function fillMeetingChild(meetingId, meetingRel) {
   const child = [...B.navPessoal.querySelectorAll("[data-mtgchild]")].find((h) => h.dataset.mtgchild === meetingId);
   if (!child) return;
   let inner = "";
-  // ADR-0008: every skill-generated document lands in the meeting's notas/
+  // ADR-0008: every skill-generated document lands in the meeting's notes/
   // (analyses, answers, any produced doc) — one flat folder, no artefatos/<kind>.
   let arts = [];
-  try { arts = ((await invoke("brain_list_dir", { rel: `${meetingRel}/notas` })) || []).filter((a) => !a.dir); }
+  try { arts = ((await invoke("brain_list_dir", { rel: `${meetingRel}/notes` })) || []).filter((a) => !a.dir); }
   catch (_) {}
   for (const a of arts) inner += bsPartRow("nota", a.path, a.path, shortName(a.name), a.name, true);
   child.innerHTML = inner || `<div class="bempty sub">${t("nada por aqui ainda")}</div>`;
@@ -3314,7 +3418,7 @@ function wirePessoal() {
     else {
       bOpen.add(key); el2.classList.add("open"); if (holder) holder.hidden = false;
       loadTemaChildren(slug);
-      openDoc(`brainstorming/${slug}/indice.md`, { preview: true });
+      openTopicDoc(`brainstorming/${slug}`, { preview: true });
     }
     markSel();
   }));
@@ -3334,7 +3438,7 @@ function wirePessoal() {
   B.navPessoal.querySelectorAll("[data-addanexo]").forEach((el2) => (el2.onclick = (e) => {
     e.stopPropagation();
     const slug = el2.dataset.addanexo;
-    importAnexoFromComputer(`brainstorming/${slug}/anexos`, () => {
+    importAnexoFromComputer(`brainstorming/${slug}/attachments`, () => {
       bOpen.add(`bsfolder:${slug}:anexos`); loadTemaChildren(slug);
     });
   }));
@@ -3380,7 +3484,7 @@ function pestoggleDestDir(key) {
   return m ? `brainstorming/${m[1]}/${m[2]}` : null;
 }
 
-// Drag a movable file (notes/anexos/avulso/meeting-notes all carry
+// Drag a movable file (notes/attachments/avulso/meeting-notes all carry
 // data-artmenu) onto a folder-group header to move it (brain_move_pessoal).
 // The drag handle is the file ICON, NOT the whole row: a draggable row makes
 // the WebView interpret a slightly-moved click (common on trackpads) as a drag
@@ -3749,7 +3853,7 @@ async function alvoDestinations() {
   try { ideias = (await invoke("brain_list_brainstorms")) || []; } catch (_) {}
   const ctxs = (lastSt && lastSt.contexts) || [];
   return ideias.map((b) => ({ value: `brainstorming/${b.slug}`, label: `${t("ideias")} · ${b.nome || b.slug}` }))
-    .concat(ctxs.map((c) => ({ value: `contextos/${c.name}`, label: `${t("conhecimento")} · ${c.name}` })));
+    .concat(ctxs.map((c) => ({ value: `contexts/${c.name}`, label: `${t("conhecimento")} · ${c.name}` })));
 }
 async function promptUseTool(rel, alvoRel) {
   const slug = rel.split("/").pop().replace(/\.md$/, "");
@@ -3991,8 +4095,8 @@ function openHabilidadeMenu(alvoRel, anchor, all, surface) {
 }
 
 // ADR-0005: "＋ do computador" — native file picker → copies the chosen files
-// into an anexos/ folder (brain_import_files). Works for both a brainstorming
-// (destRel = brainstorming/<slug>/anexos) and a context (contextos/<c>/anexos);
+// into an attachments/ folder (brain_import_files). Works for both a brainstorming
+// (destRel = brainstorming/<slug>/attachments) and a context (contexts/<c>/attachments);
 // `after` runs on success (re-open + reload the right tree).
 async function importAnexoFromComputer(destRel, after) {
   if (!destRel) { toast(t("este documento não tem uma pasta de anexos")); return; }
@@ -4022,7 +4126,7 @@ function promptNewNoteInContext(name, anchor) {
     const titulo = inp.value.trim();
     if (!titulo) return done();
     try {
-      const rel = await invoke("brain_new_note_in", { destRel: `contextos/${name}/anexos`, titulo });
+      const rel = await invoke("brain_new_note_in", { destRel: `contexts/${name}/attachments`, titulo });
       done(); bOpen.add(`ctxfolder:${name}:anexos`); loadCtxChildren(name);
       if (rel) openDoc(rel, { preview: false });
     } catch (err) { toast(tErr(String(err))); }
@@ -4031,7 +4135,7 @@ function promptNewNoteInContext(name, anchor) {
 }
 
 // Inline "nova nota" inside a brainstorming (mirrors promptNewContext/promptNewTema).
-// Writes brainstorming/<slug>/notas/<slug>.md via brain_new_notebook and opens it.
+// Writes brainstorming/<slug>/notes/<slug>.md via brain_new_notebook and opens it.
 let notaEditing = false;
 function promptNewNota(slug, anchor) {
   if (notaEditing) return;
@@ -4084,8 +4188,8 @@ function openBsMenu(slug, anchor) {
   const row = anchor.closest(".bitem") || anchor;
   B.bMenu.querySelector("[data-newnote]").onclick = () => { closeFloat(); promptNewNota(slug, row); };
   B.bMenu.querySelector("[data-rec]").onclick = () => { closeFloat(); startMeetingFlow(slug); };
-  B.bMenu.querySelector("[data-attach]").onclick = () => { closeFloat(); importAnexoFromComputer(`brainstorming/${slug}/anexos`, () => { pessoalSig = ""; refreshPessoal(); }); };
-  B.bMenu.querySelector("[data-ainote]").onclick = () => { closeFloat(); promptNoteAI(`brainstorming/${slug}/notas`, false); };
+  B.bMenu.querySelector("[data-attach]").onclick = () => { closeFloat(); importAnexoFromComputer(`brainstorming/${slug}/attachments`, () => { pessoalSig = ""; refreshPessoal(); }); };
+  B.bMenu.querySelector("[data-ainote]").onclick = () => { closeFloat(); promptNoteAI(`brainstorming/${slug}/notes`, false); };
   B.bMenu.querySelector("[data-tools]").onclick = () => openHabilidadeMenu(`brainstorming/${slug}`, anchor);
   B.bMenu.querySelector("[data-ren]").onclick = () => { closeFloat(); promptRenameBs(slug); };
   B.bMenu.querySelector("[data-toqueue]").onclick = () => { closeFloat(); sendBrainstormAllToQueue(slug); };
@@ -4108,7 +4212,7 @@ function promptRenameBs(slug) {
       try {
         const r = await invoke("brain_rename_brainstorm", { slug, nome });
         pessoalSig = ""; refreshPessoal();
-        if (r && r.rel) openDoc(`${r.rel}/indice.md`, { preview: false });
+        if (r && r.rel) openTopicDoc(r.rel, { preview: false });
         toast(t("renomeado"));
       } catch (e) { toast(t("não renomeei") + ": " + tErr(String(e))); }
     }
@@ -4159,11 +4263,11 @@ function openMeetingMenu(rel, id, title, status, anchor, notas) {
   // manifesto e o arquivo vivo com o append, e um trecho se perderia
   if (ready) B.bMenu.querySelector("[data-mvmtg]").onclick = () => { closeFloat(); promptMoveMeeting(rel); };
   if (ready) {
-    B.bMenu.querySelector("[data-analyse]").onclick = () => { closeFloat(); openDoc(`${rel}/reuniao.md`, { preview: false }); runMeetingSkill("analyse", id, null, rel); };
+    B.bMenu.querySelector("[data-analyse]").onclick = () => { closeFloat(); openDoc(livingRel(rel), { preview: false }); runMeetingSkill("analyse", id, null, rel); };
     B.bMenu.querySelector("[data-queue]").onclick = () => {
       closeFloat();
       // ADR-0018: the meeting goes as its DIRECTORY; the backend's single owner
-      // expands it into the notas/ that represent it (BR-8 stays there).
+      // expands it into the notes/ that represent it (BR-8 stays there).
       if (bloqueio) { toast(bloqueioMsg); return; }
       sendFilesToQueue([LoroBrainstorm.queueRelForSelection("reuniao", rel)]);
     };
@@ -4262,8 +4366,8 @@ function wirePathMenus(root) {
   }));
 }
 
-// #44 — "mover para…" de uma REUNIÃO: o destino é sempre o reunioes/ de outro
-// brainstorming (LM.meetingMoveTargets), nunca avulso/notas/anexos, que guardam
+// #44 — "mover para…" de uma REUNIÃO: o destino é sempre o meetings/ de outro
+// brainstorming (LM.meetingMoveTargets), nunca avulso/notes/attachments, que guardam
 // arquivos soltos. O backend confina a move e nunca sobrescreve.
 async function promptMoveMeeting(rel) {
   const slugAtual = (/^brainstorming\/([^/]+)\//.exec(rel) || [])[1] || "";
@@ -4299,7 +4403,7 @@ async function moveMeetingTo(rel, destSlug) {
 }
 
 // "mover para…": pick a destination folder within the brainstorming world
-// (avulso, or any brainstorming's notas/anexos). The backend confines the move
+// (avulso, or any brainstorming's notes/attachments). The backend confines the move
 // to the non-versioned world and never overwrites (brain_move_pessoal).
 async function promptMoveFile(rel) {
   let temas = [];
@@ -4307,8 +4411,8 @@ async function promptMoveFile(rel) {
   const cur = rel.split("/").slice(0, -1).join("/");
   const opts = [{ dir: "brainstorming/avulso", label: t("avulso") }];
   for (const b of temas) {
-    opts.push({ dir: `brainstorming/${b.slug}/notas`, label: `${b.nome || b.slug} › ${t("notas")}` });
-    opts.push({ dir: `brainstorming/${b.slug}/anexos`, label: `${b.nome || b.slug} › ${t("anexos")}` });
+    opts.push({ dir: `brainstorming/${b.slug}/notes`, label: `${b.nome || b.slug} › ${t("notas")}` });
+    opts.push({ dir: `brainstorming/${b.slug}/attachments`, label: `${b.nome || b.slug} › ${t("anexos")}` });
   }
   const dests = opts.filter((o) => o.dir !== cur);
   if (!dests.length) { toast(t("nenhum destino disponível")); return; }
@@ -4481,7 +4585,7 @@ async function sendBrainstormAllToQueue(slug) {
 
 // The selected parts across the tree -> the ACTUAL files to queue (each its own
 // item). A meeting goes as its directory (the backend expands it into the
-// notas/ that represent it, ADR-0018); notes/analyses/anexos go as-is.
+// notes/ that represent it, ADR-0018); notes/analyses/attachments go as-is.
 async function sendSelectionToQueue() {
   const rels = [];
   B.navPessoal.querySelectorAll("[data-bssel]").forEach((chk) => {
@@ -4517,7 +4621,7 @@ function renderSelectionBar() {
 }
 
 // Apaga um item do mundo brainstorming (arquivo, reunião ou brainstorming inteiro).
-// Confinado a brainstorming/ no backend (nunca toca contextos/ versionado).
+// Confinado a brainstorming/ no backend (nunca toca contexts/ versionado).
 function delPessoal(rel, kind) {
   const what = kind === "tema" ? t("a ideia e TODO o seu conteúdo")
     : kind === "reuniao" ? t("a reunião e todos os seus arquivos (transcrição, análises, artefatos)")
@@ -4546,10 +4650,24 @@ function isHomeActive() { const t = activeTab(); return !t || t.rel === HOME_REL
 // the document rel otherwise.
 function currentRel() { const t = activeTab(); return !t || t.rel === HOME_REL ? null : t.rel; }
 
+// ADR-0026 §12 — a que TEMA um documento pertence. A árvore desenha temas em
+// linhas `[data-ctx]`; o documento aberto é um `[data-doc]`. Sem essa ponte,
+// abrir um tema não acendia nada na árvore e a lateral virava uma lista de
+// pastas sem relação com o que está na tela.
+function ctxOfDoc(rel) {
+  const m = /^contexts\/(.+)\/[^/]+$/.exec(String(rel || ""));
+  return m ? m[1] : "";
+}
+
 function markSel() {
   const rel = currentRel();
   B.main.querySelectorAll("[data-doc]").forEach((el2) =>
     el2.classList.toggle("on", el2.dataset.doc === rel));
+  // o tema dono do documento aberto acende junto — inclusive quando o que está
+  // aberto é o histórico ou os donos, que continuam sendo daquele tema
+  const ctx = ctxOfDoc(rel);
+  B.main.querySelectorAll("[data-ctx]").forEach((el2) =>
+    el2.classList.toggle("here", !!ctx && el2.dataset.ctx === ctx));
   // C18 · a árvore é redesenhada por innerHTML: sem esta linha as linhas novas
   // nascem sem aria-selected (o observador só vê MUDANÇA de classe).
   paintAriaState();
@@ -4560,6 +4678,11 @@ function markSel() {
 // abertos. A aba Home continua existindo em `ws` como o estado "nada aberto"
 // (é o alvo de openHome/showHome), mas nunca é desenhada; com uma faixa vazia
 // o CSS a esconde por inteiro e o conteúdo encosta no cabeçalho.
+// ADR-0026 · a aba do índice é uma TELA, não um arquivo: o título de uma aba é o
+// basename do rel, e o sentinela `loro://indice` daria "indice" na faixa — uma
+// palavra sem acento, que se lê como erro de digitação e não como nome.
+const tabTitle = (tab) => (tab.rel === INDEX_REL ? t("índice remissivo") : tab.title);
+
 function renderTabs() {
   const active = ws.activeId;
   const docs = ws.tabs.filter((tab) => tab.rel !== HOME_REL);
@@ -4578,7 +4701,7 @@ function renderTabs() {
     const dot = tab.dirty ? `<span class="wsdot" title="${t("alterações não salvas")}">●</span>` : "";
     // a aba de gravação mostra o timer e NÃO tem × (só para pelo botão Parar)
     const time = rec ? `<span class="wstime">${esc(el.timer.textContent)}</span>` : "";
-    const close = rec ? "" : `<button class="wsclose" data-close="${tab.id}" title="${t("fechar")} (⌘/Ctrl+W)" aria-label="${t("fechar")} ${esc(tab.title)}">×</button>`;
+    const close = rec ? "" : `<button class="wsclose" data-close="${tab.id}" title="${t("fechar")} (⌘/Ctrl+W)" aria-label="${t("fechar")} ${esc(tabTitle(tab))}">×</button>`;
     // C18 · qual documento está aberto existia SÓ na classe .on: para a
     // tecnologia assistiva a faixa era um monte de <div> sem papel (WCAG 4.1.2 /
     // 1.3.1). A faixa é uma tablist de verdade, com tabindex rotativo — uma
@@ -4586,7 +4709,7 @@ function renderTabs() {
     const on = tab.id === active;
     return `<div class="${cls.join(" ")}" data-tab="${tab.id}" draggable="true" role="tab"
         aria-selected="${on ? "true" : "false"}" tabindex="${on ? 0 : -1}"
-        title="${esc(tab.rel)}">${lead}<span class="wsn">${esc(tab.title)}</span>${time}${dot}${close}</div>`;
+        title="${esc(tab.rel)}">${lead}<span class="wsn">${esc(tabTitle(tab))}</span>${time}${dot}${close}</div>`;
   }).join("") + (docs.length ? `<button class="tabadd" data-tabadd title="${t("abrir…")}">＋</button>` : "");
   wireTabs();
 }
@@ -4750,6 +4873,9 @@ function setupWorkspace() {
 function docBadge(p, isGuide) {
   if (isGuide) return [t("instruções do loop — aplicadas antes de processar"), "ok"];
   if (p === MANUAL_REL) return [t("manual do Loro — somente leitura"), "ro"];
+  // ADR-0026 · não é documento nenhum: é o que o conhecimento diz de si, montado
+  // na hora. O selo padrão ("documento do projeto") prometeria um arquivo.
+  if (p === INDEX_REL) return [t("calculado agora — não é um arquivo do projeto"), "ro"];
   if (p.startsWith("inbox/")) return [t("pendente — será processado pelo loop"), "ok"];
   if (p.endsWith("guia.md")) return [t("formato antigo — migre para context.md"), "warn2"];
   if (p.endsWith("CHANGELOG.md")) return [t("histórico (append-only)"), "ro"];
@@ -4991,7 +5117,7 @@ function ideaSlugOf(rel) {
 // frase que orienta o passo seguinte (nunca uma lista vazia calada).
 function ideaMaterialCount(counts) {
   const c = counts || {};
-  return (Number(c.reunioes) || 0) + (Number(c.notas) || 0) + (Number(c.anexos) || 0);
+  return (Number(c.meetings) || 0) + (Number(c.notes) || 0) + (Number(c.attachments) || 0);
 }
 function ideaSectionHtml(title, rows, emptyMsg) {
   return `<h2>${esc(title)} <span class="mono">(${rows.length})</span></h2>` +
@@ -5021,8 +5147,8 @@ async function renderIdeaSurface(slug, tab, stale) {
   fmById.set(tab.id, null);
   let meetings = [], notas = [], anexos = [], nome = slug, body = "";
   try { meetings = (await invoke("brain_list_meetings", { slug })) || []; } catch (_) {}
-  try { notas = ((await invoke("brain_list_dir", { rel: `brainstorming/${slug}/notas` })) || []).filter((f) => !f.dir); } catch (_) {}
-  try { anexos = ((await invoke("brain_list_dir", { rel: `brainstorming/${slug}/anexos` })) || []).filter((f) => !f.dir); } catch (_) {}
+  try { notas = ((await invoke("brain_list_dir", { rel: `brainstorming/${slug}/notes` })) || []).filter((f) => !f.dir); } catch (_) {}
+  try { anexos = ((await invoke("brain_list_dir", { rel: `brainstorming/${slug}/attachments` })) || []).filter((f) => !f.dir); } catch (_) {}
   try {
     const temas = (await invoke("brain_list_brainstorms")) || [];
     const found = temas.find((b) => b && b.slug === slug);
@@ -5037,11 +5163,11 @@ async function renderIdeaSurface(slug, tab, stale) {
     if (stale && stale()) return; // a newer render won the race
     savedById.set(tab.id, body);
   }
-  const total = ideaMaterialCount({ reunioes: meetings.length, notas: notas.length, anexos: anexos.length });
+  const total = ideaMaterialCount({ meetings: meetings.length, notes: notas.length, attachments: anexos.length });
   const mtgRows = meetings.map((m) => {
     const title = LM.meetingTitleFromManifest({ titulo: m.titulo }, m.id);
     const label = title === m.id ? LM.meetingLabel(m.id, settings.uiLang) : title;
-    return ideaRowHtml(`${m.rel}/reuniao.md`, label);
+    return ideaRowHtml(livingRel(m.rel), label);
   });
   const notaRows = notas.map((f) => ideaRowHtml(f.path, shortName(f.name)));
   const anexoRows = anexos.map((f) => ideaRowHtml(f.path, shortName(f.name)));
@@ -5062,7 +5188,7 @@ async function renderIdeaSurface(slug, tab, stale) {
     // aposentou o fluxo do digest, não o arquivo. Sem `.annotatable`: anotar
     // depende de decorateAnnotations para PINTAR a marca, e uma anotação que
     // nunca aparece seria um controle mentindo.
-    (ideaBodyMarkdown(body).trim() ? mdRender(ideaBodyMarkdown(body)) : "");
+    (ideaBodyMarkdown(body).trim() ? mdRender(ideaBodyMarkdown(body), docOpts()) : "");
   wireDocLinks();
   B.doc.querySelectorAll("[data-open]").forEach((b) => (b.onclick = () => openDoc(b.dataset.open, { preview: false })));
   const rec = B.doc.querySelector('[data-idea="rec"]');
@@ -5099,14 +5225,20 @@ async function renderView(tab, stale) {
   } catch (_) { fm = null; body = raw || ""; }
   fmById.set(tab.id, fm);
   const panel = fm ? renderRefsPanel(fm) : "";
+  // ADR-0026: as referências olham para dentro do documento; a volta ("Citado
+  // por") olha para fora. As duas nascem na MESMA pintura — uma seção inserida
+  // depois desloca o texto que o leitor já começou a ler.
+  const back = await backlinksHtmlFor(tab.rel, stale);
+  if (stale && stale()) return;
   // ADR-0007: the rendered markdown body is wrapped in an .annotatable container
   // so selection offsets and painted marks are scoped to the content (never the
   // refs panel). GUIDE_REL is not an acervo doc, so it is not annotatable.
   const annotatable = tab.rel !== GUIDE_REL;
-  B.doc.innerHTML = panel + (annotatable
-    ? `<div class="annotatable">${mdRender(body || fallback)}</div>`
-    : mdRender(body || fallback));
+  B.doc.innerHTML = panel + back + (annotatable
+    ? `<div class="annotatable">${mdRender(body || fallback, docOpts())}</div>`
+    : mdRender(body || fallback, docOpts()));
   wireDocLinks();
+  wireBacklinks();
   if (annotatable) await decorateAnnotations(tab.rel, stale);
 }
 
@@ -5128,12 +5260,116 @@ function renderRefsPanel(fm) {
     `<ul class="reflist">${rows}</ul></details>`;
 }
 
+// ============================ ADR-0026: a direção de volta do link ============================
+// O painel de Referências olha para DENTRO do documento (o material que ele
+// carrega). Uma ligação lateral só era legível na ponta que a escreveu: quem lia
+// o documento citado não tinha como saber que alguém dependia dele.
+//
+// O tipo chega ecoado como QUEM CITA o declarou — `upstream` na página de A quer
+// dizer "o alvo entrega para A". Impresso cru na página do alvo, ele diria o
+// contrário do que está escrito, então a inversão é decisão da LEITURA e mora
+// aqui. Sem tipo declarado não se inventa um: a linha existe (alguém cita) e o
+// sentido fica em silêncio.
+function backlinkKindLabel(kind) {
+  const k = String(kind || "").toLowerCase();
+  if (k === "upstream") return t("recebe deste");
+  if (k === "downstream") return t("entrega para este");
+  if (k === "bidirecional" || k === "bidirectional") return t("nos dois sentidos");
+  return "";
+}
+
+function backlinksHtml(rows) {
+  const list = (rows || []).filter((r) => r && r.rel);
+  if (!list.length) return "";   // ninguém cita: nenhuma seção nasce (DESIGN.md §1)
+  const items = list.map((r) => {
+    const kind = backlinkKindLabel(r.kind);
+    // <button>, não <a>: um <a> sem href fica fora da ordem de tabulação e não
+    // tem papel de link — a linha do painel de referências ao lado tem esse
+    // defeito e ele não se repete numa superfície nova (WCAG 2.1.1 / 4.1.2).
+    return `<li class="refrow"><button class="refitem" data-backlink="${esc(r.rel)}">` +
+      `<span class="refname">${esc(r.context || r.rel)}</span>` +
+      (kind ? `<span class="backkind mono">${esc(kind)}</span>` : "") +
+      `</button></li>`;
+  }).join("");
+  return `<details class="refspanel backpanel" open><summary>${t("Citado por")} ` +
+    `<span class="mono">(${list.length})</span></summary>` +
+    `<ul class="reflist">${items}</ul></details>`;
+}
+
+// Só `contexts/**/context.md` carrega ligação lateral (é o único arquivo que o
+// grafo varre), então perguntar por uma nota ou por uma reunião seria IPC à toa.
+// Devolve markup em vez de pintar: inserida DEPOIS, a seção empurraria o
+// documento para baixo justo quando o leitor começou a ler.
+async function backlinksHtmlFor(rel, stale) {
+  if (!/^contexts\/.+\/context\.md$/.test(rel)) return "";
+  let rows = [];
+  try { rows = (await invoke("brain_backlinks", { rel })) || []; }
+  catch (e) { clog("brain_backlinks error: " + e); return ""; }
+  if (stale && stale()) return "";   // uma leitura mais nova venceu a corrida
+  return backlinksHtml(rows);
+}
+function wireBacklinks() {
+  B.doc.querySelectorAll("[data-backlink]").forEach((b) =>
+    (b.onclick = () => openDoc(b.dataset.backlink, { preview: true })));
+}
+
+// ============================ ADR-0026: índice remissivo (tela, nunca arquivo) ============================
+// Um índice gravado no acervo envelhece entre duas escritas e passa a mentir com
+// a autoridade de um documento versionado. Este é calculado a cada leitura, a
+// partir do que o conhecimento JÁ escreveu: o nome que o vizinho usa no link, o
+// título do ponto em aberto, o slug da decisão e o código externo citado.
+const INDEX_REL = "loro://indice";
+
+// O endereço tem de ser legível fora da tela: `H-3` sozinho não diz de quem é —
+// a numeração é local ao arquivo. O hotspot já chega qualificado do grafo; a
+// seção, a decisão e o código externo ganham o nome do tema aqui.
+function locatorLabel(e) {
+  const ctx = String((e && e.context) || "")
+    || String((e && e.rel) || "").replace(/^contexts\//, "").replace(/\/context\.md$/, "");
+  const loc = String((e && e.locator) || "");
+  if (!loc) return ctx;
+  return loc.startsWith(ctx + "#") ? loc : (ctx ? ctx + " " + loc : loc);
+}
+
+function indexSurfaceHtml(terms) {
+  const list = (terms || [])
+    .filter((x) => x && x.term && (x.entries || []).length)
+    .sort((a, b) => String(a.term).localeCompare(String(b.term), uiLocale()));
+  const head = `<h1>${t("índice remissivo")}</h1>` +
+    `<p class="idxlead">${t("cada palavra aqui já está escrita no conhecimento: é o nome que um tema usa para chamar o outro, o título de um ponto em aberto, uma decisão ou um código citado. A tela é recalculada a cada leitura — não existe arquivo de índice para envelhecer.")}</p>`;
+  if (!list.length) {
+    return head + `<p class="bempty">${t("ainda não há termos — eles aparecem conforme os temas passam a se citar, abrir pontos e registrar decisões.")}</p>`;
+  }
+  const verbetes = list.map((x) => {
+    const locs = (x.entries || []).map((e) =>
+      `<a class="loc" href="#" data-path="acervo://${esc(String(e.rel || ""))}"` +
+      ` data-term="${esc(String(x.term || ""))}">${esc(locatorLabel(e))}</a>`)
+      .join(", ");
+    return `<dt class="idxterm">${esc(x.term)}</dt><dd class="idxlocs">${locs}</dd>`;
+  }).join("");
+  return head + `<dl class="idx">${verbetes}</dl>`;
+}
+
+async function renderIndexSurface(tab, stale) {
+  B.editHost.hidden = true;
+  B.editBar.hidden = true;
+  B.doc.hidden = false;
+  B.wsBody.classList.remove("editing");
+  fmById.set(tab.id, null);
+  let terms = [];
+  try { terms = (await invoke("brain_index_terms")) || []; }
+  catch (e) { clog("brain_index_terms error: " + e); }
+  if (stale && stale()) return;
+  B.doc.innerHTML = indexSurfaceHtml(terms);
+  wireDocLinks();   // o localizador abre pela mesma rota de sempre (brain_resolve_ref)
+}
+
 // ============================ reunião: superfície viva (ADR-0010) ============================
 // The living reuniao.md tab renders the transcript (append-only, read-only) plus
 // an in-tab side rail (audio + artefatos from the manifest) and a DISABLED
 // análise section with the per-meeting consent toggle (default OFF; ADR-0011).
 // It stays under pessoal/ (kind "personal"), so LoroWorld hides any Git state and
-// nothing here ever writes into contextos/.
+// nothing here ever writes into contexts/.
 async function renderMeetingLiving(tab, stale) {
   const id = LM.livingId(tab.rel);
   B.editHost.hidden = true;
@@ -5151,12 +5387,12 @@ async function renderMeetingLiving(tab, stale) {
   paintMeetingSurface(id, raw, manifest, status, artefatos, tab.rel, stale);
 }
 
-// Lista os ARQUIVOS reais sob <reunião>/notas/ — o skill grava direto em disco
+// Lista os ARQUIVOS reais sob <reunião>/notes/ — o skill grava direto em disco
 // (não no manifest), então o rail precisa escanear para mostrá-los. ADR-0008:
 // todo documento gerado é uma nota, numa pasta plana (sem artefatos/<kind>).
 async function listArtefatos(dirRel) {
   let files = [];
-  try { files = ((await invoke("brain_list_dir", { rel: `${dirRel}/notas` })) || []).filter((f) => !f.dir); }
+  try { files = ((await invoke("brain_list_dir", { rel: `${dirRel}/notes` })) || []).filter((f) => !f.dir); }
   catch (_) {}
   return files.map((f) => ({ kind: "nota", name: f.name, rel: f.path }));
 }
@@ -5207,7 +5443,7 @@ function paintMeetingSurface(id, raw, manifest, status, artefatos, rel, stale) {
   // toast que expira — depois dele a aba ficava com o selo CONCLUÍDA e nenhuma
   // porta para o passo seguinte. DESIGN.md §1: "a finished meeting with no
   // analysis shows ✦ analisar". A oferta é UMA ação, só quando a reunião terminou
-  // e ainda não há nada em notas/ (a mesma decisão pura que barra o envio para a
+  // e ainda não há nada em notes/ (a mesma decisão pura que barra o envio para a
   // fila) — enquanto grava, nenhum cromo novo entra.
   const semAnalise = eff === "done" && !!LM.meetingQueueBlock((artefatos || []).length);
   // R19 · numa reunião interrompida a ação que falta não é analisar: é encerrar.
@@ -5229,8 +5465,8 @@ function paintMeetingSurface(id, raw, manifest, status, artefatos, rel, stale) {
     `<div class="mtg-surface">` +
       `<div class="mtg-doc">${meetingStatusBar(badge)}${preview}${offer}` +
         (spoken
-          ? `<div class="annotatable transcript">${colorSpeakers(mdRender(body))}</div>`
-          : `${body.trim() ? mdRender(body) : ""}${emptyMsg}`) +
+          ? `<div class="annotatable transcript">${colorSpeakers(mdRender(body, docOpts()))}</div>`
+          : `${body.trim() ? mdRender(body, docOpts()) : ""}${emptyMsg}`) +
       `</div>` +
     `</div>`;
   wireMeetingSurface(id);
@@ -5288,7 +5524,7 @@ async function finishInterruptedMeeting(id, rel) {
   try {
     await invoke("brain_meeting_finish", { id });
     pessoalSig = ""; refreshPessoal();
-    if (rel) refreshTabFromDisk(`${rel}/reuniao.md`);
+    if (rel) refreshTabFromDisk(livingRel(rel));
     toast(t("reunião encerrada — a transcrição foi mantida"));
   } catch (e) {
     toast(t("não encerrei a reunião") + ": " + tErr(String(e)));
@@ -5339,9 +5575,9 @@ function closeAnnotPop() {
 // único (F17) — role=menu com menuitem de verdade, setas, Home/End, uma entrada de
 // foco só, e Escape/Tab que fecham. Antes ele declarava role="menu" com <button>s
 // soltos: um menu de ZERO itens para quem lê a tela, sem setas.
-function focusAnnotPop(returnTo) {
+function focusAnnotPop(returnTo, opts) {
   _annotReturnFocus = returnTo || null;
-  wireFloatMenu(annotPop(), returnTo, closeAnnotPop);
+  wireFloatMenu(annotPop(), returnTo, closeAnnotPop, opts);
 }
 function annotBtn(a, label, extra) { return `<button class="annot-act${extra ? " " + extra : ""}" data-a="${a}">${esc(label)}</button>`; }
 
@@ -5437,7 +5673,7 @@ function annotOnMouseUp() {
     const s = Math.min(a, b), e = Math.max(a, b);
     if (e - s < 1) return;
     const anchor = window.LoroAnnotate.makeAnchor(container.textContent, s, e);
-    openSelectionPopover(anchor, range.getBoundingClientRect());
+    openSelectionPopover(anchor, range.getBoundingClientRect(), null, { keepSelection: true });
   }, 0);
 }
 // Length of text from the container start up to (node, offset) — the plain-text
@@ -5450,7 +5686,7 @@ function rangeLenTo(container, node, offset) {
   return r.toString().length;
 }
 
-function openSelectionPopover(anchor, rect, returnTo) {
+function openSelectionPopover(anchor, rect, returnTo, opts) {
   const pop = annotPop();
   pop.innerHTML =
     annotBtn("grifar", "✎ " + t("grifar")) +
@@ -5464,7 +5700,8 @@ function openSelectionPopover(anchor, rect, returnTo) {
   pop.querySelector('[data-a="analisar"]').onclick = () => { hideAnnotPop(); runExcerptSkill("loro-analyse.md", anchor); };
   pop.querySelector('[data-a="slack"]').onclick = () => { hideAnnotPop(); runExcerptSkill("loro-slack.md", anchor); };
   positionPop(rect);
-  focusAnnotPop(returnTo);
+  // veio de uma seleção de mouse: a seleção é o assunto, e o foco fica onde está
+  focusAnnotPop(returnTo, opts && opts.keepSelection ? { focus: false } : undefined);
 }
 
 // N10 · o único caminho para criar uma anotação era um arrasto de mouse real
@@ -5641,7 +5878,7 @@ function currentMeetingDir(id) {
 // ADR-0012: inject the skill slash command into the terminal Claude. We reuse
 // termRun (opens the panel + types the command via term_input) — no in-app model
 // call. Results appear in the terminal AND, as the skill writes them, under the
-// meeting's notas/; we refresh the tree afterwards so the new
+// meeting's notes/; we refresh the tree afterwards so the new
 // files surface (the skill never touches manifest.json, so the rail's artefatos
 // list only reflects app-written artifacts).
 async function runMeetingSkill(kind, id, question, dirOverride) {
@@ -5816,8 +6053,8 @@ function pickMeeting(temas, presetTema, opts2) {
 // contextual header actions (move/delete) for the active document
 function applyDocActions(rel) {
   const isQueue = rel.startsWith("inbox/") && !rel.endsWith("_prompt.md");
-  const movable = isQueue || /^(reunioes|notas)\//.test(rel) ||
-    /^contextos\/.+\/(referencias|brainstorming)\//.test(rel);
+  const movable = isQueue || /^(meetings|notes|reunioes|notas)\//.test(rel) ||
+    /^contexts\/.+\/(referencias|brainstorming)\//.test(rel);
   $("bDocActs").hidden = !movable;
   $("bDelDoc").hidden = !isQueue;
   if (isQueue) {
@@ -5851,6 +6088,7 @@ async function renderActive() {
   closeFind();
   B.crumb.textContent = isGuide ? t("instruções do loop")
     : tab.rel === MANUAL_REL ? t("manual de uso")
+    : tab.rel === INDEX_REL ? t("índice remissivo")
     : tab.rel === SCRATCH_REL ? t("nota nova — ainda não salva") : tab.rel;
   // permanent world badge (versionado / rascunho), else document-specific badge
   const world = LoroWorld.crumbBadge(tab.kind, settings.uiLang);
@@ -5864,6 +6102,21 @@ async function renderActive() {
   renderDocRail(tab, isGuide);
   // ADR-0010: a meeting living file (reuniao.md) is its own append-only surface —
   // transcript + artefatos rail + análise/consent; no free-form CM6 editing.
+  // ADR-0026: o índice remissivo é uma TELA, no mesmo cartão de 700px do resto
+  // da leitura — sem modos (não há o que editar) e sem ações de arquivo.
+  if (tab.rel === INDEX_REL) {
+    B.modes.hidden = true;
+    $("bPromoted").hidden = true;
+    $("bDocActs").hidden = true;
+    // não há documento em foco: o painel diria "rascunho — não versionado" de uma
+    // tela que não é arquivo nenhum, e ofereceria habilidades sem sujeito.
+    clearPanelDoc();
+    await renderIndexSurface(tab, stale);
+    if (stale()) return;
+    B.wsBody.scrollTop = 0;
+    markSel();
+    return;
+  }
   if (LM.isLiving(tab.rel)) {
     B.modes.hidden = true;
     $("bPromoted").hidden = true;
@@ -5947,18 +6200,18 @@ function renderDocRail(tab, isGuide) {
 }
 
 // Pasta de anexos do documento aberto — o destino de "Anexar arquivo" (1e).
-// O backend só aceita um `anexos/` sob brainstorming/ ou contextos/
+// O backend só aceita um `attachments/` sob brainstorming/ ou contexts/
 // (acervo::guarded_anexos_dir). Devolver "inbox" como último recurso fazia o
 // botão existir sem destino e falhar com err.invalid_anexos_dest na cara do
 // usuário; agora um documento sem anexos simplesmente não oferece o botão.
 function anexosDirFor(rel) {
   // uma reunião tem os SEUS anexos, não os da ideia inteira
-  const mtg = /^(brainstorming\/[^/]+\/reunioes\/[^/]+)\//.exec(rel);
-  if (mtg) return `${mtg[1]}/anexos`;
-  const m = /^contextos\/([^/]+(?:\/[^/]+)*?)\//.exec(rel);
-  if (m) return `contextos/${m[1]}/anexos`;
+  const mtg = /^(brainstorming\/[^/]+\/meetings\/[^/]+)\//.exec(rel);
+  if (mtg) return `${mtg[1]}/attachments`;
+  const m = /^contexts\/([^/]+(?:\/[^/]+)*?)\//.exec(rel);
+  if (m) return `contexts/${m[1]}/attachments`;
   const b = /^brainstorming\/([^/]+)\//.exec(rel);
-  if (b) return `brainstorming/${b[1]}/anexos`;
+  if (b) return `brainstorming/${b[1]}/attachments`;
   return null;
 }
 
@@ -6174,6 +6427,60 @@ function wireDocLinks() {
   B.doc.querySelectorAll("a[data-ref]").forEach((a) =>
     (a.onclick = (e) => { e.preventDefault(); onRefClick(rel, fm, "ref:" + a.dataset.ref, a); }));
 }
+// ADR-0026 §15 — rola até o ponto que a citação nomeia. O id é o que o renderer
+// escreveu no bloco (o apelido do hotspot, ou o `H-n` de um acervo antigo): se
+// não existir, a função não faz nada — um documento aberto no topo é melhor que
+// um salto para o lugar errado.
+function revealAnchor(id) {
+  if (!id) return false;
+  const alvo = document.getElementById(id);
+  if (!alvo) return false;
+  alvo.scrollIntoView({ block: "center", behavior: reducedMotion() ? "auto" : "smooth" });
+  // a marca some sozinha: é para achar o ponto, não para ficar pintando o texto
+  alvo.classList.add("justfound");
+  setTimeout(() => alvo.classList.remove("justfound"), 1600);
+  return true;
+}
+
+// ADR-0026 §19 — grifa o trecho que o verbete nomeia, por 10s. O índice sabe QUAL
+// palavra você procurava; abrir o documento no topo devolvia essa busca para o
+// olho. Anda pelos NÓS DE TEXTO e envolve só o trecho: reescrever o innerHTML do
+// documento apagaria anotação (ADR-0007), link e estado de rolagem.
+function highlightTerm(termo) {
+  const alvo = String(termo || "").trim();
+  const raiz = B.doc;
+  if (!alvo || !raiz) return false;
+  const dobra = (x) => x.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const busca = dobra(alvo);
+  const andarilho = document.createTreeWalker(raiz, NodeFilter.SHOW_TEXT);
+  for (let no = andarilho.nextNode(); no; no = andarilho.nextNode()) {
+    if (no.parentElement && no.parentElement.closest("mark.termfound")) continue;
+    const i = dobra(no.nodeValue || "").indexOf(busca);
+    if (i < 0) continue;
+    const faixa = document.createRange();
+    faixa.setStart(no, i);
+    faixa.setEnd(no, i + alvo.length);
+    const marca = document.createElement("mark");
+    marca.className = "termfound";
+    try { faixa.surroundContents(marca); } catch (_) { return false; }
+    marca.scrollIntoView({ block: "center", behavior: reducedMotion() ? "auto" : "smooth" });
+    // dez segundos e some: é para achar o trecho, não para marcar o documento
+    setTimeout(() => {
+      const pai = marca.parentNode;
+      if (!pai) return;
+      while (marca.firstChild) pai.insertBefore(marca.firstChild, marca);
+      pai.removeChild(marca);
+      pai.normalize();
+    }, 10000);
+    return true;
+  }
+  return false;
+}
+
+function reducedMotion() {
+  return !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+}
+
 async function onRefClick(sourceRel, fm, token, anchorEl) {
   let caminho = token;
   const m = /^ref:(.+)$/.exec(token || "");
@@ -6186,7 +6493,19 @@ async function onRefClick(sourceRel, fm, token, anchorEl) {
   try { res = await invoke("brain_resolve_ref", { sourceRel, ref: caminho }); }
   catch (e) { toast(t("não resolvi a referência")); clog("resolve_ref error: " + e); return; }
   if (!res || !res.exists) { toast(t("arquivo não encontrado") + (res && res.rel ? ": " + res.rel : "")); return; }
-  if (res.tipo === "doc") { openDoc(res.rel, { preview: true }); return; }
+  // ADR-0026 §12 — seguir uma referência é navegar com intenção: a aba é PRÓPRIA.
+  // Com preview, o segundo salto comia o primeiro e você perdia de onde veio.
+  if (res.tipo === "doc") {
+    const hash = String(caminho).split("#")[1] || "";
+    const termo = anchorEl && anchorEl.dataset ? anchorEl.dataset.term : "";
+    await openDoc(res.rel, { preview: false });
+    // depois da pintura: o alvo só existe quando o documento já está na tela
+    requestAnimationFrame(() => {
+      if (termo && highlightTerm(termo)) return;
+      if (hash) revealAnchor(hash);
+    });
+    return;
+  }
   if (res.tipo === "image") {
     try {
       const asset = await invoke("brain_read_asset", { rel: res.rel });
@@ -6220,6 +6539,38 @@ function toggleInlineImage(anchorEl, mime, base64, rel) {
 
 // Open (or focus) a document as a workspace tab. Single-click = ephemeral
 // preview (default); pass {preview:false} for double-click / palette / permanent.
+// ADR-0026 §14 — o documento de um tema pode se chamar `index.md` (gerado hoje)
+// ou `indice.md` (acervo escrito antes). Quem sabe qual existe é o disco, não o
+// frontend: montar o caminho na mão abria uma aba de arquivo inexistente.
+// ADR-0026 §14 — o arquivo vivo da reunião se chama `meeting.md`. Estava escrito
+// à mão em quatro lugares com o nome ANTIGO, então toda reunião gravada por esta
+// versão abria "arquivo não encontrado". Um nome, um lugar.
+const LIVING_FILE = "meeting.md";
+const livingRel = (dir) => `${dir}/${LIVING_FILE}`;
+
+// ADR-0026 §20 · o portão da estrutura antiga. Diz o que está acontecendo, o que
+// a migração FAZ e o que ela não faz — o medo aqui é perder arquivo, e a resposta
+// tem de vir antes do botão (DESIGN.md §1: o preço está na cópia).
+function legacyGateHtml() {
+  return `<div class="wizhead">
+      <img src="parrot.png" width="34" height="34" alt="" class="wizard-icon" />
+      <div>
+        <h1>${t("Este projeto usa a estrutura antiga")}</h1>
+        <p class="lead">${t("as pastas mudaram de nome e o Loro precisa atualizar este projeto antes de abrir. sem isso, parte do conhecimento não aparece.")}</p>
+      </div>
+    </div>
+    <div class="wizcard">
+      <p class="hint">${t("a atualização renomeia as pastas e os arquivos que o Loro criou. nada é apagado, nada é reescrito, e o que você escreveu continua exatamente igual.")}</p>
+      <p class="hint">${t("você vê a lista completa do que vai mudar antes de confirmar.")}</p>
+      <button class="btn solid" data-migrate>${t("atualizar a estrutura")}</button>
+    </div>`;
+}
+
+async function openTopicDoc(rel, opts) {
+  try { await openDoc(await invoke("brain_topic_doc", { rel }), opts); }
+  catch (e) { toast(tErr(String(e))); }
+}
+
 async function openDoc(relPath, opts) {
   const r = LoroWorkspace.openTab(ws, relPath, opts || { preview: true });
   ws = r.ws;
@@ -6260,6 +6611,7 @@ const COMMANDS = [
   { group: "ir para", label: "Início", code: "KeyH", run: () => { openHome(); goDest("home"); } },
   { group: "ir para", label: "Organizar", run: () => { openHome(); goDest("organize"); } },
   { group: "ir para", label: "Conhecimento", run: () => { openHome(); goDest("knowledge"); } },
+  { group: "ir para", label: "Índice remissivo", run: () => openDoc(INDEX_REL, { preview: false }) },
   { group: "ir para", label: "Como funciona o Loro", run: () => openManual() },
   { group: "ir para", label: "Configurações", run: () => openCfg() },
   { group: "ir para", label: "apresentação do Loro", code: "KeyA", run: () => showWelcome() },
@@ -6647,6 +6999,11 @@ function drawWizHint() {
 B.ctxInput.addEventListener("input", () => { wizCtxDirty = true; });
 B.cancelBtn.addEventListener("click", () => { creatingNew = false; applyAccent(activeColor()); brainRefresh(); });
 function activeColor() { const a = acervos.find((x) => x.id === activeAcervo); return a ? a.color : ""; }
+// ADR-0026 §2 — onde os códigos citados pelo conhecimento (MM-1147) abrem. Vazio
+// é o padrão honesto: o código continua sendo uma marca, e nada é adivinhado.
+function ticketBase() { const a = acervos.find((x) => x.id === activeAcervo); return (a && a.ticketBase) || ""; }
+// Opções de leitura de um documento do acervo (ADR-0026).
+function docOpts() { return { ticketBase: ticketBase() }; }
 // ADR-0005 §6: choosing the acervo language in the wizard switches the whole
 // UI live (the wizard itself relabels), so the choice is visible before you
 // commit; it's then sent as the acervo's generation language on create.
@@ -7192,7 +7549,7 @@ function promptNewTema() {
     try {
       const r = await invoke("brain_create_brainstorm", { input: { nome } });
       done(); pessoalSig = ""; refreshPessoal();
-      if (r && r.rel) openDoc(`${r.rel}/indice.md`, { preview: false });
+      if (r && r.rel) openTopicDoc(r.rel, { preview: false });
     } catch (err) { toast(tErr(String(err))); }
   });
   inp.addEventListener("blur", done);
@@ -7271,11 +7628,13 @@ function offerPropose(r, destContext) {
 
 // ---- migrar acervo (simulação → aplicar) — estende brain_migrate (ADR-0004/0009) ----
 function migrationBodyHtml(rep) {
-  const moves = rep && (rep.moves || rep.planned || rep.movimentos);
-  let lines = [];
-  if (Array.isArray(moves)) {
-    lines = moves.map((m) => typeof m === "string" ? m : `${m.from || m.de || "?"} → ${m.to || m.para || "?"}`);
-  }
+  // As chaves são as que o MigrationReport serializa. A versão anterior lia
+  // `moves`/`planned`/`movimentos` — nenhuma existe — então a simulação dizia
+  // sempre "nada a migrar" e o usuário confirmava no escuro uma operação que
+  // renomeia a árvore inteira (DESIGN.md §1: a interface não pode esconder o que sabe).
+  const lines = ["renamedWorld", "incubated", "renamed", "conflicts", "legacyIdeas", "scaffolding"]
+    .flatMap((k) => (Array.isArray(rep && rep[k]) ? rep[k] : []))
+    .map((m) => (typeof m === "string" ? m : `${m.from || "?"} → ${m.to || "?"}`));
   const preview = lines.length ? lines.map((l) => "• " + esc(l)).join("<br>") : t("nada a migrar");
   return `<p class="pmnote mono">${t("simulação — nada é movido ainda · notas/ permanece versionado · incubadora/ vira tema pessoal")}</p>` +
     `<div class="pmpreview mono">${preview}</div>`;
@@ -7584,7 +7943,7 @@ function ctxFolders() {
 async function ctxMoved(name, newPath) {
   closeFloat(); toast(`${t("movido")} → ${newPath}`);
   bOpen.delete("ctx:" + name);
-  closeTabsUnder("contextos/" + name + "/", false);
+  closeTabsUnder("contexts/" + name + "/", false);
   sideSig = ""; brainRefresh();
 }
 function openCtxMenu(anchor, name, isFolder) {
@@ -7600,7 +7959,7 @@ function openCtxMenu(anchor, name, isFolder) {
   B.bMenu.querySelector('[data-a="ask"]').onclick = () => { closeFloat(); askAcervo(name); };
   B.bMenu.querySelector('[data-a="ren"]').onclick = () => openRenameCtx(anchor, name);
   B.bMenu.querySelector('[data-a="mv"]').onclick = () => openMoveCtxMenu(anchor, name, isFolder);
-  wireCopyPathItems(`contextos/${name}`);
+  wireCopyPathItems(`contexts/${name}`);
   B.bMenu.querySelector('[data-a="del"]').onclick = () => openConfirmDeleteCtx(anchor, name, isFolder);
   placeMenu(anchor);
 }
@@ -7678,7 +8037,7 @@ function openConfirmDeleteCtx(anchor, name, isFolder) {
     try {
       await invoke("brain_delete_context", { name });
       toast(t("deletado"));
-      closeTabsUnder("contextos/" + name + "/", false);
+      closeTabsUnder("contexts/" + name + "/", false);
       bOpen.delete("ctx:" + name);
       sideSig = ""; brainRefresh();
     } catch (e) { toast(tErr(String(e))); }
@@ -8256,9 +8615,15 @@ function goDest(name) {
   LoroShell.setDestination(name);
   // um destino é sempre a Home do workspace — abas são só documentos abertos
   if (!isHomeActive()) openHome(); else showHome();
+  // ADR-0026 · o mapa das ligações é lido só onde é olhado: entrar no destino
+  // pinta na hora, em vez de esperar a próxima passada do poll (10s).
+  if (name === "knowledge") paintKnowledgeGaps();
 }
 document.querySelectorAll("#destNav .dest").forEach((b) =>
   b.addEventListener("click", () => goDest(b.dataset.dest)));
+// ADR-0026 · o índice remissivo abre como as outras leituras: uma aba no mesmo
+// cartão de 700px. Permanente (preview: false) — é destino, não espiada.
+if ($("knowIdxBtn")) $("knowIdxBtn").addEventListener("click", () => openDoc(INDEX_REL, { preview: false }));
 
 // ---- cabeçalho: Gravar · ✦ IA ----------------------------------------------
 // o botão ● do cabeçalho é o MESMO el.toggle de sempre (ligado mais acima)
@@ -8342,7 +8707,7 @@ document.querySelectorAll("[data-sect]").forEach((btn) => btn.addEventListener("
   applySideSections();
 }));
 // as duas linhas do rodapé revelam árvores que ficam fora do caminho por
-// padrão — o CRUD das habilidades e a lista de reuniões/notas continuam ali
+// padrão — o CRUD das habilidades e a lista de reuniões/notes continuam ali
 $("footSkills").addEventListener("click", () => {
   const s = $("toolsSection");
   if (s) { s.hidden = !s.hidden; if (!s.hidden) s.scrollIntoView({ block: "nearest" }); }
@@ -8410,7 +8775,7 @@ async function promptSaveScratch(text) {
       try {
         const rel = dest.startsWith("bs:")
           ? await invoke("brain_new_notebook", { tema: dest.slice(3), titulo })
-          : await invoke("brain_new_note_in", { destRel: `contextos/${dest.slice(4)}/anexos`, titulo });
+          : await invoke("brain_new_note_in", { destRel: `contexts/${dest.slice(4)}/attachments`, titulo });
         if (!rel) throw "err.note_not_created";
         // o esqueleto criado pelo backend cede lugar ao que a pessoa escreveu
         if (text.trim()) await invoke("brain_write", { rel, content: text });
@@ -8476,11 +8841,11 @@ $("recPause").addEventListener("click", () => (state.paused ? resumeMeeting() : 
 $("recMark").addEventListener("click", () => markMeeting());
 $("recImage").addEventListener("click", () => {
   // "inbox" NÃO é destino de anexo: guarded_anexos_dir exige brainstorming/ ou
-  // contextos/ terminando em /anexos e recusa o resto (err.invalid_anexos_dest).
+  // contexts/ terminando em /attachments e recusa o resto (err.invalid_anexos_dest).
   // Fora de uma reunião não há pasta de anexos — o botão diz isso em vez de
   // disparar um erro de backend.
   if (!(meeting.active && meeting.dir)) { toast(t("anexar precisa de uma reunião aberta")); return; }
-  importAnexoFromComputer(meeting.dir + "/anexos", () => { pessoalSig = ""; refreshPessoal(); });
+  importAnexoFromComputer(meeting.dir + "/attachments", () => { pessoalSig = ""; refreshPessoal(); });
 });
 $("recOverlay").addEventListener("click", () => { el.optOverlay.checked = !el.optOverlay.checked; el.optOverlay.dispatchEvent(new Event("change")); });
 $("recSource").addEventListener("change", () => {
@@ -8521,6 +8886,18 @@ document.querySelectorAll("#modeSeg .segbtn").forEach((b) => b.addEventListener(
   if (ai) ai.addEventListener("change", async () => {
     try { await invoke("brain_set_agent", { agent: ai.value.trim() }); toast(t("agente atualizado")); }
     catch (e) { toast(tErr(String(e))); }
+  });
+  // ADR-0026 §2 — o campo diz a verdade sobre o que aceitou: o backend normaliza
+  // (só http/https, com o separador final), então o input volta com o valor real.
+  const tb = $("cfgTicketBase");
+  if (tb) tb.addEventListener("change", async () => {
+    try {
+      await invoke("brain_set_ticket_base", { base: tb.value.trim() });
+      const av = await invoke("brain_list_acervos");
+      acervos = av.acervos || []; activeAcervo = av.active || "";
+      tb.value = ticketBase();
+      toast(tb.value ? t("endereço atualizado") : t("os códigos ficam sem link"));
+    } catch (e) { toast(tErr(String(e))); }
   });
 }
 
@@ -8659,7 +9036,7 @@ function chatAtBottom() {
 }
 function chatPaint() {
   const stick = chatAtBottom();
-  chatAnswerNode().innerHTML = mdRender(chatBuf);
+  chatAnswerNode().innerHTML = mdRender(chatBuf, docOpts());
   chatThinking(chatBusy);   // reancora o indicador no fim
   if (stick) { const th = $("chatThread"); th.scrollTop = th.scrollHeight; }
 }
@@ -8868,8 +9245,10 @@ listen("chat-done", (e) => {
 function filesNamedInAnswer(text) {
   const out = [];
   // o lookbehind barra o que só PARECE um caminho do projeto: uma URL
-  // (…/contextos/x.md) ou um caminho absoluto não é um rel que openDoc abre
-  const re = /(?<![\w./-])(?:brainstorming|contextos|inbox|processed|referencias)\/[A-Za-z0-9._\-/]+\.(?:md|txt)\b/g;
+  // (…/contexts/x.md) ou um caminho absoluto não é um rel que openDoc abre.
+  // `contextos` continua na lista: um acervo escrito antes da ADR-0026 §14 tem
+  // esse caminho, e o agente vai nomeá-lo como ele está no disco.
+  const re = /(?<![\w./-])(?:brainstorming|contexts|contextos|inbox|processed|referencias)\/[A-Za-z0-9._\-/]+\.(?:md|txt)\b/g;
   for (const m of String(text == null ? "" : text).matchAll(re)) {
     if (!out.includes(m[0])) out.push(m[0]);
   }
@@ -9062,7 +9441,7 @@ function paintRecordingChrome() {
     if (pau.hidden === showPause) { pau.hidden = !showPause; paintPauseBtn(); }
   }
   // C27 · "Marcar momento" grava um marcador no manifest da reunião e "Anexar
-  // imagem" escreve em <reunião>/anexos: fora de uma reunião os dois só sabiam
+  // imagem" escreve em <reunião>/attachments: fora de uma reunião os dois só sabiam
   // RECUSAR ("nenhuma reunião em andamento") — com o relógio da transcrição
   // avulsa correndo na frente do usuário. DESIGN.md §1: nunca um controle que
   // não faz nada. Eles existem exatamente enquanto a reunião existe.

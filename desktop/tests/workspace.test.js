@@ -12,15 +12,16 @@ test("empty() is a serializable blank workspace", () => {
   assert.deepStrictEqual(JSON.parse(JSON.stringify(ws)), ws);
 });
 
-test("openTab derives kind from rel (contextos/ vs pessoal/ vs other)", () => {
+test("openTab derives kind from rel (contexts/ vs pessoal/ vs other)", () => {
   let ws = W.empty();
-  ws = W.openTab(ws, "contextos/loro/context.md").ws;
+  ws = W.openTab(ws, "contexts/loro/context.md").ws;
   ws = W.openTab(ws, "pessoal/notes.md", { preview: false }).ws;
   ws = W.openTab(ws, "README.md", { preview: false }).ws;
   assert.strictEqual(ws.tabs[0].kind, "context");
   assert.strictEqual(ws.tabs[1].kind, "personal");
   assert.strictEqual(ws.tabs[2].kind, "other");
-  assert.strictEqual(ws.tabs[0].title, "context.md");
+  // ADR-0026 §12: o título é a identidade do documento, não o nome do arquivo
+  assert.strictEqual(ws.tabs[0].title, "loro");
   assert.strictEqual(ws.tabs[1].title, "notes.md");
 });
 
@@ -128,7 +129,7 @@ test("nextMru returns the most-recent tab other than the active one", () => {
 });
 
 test("setMode and renameTab update the right tab", () => {
-  let ws = W.openTab(W.empty(), "contextos/x/context.md", { preview: false }).ws;
+  let ws = W.openTab(W.empty(), "contexts/x/context.md", { preview: false }).ws;
   const id = W.activeTab(ws).id;
   ws = W.setMode(ws, id, "edit");
   assert.strictEqual(W.activeTab(ws).mode, "edit");
@@ -166,7 +167,7 @@ test("no reducer mutates its input", () => {
 
 test("workspace stays JSON-serializable through a realistic session", () => {
   let ws = W.empty();
-  ws = W.openTab(ws, "contextos/loro/context.md", { preview: false }).ws;
+  ws = W.openTab(ws, "contexts/loro/context.md", { preview: false }).ws;
   ws = W.openTab(ws, "pessoal/draft.md").ws;
   ws = W.markDirty(ws, W.activeTab(ws).id, true);
   ws = W.openTab(ws, "README.md").ws;
@@ -240,4 +241,49 @@ test("termCollapseGlyph trata valores soltos como 'embaixo'", () => {
   assert.strictEqual(W.termCollapseGlyph(undefined), "⌄");
   assert.strictEqual(W.termCollapseGlyph(null), "⌄");
   assert.strictEqual(W.termCollapseGlyph(1), "›");
+});
+
+// ---- ADR-0026 §12 — a aba diz ONDE você está, não como o arquivo se chama ----
+//
+// Todo documento do acervo se chama `context.md`, `CHANGELOG.md` ou
+// `reuniao.md`. Com o basename por título, abrir três temas dava três abas
+// idênticas escritas "context.md": a faixa deixava de ser um mapa e o nome do
+// arquivo — que nem é traduzido — virava a única identidade visível.
+
+test("ADR-0026 — a aba de um tema é o NOME do tema, não context.md", () => {
+  const { openTab, empty, activeTab } = W;
+  let ws = openTab(empty(), "contexts/assinatura/context.md", { preview: false }).ws;
+  assert.strictEqual(activeTab(ws).title, "assinatura");
+  ws = openTab(ws, "contexts/trato/hardware-lifecycle/context.md", { preview: false }).ws;
+  assert.strictEqual(activeTab(ws).title, "trato/hardware-lifecycle");
+});
+
+test("ADR-0026 — histórico e donos dizem de QUEM são", () => {
+  const { openTab, empty, activeTab } = W;
+  let ws = openTab(empty(), "contexts/assinatura/CHANGELOG.md", { preview: false }).ws;
+  assert.strictEqual(activeTab(ws).title, "assinatura · histórico");
+  ws = openTab(ws, "contexts/frota/multas/CHANGELOG.md", { preview: false }).ws;
+  assert.strictEqual(activeTab(ws).title, "frota/multas · histórico");
+});
+
+test("ADR-0026 — a reunião é o tema e a data, não reuniao.md", () => {
+  const { openTab, empty, activeTab } = W;
+  const ws = openTab(empty(), "brainstorming/risco/meetings/2026-08-04-1212-reuniao/meeting.md",
+    { preview: false }).ws;
+  assert.strictEqual(activeTab(ws).title, "risco · 2026-08-04 12:12");
+});
+
+test("ADR-0026 — o que não é do acervo continua sendo o nome do arquivo", () => {
+  const { openTab, empty, activeTab } = W;
+  let ws = openTab(empty(), "INDEX.md", { preview: false }).ws;
+  assert.strictEqual(activeTab(ws).title, "INDEX.md");
+  ws = openTab(ws, "pessoal/temas/ideia.md", { preview: false }).ws;
+  assert.strictEqual(activeTab(ws).title, "ideia.md");
+});
+
+test("ADR-0026 — seguir uma referência abre uma aba NOVA, não substitui a de preview", () => {
+  const { openTab, empty } = W;
+  let ws = openTab(empty(), "contexts/assinatura/context.md", { preview: true }).ws;
+  ws = openTab(ws, "contexts/riscos/context.md", { preview: false }).ws;
+  assert.strictEqual(ws.tabs.length, 2, "a segunda não come a primeira");
 });

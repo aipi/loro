@@ -8,14 +8,14 @@
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.LoroMeeting = api;
 })(typeof window !== "undefined" ? window : globalThis, function () {
-  // A meeting home is brainstorming/<slug>/reunioes/<id>/ (ADR-0013) where <id>
+  // A meeting home is brainstorming/<slug>/meetings/<id>/ (ADR-0013) where <id>
   // is [a-z0-9-] (validated in meeting.rs); the legacy pessoal/temas/<slug>/…
   // home is still recognized for un-migrated acervos. The living notebook is
   // reuniao.md, under the gitignore quarantine (never versioned); ADR-0018
-  // removed the built report, so the meeting's output is its notas/.
-  const HOME = "(?:brainstorming\\/[^/]+|pessoal\\/temas\\/[^/]+)\\/reunioes";
-  const LIVING_RE = new RegExp("^" + HOME + "\\/([a-z0-9-]+)\\/reuniao\\.md$");
-  const DIR_RE = new RegExp("^(" + HOME + "\\/[a-z0-9-]+)\\/reuniao\\.md$");
+  // removed the built report, so the meeting's output is its notes/.
+  const HOME = "(?:brainstorming\\/[^/]+|pessoal\\/temas\\/[^/]+)\\/meetings";
+  const LIVING_RE = new RegExp("^" + HOME + "\\/([a-z0-9-]+)\\/(?:meeting|reuniao)\\.md$");
+  const DIR_RE = new RegExp("^(" + HOME + "\\/[a-z0-9-]+)\\/(?:meeting|reuniao)\\.md$");
 
   // The stable append marker meeting.rs writes into the living file; the reader
   // must strip it so the transcript surface never shows the raw comment.
@@ -477,7 +477,7 @@
   }
 
   // #44 — destinos possíveis para MOVER uma reunião. Uma reunião só existe em
-  // `<brainstorming>/reunioes/` (é o caminho que o list_meetings varre), então o
+  // `<brainstorming>/meetings/` (é o caminho que o list_meetings varre), então o
   // destino é sempre outro brainstorming — nunca avulso, notas ou anexos, que
   // guardam arquivos soltos. O brainstorming atual sai da lista.
   function meetingMoveTargets(temas, slugAtual) {
@@ -504,7 +504,7 @@
   }
 
   // ADR-0018 · AC-7 — a análise É a saída da reunião, então uma reunião sem nada
-  // em `notas/` não tem o que enfileirar. Devolve o motivo (msgid) quando o envio
+  // em `notes/` não tem o que enfileirar. Devolve o motivo (msgid) quando o envio
   // deve ficar bloqueado, e null quando pode ir. Puro.
   function meetingQueueBlock(notas) {
     return Number(notas) > 0 ? null : "analise a reunião antes de enviar para a fila";

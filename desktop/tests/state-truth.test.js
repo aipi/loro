@@ -248,7 +248,7 @@ test("C6 — _prompt.md é o guia do loop, não um item: arrastar não o sobresc
   const isGuide = loadPure("isQueueGuidePath");
   assert.equal(isGuide("/Users/x/Downloads/_prompt.md"), true);
   assert.equal(isGuide("C:\\Users\\x\\_PROMPT.md"), true, "o disco não diferencia caixa");
-  assert.equal(isGuide("/Users/x/notas.md"), false);
+  assert.equal(isGuide("/Users/x/notes.md"), false);
   assert.equal(isGuide("/Users/x/_prompt.md.txt"), false);
   const drop = APP.match(/listen\("tauri:\/\/drag-drop"[\s\S]*?\n\}\);/);
   assert.ok(drop, "o handler de arrastar continua no lugar");
@@ -337,9 +337,9 @@ function loadHtmlFn(name) {
 test("B5 — uma ideia abre a SUA vista, não o indice.md cru", () => {
   const ideaSlugOf = loadPure("ideaSlugOf");
   assert.equal(ideaSlugOf("brainstorming/plataforma/indice.md"), "plataforma");
-  assert.equal(ideaSlugOf("brainstorming/plataforma/notas/x.md"), null);
-  assert.equal(ideaSlugOf("brainstorming/a/reunioes/r/reuniao.md"), null);
-  assert.equal(ideaSlugOf("contextos/plataforma/context.md"), null);
+  assert.equal(ideaSlugOf("brainstorming/plataforma/notes/x.md"), null);
+  assert.equal(ideaSlugOf("brainstorming/a/meetings/r/meeting.md"), null);
+  assert.equal(ideaSlugOf("contexts/plataforma/context.md"), null);
   assert.equal(ideaSlugOf(null), null);
   // o desvio mora no pintor único do documento aberto
   const body = fnBody("renderActive");
@@ -352,13 +352,13 @@ test("B5 — uma ideia abre a SUA vista, não o indice.md cru", () => {
 test("B5 — a vista lista o material da ideia e conta cada pasta", () => {
   const body = fnBody("renderIdeaSurface");
   assert.match(body, /brain_list_meetings/, "as reuniões da ideia entram na vista");
-  assert.match(body, /brainstorming\/\$\{slug\}\/notas/, "as notas também");
-  assert.match(body, /brainstorming\/\$\{slug\}\/anexos/, "e os anexos");
+  assert.match(body, /brainstorming\/\$\{slug\}\/notes/, "as notas também");
+  assert.match(body, /brainstorming\/\$\{slug\}\/attachments/, "e os anexos");
   const section = loadHtmlFn("ideaSectionHtml");
   const cheia = section("reuniões", ["<li>a</li>", "<li>b</li>"], "nenhuma reunião ainda");
   assert.match(cheia, /\(2\)/, "a contagem é dita, não deixada para o usuário contar");
   assert.match(cheia, /<ul>/);
-  const vazia = section("notas", [], "nenhuma nota ainda");
+  const vazia = section("notes", [], "nenhuma nota ainda");
   assert.match(vazia, /\(0\)/);
   assert.match(vazia, /nenhuma nota ainda/, "uma seção vazia diz que está vazia");
   assert.ok(!/<ul>/.test(vazia), "sem lista fantasma");
@@ -366,8 +366,8 @@ test("B5 — a vista lista o material da ideia e conta cada pasta", () => {
 
 test("B5 — a linha do material é um controle alcançável pelo teclado", () => {
   const row = loadHtmlFn("ideaRowHtml");
-  const html = row("brainstorming/a/notas/n.md", "nota");
-  assert.match(html, /<button class="link" data-open="brainstorming\/a\/notas\/n\.md">/,
+  const html = row("brainstorming/a/notes/n.md", "nota");
+  assert.match(html, /<button class="link" data-open="brainstorming\/a\/notes\/n\.md">/,
     "um <a> sem href não entra na ordem de tabulação nem é anunciado como link (WCAG 2.1.1/4.1.2)");
   const body = fnBody("renderIdeaSurface");
   assert.match(body, /\[data-open\][\s\S]{0,120}openDoc\(/, "e o clique abre o documento");
@@ -383,8 +383,8 @@ test("B5 — o vazio orienta o próximo passo, com UMA ação primária", () => 
   assert.match(body, /startMeetingFlow\(slug\)/, "gravar aqui grava NESTA ideia");
   assert.match(body, /promptNewNota\(slug,/);
   const count = loadPure("ideaMaterialCount");
-  assert.equal(count({ reunioes: 0, notas: 0, anexos: 0 }), 0);
-  assert.equal(count({ reunioes: 2, notas: 1, anexos: 3 }), 6);
+  assert.equal(count({ meetings: 0, notes: 0, attachments: 0 }), 0);
+  assert.equal(count({ meetings: 2, notes: 1, attachments: 3 }), 6);
   assert.equal(count(null), 0);
 });
 
@@ -399,21 +399,21 @@ test("B5 — as frases da vista da ideia têm par em inglês", () => {
 
 // ---------------------------------------------------------------- B15
 // Uma habilidade termina anunciando o arquivo que criou ("✅ apresentação criada:
-// contextos/…/anexos/x.md") e a conversa parava aí: o caminho é TEXTO, não um
+// contexts/…/attachments/x.md") e a conversa parava aí: o caminho é TEXTO, não um
 // controle. DESIGN.md §1: "offer the action" — quem acabou de gerar um documento
 // quer abri-lo, não procurá-lo na árvore.
 test("B15 — o chat reconhece os arquivos que a resposta nomeia", () => {
   const files = loadPure("filesNamedInAnswer");
   assert.deepStrictEqual(
-    files("✅ Apresentação criada: contextos/plataforma/anexos/decisoes.md"),
-    ["contextos/plataforma/anexos/decisoes.md"]);
+    files("✅ Apresentação criada: contexts/plataforma/attachments/decisoes.md"),
+    ["contexts/plataforma/attachments/decisoes.md"]);
   // dentro de crase (o agente escreve markdown) e repetido no mesmo texto
   assert.deepStrictEqual(
-    files("escrevi `brainstorming/a/notas/n.md` e revisei brainstorming/a/notas/n.md"),
-    ["brainstorming/a/notas/n.md"]);
+    files("escrevi `brainstorming/a/notes/n.md` e revisei brainstorming/a/notes/n.md"),
+    ["brainstorming/a/notes/n.md"]);
   // nada que não seja um arquivo do projeto entra
-  assert.deepStrictEqual(files("veja https://x.dev/contextos/foo.md e /etc/passwd"), []);
-  assert.deepStrictEqual(files("li o contexto contextos/plataforma"), []);
+  assert.deepStrictEqual(files("veja https://x.dev/contexts/foo.md e /etc/passwd"), []);
+  assert.deepStrictEqual(files("li o contexto contexts/plataforma"), []);
   assert.deepStrictEqual(files(null), []);
   // teto: a conversa não vira um gerenciador de arquivos
   const many = files([1, 2, 3, 4, 5].map((i) => `inbox/f${i}.md`).join(" "));
@@ -450,4 +450,34 @@ test("R11 — trocar de idioma invalida as assinaturas da lateral", () => {
   const refresh = body.indexOf("brainRefresh()");
   assert.ok(sig >= 0 && refresh > sig,
     "zerar DEPOIS do refresh não repinta nada: a assinatura tem de cair antes");
+});
+
+// A contagem e o seu CHAMADOR são o mesmo contrato. O teste de unidade chamava a
+// função com as chaves novas e passava; quem chamava de verdade ainda mandava as
+// antigas, então uma ideia com reuniões gravadas dizia "nada aqui ainda".
+test("ADR-0026 — o chamador da contagem usa as chaves que a função lê", () => {
+  const fonte = fnSource("renderIdeaSurface");
+  const chamada = /ideaMaterialCount\(\{([^}]*)\}/.exec(fonte);
+  assert.ok(chamada, "renderIdeaSurface conta o material da ideia");
+  const corpo = fnBody("ideaMaterialCount");
+  for (const chave of ["meetings", "notes", "attachments"]) {
+    assert.match(corpo, new RegExp("c\\." + chave + "\\b"), `a função lê c.${chave}`);
+    assert.match(chamada[1], new RegExp("\\b" + chave + "\\s*:"), `e o chamador manda ${chave}`);
+  }
+});
+
+// A simulação da migração lia chaves que o backend nunca mandou: dizia sempre
+// "nada a migrar" e o usuário confirmava no escuro uma operação que renomeia a
+// árvore inteira do projeto.
+test("ADR-0026 — a simulação da migração lê as chaves que o backend serializa", () => {
+  const RS = fs.readFileSync(path.join(__dirname, "..", "src-tauri", "src", "lib.rs"), "utf8");
+  const bloco = /struct MigrationReport \{([\s\S]*?)\n\}/.exec(RS);
+  assert.ok(bloco, "o relatório de migração existe no backend");
+  const campos = [...bloco[1].matchAll(/^\s{4}(\w+):/gm)].map((m) => m[1])
+    .filter((c) => c !== "dry_run")
+    .map((c) => c.replace(/_(\w)/g, (_, l) => l.toUpperCase()));   // camelCase do serde
+  const corpo = fnBody("migrationBodyHtml");
+  for (const campo of campos) {
+    assert.match(corpo, new RegExp('"' + campo + '"'), `a simulação mostra ${campo}`);
+  }
 });
