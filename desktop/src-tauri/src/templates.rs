@@ -512,7 +512,7 @@ Rigor rules (ADR-0002 §5):
 // The meeting AI is NOT a Rust model spawn: it is a Claude Code skill the
 // terminal-resident Claude runs (the /brain pattern). The app injects the
 // invocation into the terminal PTY; the skill READS the meeting's live stream
-// (reuniao.md + manifest.json + relevant contexts/) and responds. It uses
+// (meeting.md + manifest.json + relevant contexts/) and responds. It uses
 // Claude Code's own Read/Write tools (no loro IPC) and MUST NOT edit
 // manifest.json — the app owns it with an atomic writer (ADR-0012), and editing
 // it here would race that writer. `$ARGUMENTS` carries the meeting directory
@@ -527,7 +527,7 @@ Diretório da reunião (relativo à raiz do acervo): `$ARGUMENTS`
 
 **Modo trecho (ADR-0007).** Se `$ARGUMENTS` começar com uma referência
 `acervo://<rel>#<annot-id>` em vez de um diretório, resolva-a: `<rel>` é o
-documento (ex. `.../reuniao.md`) e a pasta dele é o diretório da reunião; leia o
+documento (ex. `.../meeting.md`) e a pasta dele é o diretório da reunião; leia o
 sidecar `<rel sem .md>.anotacoes.json`, ache a anotação por `id` e trate o
 `anchor.quote` como o FOCO explícito da análise (evidencie o trecho grifado).
 
@@ -536,7 +536,7 @@ diretório acima. Use apenas suas próprias ferramentas Read/Write — não cham
 do loro e NÃO edite `manifest.json` (o app é o dono e o escreve de forma atômica;
 editar aqui geraria corrida com esse escritor).
 
-1. **Investigue PRIMEIRO no contexto LOCAL.** Leia `$ARGUMENTS/reuniao.md` (a
+1. **Investigue PRIMEIRO no contexto LOCAL.** Leia `$ARGUMENTS/meeting.md` (a
    transcrição AO VIVO, que cresce durante a reunião), `$ARGUMENTS/manifest.json`
    (metadados + marcadores sem PII) e o(s) `contexts/<c>/context.md` claramente
    relevante(s) — a base de conhecimento LOCAL é sempre a primeira fonte. Não leia
@@ -561,7 +561,7 @@ editar aqui geraria corrida com esse escritor).
 7. Acrescente UMA linha JSON, orientada a evento, em `$ARGUMENTS/audit.jsonl`
    registrando o que leu e produziu — nunca texto de transcrição, PII ou segredos
    (BR-8/BR-9), ex.:
-   `{"em":"<ISO>","event":"analyse","read":["reuniao.md","manifest.json"],"wrote":["notes/analise-<ISO>.md","markers.jsonl"]}`.
+   `{"em":"<ISO>","event":"analyse","read":["meeting.md","manifest.json"],"wrote":["notes/analise-<ISO>.md","markers.jsonl"]}`.
 
 Ao final, responda em pt-BR com 1–2 linhas do que você escreveu.
 
@@ -599,7 +599,7 @@ diretório. Use apenas suas próprias ferramentas Read/Write — não chame IPC 
 e NÃO edite `manifest.json` (o app é o dono; editar aqui geraria corrida com o
 escritor atômico).
 
-1. **Investigue PRIMEIRO no contexto LOCAL:** leia `<dir>/reuniao.md` (a
+1. **Investigue PRIMEIRO no contexto LOCAL:** leia `<dir>/meeting.md` (a
    transcrição AO VIVO), `<dir>/manifest.json` e o(s) `contexts/<c>/context.md`
    claramente relevante(s) — a base LOCAL é sempre a primeira fonte. Não leia a
    transcrição de outra reunião nem notas em `brainstorming/` para as quais não foi
@@ -639,7 +639,7 @@ Meeting directory (relative to the acervo root): `$ARGUMENTS`
 
 **Excerpt mode (ADR-0007).** If `$ARGUMENTS` begins with an
 `acervo://<rel>#<annot-id>` reference instead of a directory, resolve it: `<rel>`
-is the document (e.g. `.../reuniao.md`) and its folder is the meeting directory;
+is the document (e.g. `.../meeting.md`) and its folder is the meeting directory;
 read the sidecar `<rel without .md>.anotacoes.json`, find the annotation by `id`
 and treat its `anchor.quote` as the EXPLICIT focus of the analysis (evidence the
 highlighted excerpt).
@@ -649,7 +649,7 @@ Use only your own Read/Write tools — do not call loro IPC and do NOT edit
 `manifest.json` (the app owns it and writes it atomically; editing it here would
 race that writer).
 
-1. **Investigate the LOCAL context FIRST.** Read `$ARGUMENTS/reuniao.md` (the LIVE
+1. **Investigate the LOCAL context FIRST.** Read `$ARGUMENTS/meeting.md` (the LIVE
    transcript, accreting during the meeting), `$ARGUMENTS/manifest.json` (metadata
    + PII-free markers) and the clearly relevant `contexts/<c>/context.md` — the
    LOCAL knowledge base is always the first source. Do not read any other meeting's
@@ -673,7 +673,7 @@ race that writer).
 7. Append ONE event-oriented JSON line to `$ARGUMENTS/audit.jsonl` recording
    what you read and produced — never transcript text, PII or secrets (BR-8/BR-9),
    e.g.
-   `{"em":"<ISO>","event":"analyse","read":["reuniao.md","manifest.json"],"wrote":["notes/analise-<ISO>.md","markers.jsonl"]}`.
+   `{"em":"<ISO>","event":"analyse","read":["meeting.md","manifest.json"],"wrote":["notes/analise-<ISO>.md","markers.jsonl"]}`.
 
 Finish with a 1–2 line summary (in English) of what you wrote.
 
@@ -711,7 +711,7 @@ You are Loro's meeting assistant (ADR-0012). Work ONLY inside that directory. Us
 only your own Read/Write tools — do not call loro IPC and do NOT edit
 `manifest.json` (the app owns it; editing here would race the atomic writer).
 
-1. **Investigate the LOCAL context FIRST:** read `<dir>/reuniao.md` (the LIVE
+1. **Investigate the LOCAL context FIRST:** read `<dir>/meeting.md` (the LIVE
    transcript), `<dir>/manifest.json` and the clearly relevant
    `contexts/<c>/context.md` — the LOCAL base is always the first source. Do not
    read another meeting's transcript or `brainstorming/` notes you were not pointed
@@ -1442,7 +1442,7 @@ pub fn loro_artifact_skill(lang: &str) -> &'static str {
 // "Referências" panel renders. It stamps `digest_em` and `digest_itens` so the
 // UI can nudge "N new items since the index" (ADR-0011). BR-8: a meeting reaches
 // it through the manifest's `titulo`/`status` and the PII-free analyses in
-// `notes/` (ADR-0018) — never the raw `reuniao.md` transcript or audio.
+// `notes/` (ADR-0018) — never the raw `meeting.md` transcript or audio.
 pub const LORO_DIGEST_SKILL: &str = r#"---
 description: Resume TODO o material de uma ideia (reuniões, notas, anexos) no indice.md — resumo, pontos-chave, índice e referências
 argument-hint: <alvo:ideia>
@@ -1459,7 +1459,7 @@ leitura viva do tema — um resumão de tudo que existe ali, sempre reproduzíve
    rápido — ADR-0002 §5 — devolvendo só o essencial de cada arquivo):
    - Reuniões: para cada `meetings/<id>/`, leia o `manifest.json` (só o
      `titulo`/`status`) e TODAS as análises em `meetings/<id>/notes/` — é ali que
-     mora a saída da reunião. **BR-8: nunca leia o `reuniao.md` (transcrição) nem
+     mora a saída da reunião. **BR-8: nunca leia o `meeting.md` (transcrição) nem
      áudio** — as notas já são o resumo sem PII. Uma reunião que ninguém analisou
      entra no índice só pelo título e pelo status, sem conteúdo inventado.
    - Notas: cada `.md` em `notes/`.
@@ -1516,7 +1516,7 @@ surface — a digest of everything that lives there, always reproducible.
    fast model — ADR-0002 §5 — returning only each file's essentials):
    - Meetings: for each `meetings/<id>/`, read the `manifest.json` (only
      `titulo`/`status`) and EVERY analysis in `meetings/<id>/notes/` — that is
-     where the meeting's output lives. **BR-8: never read `reuniao.md` (the
+     where the meeting's output lives. **BR-8: never read `meeting.md` (the
      transcript) or audio** — the notes are already the PII-free summary. A
      meeting nobody analysed enters the index by title and status alone, with no
      invented content.
@@ -2137,9 +2137,9 @@ mod tests {
             assert!(s.contains("notes/") && s.contains("manifest.json"));
             assert!(s.contains("BR-8"));
             let never_transcript = if lang == "en" {
-                "never read `reuniao.md`"
+                "never read `meeting.md`"
             } else {
-                "nunca leia o `reuniao.md`"
+                "nunca leia o `meeting.md`"
             };
             assert!(
                 s.contains(never_transcript),
@@ -2177,9 +2177,9 @@ mod tests {
                 answer.contains("$ARGUMENTS"),
                 "answer [{lang}] lacks $ARGUMENTS"
             );
-            // reads the LIVE stream (reuniao.md + manifest.json)
-            assert!(analyse.contains("reuniao.md") && analyse.contains("manifest.json"));
-            assert!(answer.contains("reuniao.md") && answer.contains("manifest.json"));
+            // reads the LIVE stream (meeting.md + manifest.json)
+            assert!(analyse.contains("meeting.md") && analyse.contains("manifest.json"));
+            assert!(answer.contains("meeting.md") && answer.contains("manifest.json"));
             // T-3 · AC-2 (ADR-0018): the analysis in notes/ IS the output — the
             // skill never authors or patches a report, and never names one as
             // something it wrote.

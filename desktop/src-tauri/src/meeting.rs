@@ -138,7 +138,7 @@ fn resolve_meeting_dir(base: &Path, id: &str) -> Result<PathBuf, String> {
             continue;
         };
         for entry in rd.flatten() {
-            let cand = entry.path().join("meetings").join(id);
+            let cand = crate::paths::acervo_dir(&entry.path(), "meetings", "reunioes").join(id);
             if cand.join("manifest.json").is_file() {
                 let canon = cand.canonicalize().map_err(|e| e.to_string())?;
                 if !canon.starts_with(base) {
@@ -349,7 +349,13 @@ pub fn normalize_origin(s: &str) -> Result<String, String> {
                         .chars()
                         .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
             });
-        let n_ok = !n.is_empty() && n.chars().all(|c| c.is_ascii_digit());
+        // ADR-0026 §15 — the id the templates mandate is `H-AAAA-MM-DD-<apelido>`;
+        // this accepted only `H-<n>`, so the loop following its own instructions
+        // was refused. The documented format cannot be the rejected one.
+        let n_ok = !n.is_empty()
+            && n.starts_with(|c: char| c.is_ascii_digit())
+            && n.chars()
+                .all(|c| c.is_ascii_digit() || c.is_ascii_lowercase() || c == '-');
         (ctx_ok && n_ok).then(|| s.to_string())
     };
     let decision = || {
@@ -2386,8 +2392,8 @@ mod tests {
     #[test]
     fn an_origin_is_an_id_or_it_is_refused() {
         assert_eq!(
-            normalize_origin("assinatura#H-3").unwrap(),
-            "assinatura#H-3"
+            normalize_origin("assinatura#H-2026-08-13-multa-cdc").unwrap(),
+            "assinatura#H-2026-08-13-multa-cdc"
         );
         assert_eq!(
             normalize_origin(" rac/agendamento#H-12 ").unwrap(),
@@ -2396,6 +2402,10 @@ mod tests {
         assert_eq!(
             normalize_origin("D-2026-07-23-correcao-upgrade").unwrap(),
             "D-2026-07-23-correcao-upgrade"
+        );
+        assert_eq!(
+            normalize_origin("assinatura#H-3").unwrap(),
+            "assinatura#H-3"
         );
         assert_eq!(normalize_origin("").unwrap(), "");
         for refused in [

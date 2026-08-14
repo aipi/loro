@@ -136,7 +136,13 @@ fn is_audio(name: &str) -> bool {
 // raw audit/meta/manifest are never copied at all.
 fn is_promotion_denied(name: &str) -> bool {
     let l = name.to_ascii_lowercase();
-    is_audio(&l) || l == "audit.jsonl" || l == "meta.json" || l == "manifest.json"
+    // both spellings of the content-bearing audit (ADR-0026 §14): promoting one
+    // would copy transcript-adjacent content into a versioned context (BR-8)
+    is_audio(&l)
+        || l == "audit.jsonl"
+        || l == "auditoria.jsonl"
+        || l == "meta.json"
+        || l == "manifest.json"
 }
 
 // ---- front-matter (hand-rolled, no YAML lib — no-bundler constraint) --------
@@ -473,7 +479,7 @@ const LEGACY_MEETING_FOLDERS: [&str; 5] = [
     "relatorios",
 ];
 fn migrate_meeting_to_notas(meeting_dir: &Path) {
-    let notas = meeting_dir.join("notes");
+    let notas = crate::paths::acervo_dir(meeting_dir, "notes", "notas");
     for name in LEGACY_MEETING_FOLDERS {
         let src = meeting_dir.join(name);
         if src.is_dir() {
@@ -586,7 +592,11 @@ fn list_brainstormings(base: &Path) -> Vec<BrainstormingListItem> {
                             m.nome
                         },
                         categoria: m.categoria,
-                        meetings: count_entries(&e.path().join("meetings")),
+                        meetings: count_entries(&crate::paths::acervo_dir(
+                            &e.path(),
+                            "meetings",
+                            "reunioes",
+                        )),
                         atualizado_em: m.atualizado_em,
                         slug,
                     }
@@ -646,18 +656,19 @@ pub struct MeetingListItem {
 pub(crate) fn meeting_queueables(base: &Path, rel: &str) -> Vec<String> {
     let rel = rel.replace('\\', "/");
     let rel = rel.trim_end_matches('/');
-    let mut out: Vec<String> = std::fs::read_dir(base.join(rel).join("notes"))
-        .map(|rd| {
-            rd.flatten()
-                .filter(|f| f.path().is_file())
-                .filter_map(|f| {
-                    let n = f.file_name().to_string_lossy().to_string();
-                    let r = format!("{rel}/notes/{n}");
-                    (!n.starts_with('.') && is_queueable(&r)).then_some(r)
-                })
-                .collect()
-        })
-        .unwrap_or_default();
+    let mut out: Vec<String> =
+        std::fs::read_dir(crate::paths::acervo_dir(&base.join(rel), "notes", "notas"))
+            .map(|rd| {
+                rd.flatten()
+                    .filter(|f| f.path().is_file())
+                    .filter_map(|f| {
+                        let n = f.file_name().to_string_lossy().to_string();
+                        let r = format!("{rel}/notes/{n}");
+                        (!n.starts_with('.') && is_queueable(&r)).then_some(r)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
     out.sort();
     out
 }
@@ -1269,7 +1280,7 @@ fn promote(
     if !valid_context(dest_context) {
         return Err("err.invalid_target_context".into());
     }
-    let ctx_dir = base.join("contexts").join(dest_context);
+    let ctx_dir = crate::paths::contexts_dir(base).join(dest_context);
     let ctx_md = ctx_dir.join("context.md");
     if !ctx_md.is_file() {
         return Err("err.target_context_not_found".into());
@@ -2524,7 +2535,7 @@ fn context_stamps(base: &Path) -> Vec<DocStamp> {
         }
     }
     let mut out = Vec::new();
-    walk(base, &base.join("contexts"), "", &mut out);
+    walk(base, &crate::paths::contexts_dir(base), "", &mut out);
     out
 }
 
@@ -2857,7 +2868,10 @@ fn index_terms(docs: &[ContextDoc]) -> Vec<IndexTerm> {
         for e in t.entries.drain(..) {
             match merged.last_mut() {
                 Some(prev) if prev.rel == e.rel => {
-                    if e.locator.is_empty() || prev.locator.contains(&e.locator) {
+                    // comparação por ITEM, não substring: `contains` fazia um
+                    // "§10" já registrado engolir um "§1" seguinte, do mesmo doc
+                    let ja = prev.locator.split(", ").any(|parte| parte == e.locator);
+                    if e.locator.is_empty() || ja {
                         continue;
                     }
                     if prev.locator.is_empty() {
@@ -3093,7 +3107,7 @@ mod graph_tests {
     }
 
     fn write_ctx(base: &Path, ctx: &str, body: &str) {
-        let dir = base.join("contexts").join(ctx);
+        let dir = crate::paths::contexts_dir(base).join(ctx);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("context.md"), body).unwrap();
     }

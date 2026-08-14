@@ -451,3 +451,33 @@ test("R11 — trocar de idioma invalida as assinaturas da lateral", () => {
   assert.ok(sig >= 0 && refresh > sig,
     "zerar DEPOIS do refresh não repinta nada: a assinatura tem de cair antes");
 });
+
+// A contagem e o seu CHAMADOR são o mesmo contrato. O teste de unidade chamava a
+// função com as chaves novas e passava; quem chamava de verdade ainda mandava as
+// antigas, então uma ideia com reuniões gravadas dizia "nada aqui ainda".
+test("ADR-0026 — o chamador da contagem usa as chaves que a função lê", () => {
+  const fonte = fnSource("renderIdeaSurface");
+  const chamada = /ideaMaterialCount\(\{([^}]*)\}/.exec(fonte);
+  assert.ok(chamada, "renderIdeaSurface conta o material da ideia");
+  const corpo = fnBody("ideaMaterialCount");
+  for (const chave of ["meetings", "notes", "attachments"]) {
+    assert.match(corpo, new RegExp("c\\." + chave + "\\b"), `a função lê c.${chave}`);
+    assert.match(chamada[1], new RegExp("\\b" + chave + "\\s*:"), `e o chamador manda ${chave}`);
+  }
+});
+
+// A simulação da migração lia chaves que o backend nunca mandou: dizia sempre
+// "nada a migrar" e o usuário confirmava no escuro uma operação que renomeia a
+// árvore inteira do projeto.
+test("ADR-0026 — a simulação da migração lê as chaves que o backend serializa", () => {
+  const RS = fs.readFileSync(path.join(__dirname, "..", "src-tauri", "src", "lib.rs"), "utf8");
+  const bloco = /struct MigrationReport \{([\s\S]*?)\n\}/.exec(RS);
+  assert.ok(bloco, "o relatório de migração existe no backend");
+  const campos = [...bloco[1].matchAll(/^\s{4}(\w+):/gm)].map((m) => m[1])
+    .filter((c) => c !== "dry_run")
+    .map((c) => c.replace(/_(\w)/g, (_, l) => l.toUpperCase()));   // camelCase do serde
+  const corpo = fnBody("migrationBodyHtml");
+  for (const campo of campos) {
+    assert.match(corpo, new RegExp('"' + campo + '"'), `a simulação mostra ${campo}`);
+  }
+});

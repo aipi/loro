@@ -847,15 +847,20 @@ pub const GIT_IGNORED: [&str; 10] = [
 // `contexts/`. Pure so the quarantine is unit-testable without a git repo.
 pub fn is_versioning_denied(rel: &str) -> bool {
     let r = rel.trim_start_matches("./").replace('\\', "/");
-    if !r.starts_with("contexts/") {
+    // ADR-0026 §14 renamed both the folder and the transcript. The guard has to
+    // know EVERY spelling: it is the last thing between a raw transcript and a
+    // pushed repository (BR-8), and it fails open — an unmatched name is allowed.
+    if !(r.starts_with("contexts/") || r.starts_with("contextos/")) {
         return false;
     }
     let lower = r.to_ascii_lowercase();
     let leaf = r.rsplit('/').next().unwrap_or(&r);
     lower.ends_with(".wav")
         || lower.ends_with(".webm")
+        || leaf == crate::meeting::LIVING_FILE
         || leaf == "reuniao.md"
         || leaf == "audit.jsonl"
+        || leaf == "auditoria.jsonl"
 }
 
 // Idempotent: guarantees the ignore entries exist in the acervo's .gitignore
@@ -1090,6 +1095,10 @@ pub fn stage_and_commit(base: &Path, message: String) -> Result<String, String> 
             "processed",
             "meetings",
             "notes",
+            // ADR-0026 §14: .gitignore does not apply to a file already tracked,
+            // so an acervo that has not migrated needs its OLD names untracked too
+            "reunioes",
+            "notas",
             ".brain/prompt-history",
             "brainstorming",
             "pessoal",

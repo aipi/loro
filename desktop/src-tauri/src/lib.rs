@@ -1345,7 +1345,7 @@ fn context_file(dir: &Path) -> Option<PathBuf> {
 }
 
 fn seed_context(base: &Path, name: &str, lang: &str, mold: Option<&str>) -> Result<(), String> {
-    let d = base.join("contexts").join(name);
+    let d = crate::paths::contexts_dir(base).join(name);
     std::fs::create_dir_all(&d).map_err(|e| folder_write_error(&e))?;
     let ch = d.join("CHANGELOG.md");
     if !ch.exists() {
@@ -1416,7 +1416,7 @@ fn list_contexts(base: &Path) -> Vec<String> {
         }
     }
     let mut out = Vec::new();
-    walk(&base.join("contexts"), "", 1, &mut out);
+    walk(&crate::paths::contexts_dir(base), "", 1, &mut out);
     out.sort();
     out.dedup();
     out
@@ -1901,7 +1901,7 @@ fn delete_context_dir(base: &Path, name: &str) -> Result<(), String> {
     if !valid_context(name) {
         return Err("err.invalid_name".into());
     }
-    let src = base.join("contexts").join(name);
+    let src = crate::paths::contexts_dir(base).join(name);
     if !src.is_dir() {
         return Err("err.context_not_found".into());
     }
@@ -1925,7 +1925,7 @@ fn rename_context_dir(base: &Path, from: &str, to: &str) -> Result<(), String> {
     if from == to {
         return Ok(());
     }
-    let root = base.join("contexts");
+    let root = crate::paths::contexts_dir(base);
     let src = root.join(from);
     if !src.is_dir() {
         return Err("err.context_not_found".into());
@@ -2523,7 +2523,7 @@ fn migrate_acervo(base: &Path, apply: bool, lang: &str) -> Result<MigrationRepor
     rename_personal_world(base, apply, &mut report.renamed_world)?;
 
     for c in &ctxs {
-        let cdir = base.join("contexts").join(c);
+        let cdir = crate::paths::contexts_dir(base).join(c);
         let guia = cdir.join("guia.md");
         let ctx = cdir.join("context.md");
         if guia.is_file() && ctx.is_file() {
@@ -3029,7 +3029,9 @@ fn brain_move(rel: String, dest_context: String) -> Result<String, String> {
         if !valid_context(dc) {
             return Err("err.invalid_context".into());
         }
-        base.join("contexts").join(dc).join("referencias")
+        crate::paths::contexts_dir(&base)
+            .join(dc)
+            .join("referencias")
     };
     std::fs::create_dir_all(&destdir).map_err(|e| e.to_string())?;
     let target = destdir.join(&fname);
@@ -3538,6 +3540,15 @@ fn list_files(base: &Path, sub: &str) -> Vec<BrainFile> {
     list_files_filtered(base, sub, true)
 }
 
+// The same listing, given the resolved directory instead of a name — so a caller
+// that had to pick between two spellings (ADR-0026 §14) picks once, from disk.
+fn list_files_at(dir: &Path) -> Vec<BrainFile> {
+    let (Some(base), Some(sub)) = (dir.parent(), dir.file_name().and_then(|n| n.to_str())) else {
+        return Vec::new();
+    };
+    list_files_filtered(base, sub, true)
+}
+
 // only_text=false lists any non-hidden file (the inbox accepts pdf/docs etc.)
 fn list_files_filtered(base: &Path, sub: &str, only_text: bool) -> Vec<BrainFile> {
     let dir = base.join(sub);
@@ -3602,7 +3613,7 @@ fn brain_status() -> BrainStatus {
     let contexts = list_contexts(&base)
         .iter()
         .map(|c| {
-            let cdir = base.join("contexts").join(c);
+            let cdir = crate::paths::contexts_dir(&base).join(c);
             let entries = std::fs::read_to_string(cdir.join("CHANGELOG.md"))
                 .map(|t| t.lines().filter(|l| l.starts_with("## ")).count())
                 .unwrap_or(0);
@@ -3643,9 +3654,16 @@ fn brain_status() -> BrainStatus {
                 .join("\n")
         })
         .unwrap_or_default();
-    // ADR-0026 §18 — o índice remissivo se mantém sozinho: a checagem é por
-    // mtime/tamanho dos contextos, então só escreve quando o conhecimento mudou.
-    crate::acervo::refresh_terms_if_changed(&base, &crate::config::active_acervo_lang());
+    // ADR-0026 §18 — o índice remissivo se mantém sozinho. FORA da thread
+    // principal: `brain_status` é um comando síncrono, e no Tauri v2 isso roda na
+    // main thread — varrer todos os contextos ali a cada poll é exatamente a
+    // classe de bug do ADR-0022 §28, que já custou três aparições. O trabalho é
+    // solto; a próxima leitura vê o resultado.
+    {
+        let base = base.clone();
+        let lang = crate::config::active_acervo_lang();
+        std::thread::spawn(move || crate::acervo::refresh_terms_if_changed(&base, &lang));
+    }
 
     BrainStatus {
         configured: true,
@@ -3653,8 +3671,10 @@ fn brain_status() -> BrainStatus {
         contexts,
         inbox: list_queue(&base),
         processed: list_files_filtered(&base, "processed", false).len(),
-        meetings: list_files(&base, "meetings"),
-        notes: list_files(&base, "notes"),
+        // ADR-0026 §14 — o nome vem do disco: um acervo não migrado ainda tem
+        // `reunioes/` e `notas/`, e ler só o nome novo mostrava tudo vazio
+        meetings: list_files_at(&crate::paths::acervo_dir(&base, "meetings", "reunioes")),
+        notes: list_files_at(&crate::paths::acervo_dir(&base, "notes", "notas")),
         incubadora: incub,
         entry_docs: entry_docs(&base),
         activity,
@@ -5175,6 +5195,38 @@ mod tests {
         assert!(root.join(".claude/commands/loro-digest.md").is_file());
         // idempotent and non-destructive: running again does not break
         ensure_acervo_structure(&root, &["frota".into()], "pt", None).unwrap();
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ADR-0026 §14 — the migration is user-triggered, so until it runs an existing
+    // acervo still has the Portuguese folders. Reading has to find them, or the
+    // upgrade looks like data loss: no themes, no meetings, no notes.
+    #[test]
+    fn an_acervo_that_has_not_migrated_still_opens() {
+        let root = std::env::temp_dir().join(format!("loro-legacy-open-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("contextos/frota")).unwrap();
+        std::fs::write(root.join("contextos/frota/context.md"), "# frota").unwrap();
+        std::fs::create_dir_all(root.join("reunioes")).unwrap();
+        std::fs::write(root.join("reunioes/r.md"), "# r").unwrap();
+        std::fs::create_dir_all(root.join("notas")).unwrap();
+        std::fs::write(root.join("notas/n.md"), "# n").unwrap();
+
+        assert_eq!(
+            list_contexts(&root),
+            vec!["frota".to_string()],
+            "os temas aparecem"
+        );
+        assert_eq!(
+            list_files_at(&crate::paths::acervo_dir(&root, "meetings", "reunioes")).len(),
+            1,
+            "as reuniões aparecem"
+        );
+        assert_eq!(
+            list_files_at(&crate::paths::acervo_dir(&root, "notes", "notas")).len(),
+            1,
+            "as notas aparecem"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 

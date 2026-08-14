@@ -30,14 +30,19 @@
   // stopped being a map, and an untranslated file name became the only visible
   // identity. The name comes from the PATH, which already carries the identity —
   // no lookup, no IPC, still a pure reducer.
+  // O reducer é puro e não conhece o i18n do app; quem o carrega no navegador
+  // injeta o tradutor. Em teste (e sem tradutor) o msgid pt-BR é a própria string.
+  const tr = (m) => (typeof root !== "undefined" && root.LoroI18n ? root.LoroI18n.t(m) : m);
+
   function tabTitleFor(rel) {
     const s = String(rel);
     const ctx = /^contexts\/(.+)\/([^/]+)$/.exec(s);
     if (ctx) {
       const [, theme, file] = ctx;
       if (file === "context.md") return theme;
-      if (file === "CHANGELOG.md") return theme + " · histórico";
-      if (file === "CODEOWNERS") return theme + " · donos";
+      // os rótulos são msgid: com a UI em inglês a faixa dizia "frota · histórico"
+      if (file === "CHANGELOG.md") return theme + " · " + tr("histórico");
+      if (file === "CODEOWNERS") return theme + " · " + tr("donos");
       return theme + " · " + file;
     }
     // brainstorming/<tema>/meetings/<AAAA-MM-DD-HHMM-reuniao>/<arquivo>

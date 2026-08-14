@@ -3303,7 +3303,7 @@ async function loadTemaChildren(slug) {
     const label = title === m.id ? LM.meetingLabel(m.id, settings.uiLang) : title;
     const mkey = "mtg:" + m.id, mopen = bOpen.has(mkey);
     const mstatus = meetingEffectiveStatus(m.status, m.id, meeting);
-    reunioesRows += bsPartRow("reuniao", `${m.rel}/reuniao.md`, m.rel, label, m.id, true, m.id, mstatus, mopen, m.notes);
+    reunioesRows += bsPartRow("reuniao", livingRel(m.rel), m.rel, label, m.id, true, m.id, mstatus, mopen, m.notes);
     reunioesRows += `<div class="bchild" data-mtgchild="${esc(m.id)}" data-mtgrel="${esc(m.rel)}" ${mopen ? "" : "hidden"}></div>`;
     if (mopen) pendingMeetingFills.push([m.id, m.rel]);
   }
@@ -4251,7 +4251,7 @@ function openMeetingMenu(rel, id, title, status, anchor, notas) {
   // manifesto e o arquivo vivo com o append, e um trecho se perderia
   if (ready) B.bMenu.querySelector("[data-mvmtg]").onclick = () => { closeFloat(); promptMoveMeeting(rel); };
   if (ready) {
-    B.bMenu.querySelector("[data-analyse]").onclick = () => { closeFloat(); openDoc(`${rel}/reuniao.md`, { preview: false }); runMeetingSkill("analyse", id, null, rel); };
+    B.bMenu.querySelector("[data-analyse]").onclick = () => { closeFloat(); openDoc(livingRel(rel), { preview: false }); runMeetingSkill("analyse", id, null, rel); };
     B.bMenu.querySelector("[data-queue]").onclick = () => {
       closeFloat();
       // ADR-0018: the meeting goes as its DIRECTORY; the backend's single owner
@@ -5151,11 +5151,11 @@ async function renderIdeaSurface(slug, tab, stale) {
     if (stale && stale()) return; // a newer render won the race
     savedById.set(tab.id, body);
   }
-  const total = ideaMaterialCount({ reunioes: meetings.length, notas: notas.length, anexos: anexos.length });
+  const total = ideaMaterialCount({ meetings: meetings.length, notes: notas.length, attachments: anexos.length });
   const mtgRows = meetings.map((m) => {
     const title = LM.meetingTitleFromManifest({ titulo: m.titulo }, m.id);
     const label = title === m.id ? LM.meetingLabel(m.id, settings.uiLang) : title;
-    return ideaRowHtml(`${m.rel}/reuniao.md`, label);
+    return ideaRowHtml(livingRel(m.rel), label);
   });
   const notaRows = notas.map((f) => ideaRowHtml(f.path, shortName(f.name)));
   const anexoRows = anexos.map((f) => ideaRowHtml(f.path, shortName(f.name)));
@@ -5512,7 +5512,7 @@ async function finishInterruptedMeeting(id, rel) {
   try {
     await invoke("brain_meeting_finish", { id });
     pessoalSig = ""; refreshPessoal();
-    if (rel) refreshTabFromDisk(`${rel}/reuniao.md`);
+    if (rel) refreshTabFromDisk(livingRel(rel));
     toast(t("reunião encerrada — a transcrição foi mantida"));
   } catch (e) {
     toast(t("não encerrei a reunião") + ": " + tErr(String(e)));
@@ -6041,7 +6041,7 @@ function pickMeeting(temas, presetTema, opts2) {
 // contextual header actions (move/delete) for the active document
 function applyDocActions(rel) {
   const isQueue = rel.startsWith("inbox/") && !rel.endsWith("_prompt.md");
-  const movable = isQueue || /^(reunioes|notas)\//.test(rel) ||
+  const movable = isQueue || /^(meetings|notes|reunioes|notas)\//.test(rel) ||
     /^contexts\/.+\/(referencias|brainstorming)\//.test(rel);
   $("bDocActs").hidden = !movable;
   $("bDelDoc").hidden = !isQueue;
@@ -6530,6 +6530,12 @@ function toggleInlineImage(anchorEl, mime, base64, rel) {
 // ADR-0026 §14 — o documento de um tema pode se chamar `index.md` (gerado hoje)
 // ou `indice.md` (acervo escrito antes). Quem sabe qual existe é o disco, não o
 // frontend: montar o caminho na mão abria uma aba de arquivo inexistente.
+// ADR-0026 §14 — o arquivo vivo da reunião se chama `meeting.md`. Estava escrito
+// à mão em quatro lugares com o nome ANTIGO, então toda reunião gravada por esta
+// versão abria "arquivo não encontrado". Um nome, um lugar.
+const LIVING_FILE = "meeting.md";
+const livingRel = (dir) => `${dir}/${LIVING_FILE}`;
+
 async function openTopicDoc(rel, opts) {
   try { await openDoc(await invoke("brain_topic_doc", { rel }), opts); }
   catch (e) { toast(tErr(String(e))); }
@@ -7592,11 +7598,13 @@ function offerPropose(r, destContext) {
 
 // ---- migrar acervo (simulação → aplicar) — estende brain_migrate (ADR-0004/0009) ----
 function migrationBodyHtml(rep) {
-  const moves = rep && (rep.moves || rep.planned || rep.movimentos);
-  let lines = [];
-  if (Array.isArray(moves)) {
-    lines = moves.map((m) => typeof m === "string" ? m : `${m.from || m.de || "?"} → ${m.to || m.para || "?"}`);
-  }
+  // As chaves são as que o MigrationReport serializa. A versão anterior lia
+  // `moves`/`planned`/`movimentos` — nenhuma existe — então a simulação dizia
+  // sempre "nada a migrar" e o usuário confirmava no escuro uma operação que
+  // renomeia a árvore inteira (DESIGN.md §1: a interface não pode esconder o que sabe).
+  const lines = ["renamedWorld", "incubated", "renamed", "conflicts", "legacyIdeas", "scaffolding"]
+    .flatMap((k) => (Array.isArray(rep && rep[k]) ? rep[k] : []))
+    .map((m) => (typeof m === "string" ? m : `${m.from || "?"} → ${m.to || "?"}`));
   const preview = lines.length ? lines.map((l) => "• " + esc(l)).join("<br>") : t("nada a migrar");
   return `<p class="pmnote mono">${t("simulação — nada é movido ainda · notas/ permanece versionado · incubadora/ vira tema pessoal")}</p>` +
     `<div class="pmpreview mono">${preview}</div>`;
