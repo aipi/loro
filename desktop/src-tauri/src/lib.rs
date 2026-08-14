@@ -1477,16 +1477,23 @@ fn ensure_acervo_structure(
     // First setup = no loop state yet. The queue guide (inbox/_prompt.md) is
     // consumed by the loop, so re-materializations must never re-inject it.
     let first_setup = !base.join(".brain/state.json").exists();
-    for sub in [
-        "inbox",
-        "processed",
-        "meetings",
-        "notes",
-        ".brain",
-        "contexts",
-        ".claude/commands",
-    ] {
+    for sub in ["inbox", "processed", ".brain", ".claude/commands"] {
         std::fs::create_dir_all(base.join(sub)).map_err(|e| folder_write_error(&e))?;
+    }
+    // ADR-0026 §14 — as três pastas renomeadas nascem pelo nome que o DISCO já usa.
+    // Criá-las pelo nome novo sem olhar fazia um acervo não migrado ganhar
+    // `contexts/` vazia ao lado da `contextos/` cheia: como a resolução prefere a
+    // que existe, todo o conhecimento sumia da tela — e a migração passava a
+    // reportar "conflito: as duas coexistem" para sempre, sem conserto possível
+    // sem apagar pasta na mão. Aqui a estrutura ACOMPANHA o acervo; quem renomeia
+    // é a migração, que é um ato do dono.
+    for (current, legacy) in [
+        ("meetings", "reunioes"),
+        ("notes", "notas"),
+        ("contexts", "contextos"),
+    ] {
+        let dir = crate::paths::acervo_dir(base, current, legacy);
+        std::fs::create_dir_all(&dir).map_err(|e| folder_write_error(&e))?;
     }
     // /loro-context is the thin Claude adapter for the queue -> context loop
     // (ADR-0013); analyse/answer are the meeting-AI skills the terminal Claude runs
@@ -1968,12 +1975,12 @@ fn brain_move_context_to_acervo(name: String, target_id: String) -> Result<(), S
     if target == active {
         return Err("err.already_in_acervo".into());
     }
-    let src = PathBuf::from(&active).join("contexts").join(&name);
+    let src = crate::paths::contexts_dir(Path::new(&active)).join(&name);
     if !src.is_dir() {
         return Err("err.context_not_found".into());
     }
     let leaf = name.rsplit('/').next().unwrap_or(&name);
-    let dest = PathBuf::from(&target).join("contexts").join(leaf);
+    let dest = crate::paths::contexts_dir(Path::new(&target)).join(leaf);
     if dest.exists() {
         return Err("err.context_exists_in_target".into());
     }
@@ -2711,7 +2718,11 @@ fn rename_acervo_folders(base: &Path, apply: bool, out: &mut Vec<String>) -> Res
         ("auditoria.jsonl", "audit.jsonl"),
         ("marcadores.jsonl", "markers.jsonl"),
     ];
-    let mut pending = vec![base.to_path_buf()];
+    // Só o mundo do brainstorming e a raiz: um `indice.md` que a PESSOA escreveu
+    // dentro de contexts/ (ou um arquivo esperando em inbox/) não é artefato
+    // gerado, e renomeá-lo quebraria o link que aponta para ele — numa migração
+    // cuja postura declarada é não destruir nada.
+    let mut pending = vec![base.join("brainstorming"), base.join("pessoal")];
     while let Some(dir) = pending.pop() {
         let Ok(rd) = std::fs::read_dir(&dir) else {
             continue;

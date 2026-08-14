@@ -341,7 +341,13 @@ pub fn normalize_origin(s: &str) -> Result<String, String> {
     }
     let hotspot = || {
         let (ctx, h) = s.split_once('#')?;
-        let n = h.strip_prefix("H-")?;
+        // As formas que `hotspot_of` publica, e SÓ elas: com o prefixo `H-` o resto
+        // pode ser número ou data+apelido; sem prefixo, é apelido — e apelido
+        // começa por letra. Um `#3` solto não é id de coisa nenhuma.
+        let (n, exige_letra) = match h.strip_prefix("H-") {
+            Some(resto) => (resto, false),
+            None => (h, true),
+        };
         let ctx_ok = !ctx.is_empty()
             && ctx.split('/').all(|seg| {
                 !seg.is_empty()
@@ -352,8 +358,12 @@ pub fn normalize_origin(s: &str) -> Result<String, String> {
         // ADR-0026 §15 — the id the templates mandate is `H-AAAA-MM-DD-<apelido>`;
         // this accepted only `H-<n>`, so the loop following its own instructions
         // was refused. The documented format cannot be the rejected one.
+        // Aceita as três formas que o parser de hotspot publica: o `H-<n>` antigo,
+        // o `H-AAAA-MM-DD-<apelido>` que os templates mandam, e o apelido puro.
+        // Recusar um id que o próprio grafo emite é o validador chamando o
+        // sistema de mentiroso.
         let n_ok = !n.is_empty()
-            && n.starts_with(|c: char| c.is_ascii_digit())
+            && (!exige_letra || n.starts_with(|c: char| c.is_ascii_lowercase()))
             && n.chars()
                 .all(|c| c.is_ascii_digit() || c.is_ascii_lowercase() || c == '-');
         (ctx_ok && n_ok).then(|| s.to_string())
@@ -779,7 +789,7 @@ fn create_meeting(
     if !dir.starts_with(base) {
         return Err("err.outside_acervo".into());
     }
-    let living_rel = format!("{}/{LIVING_FILE}", rel_of(base, &dir));
+    let living_rel = rel_of(base, &living_path(&dir));
     Ok(Created {
         id,
         dir,
@@ -929,7 +939,9 @@ pub fn brain_meeting_stop(
     manifest.atualizado_em = now_iso();
     manifest_write(&dir, &manifest)?;
 
-    let living_rel = format!("{}/{LIVING_FILE}", rel_of(&base, &dir));
+    // o rel emitido nomeia o arquivo que EXISTE: compor sempre `meeting.md` fazia
+    // o evento apontar para um caminho inexistente numa reunião ainda não migrada
+    let living_rel = rel_of(&base, &living_path(&dir));
     let _ = app.emit("pessoal-changed", serde_json::json!({ "rel": living_rel }));
     Ok(MeetingStop {
         living_rel,
@@ -975,7 +987,9 @@ pub fn brain_meeting_append(app: AppHandle, input: MeetingAppendInput) -> Result
     manifest.atualizado_em = now_iso();
     manifest_write(&dir, &manifest)?;
 
-    let living_rel = format!("{}/{LIVING_FILE}", rel_of(&base, &dir));
+    // o rel emitido nomeia o arquivo que EXISTE: compor sempre `meeting.md` fazia
+    // o evento apontar para um caminho inexistente numa reunião ainda não migrada
+    let living_rel = rel_of(&base, &living_path(&dir));
     let bytes = input.chunk.len();
     let _ = app.emit(
         "meeting-appended",
@@ -1031,7 +1045,9 @@ pub fn brain_meeting_append_timed(
     manifest.atualizado_em = now_iso();
     manifest_write(&dir, &manifest)?;
 
-    let living_rel = format!("{}/{LIVING_FILE}", rel_of(&base, &dir));
+    // o rel emitido nomeia o arquivo que EXISTE: compor sempre `meeting.md` fazia
+    // o evento apontar para um caminho inexistente numa reunião ainda não migrada
+    let living_rel = rel_of(&base, &living_path(&dir));
     let bytes: usize = input.blocks.iter().map(|b| b.chunk.len()).sum();
     let _ = app.emit(
         "meeting-appended",
@@ -2406,6 +2422,11 @@ mod tests {
         assert_eq!(
             normalize_origin("assinatura#H-3").unwrap(),
             "assinatura#H-3"
+        );
+        // o apelido puro, que `hotspot_of` também publica no grafo
+        assert_eq!(
+            normalize_origin("assinatura#cancelamento-cdc").unwrap(),
+            "assinatura#cancelamento-cdc"
         );
         assert_eq!(normalize_origin("").unwrap(), "");
         for refused in [

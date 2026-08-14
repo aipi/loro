@@ -404,8 +404,14 @@ fn create_brainstorming(
     // attachments/. The legacy investigacoes/, relatorios/ and perguntas/ folders are no
     // longer scaffolded — non-meeting output (e.g. the brainstorming report) lands
     // in attachments/.
-    for sub in ["", "meetings", "notes", "attachments"] {
-        std::fs::create_dir_all(dir.join(sub)).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    for (current, legacy) in [
+        ("meetings", "reunioes"),
+        ("notes", "notas"),
+        ("attachments", "anexos"),
+    ] {
+        std::fs::create_dir_all(crate::paths::acervo_dir(&dir, current, legacy))
+            .map_err(|e| e.to_string())?;
     }
     // ADR-0026 §14 — generated in English (`index.md`); an acervo written earlier
     // keeps its `indice.md` and is left exactly where it is.
@@ -462,7 +468,9 @@ pub struct BrainstormingListItem {
 // others) — no separate apresentacoes/ folder; the acervo's three
 // brainstorming folders are meetings/, notes/, attachments/.
 fn ensure_brainstorming_subfolders(dir: &Path) {
-    let _ = std::fs::create_dir_all(dir.join("attachments"));
+    // pelo nome que o disco já usa: criar `attachments/` ao lado de uma `anexos/`
+    // com conteúdo esconderia o material (mesmo defeito do ADR-0026 §14 na raiz)
+    let _ = std::fs::create_dir_all(crate::paths::acervo_dir(dir, "attachments", "anexos"));
 }
 
 // ADR-0008: every skill-generated document is a note — it lives in the meeting's
@@ -656,25 +664,33 @@ pub struct MeetingListItem {
 pub(crate) fn meeting_queueables(base: &Path, rel: &str) -> Vec<String> {
     let rel = rel.replace('\\', "/");
     let rel = rel.trim_end_matches('/');
-    let mut out: Vec<String> =
-        std::fs::read_dir(crate::paths::acervo_dir(&base.join(rel), "notes", "notas"))
-            .map(|rd| {
-                rd.flatten()
-                    .filter(|f| f.path().is_file())
-                    .filter_map(|f| {
-                        let n = f.file_name().to_string_lossy().to_string();
-                        let r = format!("{rel}/notes/{n}");
-                        (!n.starts_with('.') && is_queueable(&r)).then_some(r)
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
+    // o rel devolvido tem de nomear a pasta que EXISTE: montá-lo sempre com
+    // "notes" fazia a triagem receber caminhos inexistentes e reportar zero
+    // achados para arquivos que ela nunca abriu
+    let dir = crate::paths::acervo_dir(&base.join(rel), "notes", "notas");
+    let notas_sub = dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("notes")
+        .to_string();
+    let mut out: Vec<String> = std::fs::read_dir(&dir)
+        .map(|rd| {
+            rd.flatten()
+                .filter(|f| f.path().is_file())
+                .filter_map(|f| {
+                    let n = f.file_name().to_string_lossy().to_string();
+                    let r = format!("{rel}/{sub}/{n}", sub = notas_sub);
+                    (!n.starts_with('.') && is_queueable(&r)).then_some(r)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     out.sort();
     out
 }
 
 fn list_meetings(base: &Path, slug: &str) -> Vec<MeetingListItem> {
-    let dir = brainstorming_dir(base).join(slug).join("meetings");
+    let dir = crate::paths::acervo_dir(&brainstorming_dir(base).join(slug), "meetings", "reunioes");
     let mut out: Vec<MeetingListItem> = std::fs::read_dir(dir)
         .map(|rd| {
             rd.flatten()
@@ -1430,7 +1446,7 @@ pub(crate) fn queue_name_for(rel: &str) -> String {
 pub(crate) fn queueable_files(base: &Path, slug: &str) -> Vec<String> {
     let root = brainstorming_dir(base).join(slug);
     let mut out = Vec::new();
-    if let Ok(rd) = std::fs::read_dir(root.join("meetings")) {
+    if let Ok(rd) = std::fs::read_dir(crate::paths::acervo_dir(&root, "meetings", "reunioes")) {
         for e in rd.flatten().filter(|e| e.path().is_dir()) {
             let id = e.file_name().to_string_lossy().to_string();
             out.extend(meeting_queueables(
@@ -2351,8 +2367,14 @@ struct RawLink {
 
 // One word, right after the link. Both spellings of the two-way edge collapse to
 // the pt-BR one so the JS has a single vocabulary to switch on.
+// O tipo vale para o link que ele SEGUE, e só até o próximo. Antes a janela ia
+// 40 caracteres adiante e casava por `contains`, então numa frase com dois links
+// — "[precificação](…) e [frota](…) upstream" — a palavra do segundo tipava o
+// primeiro também: o grafo afirmava uma direção que a prosa não escreveu para
+// aquele vizinho. Aresta com tipo inventado é o defeito mais caro deste ADR.
 fn kind_after(tail: &str) -> String {
-    let t = tail.to_lowercase();
+    let ate_o_proximo = tail.find('[').map(|i| &tail[..i]).unwrap_or(tail);
+    let t = ate_o_proximo.to_lowercase();
     for (needle, kind) in [
         ("bidirecional", "bidirecional"),
         ("bidirectional", "bidirecional"),
@@ -2488,8 +2510,17 @@ struct DocStamp {
 }
 
 fn context_doc_of(base: &Path, ctx: &str) -> Option<(String, std::fs::Metadata)> {
+    // o mesmo caminho que `context_stamps` percorre: cravar "contexts/" aqui fazia
+    // o carimbo nunca casar num acervo não migrado, e o grafo inteiro (citado por,
+    // órfãos, índice) voltava vazio — escrevendo um TERMS.md só com cabeçalho
+    let raiz = crate::paths::contexts_dir(base);
+    let pasta = raiz
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("contexts")
+        .to_string();
     CONTEXT_DOC_NAMES.iter().find_map(|name| {
-        let rel = format!("contexts/{ctx}/{name}");
+        let rel = format!("{pasta}/{ctx}/{name}");
         let md = base.join(&rel).metadata().ok()?;
         md.is_file().then_some((rel, md))
     })
@@ -3389,6 +3420,22 @@ Telemetria bruta do veículo.
                 "falso positivo em {texto}: {h:?}"
             );
         }
+    }
+
+    // ADR-0026 §5 — o tipo pertence ao link que ele segue. Numa frase com dois
+    // links, a palavra do segundo não pode tipar o primeiro.
+    #[test]
+    fn the_kind_belongs_to_the_link_it_follows_and_stops_at_the_next() {
+        assert_eq!(kind_after(" upstream, e depois"), "upstream");
+        assert_eq!(
+            kind_after(" e de [a frota](../frota/context.md) upstream."),
+            "",
+            "a palavra depois do PRÓXIMO link não é deste"
+        );
+        assert_eq!(
+            kind_after(" bidirecional [outro](x.md) upstream"),
+            "bidirecional"
+        );
     }
 
     // ADR-0026 §15 — a hotspot id is a NAME, and the name is the address.

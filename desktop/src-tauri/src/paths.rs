@@ -193,6 +193,28 @@ pub fn which(name: &str) -> Option<String> {
         .map(|p| p.display().to_string())
 }
 
+// ADR-0026 §14 — the acervo's folders were renamed to English, and the migration
+// that renames them on disk is USER-triggered. Until someone runs it, an existing
+// acervo still has the Portuguese folder — and every read that hardcoded the new
+// name found nothing: no themes, no meetings, no notes, and every meeting command
+// failing. Resolve the name once, from what is actually on disk, and both spellings
+// keep working. New/empty acervos get the English name.
+pub fn acervo_dir(base: &std::path::Path, current: &str, legacy: &str) -> std::path::PathBuf {
+    let atual = base.join(current);
+    if atual.is_dir() {
+        return atual;
+    }
+    let antigo = base.join(legacy);
+    if antigo.is_dir() {
+        return antigo;
+    }
+    atual
+}
+
+pub fn contexts_dir(base: &std::path::Path) -> std::path::PathBuf {
+    acervo_dir(base, "contexts", "contextos")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -289,26 +311,4 @@ mod tests {
         // must always include it (no PATH edit required)
         assert!(engine_search_dirs().contains(&loro_data_dir().join("bin")));
     }
-}
-
-// ADR-0026 §14 — the acervo's folders were renamed to English, and the migration
-// that renames them on disk is USER-triggered. Until someone runs it, an existing
-// acervo still has the Portuguese folder — and every read that hardcoded the new
-// name found nothing: no themes, no meetings, no notes, and every meeting command
-// failing. Resolve the name once, from what is actually on disk, and both spellings
-// keep working. New/empty acervos get the English name.
-pub fn acervo_dir(base: &std::path::Path, current: &str, legacy: &str) -> std::path::PathBuf {
-    let atual = base.join(current);
-    if atual.is_dir() {
-        return atual;
-    }
-    let antigo = base.join(legacy);
-    if antigo.is_dir() {
-        return antigo;
-    }
-    atual
-}
-
-pub fn contexts_dir(base: &std::path::Path) -> std::path::PathBuf {
-    acervo_dir(base, "contexts", "contextos")
 }
