@@ -3544,6 +3544,10 @@ struct BrainStatus {
     // never drew and a feature that never existed. A test pins both sides.
     #[serde(rename = "entryDocs")]
     entry_docs: Vec<BrainFile>,
+    // ADR-0026 §20: a estrutura é a antiga e a leitura seria ambígua — a tela
+    // para e oferece a migração em vez de mostrar meio acervo
+    #[serde(rename = "legacyLayout")]
+    legacy_layout: bool,
     activity: String,
 }
 
@@ -3617,6 +3621,7 @@ fn brain_status() -> BrainStatus {
             notes: vec![],
             incubadora: vec![],
             entry_docs: vec![],
+            legacy_layout: false,
             activity: String::new(),
         };
     };
@@ -3688,6 +3693,7 @@ fn brain_status() -> BrainStatus {
         notes: list_files_at(&crate::paths::acervo_dir(&base, "notes", "notas")),
         incubadora: incub,
         entry_docs: entry_docs(&base),
+        legacy_layout: crate::paths::is_legacy_layout(&base),
         activity,
     }
 }
@@ -5209,6 +5215,33 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    // ADR-0026 §20 — o portão. O estado meio-migrado é pior que qualquer um dos
+    // dois extremos, e foi ele que fez o conhecimento sumir da tela: o app
+    // reconhece a estrutura antiga e para, em vez de mostrar meio acervo.
+    #[test]
+    fn a_legacy_layout_is_reported_so_the_screen_can_stop() {
+        let root = std::env::temp_dir().join(format!("loro-gate-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("contextos/frota")).unwrap();
+        assert!(
+            crate::paths::is_legacy_layout(&root),
+            "contextos/ é a antiga"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("reunioes")).unwrap();
+        assert!(crate::paths::is_legacy_layout(&root), "reunioes/ também");
+
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("contexts/frota")).unwrap();
+        std::fs::create_dir_all(root.join("meetings")).unwrap();
+        assert!(
+            !crate::paths::is_legacy_layout(&root),
+            "um acervo migrado não é portão"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     // ADR-0026 §14 — the migration is user-triggered, so until it runs an existing
     // acervo still has the Portuguese folders. Reading has to find them, or the
     // upgrade looks like data loss: no themes, no meetings, no notes.
@@ -5593,6 +5626,7 @@ mod tests {
                 path: "TERMS.md".into(),
                 mtime: 0,
             }],
+            legacy_layout: false,
             activity: String::new(),
         })
         .unwrap();

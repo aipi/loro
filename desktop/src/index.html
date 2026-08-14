@@ -52,6 +52,12 @@
 
       <div id="mainRow" class="mainrow">
       <main id="brain" class="bwrap">
+        <!-- ADR-0026 §20 · ESTRUTURA ANTIGA. Mesmo mecanismo do primeiro uso: uma
+             tela só, com uma ação. Sustentar as duas grafias em todo o código não
+             se sustentou, e o estado meio-migrado escondia o conhecimento sem
+             dizer por quê. Aqui o app diz, e oferece o conserto. -->
+        <section id="brainLegacy" class="wizard" hidden></section>
+
         <!-- ============ 1j · PRIMEIRO USO ============ -->
         <section id="brainSetup" class="wizard" hidden>
           <div class="wizhead">

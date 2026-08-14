@@ -2486,8 +2486,20 @@ async function brainRefresh() {
     B.nameInput.focus();
   }
   if (!showWizard) wizInited = false;
+  // ADR-0026 §20 — estrutura antiga: a tela para aqui. Não desenhar o casco é o
+  // ponto: meio acervo na árvore é pior que uma tela que diz o que houve.
+  const legado = !showWizard && !!st.legacyLayout;
+  const gate = document.getElementById("brainLegacy");
+  if (gate) {
+    if (legado && gate.hidden) {
+      gate.innerHTML = legacyGateHtml();
+      const b = gate.querySelector("[data-migrate]");
+      if (b) b.onclick = () => runMigration();
+    }
+    gate.hidden = !legado;
+  }
   B.setup.hidden = !showWizard;
-  B.shell.hidden = showWizard;
+  B.shell.hidden = showWizard || legado;
   // 1j: sem projeto não há destinos, nem o que gravar, nem documento no painel
   document.getElementById("app").classList.toggle("firstrun", showWizard);
   renderSwitch();
@@ -6535,6 +6547,24 @@ function toggleInlineImage(anchorEl, mime, base64, rel) {
 // versão abria "arquivo não encontrado". Um nome, um lugar.
 const LIVING_FILE = "meeting.md";
 const livingRel = (dir) => `${dir}/${LIVING_FILE}`;
+
+// ADR-0026 §20 · o portão da estrutura antiga. Diz o que está acontecendo, o que
+// a migração FAZ e o que ela não faz — o medo aqui é perder arquivo, e a resposta
+// tem de vir antes do botão (DESIGN.md §1: o preço está na cópia).
+function legacyGateHtml() {
+  return `<div class="wizhead">
+      <img src="parrot.png" width="34" height="34" alt="" class="wizard-icon" />
+      <div>
+        <h1>${t("Este projeto usa a estrutura antiga")}</h1>
+        <p class="lead">${t("as pastas mudaram de nome e o Loro precisa atualizar este projeto antes de abrir. sem isso, parte do conhecimento não aparece.")}</p>
+      </div>
+    </div>
+    <div class="wizcard">
+      <p class="hint">${t("a atualização renomeia as pastas e os arquivos que o Loro criou. nada é apagado, nada é reescrito, e o que você escreveu continua exatamente igual.")}</p>
+      <p class="hint">${t("você vê a lista completa do que vai mudar antes de confirmar.")}</p>
+      <button class="btn solid" data-migrate>${t("atualizar a estrutura")}</button>
+    </div>`;
+}
 
 async function openTopicDoc(rel, opts) {
   try { await openDoc(await invoke("brain_topic_doc", { rel }), opts); }

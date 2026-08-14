@@ -422,6 +422,9 @@ por enviar para revisão do time normalmente).
   onde começar, e por onde a IA começa. O segundo (`TERMS.md`) é a lista de nomes
   com o lugar de cada um. Os dois são arquivos do projeto: abrem no GitHub e em
   qualquer editor, sem o Loro.
+- **Projeto com a estrutura antiga pede uma atualização antes de abrir.** O Loro
+  reconhece e mostra uma tela só, com um botão: você vê a lista completa do que vai
+  mudar antes de confirmar, nada é apagado e o que você escreveu continua igual.
 - **Clicar num verbete leva até a palavra, não até o topo do arquivo.** O
   trecho fica grifado por 10 segundos e a tela rola até ele; depois a marca some
   sozinha, sem deixar nada no documento.

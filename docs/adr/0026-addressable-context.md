@@ -454,6 +454,38 @@ is not the only cue (WCAG G183): the mark carries an outline too.
 An anchor still wins when there is no term — a citation to a hotspot lands on the
 hotspot, which is §15's job.
 
+### 20. A legacy acervo is gated to the migration, not supported forever
+
+§14 promised that reading would keep accepting the old names indefinitely, so an
+acervo nobody migrated would go on working. **That promise was withdrawn**, and
+the reason is evidence, not taste.
+
+Three review rounds found three sets of leaks, all the same shape: the rename
+created two spellings, and honouring both means auditing *every* path composition
+in the codebase. Round one missed the versioning guard (a raw transcript could be
+versioned — BR-8). Round two missed `list_meetings`, `queueable_files`, the stamp
+path and the returned rel of the queueables. Twenty-one more compositions are
+still hardcoded in `app.js`. Each round shipped a commit claiming the class was
+closed; each round it was not.
+
+The decisive one is the failure mode. `ensure_acervo_structure` created the
+English folders unconditionally, and it runs from the wizard — which is also the
+path for pointing at a folder that already exists. On a legacy acervo it created
+empty new folders beside the populated old ones; since resolution prefers the
+folder that exists, **the entire knowledge vanished from the screen**, and the
+migration then reported "both coexist" forever. A half-migrated state is worse
+than either end, and it fails silently.
+
+So: `brain_status` reports `legacyLayout`, and the shell is not drawn. The screen
+says what happened, says what the migration does *and what it does not do* — the
+fear here is losing a file, so that answer comes before the button — and offers
+the one action. The migration was already non-destructive, idempotent and
+one-step; what was missing was the app admitting it needs to run.
+
+`paths::acervo_dir` stays. It is no longer a promise of dual-mode operation: it is
+what keeps the gate itself, and the migration that follows it, able to read a tree
+they are about to rename.
+
 ## Explicitly NOT done
 
 - **A node-and-edge picture.** It fails the DESIGN.md §9 checklist (it invents a

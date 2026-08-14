@@ -414,6 +414,9 @@ for team review normally).
   to start, and where the AI starts. The second (`TERMS.md`) is the list of names
   with the place of each one. Both are files in the project: they open on GitHub
   and in any editor, with no Loro.
+- **A project with the old structure asks to be updated before it opens.** Loro
+  recognises it and shows one screen with one button: you see the full list of what
+  will change before confirming, nothing is deleted, and what you wrote stays as it is.
 - **Clicking an entry lands on the word, not at the top of the file.** The
   passage is highlighted for 10 seconds and the view scrolls to it; the mark then
   disappears on its own, leaving nothing behind in the document.

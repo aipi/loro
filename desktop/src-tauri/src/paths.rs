@@ -215,6 +215,17 @@ pub fn contexts_dir(base: &std::path::Path) -> std::path::PathBuf {
     acervo_dir(base, "contexts", "contextos")
 }
 
+// ADR-0026 §20 — um acervo escrito antes da renomeação. Sustentar as DUAS grafias
+// em todo o código provou ser insustentável: três rodadas de revisão, três
+// conjuntos de vazamento, e o pior deles fez o conhecimento sumir da tela. Em vez
+// de fingir que funciona meio-a-meio, o app RECONHECE o estado e oferece a
+// migração — que já é não destrutiva, idempotente e de um ato só.
+pub fn is_legacy_layout(base: &std::path::Path) -> bool {
+    ["contextos", "reunioes", "notas"]
+        .iter()
+        .any(|d| base.join(d).is_dir())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

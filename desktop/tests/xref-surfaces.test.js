@@ -490,3 +490,34 @@ test("ADR-0026 — o grifo não reescreve o texto do autor", () => {
   assert.doesNotMatch(body, /innerHTML\s*=/, "mexer no innerHTML do documento apagaria anotação e link");
   assert.match(body, /createTreeWalker|TEXT_NODE|nodeValue/, "anda nos nós de texto e envolve o trecho");
 });
+
+// ======================================================= 9 · o portão
+//
+// Sustentar as duas grafias em todo o código não se sustentou: três rodadas de
+// revisão, três conjuntos de vazamento, e o pior deles fez o conhecimento sumir
+// da tela sem dizer por quê. O app passa a RECONHECER a estrutura antiga e parar,
+// com uma ação: atualizar. Meio migrado é pior que qualquer um dos dois extremos.
+
+test("ADR-0026 — a estrutura antiga para a tela, e a tela diz por quê", () => {
+  const { legacyGateHtml } = loadPure(["legacyGateHtml"]);
+  const html = legacyGateHtml();
+  assert.match(html, /estrutura/i, "a tela nomeia o que está acontecendo");
+  assert.match(html, /data-migrate/, "e a ação é a migração que já existe");
+  assert.equal((html.match(/btn solid/g) || []).length, 1, "uma ação primária (DESIGN.md §1)");
+});
+
+test("ADR-0026 — o portão diz o que a migração faz, antes de fazer", () => {
+  const { legacyGateHtml } = loadPure(["legacyGateHtml"]);
+  const html = legacyGateHtml();
+  assert.match(html, /renomeia|renomear/i, "o preço está na cópia (DESIGN.md §1)");
+  assert.match(html, /nada é apagado|não apaga|nenhum arquivo é apagado/i,
+    "e o que ela NÃO faz, que é o que dá medo");
+});
+
+test("ADR-0026 — com estrutura antiga o casco não é desenhado", () => {
+  const src = fnBody("brainRefresh");
+  assert.match(src, /legacyLayout/, "brainRefresh lê o estado");
+  const gate = src.indexOf("legacyLayout");
+  const shell = src.indexOf("B.shell.hidden");
+  assert.ok(gate >= 0 && shell >= 0 && gate < shell, "o portão decide antes de mostrar o casco");
+});
