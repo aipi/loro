@@ -46,19 +46,19 @@ test("mdRender: títulos, parágrafos e listas", () => {
 });
 
 test("mdRender: link relativo vira interno, http abre fora", () => {
-  const html = mdRender("[doc](../reunioes/x.md) e [site](https://a.b)");
-  assert.match(html, /<a href="#" data-path="\.\.\/reunioes\/x\.md">doc<\/a>/);
-  assert.match(html, /<a href="https:\/\/a\.b" target="_blank">site<\/a>/);
+  const html = mdRender("[doc](../meetings/x.md) e [site](https://a.b)");
+  assert.match(html, /<a class="[^"]*" href="#" data-path="\.\.\/meetings\/x\.md">doc<\/a>/);
+  assert.match(html, /<a class="[^"]*" href="https:\/\/a\.b" target="_blank">site<\/a>/);
 });
 
 // R2 — a referência interna saía como <a> sem href: fora da ordem de tabulação
 // (WCAG 2.1.1) e sem papel de link para a tecnologia assistiva (4.1.2). O app
 // despacha pelo data-path e dá preventDefault, então o href é só a semântica.
 test("mdRender: referência interna é um link alcançável pelo teclado", () => {
-  const attrs = /<a ([^>]*)>doc<\/a>/.exec(mdRender("[doc](contextos/x.md)"));
+  const attrs = /<a ([^>]*)>doc<\/a>/.exec(mdRender("[doc](contexts/x.md)"));
   assert.ok(attrs, "a referência interna continua sendo um <a>");
   assert.match(attrs[1], /href="/, "sem href o <a> não recebe foco nem é anunciado como link");
-  assert.match(attrs[1], /data-path="contextos\/x\.md"/, "o app segue interceptando pelo data-path");
+  assert.match(attrs[1], /data-path="contexts\/x\.md"/, "o app segue interceptando pelo data-path");
 });
 
 test("mdRender: bloco de código preservado", () => {
@@ -112,7 +112,7 @@ test("mdRender: ênfase e link atravessam a quebra de linha", () => {
     "<p><em>O Loro captura sua fala e guarda por tema.</em></p>"
   );
   assert.match(
-    mdRender("veja o [documento\ndo gateway](contextos/x.md) depois"),
+    mdRender("veja o [documento\ndo gateway](contexts/x.md) depois"),
     /<a [^>]*>documento do gateway<\/a> depois/
   );
 });
@@ -145,7 +145,8 @@ test("mdRender: título e item de lista interrompem o parágrafo", () => {
 test("mdRender: a citação mantém uma linha por linha", () => {
   assert.strictEqual(
     mdRender("> [!HOTSPOT] H-1 — título\n> onde: api/gateway\n"),
-    '<blockquote class="hotspot"><p class="hstitle">H-1 — título</p><p>onde: api/gateway</p></blockquote>'
+    // ADR-0026 §15: o apelido vira âncora e sai do texto
+    '<blockquote class="hotspot" id="H-1"><p class="hstitle">título</p><p class="hsid loc">H-1</p><p>onde: api/gateway</p></blockquote>'
   );
 });
 
@@ -223,4 +224,84 @@ test("mergeSettings aplica o modo de transcrição (ao vivo / gravar tudo)", () 
 
 test("mergeSettings ignora modo com tipo errado e mantém o padrão", () => {
   assert.deepStrictEqual(mergeSettings(DEF_MODE, { mode: 1 }), DEF_MODE);
+});
+
+// ---- ADR-0026 §2 — o salto é visível: cada tipo de destino tem a sua marca ----
+
+test("ADR-0026 — link para outro contexto é nome (prosa), não caminho", () => {
+  const { inlineMd } = require("../src/text.js");
+  const html = inlineMd("veja [precificação](../precificacao/context.md) upstream");
+  assert.match(html, /class="xref xref--ctx"/);
+  assert.match(html, /data-path="\.\.\/precificacao\/context\.md"/);
+});
+
+test("ADR-0026 — link para material é caminho (máquina)", () => {
+  const { inlineMd } = require("../src/text.js");
+  assert.match(inlineMd("[planilha](attachments/base.xlsx)"), /class="xref xref--file"/);
+});
+
+test("ADR-0026 — link externo continua abrindo fora e é marcado como web", () => {
+  const { inlineMd } = require("../src/text.js");
+  const html = inlineMd("[docs](https://exemplo.com/a)");
+  assert.match(html, /class="xref xref--web"/);
+  assert.match(html, /target="_blank"/);
+});
+
+test("ADR-0026 — localizador externo vira mono; só clica com URL base", () => {
+  const { inlineMd } = require("../src/text.js");
+  const plain = inlineMd("registrado em MM-1147 hoje");
+  assert.match(plain, /<span class="loc">MM-1147<\/span>/);
+  const linked = inlineMd("registrado em MM-1147 hoje", { ticketBase: "https://j.co/browse/" });
+  assert.match(linked, /<a class="loc" href="https:\/\/j\.co\/browse\/MM-1147" target="_blank">MM-1147<\/a>/);
+});
+
+test("ADR-0026 — localizador não é criado dentro de link nem de código", () => {
+  const { inlineMd } = require("../src/text.js");
+  const inLink = inlineMd("[MM-1147](../frota/context.md)", { ticketBase: "https://j.co/" });
+  assert.strictEqual((inLink.match(/<a /g) || []).length, 1);
+  assert.doesNotMatch(inlineMd("use `MM-1147` aqui"), /class="loc"/);
+});
+
+test("ADR-0026 — ID de decisão e de hotspot não são confundidos com ticket", () => {
+  const { inlineMd } = require("../src/text.js");
+  assert.doesNotMatch(inlineMd("vide D-2026-07-23-upgrade", { ticketBase: "https://j.co/" }), /class="loc"/);
+  assert.doesNotMatch(inlineMd("vide H-3", { ticketBase: "https://j.co/" }), /class="loc"/);
+});
+
+test("ADR-0026 — o cartão §0 é marcado como sumário nas duas línguas", () => {
+  assert.match(mdRender("## 0 · Sumário\n\n- **Visão geral** — algo\n"), /<ul class="summary">/);
+  assert.match(mdRender("## 0 · Summary\n\n- **Overview** — a thing\n"), /<ul class="summary">/);
+  assert.doesNotMatch(mdRender("## 1 · Visão geral\n\n- item\n"), /<ul class="summary">/);
+});
+
+// ---- ADR-0026 §15 — o ponto em aberto tem NOME, e o nome é endereço ----
+//
+// `H-3` era numeração local ao arquivo: o mesmo id existe em quase todos os 80
+// documentos, então citá-lo em qualquer outro lugar é ambíguo — e ele chegava ao
+// leitor no meio da frase, sintaxe de máquina na superfície que a ADR-0018 define
+// como a saída do produto. O id vira apelido tirado do próprio título, o leitor
+// o CONSOME (como já consome o marcador) e o deixa como âncora.
+
+test("ADR-0026 — o leitor mostra o título, não o apelido", () => {
+  const html = mdRender("> [!HOTSPOT] cancelamento-cdc — Cancelamento e arrependimento\n> O que está em aberto.\n");
+  assert.match(html, /<p class="hstitle">Cancelamento e arrependimento<\/p><p class="hsid loc">cancelamento-cdc<\/p>/,
+    "o título é a frase; o id vem na linha de baixo — buscável e copiável");
+  assert.doesNotMatch(html, /cancelamento-cdc —/, "e não uma palavra no meio da frase");
+});
+
+test("ADR-0026 — o apelido vira âncora, para uma citação chegar no ponto", () => {
+  const html = mdRender("> [!HOTSPOT] cancelamento-cdc — Cancelamento\n> texto\n");
+  assert.match(html, /<blockquote class="hotspot" id="cancelamento-cdc">/);
+});
+
+test("ADR-0026 — o id antigo continua sendo lido e vira âncora igual", () => {
+  const html = mdRender("> [!HOTSPOT] H-3 — Regras financeiras em aberto\n> texto\n");
+  assert.match(html, /<blockquote class="hotspot" id="H-3">/);
+  assert.match(html, /<p class="hstitle">Regras financeiras em aberto<\/p><p class="hsid loc">H-3<\/p>/);
+});
+
+test("ADR-0026 — hotspot sem apelido não inventa âncora", () => {
+  const html = mdRender("> [!HOTSPOT] Um ponto em aberto qualquer\n> texto\n");
+  assert.match(html, /<blockquote class="hotspot">/);
+  assert.match(html, /<p class="hstitle">Um ponto em aberto qualquer<\/p>/);
 });

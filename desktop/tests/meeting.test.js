@@ -24,13 +24,13 @@ test("filterHallucinations drops whisper silence-artifacts, keeps real speech", 
 // T-7 (ADR-0018): the report is gone, so reuniao.md is the only door into a
 // meeting. A relatorio.md left on disk by an old version is NOT a meeting file.
 test("livingId extracts the meeting id only from the canonical home", () => {
-  const living = "pessoal/temas/frota-2026/reunioes/2026-07-27-1430-semanal/reuniao.md";
-  const report = "pessoal/temas/frota-2026/reunioes/2026-07-27-1430-semanal/relatorio.md";
+  const living = "pessoal/temas/frota-2026/meetings/2026-07-27-1430-semanal/meeting.md";
+  const report = "pessoal/temas/frota-2026/meetings/2026-07-27-1430-semanal/relatorio.md";
   assert.strictEqual(LM.livingId(living), "2026-07-27-1430-semanal");
   // wrong file / wrong world / traversal-ish never match
   assert.strictEqual(LM.livingId(report), null);
-  assert.strictEqual(LM.livingId("contextos/x/context.md"), null);
-  assert.strictEqual(LM.livingId("pessoal/temas/t/reunioes/../reuniao.md"), null);
+  assert.strictEqual(LM.livingId("contexts/x/context.md"), null);
+  assert.strictEqual(LM.livingId("pessoal/temas/t/meetings/../meeting.md"), null);
   assert.strictEqual(LM.livingId(null), null);
   // the report helpers are gone with the report itself
   assert.strictEqual(LM.reportId, undefined);
@@ -38,9 +38,9 @@ test("livingId extracts the meeting id only from the canonical home", () => {
 });
 
 test("isLiving mirrors the id extractor", () => {
-  const living = "pessoal/temas/t/reunioes/2026-07-27-1430-x/reuniao.md";
+  const living = "pessoal/temas/t/meetings/2026-07-27-1430-x/meeting.md";
   assert.strictEqual(LM.isLiving(living), true);
-  assert.strictEqual(LM.isLiving("pessoal/temas/t/reunioes/2026-07-27-1430-x/relatorio.md"), false);
+  assert.strictEqual(LM.isLiving("pessoal/temas/t/meetings/2026-07-27-1430-x/relatorio.md"), false);
 });
 
 test("stripMarker removes every occurrence of the append marker (BR-8: never shows the raw comment)", () => {
@@ -52,7 +52,7 @@ test("stripMarker removes every occurrence of the append marker (BR-8: never sho
 });
 
 test("acervoJoin resolves an acervo-relative path against the base with one separator", () => {
-  const rel = "pessoal/temas/t/reunioes/2026-07-27-1430-x/audio/completo.wav";
+  const rel = "pessoal/temas/t/meetings/2026-07-27-1430-x/audio/completo.wav";
   assert.strictEqual(LM.acervoJoin("/Users/me/acervo", rel), "/Users/me/acervo/" + rel);
   // trailing base slash and leading rel slash collapse to a single separator
   assert.strictEqual(LM.acervoJoin("/Users/me/acervo/", "/" + rel), "/Users/me/acervo/" + rel);
@@ -103,13 +103,13 @@ test("aiStatusLine renders in English when lang is 'en'", () => {
 // ADR-0012 terminal trigger: the app injects a Claude Code slash command into
 // the terminal PTY. These helpers build that exact string, so they are the unit
 // that must never leak a premature submit (a raw newline) or a bad dir.
-const DIR = "pessoal/temas/frota-2026/reunioes/2026-07-27-1430-x";
+const DIR = "pessoal/temas/frota-2026/meetings/2026-07-27-1430-x";
 
 test("meetingDir derives the acervo-relative dir from the living path", () => {
-  assert.strictEqual(LM.meetingDir(DIR + "/reuniao.md"), DIR);
+  assert.strictEqual(LM.meetingDir(DIR + "/meeting.md"), DIR);
   assert.strictEqual(LM.meetingDir(DIR + "/relatorio.md"), null);
   // non-meeting paths, the bare dir, and nullish input never match
-  assert.strictEqual(LM.meetingDir("contextos/frota/context.md"), null);
+  assert.strictEqual(LM.meetingDir("contexts/frota/context.md"), null);
   assert.strictEqual(LM.meetingDir(DIR), null);
   assert.strictEqual(LM.meetingDir(null), null);
 });
@@ -143,10 +143,10 @@ test("meetingSkillCmd returns null without a dir, or with an empty answer questi
 });
 
 test("ADR-0013: meeting helpers recognize the brainstorming/ world", () => {
-  const dir = "brainstorming/frota-2026/reunioes/2026-07-27-1430-x";
-  assert.strictEqual(LM.meetingDir(dir + "/reuniao.md"), dir);
-  assert.strictEqual(LM.livingId(dir + "/reuniao.md"), "2026-07-27-1430-x");
-  assert.strictEqual(LM.isLiving(dir + "/reuniao.md"), true);
+  const dir = "brainstorming/frota-2026/meetings/2026-07-27-1430-x";
+  assert.strictEqual(LM.meetingDir(dir + "/meeting.md"), dir);
+  assert.strictEqual(LM.livingId(dir + "/meeting.md"), "2026-07-27-1430-x");
+  assert.strictEqual(LM.isLiving(dir + "/meeting.md"), true);
 });
 
 test("meetingLabel strips the timestamp and humanizes the slug", () => {
@@ -212,8 +212,8 @@ test("looseEndAction tolera entrada faltando", () => {
 });
 
 // ---- #44: mover uma reunião com toda a sua análise -------------------------
-// Uma reunião só existe em `<brainstorming>/reunioes/`, porque é exatamente esse
-// caminho que o list_meetings varre — então o destino nunca é avulso/notas/anexos.
+// Uma reunião só existe em `<brainstorming>/meetings/`, porque é exatamente esse
+// caminho que o list_meetings varre — então o destino nunca é avulso/notes/attachments.
 test("meetingMoveTargets exclui o brainstorming atual", () => {
   const temas = [
     { slug: "a", nome: "Alfa" },
@@ -246,7 +246,7 @@ test("meetingDropTarget aceita só reuniões de OUTRO brainstorming", () => {
 // T-9 · AC-5 (ADR-0018) — o fim de uma gravação SUGERE a análise. O desfecho é
 // puro: só "analisar" produz um comando, e ele é o mesmo que o menu injeta.
 test("analyseOffer só injeta quando o usuário aceita", () => {
-  const dir = "brainstorming/frota/reunioes/2026-07-27-1430-x";
+  const dir = "brainstorming/frota/meetings/2026-07-27-1430-x";
   assert.strictEqual(LM.analyseOffer("analisar", dir), LM.meetingSkillCmd("analyse", dir));
   // dispensar não roda nada
   assert.strictEqual(LM.analyseOffer("agora não", dir), null);

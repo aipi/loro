@@ -39,7 +39,7 @@ test("B13 — uma resposta de verdade não é confundida com falha de credencial
     "",
     "Aqui está o resumo da reunião: o time decidiu adiar o lançamento.",
     // uma resposta que FALA de login não é uma resposta que falhou por login
-    "Para entrar no painel, o time usa login único; a documentação está em contextos/plataforma. "
+    "Para entrar no painel, o time usa login único; a documentação está em contexts/plataforma. "
       + "Isso não é uma falha de autenticação: é o texto do conhecimento, e ele é longo o bastante "
       + "para ser claramente uma resposta e não a saída de um processo que morreu na primeira linha. "
       + "O parágrafo segue explicando o fluxo de autenticação do produto com todos os detalhes que o "

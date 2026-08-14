@@ -34,10 +34,10 @@ explicit — **Brainstorming → Fila → Contexto**. A *brainstorming*
 meetings/notes/attachments; the user **selects the real files** to send and each
 one enters the **fila** (the `inbox/` queue) AS ITSELF — one queue item per file,
 no consolidated report (ADR-0014 supersedes the ADR-0013 merged relatorio). A
-meeting is queued as its **analyses** (`reunioes/<id>/notas/*`, ADR-0018 — a
-meeting no longer has a `relatorio.md`); the raw transcript (`reuniao.md`), audit
+meeting is queued as its **analyses** (`meetings/<id>/notes/*`, ADR-0018 — a
+meeting no longer has a `relatorio.md`); the raw transcript (`meeting.md`), audit
 and audio never enter the fila (BR-8). **"gerar contexto"** runs `/loro-context`
-(the renamed loop skill) which distills the fila into versioned `contextos/`.
+(the renamed loop skill) which distills the fila into versioned `contexts/`.
 
 Config, models and logs live under `~/.loro/`. The knowledge base ("brain") is a
 separate, user-chosen folder and is **not** part of the codebase.
@@ -116,8 +116,8 @@ only ever shows `err.acervo_dir_is_file` / `err.acervo_dir_not_writable` /
 | `brain_status` | — | status | contexts, inbox, processed, activity |
 | `brain_read` | `rel` | content | read a file inside the acervo (path-traversal guarded) |
 | `brain_import` | `context?` | count | copy files into the inbox (prefix `<ctx>--`) |
-| `brain_import_files` | `destRel` | count | native file picker → copy chosen files into an `anexos/` folder — a brainstorming's or a context's (guarded, ADR-0005) |
-| `brain_new_note_in` | `destRel, titulo` | rel | create a living-front-matter note inside an `anexos/` folder (context counterpart of `brain_new_notebook`, ADR-0005) |
+| `brain_import_files` | `destRel` | count | native file picker → copy chosen files into an `attachments/` folder — a brainstorming's or a context's (guarded, ADR-0005) |
+| `brain_new_note_in` | `destRel, titulo` | rel | create a living-front-matter note inside an `attachments/` folder (context counterpart of `brain_new_notebook`, ADR-0005) |
 | `brain_delete_inbox` | `name` | `()` | delete an unprocessed queue item |
 | `brain_set_auto_context` | `value: bool` | `()` | post-creation toggle (Settings) for autoContext — global config + local `.loro/settings.json` (ADR-0005 §3) |
 | `brain_set_agent` | `agent` | `()` | post-creation edit (Settings → IA e terminal) of the active acervo's AI agent command; blank falls back to the default (ADR-0020) |
@@ -132,21 +132,43 @@ only ever shows `err.acervo_dir_is_file` / `err.acervo_dir_not_writable` /
 | `brain_annotation_update` | `rel, id, patch` | `()` | patch an annotation — change `cor` and/or append a `comentario` (ADR-0007) |
 | `brain_annotation_delete` | `rel, id` | `()` | remove a highlight/comment ("desgrifar") (ADR-0007) |
 
+Addressable context (ADR-0026) — three **read-only** commands over
+`contexts/**/context.md`, and nothing else. They never open `meetings/`,
+`meeting.md`, `notes/` or the audit trail, so no transcript or PII can reach a
+node, an edge or a term (BR-8); they write nothing anywhere (a test compares the
+bytes of every document before and after the pass). All three are `async`: a sync
+command runs on the main thread and scanning 80 documents there is the freeze
+class of ADR-0022 §28, which a test now guards. One pass builds links, kinds,
+hotspots, decisions, codes and title — no file is read twice — behind a cache
+keyed by acervo + mtime + size of **each** `context.md`:
+
+| Command | Args | Returns | Purpose |
+|---|---|---|---|
+| `brain_knowledge_graph` | — | `{nodes[], edges[], broken[], orphans[]}` | the lateral graph, computed on read. `nodes: {rel, context, title, hotspots[] (qualified `<ctx>#H-n`), decisions[], inlinks, outlinks}` · `edges: {from, to, kind}` where `kind` is `upstream\|downstream\|bidirecional\|""` **as the citing document declared it** (the reader inverts it, ADR-0026 §6) · `broken: {from, target}` with the target exactly as the author typed it · `orphans: [rel]` — a context with no lateral inlink (a parent indexing a child is navigation, not an edge; child → parent is). Edges are deduplicated by `(from, to)`, and a declared kind survives an undeclared duplicate |
+| `brain_backlinks` | `rel` | `[{rel, context, kind}]` | who cites this document, and how. `rel` is the document rel (`contexts/<ctx>/context.md`), the same identity used by `edges` and `orphans` |
+| `brain_index_terms` | — | `[{term, entries: [{rel, context, locator}]}]` | the índice remissivo's data. Terms come only from what is already written — the anchor text a neighbour chose, hotspot titles, decision slugs (date prefix stripped, full id in the locator) and cited external codes; no NLP, no stemming. `locator` addresses **inside** `rel` (`<ctx>#H-3` · `D-YYYY-MM-DD-slug` · `§n` · `MM-1147`, or empty for "in the document") — who cites whom is `brain_backlinks`' answer and is not duplicated here |
+| `brain_set_ticket_base` | `base` | `()` / err | per-acervo base URL where cited external ids open (`Acervo.ticket_base`, Configurações → Projeto). `normalize_ticket_base` accepts **http(s) only** — anything else is stored empty and the locator stays unclickable — and appends the separator the URL needs |
+| `brain_index_write` | — | `"TERMS.md"` / err | writes the índice remissivo to the acervo root, from the same `index_terms` the screen paints (ADR-0026 §1, revised). Deterministic — no model call — so it can be re-run at any time and never invents a term |
+| `brain_status` | — | `{…, legacyLayout}` | `legacyLayout` is true when the acervo still has `contextos/`, `reunioes/` or `notas/` (ADR-0026 §20). The shell is not drawn: the screen states what happened and offers the migration, because a half-migrated tree hides knowledge without saying so |
+| `brain_pii_scan` | — | `[{rel, kind, sample, count}]` | reports PII **candidates** in the versioned contexts — an e-mail with a dotted local part, a `nome.sobrenome` handle (ADR-0026 §17). Read-only by contract: it never edits, because a person's name and a product's name have the same shape. A functional mailbox (`sinistros@`) is a role and is not reported |
+| `brain_topic_doc` | `rel` | `"<rel>/<file>"` / err | the topic document that EXISTS in that directory: `index.md`, or `index.md` in an acervo written before ADR-0026 §14. The frontend used to build this path by hand, in three places |
+| `brain_meeting_set_origin` | `{id, origem}` | `origem` / err | records the open point a meeting came from (ADR-0026 §11), in `manifest.origem`. `normalize_origin` accepts **only** `<contexto>#H-<n>` or `D-YYYY-MM-DD-<slug>`; a path, a title or a sentence is refused with `err.origin_not_an_id` and the recorded value is left untouched. An empty origin is not serialized, so an old manifest stays byte-identical |
+
 Brainstorming world + the fila → contexto flow (ADR-0001 §7):
 
 | Command | Args | Returns | Purpose |
 |---|---|---|---|
 | `brain_create_brainstorm` | `{nome, categoria?}` | `{slug, rel}` | create a brainstorming under `brainstorming/` |
 | `brain_list_brainstorms` | — | list | list brainstormings (with categoria) |
-| `brain_list_meetings` | `slug` | `[{id,rel,titulo,status,notas}]` | a brainstorming's meetings, newest first, labelled by manifest `titulo`; `notas` counts how many of the meeting's `notas/` the fila would accept (0 = nothing to send, ADR-0018) |
-| `brain_meeting_start` | `{tema, titulo?, cfg?}` | `{id, dir, livingRel, startedEpochMs}` | scaffold the meeting home + manifest + `reuniao.md` and start the capture sidecar (capture first, so a permission denial leaves no orphan). `startedEpochMs` is the meeting's **t=0**, taken right before the spawn: both tracks convert their timestamps to it (ADR-0025) |
-| `brain_meeting_finish` | `id` | `{rel}` | close a meeting: `status: "done"`, nothing authored; returns the `reuniao.md` rel the UI opens (ADR-0018 — replaces `brain_meeting_build_notebook`) |
+| `brain_list_meetings` | `slug` | `[{id,rel,titulo,status,notas}]` | a brainstorming's meetings, newest first, labelled by manifest `titulo`; `notes` counts how many of the meeting's `notes/` the fila would accept (0 = nothing to send, ADR-0018) |
+| `brain_meeting_start` | `{tema, titulo?, cfg?}` | `{id, dir, livingRel, startedEpochMs}` | scaffold the meeting home + manifest + `meeting.md` and start the capture sidecar (capture first, so a permission denial leaves no orphan). `startedEpochMs` is the meeting's **t=0**, taken right before the spawn: both tracks convert their timestamps to it (ADR-0025) |
+| `brain_meeting_finish` | `id` | `{rel}` | close a meeting: `status: "done"`, nothing authored; returns the `meeting.md` rel the UI opens (ADR-0018 — replaces `brain_meeting_build_notebook`) |
 | `brain_meeting_rename` | `{id, titulo}` | `()` | rename a meeting (manifest + heading; the folder id stays stable) |
 | `brain_meeting_transcribe_tail` | `{id, fromMs}` | `{segments[], nextMs, anchorEpochMs?}` | best-effort live window of the system track: snapshots the growing WAV, transcribes `[fromMs, end]` and returns **every utterance whisper timed**, each with its offset into that capture segment's WAV, plus `anchorEpochMs` — the WAV's own t=0, measured by the sidecar (absent until reported; the caller degrades) (ADR-0012, ADR-0025) |
 | `brain_meeting_transcribe_segment` | `{id, data}` | `{segments[]}` | same for one rotated mic segment (bytes in, transient temp, nothing stored): each utterance with its offset into the segment (ADR-0012 model A, ADR-0025) |
 | `brain_meeting_append` | `{id, chunk, tMs?, source?}` | `()` | append one block below the stable marker (append-only, ADR-0010); timed blocks land in chronological order, untimed ones (skills/legacy) at the tail |
 | `brain_meeting_append_timed` | `{id, blocks[{tMs, source, chunk}]}` | `()` | a whole window's utterances in ONE pass — one read, one write, one `meeting-appended` — so the living surface repaints once instead of once per utterance (ADR-0025) |
-| `brain_triage_files` | `rels[]` | `[{rel, findings[]}]` | read-only: what these files carry before they enter the acervo — `{severity, rule, line, count}`, NEVER the matched text (BR-8 binds the detector itself). A meeting expands to its `notas/*` through the same owner as the send path (ADR-0024) |
+| `brain_triage_files` | `rels[]` | `[{rel, findings[]}]` | read-only: what these files carry before they enter the acervo — `{severity, rule, line, count}`, NEVER the matched text (BR-8 binds the detector itself). A meeting expands to its `notes/*` through the same owner as the send path (ADR-0024) |
 | `brain_meeting_pause` | `id` | `()` / err | stop the capture sidecar mid-meeting: NOTHING is recorded while paused. The segment already written stays in the pending list so its last window can still be transcribed (ADR-0022 §19) |
 | `brain_meeting_resume` | `id` | `()` / err | open a NEW capture segment (`system-2.wav`, …). Its window offsets restart at zero and its place on the meeting timeline comes from the segment's own anchor, with the pause discounted on both tracks alike (ADR-0022 §19, ADR-0025) |
 | `brain_rename_brainstorm` | `slug, nome` | `{slug, rel}` | rename a brainstorming (folder + meta) |
@@ -154,7 +176,7 @@ Brainstorming world + the fila → contexto flow (ADR-0001 §7):
 | `brain_brainstorm_delete` | `{rel}` | `()` | delete a brainstorming item (guarded to `brainstorming/`) |
 | `brain_rename_pessoal` | `rel, name` | new rel | rename a note/analysis file in place (world-confined, keeps extension, never overwrites — ADR-0003 §5) |
 | `brain_move_pessoal` | `rel, destDir` | new rel | move a file into another folder of the same non-versioned world (brainstorming/pessoal); never overwrites — ADR-0009 |
-| `brain_move_meeting` | `rel, destSlug` | new rel | move a whole meeting folder into another brainstorming's `reunioes/`, rewriting the `tema` and the meeting's own paths in `manifest.json`, the `tema:` in `reuniao.md`'s front matter, and every inbound ref across the non-versioned worlds and `.claude/commands/`; refuses a meeting still recording; never overwrites — ADR-0017 |
+| `brain_move_meeting` | `rel, destSlug` | new rel | move a whole meeting folder into another brainstorming's `meetings/`, rewriting the `tema` and the meeting's own paths in `manifest.json`, the `tema:` in `meeting.md`'s front matter, and every inbound ref across the non-versioned worlds and `.claude/commands/`; refuses a meeting still recording; never overwrites — ADR-0017 |
 | `brain_abs_path` | `rel` | abs path | resolve an acervo-relative path to its absolute on-disk path (guarded to the acervo root); backs "copy absolute path" — ADR-0009 |
 | `brain_send_files_to_queue` | `rels[], destContext?` | `name[]` | send the selected brainstorming files to the fila (`inbox/`), one item per file, steered by `<ctx>--`; validates all before writing any; rejects transcript/audio/audit (BR-8) |
 | `brain_send_brainstorm_to_queue` | `slug, destContext?` | `name[]` | "enviar tudo → fila": send every queueable file of the brainstorming, each its own item |
@@ -210,11 +232,11 @@ Path resolution: `LORO_HOME` (exported by `loro.sh`) or a sensible default;
 - **Auto-save:** on stop, if enabled, the buffer is written to
   `<saveDir>/loro-<timestamp>.md` (validated filename).
 - **Brain loop (`/loro-context`, ADR-0001 §7):** `loop → /loro-context` reads the acervo inbox, distills each new input
-  into `reunioes/` or `notas/`, appends prose to `contextos/<c>/CHANGELOG.md`,
-  updates `contextos/<c>/context.md` (consolidated in sections 1–5; anything still
+  into `meetings/` or `notes/`, appends prose to `contexts/<c>/CHANGELOG.md`,
+  updates `contexts/<c>/context.md` (consolidated in sections 1–5; anything still
   open/contradictory as a **hotspot** in section 6 — ideas are no longer files),
   moves raw to `processed/`, updates state. Suggests a new context when none fits,
-  and splits a composite domain into recursive `contextos/<c>/<sub>/` subdomains
+  and splits a composite domain into recursive `contexts/<c>/<sub>/` subdomains
   (parent becomes overview + index), up to `MAX_CONTEXT_DEPTH` levels (ADR-0001 §4).
 - **Efficient-reading layer (ADR-0004):** every `context.md` opens with a
   regenerated **Summary card** (§0); decisions carry stable IDs
@@ -222,10 +244,22 @@ Path resolution: `LORO_HOME` (exported by `loro.sh`) or a sensible default;
   enriched (description · updated date · hotspot range) so agents route without
   opening files. The generated `AGENTS.md` and every skill teach the protocol:
   index → card → ID search → targeted section read.
+- **Addressing layer (ADR-0026):** what ADR-0004 left undescribed is the space
+  *between* documents. The loop's `AGENTS.md` teaches a context to cite a
+  neighbour with a **relative link whose target exists**, carrying its **kind** in
+  one word (`upstream`/`downstream`/`bidirecional`) and only for a real handoff.
+  Those links **are** the graph — nothing else is written: `brain_knowledge_graph`,
+  `brain_backlinks` and `brain_index_terms` compute the neighbourhood, the return
+  direction and the índice remissivo on every read, so no derived artefact can
+  drift from the markdown. Hotspot ids stay local to their file and are
+  **qualified on read** (`<ctx>#H-3`), never renumbered on disk. Measured on an
+  80-context acervo: describing every context in `INDEX.md` moved hit@1 from 0,17
+  to 0,50; the whole pass costs tens of milliseconds cold and 1,7 ms cached
+  (ADR-0026, "Measurement").
 - **External-source sync (`/loro-sync`, ADR-0005):** brings an
   external item — a Gemini note on Google Drive (full document), a Slack
   channel message, a Jira ticket, or a Confluence page (agent-written
-  summaries) — into a LOCAL anexo file (`brainstorming/<tema>/anexos/`),
+  summaries) — into a LOCAL anexo file (`brainstorming/<tema>/attachments/`),
   referenced by an acervo note (`tipo: doc`, never the external URL
   directly in `refs:`). Runs as a terminal-Claude skill like `/loro-note`,
   using the terminal agent's own connector access (ambient-credential
@@ -257,9 +291,9 @@ Path resolution: `LORO_HOME` (exported by `loro.sh`) or a sensible default;
   no exclusion — from a single dropdown in a meeting's rail
   ("o que fazer com esta reunião" no longer lists fixed actions; those
   moved to the meeting's `⋯` menu). `/loro-presentation`/`/loro-artifact`
-  generate material (markdown by default) into `anexos/` — a
-  brainstorming's `brainstorming/<tema>/anexos/` or a context's
-  `contextos/<c>/anexos/`; there is no separate presentations folder.
+  generate material (markdown by default) into `attachments/` — a
+  brainstorming's `brainstorming/<tema>/attachments/` or a context's
+  `contexts/<c>/attachments/`; there is no separate presentations folder.
 - **Knowledge versioning (ADR-0001 §5), Git hidden behind two buttons:**
   a project created with versioning on gets its **baseline commit** at setup
   (`ensure_baseline_commit`), so the official branch exists from day one — without
@@ -315,7 +349,7 @@ All technical decisions are consolidated in the single **`docs/adr/0001-baseline
 | Change proposal | RFC = branch + Pull Request; opt-in remote via `gh` + CODEOWNERS | ADR-0001 §5 |
 | Studio shell | multi-tab workspace, command palette, vendored CM6 IIFE | ADR-0001 §6 |
 | Knowledge flow | Brainstorming → Fila → Contexto (`/loro-context`) | ADR-0001 §7 |
-| Meetings | living file + analyses in `notas/`, transient audio | ADR-0001 §8, ADR-0018 |
+| Meetings | living file + analyses in `notes/`, transient audio | ADR-0001 §8, ADR-0018 |
 | Meeting AI | agent skills, local-first; WHERE they run is the user's choice (chat or terminal) since ADR-0022 §3 | ADR-0001 §9, ADR-0022 |
 | Doc language | English | ADR-0001 |
 | External-source sync | `/loro-sync <fonte>` (drive/slack/jira/confluence) → local anexo + ref, ambient terminal-agent connector | ADR-0005 |
@@ -329,7 +363,7 @@ All technical decisions are consolidated in the single **`docs/adr/0001-baseline
 | UI anatomy | one shell everywhere: header 54px (project · nav pill · Record · ✦ AI) → sidebar 250/60px │ document tabs │ right panel 330px (Documento·Chat·Terminal); three destinations replace the numbered flow, no Home tab, no `ⓘ` tooltips | ADR-0020 |
 | Theme | `data-theme` on `<html>`, preference `light\|dark\|system` resolved in JS; warm dark tokens (`#211e19`) | ADR-0020 |
 | UI vocabulary | projeto · ideias · para organizar · conhecimento · **habilidades de IA** · salvar versão · enviar para revisão do time (internal terms unchanged in code/IPC/disk) | ADR-0020, renamed from "ações de IA" by ADR-0022 §7 |
-| Brainstorming digest | **its UI is removed** — the ⋯ entry, the picker entry and the `indice.md` staleness nudge are gone; existing `indice.md` files stay as ordinary documents. The `/loro-digest` skill itself still ships as a built-in (listed in Habilidades de IA, runnable from chat/terminal) — what was revoked is the dedicated flow, not the skill | ADR-0020 (revokes ADR-0011) |
+| Brainstorming digest | **its UI is removed** — the ⋯ entry, the picker entry and the `index.md` staleness nudge are gone; existing `index.md` files stay as ordinary documents. The `/loro-digest` skill itself still ships as a built-in (listed in Habilidades de IA, runnable from chat/terminal) — what was revoked is the dedicated flow, not the skill | ADR-0020 (revokes ADR-0011) |
 | Meeting markers | a single "momento" marker (`⌘⌥M`); the three typed markers and `⌘⌥1/2/3` are retired | ADR-0020 |
 | Chat | runs the acervo's own agent CLI non-interactively (`-p --output-format stream-json`), multi-turn via `--resume`; no API call, no new credential (BR-1/BR-9). Print mode cannot ask for permission, so `--permission-mode` is always passed and is the user's choice (`acceptEdits` default \| `bypassPermissions`); a denial is detected on the `tool_result` and offers *liberar tudo e repetir* or hand-off to the terminal | ADR-0021 + amendment |
 | Resizable panes | file tree, right panel and terminal dock all drag-to-resize and double-click-to-reset, persisted (`sideW`/`panelW`/`termH`) | ADR-0002 §6, ADR-0021 |
@@ -341,4 +375,5 @@ All technical decisions are consolidated in the single **`docs/adr/0001-baseline
 | Settings page | ONE scrolling page: every section visible, the nav scrolls to a section and a scroll-spy tracks it; the network check (`gh auth status`) still runs once per visit, when its section is first reached | ADR-0022 §22 |
 | Document frame | the frame does not change with the mode: edit mode uses the SAME centered 700px card as view mode, the editor filling its height | ADR-0022 §23 |
 | Blocking probes | `env_doctor` runs on the blocking pool (`spawn_blocking`) and only re-runs when the Versions/GitHub section is opened — as a sync command it froze the window on `gh auth status` | ADR-0022 |
+| Addressable context | the lateral link written in the markdown IS the graph — kind in one word, target must exist. Read-only commands compute the neighbourhood, the backlinks and the índice remissivo on every read: **no index file is ever written** into the acervo. Hotspot ids qualified on read (`<ctx>#H-n`), never renumbered; a meeting cited by ID only; an external code linked only where the project configured a base URL. Refused with reasons: node-and-edge picture, mermaid, embeddings, typed catalogue | ADR-0026 |
 | Edit-mode formatting | markdown-aware bar (not WYSIWYG): pure `LoroMdEdit.apply(doc, anchor, head, action)` → CM6 `{changes, selection}`; `⌘B`/`⌘I`/`⌘K` captured off the editor DOM; same bar + CM6 in the Studio tab and the modal editor | ADR-0016 |

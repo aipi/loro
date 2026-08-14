@@ -193,6 +193,39 @@ pub fn which(name: &str) -> Option<String> {
         .map(|p| p.display().to_string())
 }
 
+// ADR-0026 §14 — the acervo's folders were renamed to English, and the migration
+// that renames them on disk is USER-triggered. Until someone runs it, an existing
+// acervo still has the Portuguese folder — and every read that hardcoded the new
+// name found nothing: no themes, no meetings, no notes, and every meeting command
+// failing. Resolve the name once, from what is actually on disk, and both spellings
+// keep working. New/empty acervos get the English name.
+pub fn acervo_dir(base: &std::path::Path, current: &str, legacy: &str) -> std::path::PathBuf {
+    let atual = base.join(current);
+    if atual.is_dir() {
+        return atual;
+    }
+    let antigo = base.join(legacy);
+    if antigo.is_dir() {
+        return antigo;
+    }
+    atual
+}
+
+pub fn contexts_dir(base: &std::path::Path) -> std::path::PathBuf {
+    acervo_dir(base, "contexts", "contextos")
+}
+
+// ADR-0026 §20 — um acervo escrito antes da renomeação. Sustentar as DUAS grafias
+// em todo o código provou ser insustentável: três rodadas de revisão, três
+// conjuntos de vazamento, e o pior deles fez o conhecimento sumir da tela. Em vez
+// de fingir que funciona meio-a-meio, o app RECONHECE o estado e oferece a
+// migração — que já é não destrutiva, idempotente e de um ato só.
+pub fn is_legacy_layout(base: &std::path::Path) -> bool {
+    ["contextos", "reunioes", "notas"]
+        .iter()
+        .any(|d| base.join(d).is_dir())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

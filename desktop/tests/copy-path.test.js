@@ -32,7 +32,7 @@ test("every ⋯ menu builder offers the copy-path rows", () => {
   for (const call of [
     "wireCopyPathItems(`brainstorming/${slug}`)",
     "wireCopyPathItems(`inbox/${name}`)",
-    "wireCopyPathItems(`contextos/${name}`)",
+    "wireCopyPathItems(`contexts/${name}`)",
   ]) {
     assert.ok(APP.includes(call), `missing wiring: ${call}`);
   }
@@ -45,13 +45,13 @@ test("menuless file/folder rows carry a copy-path ⋯ button", () => {
   assert.ok(APP.includes("wirePathMenus("), "wirePathMenus must be called to bind the buttons");
 });
 
-test("brainstorming folders (reuniões/notas/anexos) copy their path", () => {
+test("brainstorming folders (reuniões/notes/attachments) copy their path", () => {
   // each tema folder passes its real acervo path as folderGroupHtml's `rel`,
   // so the copy-path ⋯ shows on the folder header (not only inside it).
   for (const rel of [
-    "`brainstorming/${slug}/reunioes`",
-    "`brainstorming/${slug}/notas`",
-    "`brainstorming/${slug}/anexos`",
+    "`brainstorming/${slug}/meetings`",
+    "`brainstorming/${slug}/notes`",
+    "`brainstorming/${slug}/attachments`",
   ]) {
     assert.ok(APP.includes(rel), `folder header must copy ${rel}`);
   }

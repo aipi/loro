@@ -192,7 +192,7 @@ test("N14 — rodar sem os argumentos obrigatórios é recusado, não celebrado"
   assert.match(body, /toast\(/);
   const f = loadPure("missingRequiredArgs");
   assert.equal(f(["<dir-da-reuniao>", "<pergunta>"], ""), true);
-  assert.equal(f(["<dir-da-reuniao>"], "reunioes/x"), false);
+  assert.equal(f(["<dir-da-reuniao>"], "meetings/x"), false);
   assert.equal(f(["[opcional]"], ""), false, "um token opcional não bloqueia");
   assert.equal(f([], ""), false);
   pair("preencha os argumentos pedidos");
@@ -320,7 +320,7 @@ test("N14 — o que conta como habilidade é decidido num lugar só", () => {
   assert.equal(isHabilidadeRel(".claude/commands/loro-ask.md"), true);
   assert.equal(isHabilidadeRel(".claude/commands/minha.md"), true);
   // um documento comum não pode zerar o cache das habilidades…
-  assert.equal(isHabilidadeRel("contextos/plataforma/context.md"), false);
+  assert.equal(isHabilidadeRel("contexts/plataforma/context.md"), false);
   // …nem um arquivo da máquina que apenas mora na mesma pasta
   assert.equal(isHabilidadeRel(".claude/commands/loro-ask.anotacoes.json"), false);
   assert.equal(isHabilidadeRel(""), false);
@@ -392,7 +392,7 @@ test("N16 — os destinos são as casas que o projeto tem, no vocabulário da te
   assert.match(body, /brain_list_brainstorms/, "as ideias vêm da mesma fonte de “Salvar nota”");
   assert.match(body, /lastSt && lastSt\.contexts/, "e os conhecimentos, da mesma que a lateral pinta");
   assert.match(body, /brainstorming\/\$\{b\.slug\}/, "o valor é o caminho real que a habilidade recebe");
-  assert.match(body, /contextos\/\$\{c\.name\}/);
+  assert.match(body, /contexts\/\$\{c\.name\}/);
   for (const m of ["ideias", "conhecimento"]) pair(m);
   // sem nenhuma casa, a folha não abre pedindo um caminho impossível: ela diz o passo
   assert.match(fnBody("promptUseTool"), /crie uma ideia ou um tema antes de rodar esta habilidade/);

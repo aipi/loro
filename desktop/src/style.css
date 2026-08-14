@@ -483,6 +483,36 @@ body {
   text-decoration-thickness: 2px; text-decoration-color: var(--accent);
 }
 
+/* ADR-0026 §2 · três destinos, três marcas. Um salto para outro conhecimento é um
+   NOME (prosa), um salto para um material é um CAMINHO e um código citado é um
+   LOCALIZADOR — a metade da máquina da linha (DESIGN.md §3). Antes os três eram
+   desenhados igual, então o leitor só descobria para onde ia depois de clicar. A
+   marca é o TIPO, nunca um ícone com legenda: o sublinhado do link segue idêntico,
+   e nenhuma palavra escrita pelo autor é reescrita pela folha de estilo. */
+.doc a.xref--file { font-family: var(--mono); font-size: .92em; }
+.doc a.xref--web::after {
+  content: "↗"; font-size: .82em; margin-left: .18em;
+  text-decoration: none; display: inline-block;
+}
+/* O localizador é mono com ou sem link: ele é um valor, não uma frase. Sem
+   endereço configurado ele não é <a> nenhum — não finge ser clicável. */
+.doc .loc { font-family: var(--mono); font-size: .9em; }
+.doc span.loc { color: var(--ink3); }
+
+/* O cartão §0 é a superfície em que toda consulta aterrissa primeiro. Ele é uma
+   lista de definições, não prosa corrida: ganha a mesma caixa que um bloco de
+   código (4% de tinta + borda de 3:1) para se ler como cartão, e o rótulo de
+   cada linha sobe para --ink. As palavras são as do autor — caixa e fonte ficam
+   como ele escreveu (DESIGN.md §3, "uma tabela mantém as palavras do autor"). */
+.doc ul.summary {
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
+  border: 1px solid var(--line-control); border-radius: 8px;
+  padding: 10px 14px 10px 30px; margin: 12px 0; list-style: none;
+}
+.doc ul.summary > li { padding-left: 0; margin: 5px 0; text-indent: -16px; }
+.doc ul.summary > li::before { content: "·"; margin-right: 10px; color: var(--ink3); }
+.doc ul.summary > li > strong:first-child { color: var(--ink); }
+
 /* modo acervo esconde a faixa de controles do live */
 
 /* ---- folha de configurações ---- */
@@ -2629,3 +2659,105 @@ details.chatstep pre {
 .intakerow b { font: 600 13px var(--sans); color: var(--ink); }
 .intakerow span { font: 12px/1.5 var(--sans); color: var(--ink3); }
 .intakerow i { font: 11px var(--mono); color: var(--muted); font-style: normal; }
+
+/* ADR-0026 §15 · o id do ponto em aberto, ao lado do título. Fica VISÍVEL de
+   propósito: é assim que se acha por Cmd+F e se copia para citar em outro
+   documento. Discreto porque é valor, não frase — e um id não compete com o
+   título que ele endereça. */
+.doc .hotspot .hsid { font-size: .8em; color: var(--ink3); font-weight: 400; margin-top: 2px; }
+
+/* ADR-0026 §19 · o trecho que o verbete do índice acabou de encontrar. Vive 10s
+   e sai. `mark` é o elemento certo — o navegador já o anuncia como destaque —
+   e a marca tem contorno além da cor, porque cor sozinha não é sinal (G183). */
+.doc mark.termfound {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  outline: 1px solid var(--accent); border-radius: 3px; color: inherit;
+}
+
+/* ADR-0026 §15 · o ponto que a citação acabou de encontrar. Some sozinho: serve
+   para o olho achar o lugar, não para virar marcação permanente no documento.
+   A marca é a borda, não o fundo — cor sozinha não é sinal (WCAG G183). */
+/* `outline` e não `box-shadow`: a folha reserva box-shadow para ELEVAÇÃO, pelos
+   tokens --sh-* (tokens.test.js cobra isso). Aqui não há elevação nenhuma — é uma
+   marca no plano do texto, que é exatamente o que outline desenha. */
+.doc .hotspot.justfound { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 8px; }
+@media (prefers-reduced-motion: no-preference) {
+  .doc .hotspot { transition: outline-color .25s ease; }
+}
+
+/* ADR-0026 §12 · o tema DONO do documento aberto. Distinto de `.on` (a linha
+   exata que está aberta): quando você abre o histórico de um tema, o documento
+   aceso é o histórico, mas o lugar onde você está continua sendo o tema. A marca
+   é a barra à esquerda + o texto em --ink, nunca só cor de fundo (3:1, G183). */
+.btree .bitem.ctx.here > .bn { color: var(--ink); font-weight: 650; }
+.btree .bitem.ctx.here { box-shadow: inset 2px 0 0 var(--accent); }
+
+/* ADR-0026 · superfícies de leitura da ligação lateral. Três telas, um sistema:
+   "Citado por" (a direção de volta de um link), o índice remissivo (calculado na
+   leitura, nunca um arquivo) e o mapa do que o conhecimento denuncia sobre si.
+   Tudo sai dos tokens, então os dois temas vêm do `data-theme` sem uma regra a
+   mais — ler `prefers-color-scheme` aqui ignoraria a escolha do usuário. */
+
+/* — Citado por: a mesma caixa do painel de Referências (é o mesmo gesto, para o
+   outro lado), com a linha como <button>: o <a> sem href do painel vizinho fica
+   fora da ordem de tabulação e não tem papel de link (WCAG 2.1.1 / 4.1.2). */
+button.refitem {
+  width: 100%; border: 0; background: none; font: inherit; text-align: left;
+}
+.backpanel .backkind {
+  flex: none; margin-left: auto;
+  font-size: 10.5px; color: var(--ink3); white-space: nowrap;
+}
+
+/* — Índice remissivo: verbete em prosa à esquerda, localizadores (a metade da
+   máquina da linha — DESIGN.md §3) à direita. A régua entre verbetes é um
+   separador, não a borda de um controle: 1,2:1 é a cor certa para ela. */
+.doc .idxlead { color: var(--ink3); }
+.doc dl.idx {
+  margin: 20px 0 0; display: grid;
+  grid-template-columns: minmax(0, 34%) minmax(0, 1fr); column-gap: 18px;
+}
+.doc dl.idx > dt.idxterm {
+  padding: 6px 0; border-top: 1px solid var(--line-soft);
+  font-weight: 600; color: var(--ink); overflow-wrap: break-word;
+}
+.doc dl.idx > dd.idxlocs {
+  margin: 0; padding: 6px 0; border-top: 1px solid var(--line-soft);
+  color: var(--ink3); overflow-wrap: anywhere;
+}
+
+/* — O mapa das ligações, no destino Conhecimento. O bloco todo só existe quando
+   há conhecimento; cada seção dentro dele, só quando tem um defeito a nomear. */
+.knowmap {
+  max-width: 760px; margin-top: 32px; padding-top: 22px;
+  border-top: 1px solid var(--line-soft);
+  display: flex; flex-direction: column; gap: 6px;
+}
+.kmidx { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+/* a caixa É a afordância deste controle, então ela clareia os 3:1 da 1.4.11 —
+   o --line do .btn é uma régua entre superfícies (1,2:1), não um limite */
+#knowIdxBtn { border-color: var(--line-control); }
+.kmidx .hint { flex: 1 1 260px; min-width: 0; }
+.kmttl { font: 600 14px var(--sans); color: var(--ink); margin: 20px 0 2px; }
+.kmttl .mono { font-size: 11px; color: var(--muted); }
+.gaplist { list-style: none; margin: 8px 0 0; padding: 0; }
+.gaprow {
+  display: flex; align-items: center; gap: 10px; min-width: 0;
+  padding: 7px 0; border-top: 1px solid var(--line-soft);
+}
+.gapname { font: 600 13px var(--sans); color: var(--ink); min-width: 0; overflow-wrap: anywhere; }
+.gaparrow { flex: none; color: var(--muted); font-size: 12px; }
+.gaptarget { font-size: 11px; color: var(--muted); min-width: 0; overflow-wrap: anywhere; }
+.gaprow .mini.act { margin-left: auto; flex: none; border-color: var(--line-control); }
+
+/* O painel ✦ IA tira COLUNA, não janela: uma media query de largura de janela
+   não veria o painel aberto (DESIGN.md §7). Abaixo de 560px de coluna o verbete
+   passa a ocupar a linha inteira e a ação da linha desce em vez de espremer o
+   nome do tema — nenhum controle é cortado. */
+@container (max-width: 560px) {
+  .doc dl.idx { grid-template-columns: minmax(0, 1fr); }
+  .doc dl.idx > dd.idxlocs { padding-top: 0; border-top: 0; }
+  .doc dl.idx > dt.idxterm { padding-bottom: 0; }
+  .gaprow { flex-wrap: wrap; }
+  .gaprow .mini.act { margin-left: 0; }
+}

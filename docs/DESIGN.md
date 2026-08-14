@@ -9,8 +9,9 @@ the two disagree, the code is right and this file is stale — fix it.
 
 > Sources: ADR-0020 (anatomy, vocabulary, theme), ADR-0021 (chat, resizable
 > panes), ADR-0022 (seven usability rounds + the review sweep), ADR-0024 (intake
-> triage). This file consolidates their *visual* consequences; the reasoning
-> stays in the ADRs.
+> triage), ADR-0026 (the marks of a jump, and the three reading surfaces of a
+> lateral link). This file consolidates their *visual* consequences; the
+> reasoning stays in the ADRs.
 
 ## 1. Principles
 
@@ -245,6 +246,35 @@ text into the machine's font, at the step this scale reserves for a micro-label,
 with the casing destroyed. A table header is prose — it is told apart by weight
 and ink (`650` at `--ink`) on the cell's own step, and nothing else.
 
+**Three destinations, three marks** (ADR-0026). A link in a document can land in
+three different places, and the reader used to find out only after clicking: all
+three were drawn alike. The mark is the **type**, never an icon with a legend —
+the permanent underline (§5) is identical on all of them, and no authored word is
+rewritten by the sheet.
+
+| Mark | Destination | Style | Why |
+|---|---|---|---|
+| `a.xref--ctx` | another knowledge topic (`context.md`, `AGENTS.md`, `INDEX.md`, `CLAUDE.md`) | the prose of the line | a topic is a **name**, and a name is prose |
+| `a.xref--file` | any other file in the project | `var(--mono)` at `.92em` | a material is a **path** — the machine's half of the line |
+| `a.xref--web` | outside the project (`http(s):`) | trailing `↗` | leaving the app is a state change, so it is stated before the click |
+
+**A locator is a value, so it is mono with or without a link.** An id the
+knowledge cites (`MM-1147`) is marked `.loc` in `var(--mono)` at `.9em`. It only
+becomes an `<a>` when the project carries a base URL (Configurações → Projeto);
+with none it is a `<span>` at `--ink3` — it does not pretend to be clickable, and
+the app never guesses where someone else's ids live. The prefix is two to five
+capitals on purpose: the acervo's own ids (`H-3`, `D-2026-07-23-slug`) open with
+a single letter and must never be dressed as a ticket.
+
+**The §0 card is a box, not a font.** The summary card is the surface every
+retrieval path lands on first, and it is a list of definitions rather than body
+prose. It gets the **same container as a code block** — 4% ink fill, a
+`--line-control` (3:1) edge, `8px` radius — with each row's label lifted to
+`--ink`. Deliberately *not* a font change: the rule two paragraphs up — a table
+in a document keeps the words the author wrote — holds here too. The card is
+authored prose; the sheet may contain it, and may not restyle it into the
+machine's typeface, uppercase it, or rewrite its casing.
+
 **The manual's modal is a reading surface too.** When there is no project yet the
 manual opens as a sheet (`.manualmodal`), and that block declares `pre` and
 `table` with the same decisions as `.doc` — `var(--mono)`, the 4% tint, the
@@ -364,6 +394,42 @@ actually type in had the weaker border.
 prose around it is 2.95:1 in light and 1.79:1 in dark, well under the 3:1 that
 allows colour to be the only cue, so the underline is not decoration and not a
 hover reveal — hover and focus only thicken it (WCAG 1.4.1, 2.4.7).
+
+**"Citado por" is the same box as Referências, pointing the other way**
+(ADR-0026). Referências looks *into* the document (the material it carries); the
+second `<details class="refspanel backpanel">` below it lists who cites this
+document. Same anatomy, opposite direction — a new shape would have implied a new
+kind of thing. Three rules it does not share with its neighbour: each row is a
+`<button class="refitem">` (the neighbour's href-less `<a>` is out of the tab
+order and carries no link role — WCAG 2.1.1 / 4.1.2); the row reads the **type of
+the edge inverted for the page it is on** (`upstream` → *recebe deste*,
+`downstream` → *entrega para este*), because printing it raw would say the
+opposite of what the other document wrote, and an undeclared type gets **no badge
+at all**; and with nobody citing, nothing is drawn. The markup is built in the
+**same paint** as the document — a panel inserted afterwards shoves the text down
+just as the reader starts reading.
+
+**A computed screen is a reading tab, not a file.** The índice remissivo lives at
+the sentinel `loro://indice`, the pattern the manual (`loro://manual`) already
+used: same 700px card, same tab strip, no destination invented for it. Because it
+is a calculation and not a document it has **no modes** (nothing to edit), no ⇢
+move/delete, no version seal, and the right panel returns to "nenhum documento em
+foco" instead of promising a document's affordances to a screen. Its header seal
+and tab name say it is computed. The entry is `<dl class="idx">`: the term in
+prose on the left (it is the word a person wrote), its locators in mono on the
+right (they are addresses), a `--line-soft` rule between entries — a separator,
+not the boundary of a control. Alphabetical by the UI locale, like the back of a
+book.
+
+**A number with no action is a statistic; a defect with a door is a control.**
+The Conhecimento map (`#knowMap`) lists topics nobody cites and links whose target
+does not exist. Each row names the **topic** (never the path) and carries exactly
+one action — *abrir* — which opens the document where the fix belongs: the orphan
+itself, or, for a broken link, the document *that cites*. The broken target is
+printed exactly as its author typed it, in mono, because that is the string to
+correct. A section with no defect is not drawn, and the block itself is hidden
+while the project has no knowledge at all. This is the bar ADR-0020 §4 set when
+it removed the home statistics, met from the other side.
 
 **Empty states** carry an icon, a bold line and one explanatory sentence — never
 three sections each explaining their own emptiness.

@@ -1,5 +1,5 @@
 // ADR-0008 — the two versioned worlds must be legible at the tab surface:
-// contextos/ tabs are "versionado" and carry a Git indicator; pessoal/ tabs are
+// contexts/ tabs are "versionado" and carry a Git indicator; pessoal/ tabs are
 // "rascunho — não versionado" and NEVER surface any Git state. These are pure
 // derivations of a tab's kind, so they live in a node-testable module.
 const test = require("node:test");

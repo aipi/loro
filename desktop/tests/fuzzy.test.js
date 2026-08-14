@@ -53,19 +53,19 @@ test("word-boundary matches outrank mid-word matches", () => {
 
 test("NFD folding: 'reuniao' matches 'reunião'", () => {
   assert.notStrictEqual(
-    score("reuniao", "pessoal/temas/x/reunioes/reunião.md"),
+    score("reuniao", "pessoal/temas/x/meetings/reunião.md"),
     null
   );
 });
 
 test("NFD folding: 'analise' matches 'análise'", () => {
-  assert.notStrictEqual(score("analise", "contextos/loro/análise.md"), null);
+  assert.notStrictEqual(score("analise", "contexts/loro/análise.md"), null);
 });
 
 test("filter sorts by descending score and drops non-matches", () => {
   const items = [
     { rel: "pessoal/notes.md" },
-    { rel: "contextos/loro/context.md" },
+    { rel: "contexts/loro/context.md" },
     { rel: "pessoal/context-draft.md" },
   ];
   const out = filter("context", items, (it) => it.rel);
@@ -73,7 +73,7 @@ test("filter sorts by descending score and drops non-matches", () => {
   assert.strictEqual(out.length, 2);
   assert.ok(out.every((it) => it.rel !== "pessoal/notes.md"));
   // basename hit ('context.md') ranks above dir/scattered hit.
-  assert.strictEqual(out[0].rel, "contextos/loro/context.md");
+  assert.strictEqual(out[0].rel, "contexts/loro/context.md");
 });
 
 test("filter with empty query keeps every item in original order (stable)", () => {

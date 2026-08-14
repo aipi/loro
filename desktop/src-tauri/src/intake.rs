@@ -1,6 +1,6 @@
 // Loro — intake triage: what a file carries, checked BEFORE it enters the acervo.
 //
-// The acervo is VERSIONED: `contextos/` becomes a commit, a PR, and eventually a
+// The acervo is VERSIONED: `contexts/` becomes a commit, a PR, and eventually a
 // remote. A credential that gets through this door is a commit, and once pushed
 // it has leaked — there is no taking it back. That one-way door is why the check
 // belongs at the gate and not in a later review step.
