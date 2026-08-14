@@ -25,6 +25,11 @@ pub struct Acervo {
     // Any CLI the user owns — the app never ships credentials (BR-9).
     #[serde(default = "default_agent")]
     pub agent: String,
+    // ADR-0026 §2: where this project's external locators (`MM-1147`) live, so
+    // the reader can open one. Empty = the id stays a plain mono locator; the
+    // app never invents a host.
+    #[serde(default)]
+    pub ticket_base: String,
 }
 
 pub fn default_template() -> String {
@@ -33,6 +38,22 @@ pub fn default_template() -> String {
 
 pub fn default_agent() -> String {
     "claude".into()
+}
+
+// Only an http(s) base is accepted — anything else (a scheme that executes, a
+// bare host) becomes empty, and the locator stays unclickable rather than
+// pointing somewhere the user did not ask for. A base that ends in a path
+// segment gains the "/" it needs, so `…/browse` + `MM-1` is not `…/browseMM-1`.
+pub fn normalize_ticket_base(s: &str) -> String {
+    let s = s.trim();
+    if !(s.starts_with("https://") || s.starts_with("http://")) {
+        return String::new();
+    }
+    if s.ends_with('/') || s.ends_with('=') || s.ends_with('?') || s.ends_with('#') {
+        s.to_string()
+    } else {
+        format!("{s}/")
+    }
 }
 
 // Empty/blank agent falls back to the default; the command is otherwise the
@@ -131,6 +152,7 @@ mod tests {
             lang: "pt".into(),
             template: "vendas".into(),
             agent: "ollama run llama3".into(),
+            ticket_base: String::new(),
         };
         let json = serde_json::to_string(&a).unwrap();
         assert!(json.contains(r#""template":"vendas""#));
@@ -138,6 +160,35 @@ mod tests {
         let back: Acervo = serde_json::from_str(&json).unwrap();
         assert_eq!(back.template, "vendas");
         assert_eq!(back.agent, "ollama run llama3");
+    }
+
+    // ADR-0026 §2 — the acervo cites external locators by id (`MM-1147`). The app
+    // only makes them clickable when the project says where they live; it never
+    // guesses a host, and it never accepts one that is not http(s).
+    #[test]
+    fn ticket_base_is_empty_until_the_project_says_where_ids_live() {
+        let a: Acervo = serde_json::from_str(r#"{"id":"x","name":"X","dir":"/tmp/x"}"#).unwrap();
+        assert_eq!(a.ticket_base, "");
+        assert_eq!(normalize_ticket_base("  "), "");
+        assert_eq!(normalize_ticket_base("javascript:alert(1)"), "");
+        assert_eq!(normalize_ticket_base("jira.co/browse/"), "");
+        assert_eq!(
+            normalize_ticket_base(" https://j.co/browse/ "),
+            "https://j.co/browse/"
+        );
+    }
+
+    // A base without its trailing separator would build `…/browseMM-1147`.
+    #[test]
+    fn ticket_base_keeps_the_separator_the_url_needs() {
+        assert_eq!(
+            normalize_ticket_base("https://j.co/browse"),
+            "https://j.co/browse/"
+        );
+        assert_eq!(
+            normalize_ticket_base("https://j.co/i?key="),
+            "https://j.co/i?key="
+        );
     }
 
     #[test]
@@ -181,6 +232,19 @@ pub struct BrainConfig {
     pub contexts: Vec<String>,
     #[serde(default)]
     pub auto_context: bool,
+}
+
+// The active acervo's own language ("pt" | "en"), which is what drives anything
+// the app WRITES into that acervo — distinct from `ui_lang`, the chrome's.
+pub fn active_acervo_lang() -> String {
+    let cfg = read_loro_config();
+    let lang = cfg
+        .acervos
+        .iter()
+        .find(|a| a.id == cfg.active)
+        .map(|a| a.lang.clone())
+        .unwrap_or_default();
+    normalize_lang(&lang)
 }
 
 // Config lives in the Loro data dir (~/.loro, or LORO_HOME). Reuses the shared
@@ -233,6 +297,7 @@ pub fn read_loro_config() -> LoroConfig {
                     lang: "pt".into(),
                     template: default_template(),
                     agent: default_agent(),
+                    ticket_base: String::new(),
                 }],
                 active: id,
                 ui_lang: default_ui_lang(),

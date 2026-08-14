@@ -241,17 +241,17 @@ palette: `Cmd/Ctrl+K` → "Loro tour".
 - **✦ analyse**, **? ask…** and **send to organize →** live in the meeting's
   **⋯** menu in the sidebar. **ask…** already works while the meeting is still
   recording; the other two enable once the meeting ends. **send to organize**
-  sends the meeting's **analyses** (whatever is in `notas/`) — the raw
+  sends the meeting's **analyses** (whatever is in `notes/`) — the raw
   transcript never goes. A meeting nobody analysed has nothing to send, and the
   menu says so instead of failing on click.
-- The meeting's `reuniao.md` tab shows, instead of fixed buttons, a single
+- The meeting's `meeting.md` tab shows, instead of fixed buttons, a single
   **skill dropdown** ("what to do with this meeting") — pick any skill
   (including analyse/ask) and run it against the open meeting.
   Unrestricted: every skill shows up there, built-in and custom.
 - In a meeting: use **✎ Mark moment** (`Cmd/Ctrl+Alt+M`, or the button above the
   transcript) to anchor the instant something important was said — one marker,
   no kind to choose mid-sentence; then run **analyse**
-  (⋯ menu) so Claude writes the analysis into `notas/`. When the recording ends
+  (⋯ menu) so Claude writes the analysis into `notes/`. When the recording ends
   the app opens the transcript and **offers** to analyse in one click — a
   suggestion, never a run, and it goes away if you ignore it.
 - Nothing inside an idea enters the version history or leaves the machine.
@@ -259,13 +259,13 @@ palette: `Cmd/Ctrl+K` → "Loro tour".
   produces) are **collapsed by default** in the sidebar (tap the ▸ arrow next
   to the meeting to open) — keeps the list from growing huge once you've
   analysed several meetings. Everything a skill produces about the meeting
-  goes into its **notas/** folder (no more separate investigations/answers
+  goes into its **notes/** folder (no more separate investigations/answers
   folders).
 - Every idea has exactly three folders, visible in the sidebar as
   collapsible groups with a folder icon (📁 **meetings**, 📁 **notes**,
-  📁 **attachments**) — on disk `reunioes/` (every meeting is born there),
-  `notas/` and `anexos/` (a presentation is just one kind of attachment — no
-  folder of its own). `anexos/` is fed by an AI skill (sync, presentation,
+  📁 **attachments**) — on disk `meetings/` (every meeting is born there),
+  `notes/` and `attachments/` (a presentation is just one kind of attachment — no
+  folder of its own). `attachments/` is fed by an AI skill (sync, presentation,
   artifact) or by dropping a file straight into the real folder on disk.
 - With many ideas, a search box appears above the list (past 8) —
   filters by name; with no search, it shows the most recent + "see all".
@@ -299,7 +299,7 @@ that document.
   Loro does not manage those credentials.
 - **Presentation** and **artifact** are built-in skills that generate
   material (a markdown deck, a diagram, a script, a spreadsheet) from an idea
-  or a knowledge topic — always into `anexos/` (no folder of its own for
+  or a knowledge topic — always into `attachments/` (no folder of its own for
   presentations), and pointing at a specific note automatically links it
   there.
 - **Built-in skills** (sync, presentation, artifact) can be **edited**
@@ -351,7 +351,7 @@ passage can no longer be found, it is not lost silently: it shows up as an
 
 ## Knowledge topics have attachments too
 
-Every topic has its own **attachments** folder (`anexos/` on disk), always
+Every topic has its own **attachments** folder (`attachments/` on disk), always
 visible in the tree — with **＋ new note** (writes a note born inside the
 topic) and **＋ from computer** (file picker). Unlike an idea's attachments, a
 topic's attachments **enter the version history with it** (they flow through Save version and Send
@@ -383,6 +383,52 @@ for team review normally).
   before) copies the processed items' attachments into the topic's attachments
   — unchecked, they stay only in the idea. **adjust instructions** opens what the
   agent must follow before organizing.
+
+## How one topic pulls another
+
+- **You can see where a click goes before clicking.** Inside a document, a jump
+  to **another topic** looks like an ordinary name, a jump to a **file in the
+  project** looks like a path in machine type, and an address that **leaves for
+  the browser** carries a small `↗`.
+- **Cited by** is the box right below **References**, at the end of a topic.
+  References shows what that topic points at; **Cited by** shows who points at
+  it — and in which direction: *receives from this one*, *feeds this one*, or
+  *both directions*. Click any row to open the topic that cites it. With nobody
+  citing, the box does not appear.
+- **Index** — the button is in **Knowledge**, and also in `⌘K`. It lists every
+  word the knowledge has already written — the name one topic uses to call
+  another, the title of an open point, a decision, a cited code — with the exact
+  place of each one beside it. Click a place and it opens right there. **It is
+  computed on the spot, every time you open it**: it is not a file, it cannot go
+  stale, and nothing is written into your project because of it. `Cmd/Ctrl+F`
+  searches inside the list.
+- **Knowledge nobody cites** and **Broken links** sit at the end of
+  **Knowledge**, and only appear when the problem exists. The first lists topics
+  no other topic points at — anyone reading along the links never reaches them;
+  the second lists links pointing at a file that does not exist. Each row names
+  the topic and carries **open** beside it: for a broken link it opens the
+  document **that cites** (that is where the fix goes) and shows the address
+  exactly as it was written.
+- **The project index and the index of terms sit at the top of Knowledge.** The
+  first (`INDEX.md`) lists every topic with a one-line description — it is where
+  to start, and where the AI starts. The second (`TERMS.md`) is the list of names
+  with the place of each one. Both are files in the project: they open on GitHub
+  and in any editor, with no Loro.
+- **Clicking an entry lands on the word, not at the top of the file.** The
+  passage is highlighted for 10 seconds and the view scrolls to it; the mark then
+  disappears on its own, leaving nothing behind in the document.
+- **The index of terms keeps itself.** It is regenerated when the knowledge
+  changes — not when you open the screen — and only rewritten when the content
+  actually changed, so it does not clutter your `git status`.
+- **A person's name does not belong in the knowledge.** The project is versioned
+  and shared, so whoever takes part is described by role (product, business,
+  engineering), not by name. That is the project's own rule, and Loro can point
+  at what looks like personal data for you to decide.
+- **Cited codes (`MM-1147`) become links once you say where they open.** In
+  **Settings → Project**, the *where cited codes open* field takes the start of
+  your tracker's address (`https://…/browse/`). Without it the code still shows
+  in the text, it just is not clickable — Loro does not guess where another
+  tool's codes live.
 
 ## Save version and send for team review
 
@@ -452,6 +498,13 @@ sidebar switches between projects and creates new ones.
 **Why is "Turn into knowledge" disabled?** There is nothing to organize. Send
 files from an idea (or drop files into the list) first.
 
+**One of my topics showed up under "Knowledge nobody cites". Is it broken?**
+No — the document is intact. The list only says no **other** topic points at it,
+so anyone reading along the links never gets there. The fix is not in that topic:
+open the neighbouring topic that hands work over to it and write the link there.
+A new project starts with every topic on that list, and it empties as topics
+begin citing each other.
+
 **Claude does not open in the terminal.** Check that the CLI is installed
 (`claude` on PATH) and that a project is configured. The app tells you when it
 cannot open it.
@@ -468,8 +521,8 @@ issue with the steps.
 **Which language is content generated in?** The language you chose when
 creating the project (pt-BR or English) — the whole UI follows it. You can
 switch later in the gear (⚙); a project may hold documents in both languages
-if you switch. The on-disk folders (`reunioes/`, `notas/`, `anexos/`,
-`contextos/`) stay Portuguese regardless of language.
+if you switch. The on-disk folders (`meetings/`, `notes/`, `attachments/`,
+`contexts/`) stay Portuguese regardless of language.
 
 **What is a "custom skill"?** An AI skill you author yourself — either by
 describing what it should do (the AI writes it) or by importing one you
@@ -492,4 +545,4 @@ assigning to a topic that already exists.
 **Why don't a meeting's notes show up right away?** They're
 collapsed by default so the sidebar doesn't grow too large — tap the ▸ arrow
 next to the meeting to open it. Analyses, answers and any document an AI skill
-generated all live in the meeting's **notas/** folder.
+generated all live in the meeting's **notes/** folder.

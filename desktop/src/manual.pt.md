@@ -211,7 +211,7 @@ quando quiser pela paleta: `Cmd/Ctrl+K` → "apresentação do Loro".
   nunca é sobrescrita.
 - **Menu ⋯ de qualquer arquivo** (nota, anexo, avulso, nota de reunião):
   além de **renomear** e **apagar**, traz **⇄ mover para…** (escolha a pasta
-  de destino — avulso, ou as pastas notas/anexos de qualquer ideia) e
+  de destino — avulso, ou as pastas notes/attachments de qualquer ideia) e
   **⧉ copiar caminho** — **relativo** (portátil, no formato usado pelas
   referências `acervo://`) ou **absoluto** (o caminho completo no disco, útil
   para abrir no Finder/terminal). Nunca sobrescreve um arquivo de mesmo nome no
@@ -244,17 +244,17 @@ quando quiser pela paleta: `Cmd/Ctrl+K` → "apresentação do Loro".
 - **✦ analisar**, **? perguntar…** e **enviar para organizar →** ficam no menu
   **⋯** da reunião na lateral. **perguntar…** funciona já durante a gravação; as
   outras duas habilitam quando a reunião termina. **enviar para organizar** manda
-  as **análises** da reunião (o que estiver em `notas/`) — a transcrição bruta
+  as **análises** da reunião (o que estiver em `notes/`) — a transcrição bruta
   nunca vai. Uma reunião que ninguém analisou não tem o que enviar, e o menu diz
   isso em vez de falhar no clique.
-- A aba `reuniao.md` da reunião mostra, em vez de botões fixos, um único
+- A aba `meeting.md` da reunião mostra, em vez de botões fixos, um único
   **dropdown de habilidades** ("o que fazer com esta reunião") — escolha
   qualquer habilidade (incluindo analisar/perguntar) e rode sobre a reunião
   aberta. Sem restrição: aparecem todas, padrão e customizadas.
 - Numa reunião: use **✎ Marcar momento** (`Cmd/Ctrl+Alt+M`, ou o botão acima da
   transcrição) para ancorar o instante em que algo importante foi dito — é um
   marcador só, sem tipo a escolher no meio da fala; depois rode **analisar** (menu ⋯)
-  para o Claude escrever a análise em `notas/`. Quando a gravação termina, o app
+  para o Claude escrever a análise em `notes/`. Quando a gravação termina, o app
   abre a transcrição e **oferece** analisar em um clique — é uma sugestão, não
   roda nada sozinho, e some se você ignorar.
 - Nada de uma ideia entra no histórico de versões nem sai da máquina.
@@ -262,14 +262,14 @@ quando quiser pela paleta: `Cmd/Ctrl+K` → "apresentação do Loro".
   uma habilidade gere) ficam **recolhidas por padrão** na lateral (toque na
   seta ▸ ao lado da reunião para abrir) — evita que a lista cresça demais
   quando há muitas reuniões analisadas. Tudo o que uma habilidade produz sobre
-  a reunião vai para a pasta **notas/** dela (não mais em pastas separadas como
+  a reunião vai para a pasta **notes/** dela (não mais em pastas separadas como
   investigações/respostas).
 - Cada ideia tem exatamente três pastas, visíveis na lateral como
   grupos com ícone de pasta (📁 **reuniões**, 📁 **notas**, 📁 **anexos** —
   cada uma clicável para expandir/recolher):
-  **reunioes/** (toda reunião nasce ali), **notas/** e **anexos/** (uma
+  **meetings/** (toda reunião nasce ali), **notes/** e **attachments/** (uma
   apresentação é só mais um tipo de anexo — não tem pasta própria).
-  `anexos/` é alimentada por uma habilidade (sincronizar, apresentação,
+  `attachments/` é alimentada por uma habilidade (sincronizar, apresentação,
   artefato) ou arrastando um arquivo
   direto na pasta real no disco.
 - Com muitas ideias, um campo de busca aparece no topo da seção
@@ -306,7 +306,7 @@ documento, o alvo já vem preenchido com ele.
   Loro não gerencia essas credenciais.
 - **Apresentação** e **artefato** são habilidades padrão que geram material
   (um deck em markdown, um diagrama, um script, uma planilha) a partir de uma
-  ideia ou de um tema — sempre em `anexos/` (não há pasta
+  ideia ou de um tema — sempre em `attachments/` (não há pasta
   própria de apresentações), e se você apontar para uma nota específica,
   ela ganha a referência automaticamente.
 - **Habilidades padrão** (as de sincronizar, apresentação e artefato) podem
@@ -360,7 +360,7 @@ aparece como **"trecho órfão"** no painel de comentários.
 
 ## Os temas de conhecimento também têm anexos
 
-Cada tema tem sua pasta **anexos/**, sempre visível na árvore — com **＋ nova
+Cada tema tem sua pasta **attachments/**, sempre visível na árvore — com **＋ nova
 nota** (escreve uma nota que nasce dentro do tema) e **＋ do computador**
 (seletor de arquivos). Diferente dos anexos de uma ideia, os anexos de um tema
 **entram no histórico de versões junto com ele** (passam por salvar versão e
@@ -391,6 +391,52 @@ por enviar para revisão do time normalmente).
   os anexos dos itens processados para os anexos do tema — sem marcar, eles
   ficam só na ideia. **ajustar instruções** abre o que o agente deve seguir
   antes de organizar.
+
+## Como um tema puxa o outro
+
+- **Dá para ver para onde o clique leva antes de clicar.** Dentro de um
+  documento, um salto para **outro tema** aparece como um nome comum, um salto
+  para um **arquivo do projeto** aparece como caminho em letra de máquina, e um
+  endereço que **sai para o navegador** leva uma setinha `↗`.
+- **Citado por** é a caixa logo abaixo de **Referências**, no fim de um tema.
+  Referências mostra o que aquele tema aponta; **Citado por** mostra quem aponta
+  para ele — e em que sentido: *recebe deste*, *entrega para este* ou *nos dois
+  sentidos*. Clique em qualquer linha para abrir o tema que cita. Se ninguém
+  cita, a caixa não aparece.
+- **Índice remissivo** — o botão fica em **Conhecimento**, e também no `⌘K`.
+  É a lista de toda palavra que o conhecimento já escreveu — o nome que um tema
+  usa para chamar o outro, o título de um ponto em aberto, uma decisão, um código
+  citado — com o lugar exato de cada uma ao lado. Clique no lugar e ele abre ali.
+  **Ele é calculado na hora, toda vez que você abre**: não é um arquivo, não
+  envelhece e nada é gravado no projeto por causa dele. `Cmd/Ctrl+F` busca dentro
+  da lista.
+- **Conhecimento que ninguém cita** e **Ligações quebradas** ficam no fim de
+  **Conhecimento**, e só aparecem quando existe o problema. A primeira lista os
+  temas para os quais nenhum outro aponta — quem lê seguindo as ligações nunca
+  chega até eles; a segunda, os links que apontam para um arquivo que não existe.
+  Cada linha diz o nome do tema e tem **abrir** ao lado: no link quebrado, abre o
+  documento **que cita** (é lá que se conserta) e mostra o endereço exatamente
+  como está escrito.
+- **O índice do projeto e o índice remissivo ficam no topo de Conhecimento.** O
+  primeiro (`INDEX.md`) lista todos os temas com uma linha de descrição — é por
+  onde começar, e por onde a IA começa. O segundo (`TERMS.md`) é a lista de nomes
+  com o lugar de cada um. Os dois são arquivos do projeto: abrem no GitHub e em
+  qualquer editor, sem o Loro.
+- **Clicar num verbete leva até a palavra, não até o topo do arquivo.** O
+  trecho fica grifado por 10 segundos e a tela rola até ele; depois a marca some
+  sozinha, sem deixar nada no documento.
+- **O índice remissivo se mantém sozinho.** Ele é regerado quando o conhecimento
+  muda — não quando você abre a tela — e só é reescrito se o conteúdo mudou de
+  verdade, para não sujar o seu `git status` à toa.
+- **Nome de pessoa não fica no conhecimento.** O projeto é versionado e
+  compartilhado, então quem participa é descrito pelo papel (produto, negócio,
+  engenharia), não pelo nome. Isso é regra do próprio projeto, e o Loro sabe
+  apontar o que parece dado pessoal para você decidir.
+- **Códigos citados (`MM-1147`) viram link quando você diz onde eles abrem.** Em
+  **Configurações → Projeto**, o campo *onde abrem os códigos citados* recebe o
+  começo do endereço do seu quadro de tarefas (`https://…/browse/`). Sem esse
+  endereço o código continua aparecendo no texto, só não é clicável — o Loro não
+  adivinha onde os códigos de outra ferramenta vivem.
 
 ## Salvar versão e enviar para revisão do time
 
@@ -461,6 +507,13 @@ projeto e cria novos.
 nada para organizar.
 Envie arquivos de uma ideia (ou solte arquivos na lista) primeiro.
 
+**Um tema meu apareceu em "Conhecimento que ninguém cita". Ele está errado?**
+Não — o documento está inteiro. A lista diz só que nenhum **outro** tema aponta
+para ele, então quem lê seguindo as ligações nunca chega até lá. O conserto não é
+nele: abra o tema vizinho que entrega trabalho para este e escreva ali o link.
+Um projeto novo começa com todos os temas nessa lista, e ela vai esvaziando
+conforme os temas passam a se citar.
+
 **O Claude não abre no terminal.** Confira se o CLI está instalado (`claude`
 no PATH) e se há um projeto configurado. O app avisa quando não consegue abrir.
 
@@ -476,8 +529,8 @@ os passos.
 **Em que idioma o conteúdo é gerado?** No idioma que você escolheu ao criar o
 projeto (pt-BR ou inglês) — a interface inteira segue essa escolha. Dá para
 trocar depois na engrenagem (⚙); um projeto pode conter documentos nos dois
-idiomas se você alternar. As pastas no disco (`reunioes/`, `notas/`,
-`anexos/`, `contextos/`) ficam sempre em português, independente do idioma —
+idiomas se você alternar. As pastas no disco (`meetings/`, `notes/`,
+`attachments/`, `contexts/`) ficam sempre em português, independente do idioma —
 elas são o disco, não a tela.
 
 **O que é uma "habilidade customizada"?** Uma skill que você mesmo cria —
@@ -501,4 +554,4 @@ existe.
 **Por que as notas de uma reunião não aparecem de cara?**
 Ficam recolhidas por padrão para a lateral não crescer demais — toque na
 seta ▸ ao lado da reunião para abrir. Análises, respostas e qualquer documento
-gerado por uma habilidade ficam todos na pasta **notas/** da reunião.
+gerado por uma habilidade ficam todos na pasta **notes/** da reunião.

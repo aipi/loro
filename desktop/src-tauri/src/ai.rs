@@ -293,7 +293,7 @@ impl ModelRunner for CloudRunner {
 // ---- two-tier audit (ADR-0011 Decision (c)/(d)) -----------------------------
 
 // One external-call record as read back from the meeting-LOCAL, content-bearing
-// `auditoria.jsonl`. It MAY carry the exact excerpt sent (the file stays under
+// `audit.jsonl`. It MAY carry the exact excerpt sent (the file stays under
 // pessoal/, quarantined by git.rs — never shared, never PR'd). The `callId` is an
 // opaque correlator to the redacted shared-log line.
 #[derive(Serialize, PartialEq, Debug)]
@@ -360,7 +360,7 @@ fn shared_call_log_line(
 }
 
 // Record ONE external call across BOTH tiers (ADR-0011): the content-bearing line
-// (with the exact excerpt) into the meeting-local `auditoria.jsonl`, and the
+// (with the exact excerpt) into the meeting-local `audit.jsonl`, and the
 // redacted correlator line into `~/.loro/logs`. Returns the opaque callId. No
 // external call happens in v1, so this is exercised only by a unit test.
 #[allow(dead_code)] // wired by the deferred ADR-0011 graph; contract locked now.
@@ -375,7 +375,7 @@ fn record_external_call(
 ) -> Result<String, String> {
     let call_id = new_call_id();
     append_line(
-        &meeting_dir.join("auditoria.jsonl"),
+        &meeting_dir.join("audit.jsonl"),
         &serde_json::json!({
             "em": when,
             "event": "external-call",
@@ -466,7 +466,7 @@ pub fn ai_doctor() -> AiDoctor {
 #[tauri::command]
 pub fn brain_meeting_audit(id: String) -> Result<Vec<AuditEvent>, String> {
     let dir = crate::meeting::meeting_dir(&id)?;
-    Ok(read_audit(&dir.join("auditoria.jsonl")))
+    Ok(read_audit(&dir.join("audit.jsonl")))
 }
 
 #[cfg(test)]
@@ -651,7 +651,7 @@ mod tests {
         .unwrap();
 
         // meeting-local audit is content-bearing
-        let local = std::fs::read_to_string(mdir.join("auditoria.jsonl")).unwrap();
+        let local = std::fs::read_to_string(mdir.join("audit.jsonl")).unwrap();
         assert!(local.contains("trecho confidencial da reunião"));
         assert!(local.contains(&call_id));
 
@@ -667,7 +667,7 @@ mod tests {
         assert!(!call_id.is_empty() && call_id.len() == 16);
 
         // read_audit reconstructs the content-bearing record
-        let events = read_audit(&mdir.join("auditoria.jsonl"));
+        let events = read_audit(&mdir.join("audit.jsonl"));
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].excerpt, "trecho confidencial da reunião");
         assert_eq!(events[0].call_id, call_id);
@@ -678,7 +678,7 @@ mod tests {
     #[test]
     fn read_audit_ignores_non_call_events() {
         let mdir = tmp("audit-mixed");
-        let p = mdir.join("auditoria.jsonl");
+        let p = mdir.join("audit.jsonl");
         std::fs::write(
             &p,
             "{\"em\":\"2026-07-27T14:31:00Z\",\"event\":\"consent-set\",\"cloud\":true,\"mcp\":false}\n",

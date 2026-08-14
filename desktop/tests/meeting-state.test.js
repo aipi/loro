@@ -123,7 +123,7 @@ test("B3 — uma reunião concluída sem análise oferece analisar na própria a
   const body = fnBody("paintMeetingSurface");
   assert.match(body, /data-mtg="analyse"/, "a oferta é um botão de verdade, não um toast que expira");
   assert.match(body, /meetingQueueBlock\(/,
-    "a condição é 'nada em notas/' — a mesma decisão pura que barra o envio para a fila");
+    "a condição é 'nada em notes/' — a mesma decisão pura que barra o envio para a fila");
   // R19 passou a decisão para o estado EFETIVO (o manifest fica em "recording"
   // quando o app é fechado no meio): a condição é a mesma, agora sobre a verdade.
   assert.match(body, /eff === "done"/, "e só quando a reunião terminou — gravando não entra cromo novo");

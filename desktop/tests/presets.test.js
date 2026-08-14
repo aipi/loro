@@ -59,8 +59,8 @@ test("agentInvocation passes non-slash input through untouched", () => {
 test("agentInvocation reconhece o claude escrito com maiúscula", () => {
   for (const a of ["Claude", "CLAUDE", "Claude --resume", "/opt/bin/Claude"]) {
     assert.strictEqual(
-      agentInvocation(a, "/loro-analyse brainstorming/x/reunioes/y"),
-      "/loro-analyse brainstorming/x/reunioes/y",
+      agentInvocation(a, "/loro-analyse brainstorming/x/meetings/y"),
+      "/loro-analyse brainstorming/x/meetings/y",
       `agente ${a} deveria receber o slash-command`,
     );
   }

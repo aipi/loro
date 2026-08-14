@@ -184,7 +184,7 @@
   // ---- assinatura da árvore lateral ---------------------------------------
   // A lateral só re-renderiza quando esta string muda. Ela PRECISA cobrir os
   // filhos EXPANDIDOS, não só o topo: uma análise que o agente escreve cai em
-  // <reunião>/notas/ e não mexe em nada do nível de cima — a contagem de
+  // <reunião>/notes/ e não mexe em nada do nível de cima — a contagem de
   // reuniões é a mesma e `atualizado_em` é uma data vinda do manifest. Com a
   // assinatura rasa o relatório nunca aparecia, e a única saída era zerar a
   // assinatura de fora — o que reconstruía a árvore inteira a cada 5s e comia
@@ -205,13 +205,13 @@
       try { meetings = (await world.listMeetings(t.slug)) || []; } catch (_) { meetings = []; }
       parts.push([
         t.slug,
-        await dir("brainstorming/" + t.slug + "/notas"),
-        await dir("brainstorming/" + t.slug + "/anexos"),
+        await dir("brainstorming/" + t.slug + "/notes"),
+        await dir("brainstorming/" + t.slug + "/attachments"),
         meetings.map((m) => [m.id, m.titulo || "", m.status || ""]),
       ]);
       for (const m of meetings) {
         if (!isOpen("mtg:" + m.id)) continue;
-        parts.push([m.id, await dir(m.rel + "/notas")]);
+        parts.push([m.id, await dir(m.rel + "/notes")]);
       }
     }
     return JSON.stringify(parts);

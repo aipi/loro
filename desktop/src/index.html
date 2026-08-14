@@ -316,6 +316,18 @@
                   <p data-i18n>O que o time dá como certo, por tema. Cada um guarda seu histórico, então dá para ver o que mudou e por quê.</p>
                 </div>
                 <div id="knowGrid" class="knowgrid"></div>
+                <!-- ADR-0026 · como o conhecimento se cita: a porta do índice
+                     remissivo (tela calculada na leitura, nunca um arquivo) e o
+                     que o próprio conhecimento denuncia — tema que ninguém cita
+                     e ligação quebrada. #knowGaps só recebe o que existe: sem
+                     defeito nenhum a seção fica vazia e não desenha cromo. -->
+                <section id="knowMap" class="knowmap" hidden>
+                  <div class="kmidx">
+                    <button id="knowIdxBtn" class="btn" data-i18n>índice remissivo</button>
+                    <span class="hint" data-i18n>toda palavra que o conhecimento já escreveu, com o lugar exato de cada uma.</span>
+                  </div>
+                  <div id="knowGaps" class="kmgaps"></div>
+                </section>
               </div>
             </div>
 
@@ -624,6 +636,12 @@
                     <option value="en" data-i18n>english</option>
                   </select>
                 </label>
+                <!-- ADR-0026 §2: o conhecimento cita códigos externos (MM-1147);
+                     sem esta base eles ficam como código, nunca viram link -->
+                <label class="field"><span class="mono" data-i18n>onde abrem os códigos citados (ex.: MM-1147)</span>
+                  <input id="cfgTicketBase" type="text" placeholder="https://…/browse/" data-i18n-attrs="placeholder" />
+                </label>
+                <p class="hint" data-i18n>vazio: o código fica só como marca no texto. com um endereço, ele vira link e abre no navegador</p>
                 <label class="opt"><input type="checkbox" id="cfgAutoContext" /> <span data-i18n>a IA pode criar e escolher o tema sozinha ao organizar</span></label>
                 <!-- C29: a dica descreve o estado do interruptor acima (paintAutoContextHint) -->
                 <p id="cfgAutoContextHint" class="hint" data-i18n-dyn>desligado: quando nada existente couber, a IA deixa o item em "para organizar" e pede o tema a você</p>

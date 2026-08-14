@@ -76,9 +76,9 @@ test("filterAndCapTemas caps to the most recent when no query and over cap", () 
 
 test("selection model toggles rels and maps to backend SelItems in parts order", () => {
   const parts = [
-    { kind: "reuniao", rel: "brainstorming/x/reunioes/m1" },
-    { kind: "anexo", rel: "brainstorming/x/anexos/a1.md" },
-    { kind: "nota", rel: "brainstorming/x/notas/n1.md" },
+    { kind: "reuniao", rel: "brainstorming/x/meetings/m1" },
+    { kind: "anexo", rel: "brainstorming/x/attachments/a1.md" },
+    { kind: "nota", rel: "brainstorming/x/notes/n1.md" },
   ];
   let sel = B.emptySelection();
   sel = B.toggleSelection(sel, parts[1].rel);
@@ -90,8 +90,8 @@ test("selection model toggles rels and maps to backend SelItems in parts order",
   // mapped items keep parts order, not insertion order
   const items = B.selectedItems(parts, B.toggleSelection(sel, parts[2].rel));
   assert.deepStrictEqual(items, [
-    { kind: "reuniao", rel: "brainstorming/x/reunioes/m1" },
-    { kind: "nota", rel: "brainstorming/x/notas/n1.md" },
+    { kind: "reuniao", rel: "brainstorming/x/meetings/m1" },
+    { kind: "nota", rel: "brainstorming/x/notes/n1.md" },
   ]);
 });
 
@@ -100,22 +100,22 @@ test("selection model toggles rels and maps to backend SelItems in parts order",
 // rebuilds the BR-8 gate (hotspot #46), and never names relatorio.md again.
 test("queueRelForSelection keeps a meeting as its directory, files as themselves", () => {
   assert.strictEqual(
-    B.queueRelForSelection("reuniao", "brainstorming/frota/reunioes/m1"),
-    "brainstorming/frota/reunioes/m1"
+    B.queueRelForSelection("reuniao", "brainstorming/frota/meetings/m1"),
+    "brainstorming/frota/meetings/m1"
   );
   // a trailing slash on the meeting dir must not survive
   assert.strictEqual(
-    B.queueRelForSelection("reuniao", "brainstorming/frota/reunioes/m1/"),
-    "brainstorming/frota/reunioes/m1"
+    B.queueRelForSelection("reuniao", "brainstorming/frota/meetings/m1/"),
+    "brainstorming/frota/meetings/m1"
   );
   // notes / analyses / attachments are already files — sent as themselves
   assert.strictEqual(
-    B.queueRelForSelection("nota", "brainstorming/frota/notas/n1.md"),
-    "brainstorming/frota/notas/n1.md"
+    B.queueRelForSelection("nota", "brainstorming/frota/notes/n1.md"),
+    "brainstorming/frota/notes/n1.md"
   );
   assert.strictEqual(
-    B.queueRelForSelection("anexo", "brainstorming/frota/anexos/a1.md"),
-    "brainstorming/frota/anexos/a1.md"
+    B.queueRelForSelection("anexo", "brainstorming/frota/attachments/a1.md"),
+    "brainstorming/frota/attachments/a1.md"
   );
   assert.strictEqual(B.queueRelForSelection("reuniao", ""), null);
 });
@@ -144,12 +144,12 @@ test("brainAskCmd scopes the question to a context when given", () => {
 
 test("noteCmd targets a folder (create) or a note file (evolve)", () => {
   const { noteCmd } = require("../src/brainstorm.js");
-  assert.strictEqual(noteCmd("brainstorming/vendas/notas", "riscos do contrato"),
-    "/loro-note brainstorming/vendas/notas riscos do contrato");
-  assert.strictEqual(noteCmd("brainstorming/vendas/notas/n.md", "resuma\nem bullets"),
-    "/loro-note brainstorming/vendas/notas/n.md resuma em bullets");
+  assert.strictEqual(noteCmd("brainstorming/vendas/notes", "riscos do contrato"),
+    "/loro-note brainstorming/vendas/notes riscos do contrato");
+  assert.strictEqual(noteCmd("brainstorming/vendas/notes/n.md", "resuma\nem bullets"),
+    "/loro-note brainstorming/vendas/notes/n.md resuma em bullets");
   assert.strictEqual(noteCmd("", "x"), null);
-  assert.strictEqual(noteCmd("brainstorming/vendas/notas", "  "), null);
+  assert.strictEqual(noteCmd("brainstorming/vendas/notes", "  "), null);
 });
 
 test("toolCmd targets an existing tool file to evolve, mirrors noteCmd", () => {
@@ -202,9 +202,9 @@ test("digestNotice nudges to generate/update the indice.md digest (ADR-0011)", (
 
 // ---- assinatura da árvore lateral -----------------------------------------
 // Regressão relatada: ao terminar uma análise o relatório não aparecia na
-// lateral, e arquivo novo em notas/anexos também não. A assinatura só olhava o
+// lateral, e arquivo novo em notes/attachments também não. A assinatura só olhava o
 // TOPO (lista de brainstormings + avulsos); uma análise cai em
-// <reunião>/notas/ e não muda nada disso — a contagem de reuniões é a mesma e
+// <reunião>/notes/ e não muda nada disso — a contagem de reuniões é a mesma e
 // `atualizado_em` é uma DATA vinda do manifest.
 //
 // `listDir(rel) -> [nomes]` e `listMeetings(slug) -> [{id, rel, ...}]` são
@@ -216,11 +216,11 @@ function fakeWorld(fs, meetings) {
   };
 }
 const TEMAS = [{ slug: "tech", nome: "Tech", reunioes: 1, atualizado_em: "2026-08-07" }];
-const MTG = { tech: [{ id: "m1", rel: "brainstorming/tech/reunioes/m1", titulo: "", status: "" }] };
+const MTG = { tech: [{ id: "m1", rel: "brainstorming/tech/meetings/m1", titulo: "", status: "" }] };
 const FS_BASE = {
-  "brainstorming/tech/notas": ["ideia.md"],
-  "brainstorming/tech/anexos": [],
-  "brainstorming/tech/reunioes/m1/notas": [],
+  "brainstorming/tech/notes": ["ideia.md"],
+  "brainstorming/tech/attachments": [],
+  "brainstorming/tech/meetings/m1/notes": [],
 };
 const OPEN_ALL = new Set(["pes:tema:tech", "mtg:m1"]);
 
@@ -228,13 +228,13 @@ test("a análise que o agente escreve muda a assinatura", async () => {
   const fs = JSON.parse(JSON.stringify(FS_BASE));
   const w = fakeWorld(fs, MTG);
   const before = await B.pessoalSig(TEMAS, [], OPEN_ALL, w);
-  fs["brainstorming/tech/reunioes/m1/notas"].push("analise-2026-08-07.md");
+  fs["brainstorming/tech/meetings/m1/notes"].push("analise-2026-08-07.md");
   const after = await B.pessoalSig(TEMAS, [], OPEN_ALL, w);
   assert.notStrictEqual(after, before, "o relatório novo tem de disparar re-render");
 });
 
-test("arquivo novo em notas/ e em anexos/ muda a assinatura", async () => {
-  for (const pasta of ["notas", "anexos"]) {
+test("arquivo novo em notes/ e em attachments/ muda a assinatura", async () => {
+  for (const pasta of ["notes", "attachments"]) {
     const fs = JSON.parse(JSON.stringify(FS_BASE));
     const w = fakeWorld(fs, MTG);
     const before = await B.pessoalSig(TEMAS, [], OPEN_ALL, w);
@@ -263,7 +263,7 @@ test("só lê o que está aberto — nó fechado não custa e não dispara", asy
   const fechado = new Set();
   const before = await B.pessoalSig(TEMAS, [], fechado, w);
   assert.deepStrictEqual(lidos, [], "com nada expandido não há leitura extra");
-  fs["brainstorming/tech/reunioes/m1/notas"].push("analise.md");
+  fs["brainstorming/tech/meetings/m1/notes"].push("analise.md");
   assert.strictEqual(await B.pessoalSig(TEMAS, [], fechado, w), before,
     "arquivo dentro de nó fechado não precisa re-renderizar");
 });
@@ -273,7 +273,7 @@ test("reunião fechada não é lida, mas a lista de reuniões conta", async () =
   const w = fakeWorld(fs, MTG);
   const soTema = new Set(["pes:tema:tech"]);
   const before = await B.pessoalSig(TEMAS, [], soTema, w);
-  fs["brainstorming/tech/reunioes/m1/notas"].push("analise.md");
+  fs["brainstorming/tech/meetings/m1/notes"].push("analise.md");
   assert.strictEqual(await B.pessoalSig(TEMAS, [], soTema, w), before);
   // uma reunião NOVA muda, mesmo com todas fechadas
   const mtg2 = { tech: MTG.tech.concat([{ id: "m2", rel: "b/m2", titulo: "", status: "" }]) };
@@ -283,7 +283,7 @@ test("reunião fechada não é lida, mas a lista de reuniões conta", async () =
 test("renomear uma reunião muda a assinatura", async () => {
   const w = fakeWorld(JSON.parse(JSON.stringify(FS_BASE)), MTG);
   const before = await B.pessoalSig(TEMAS, [], OPEN_ALL, w);
-  const renomeada = { tech: [{ id: "m1", rel: "brainstorming/tech/reunioes/m1", titulo: "Semanal", status: "" }] };
+  const renomeada = { tech: [{ id: "m1", rel: "brainstorming/tech/meetings/m1", titulo: "Semanal", status: "" }] };
   const w2 = fakeWorld(JSON.parse(JSON.stringify(FS_BASE)), renomeada);
   assert.notStrictEqual(await B.pessoalSig(TEMAS, [], OPEN_ALL, w2), before);
 });

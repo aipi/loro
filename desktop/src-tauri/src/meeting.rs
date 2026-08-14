@@ -1,6 +1,6 @@
 // Meetings as living files, artifacts and a built notebook (ADR-0010, extending
 // ADR-0005). A meeting is a folder under the ADR-0013 Brainstorming tree
-// `brainstorming/<slug>/reunioes/<AAAA-MM-DD-HHMM>-<slug>/`, so the single
+// `brainstorming/<slug>/meetings/<AAAA-MM-DD-HHMM>-<slug>/`, so the single
 // `brainstorming/` gitignore line (git.rs) already quarantines all meeting audio,
 // transcript and audit — nothing here is ever versioned. Everything is local
 // (BR-1, unconditional for audio here); markers/logs carry no transcript text or
@@ -116,8 +116,8 @@ fn valid_meeting_id(id: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
-// Locate a meeting dir from its id by scanning brainstorming/*/reunioes/<id>/
-// (ADR-0013), falling back to the legacy pessoal/temas/*/reunioes/<id>/ for
+// Locate a meeting dir from its id by scanning brainstorming/*/meetings/<id>/
+// (ADR-0013), falling back to the legacy pessoal/temas/*/meetings/<id>/ for
 // un-migrated acervos; stateless and path-guarded (canonicalize + starts_with).
 //
 // The result is only valid while the meeting's lock is HELD: `move_meeting_dir`
@@ -128,7 +128,7 @@ fn resolve_meeting_dir(base: &Path, id: &str) -> Result<PathBuf, String> {
     if !valid_meeting_id(id) {
         return Err("err.invalid_meeting_id".into());
     }
-    // (roots to scan, whether the <id> sits directly under `reunioes/`)
+    // (roots to scan, whether the <id> sits directly under `meetings/`)
     let roots = [
         base.join("brainstorming"),
         base.join("pessoal").join("temas"),
@@ -138,7 +138,7 @@ fn resolve_meeting_dir(base: &Path, id: &str) -> Result<PathBuf, String> {
             continue;
         };
         for entry in rd.flatten() {
-            let cand = entry.path().join("reunioes").join(id);
+            let cand = entry.path().join("meetings").join(id);
             if cand.join("manifest.json").is_file() {
                 let canon = cand.canonicalize().map_err(|e| e.to_string())?;
                 if !canon.starts_with(base) {
@@ -153,7 +153,7 @@ fn resolve_meeting_dir(base: &Path, id: &str) -> Result<PathBuf, String> {
 
 // Resolve a meeting's on-disk dir by id for cross-module readers (ADR-0011
 // two-tier audit: `ai::brain_meeting_audit` reads the meeting-local
-// `auditoria.jsonl`). Reuses the SAME acervo base + path guard as every meeting
+// `audit.jsonl`). Reuses the SAME acervo base + path guard as every meeting
 // command, so no caller can traverse outside the quarantined `pessoal/` tree.
 pub(crate) fn meeting_dir(id: &str) -> Result<PathBuf, String> {
     resolve_meeting_dir(&acervo_base()?, id)
@@ -200,6 +200,30 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
     let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
     let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
     (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
+// ADR-0026 §14 — everything Loro GENERATES is named in English, like the code and
+// the docs. The domain's own document keeps `context.md`, which already was. The
+// living transcript was `reuniao.md`: a Portuguese file name that every acervo
+// carried, that no English project would want, and that the tab strip printed raw
+// before the title came from the path.
+//
+// Reading accepts the old name so an acervo written by an earlier version — or a
+// teammate's clone mid-PR — keeps working; writing only ever uses the new one.
+pub const LIVING_FILE: &str = "meeting.md";
+const LIVING_FILE_LEGACY: &str = "reuniao.md";
+
+// The living transcript of a meeting directory, new name first.
+pub(crate) fn living_path(dir: &Path) -> PathBuf {
+    let current = dir.join(LIVING_FILE);
+    if current.is_file() {
+        return current;
+    }
+    let legacy = dir.join(LIVING_FILE_LEGACY);
+    if legacy.is_file() {
+        return legacy;
+    }
+    current
 }
 
 // ---- manifest ---------------------------------------------------------------
@@ -299,6 +323,66 @@ pub struct Manifest {
     consent: Consent,
     #[serde(default)]
     refs: Vec<RefItem>,
+    // ADR-0026 §11 — the open point this meeting came from, as an ID and nothing
+    // else: `<contexto>#H-<n>` or `D-AAAA-MM-DD-<slug>`. An ID is not PII, so the
+    // genealogy survives the meeting file being ephemeral (AGENTS.md) without
+    // reopening the transcript path that BR-8 closes. Free text is refused on the
+    // way in — a field that accepts a sentence is a field that will hold one.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    origem: String,
+}
+
+// An origin is an ID or it is nothing. Rejecting instead of sanitizing is the
+// point: a caller that meant to write a path or a sentence has to find out.
+pub fn normalize_origin(s: &str) -> Result<String, String> {
+    let s = s.trim();
+    if s.is_empty() {
+        return Ok(String::new());
+    }
+    let hotspot = || {
+        let (ctx, h) = s.split_once('#')?;
+        let n = h.strip_prefix("H-")?;
+        let ctx_ok = !ctx.is_empty()
+            && ctx.split('/').all(|seg| {
+                !seg.is_empty()
+                    && seg
+                        .chars()
+                        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+            });
+        let n_ok = !n.is_empty() && n.chars().all(|c| c.is_ascii_digit());
+        (ctx_ok && n_ok).then(|| s.to_string())
+    };
+    let decision = || {
+        let rest = s.strip_prefix("D-")?;
+        let mut it = rest.splitn(4, '-');
+        let (y, m, d, slug) = (it.next()?, it.next()?, it.next()?, it.next()?);
+        let date_ok = y.len() == 4
+            && m.len() == 2
+            && d.len() == 2
+            && [y, m, d]
+                .iter()
+                .all(|p| p.chars().all(|c| c.is_ascii_digit()));
+        let slug_ok = !slug.is_empty()
+            && slug
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+        (date_ok && slug_ok).then(|| s.to_string())
+    };
+    hotspot()
+        .or_else(decision)
+        .ok_or_else(|| "err.origin_not_an_id".to_string())
+}
+
+// Records where a meeting came from. Under the meeting lock, like every other
+// manifest write.
+pub(crate) fn set_origin(dir: &Path, origem: &str) -> Result<String, String> {
+    let value = normalize_origin(origem)?;
+    let lock = meeting_lock(&manifest_read(dir)?.id);
+    let _g = lock.lock().map_err(|e| e.to_string())?;
+    let mut m = manifest_read(dir)?;
+    m.origem = value.clone();
+    manifest_write(dir, &m)?;
+    Ok(value)
 }
 
 // #44 — the meeting lock, reachable from `acervo::move_meeting_dir` so the rename
@@ -360,7 +444,7 @@ pub(crate) fn remap_meeting_locked(
     }
     manifest_write(dir, &manifest)?;
 
-    let living = dir.join("reuniao.md");
+    let living = living_path(dir);
     match std::fs::read_to_string(&living) {
         Ok(txt) => {
             let out = retema_front_matter(&txt, new_tema);
@@ -561,7 +645,7 @@ fn valid_tipo(tipo: &str) -> bool {
 }
 
 // ADR-0013: the meeting-AI skills can't touch manifest.json (the app owns the
-// atomic writer), so they append PII-free markers to a `marcadores.jsonl` sidecar
+// atomic writer), so they append PII-free markers to a `markers.jsonl` sidecar
 // which the app FOLDS into the manifest at build time. Pure: parse each JSONL line
 // as a Marker, keep only known `tipo`s (BR-8: a text field would never parse into
 // Marker — only tipo/t_ms/ref exist), and append them to the existing markers.
@@ -581,11 +665,11 @@ fn fold_markers(existing: &[Marker], lines: &str) -> Vec<Marker> {
     out
 }
 
-// Read `<dir>/marcadores.jsonl` (if any) and return the manifest markers folded
+// Read `<dir>/markers.jsonl` (if any) and return the manifest markers folded
 // with it. Idempotency is the caller's concern (the sidecar is consumed/cleared
 // after a successful fold so a re-run does not double-count).
 fn fold_markers_file(dir: &Path, existing: &[Marker]) -> Vec<Marker> {
-    match std::fs::read_to_string(dir.join("marcadores.jsonl")) {
+    match std::fs::read_to_string(dir.join("markers.jsonl")) {
         Ok(lines) => fold_markers(existing, &lines),
         Err(_) => existing.to_vec(),
     }
@@ -655,11 +739,11 @@ fn create_meeting(
     let titulo_display = titulo.unwrap_or("Reunião").to_string();
     let id = format!("{dir_stamp}-{title_slug}");
 
-    // ADR-0013: meetings live under the flat brainstorming/<slug>/reunioes/ tree.
+    // ADR-0013: meetings live under the flat brainstorming/<slug>/meetings/ tree.
     let dir = base
         .join("brainstorming")
         .join(&tema_slug)
-        .join("reunioes")
+        .join("meetings")
         .join(&id);
     if dir.exists() {
         return Err("err.meeting_id_exists".into());
@@ -670,7 +754,7 @@ fn create_meeting(
     }
 
     let header = living_header(&id, &tema_slug, &titulo_display, iso);
-    std::fs::write(dir.join("reuniao.md"), header).map_err(|e| e.to_string())?;
+    std::fs::write(dir.join(LIVING_FILE), header).map_err(|e| e.to_string())?;
 
     let manifest = Manifest {
         id: id.clone(),
@@ -689,7 +773,7 @@ fn create_meeting(
     if !dir.starts_with(base) {
         return Err("err.outside_acervo".into());
     }
-    let living_rel = format!("{}/reuniao.md", rel_of(base, &dir));
+    let living_rel = format!("{}/{LIVING_FILE}", rel_of(base, &dir));
     Ok(Created {
         id,
         dir,
@@ -839,7 +923,7 @@ pub fn brain_meeting_stop(
     manifest.atualizado_em = now_iso();
     manifest_write(&dir, &manifest)?;
 
-    let living_rel = format!("{}/reuniao.md", rel_of(&base, &dir));
+    let living_rel = format!("{}/{LIVING_FILE}", rel_of(&base, &dir));
     let _ = app.emit("pessoal-changed", serde_json::json!({ "rel": living_rel }));
     Ok(MeetingStop {
         living_rel,
@@ -871,7 +955,7 @@ pub fn brain_meeting_append(app: AppHandle, input: MeetingAppendInput) -> Result
     let _guard = lock.lock().map_err(|_| "lock envenenado".to_string())?;
     let dir = resolve_meeting_dir(&base, &input.id)?;
 
-    let living = dir.join("reuniao.md");
+    let living = living_path(&dir);
     let content = std::fs::read_to_string(&living).map_err(|e| e.to_string())?;
     // ADR-0013: a timecoded chunk is inserted in chronological order (mic + system
     // interleave correctly); an untimed one (skills/legacy) appends at the tail.
@@ -885,7 +969,7 @@ pub fn brain_meeting_append(app: AppHandle, input: MeetingAppendInput) -> Result
     manifest.atualizado_em = now_iso();
     manifest_write(&dir, &manifest)?;
 
-    let living_rel = format!("{}/reuniao.md", rel_of(&base, &dir));
+    let living_rel = format!("{}/{LIVING_FILE}", rel_of(&base, &dir));
     let bytes = input.chunk.len();
     let _ = app.emit(
         "meeting-appended",
@@ -927,7 +1011,7 @@ pub fn brain_meeting_append_timed(
     let _guard = lock.lock().map_err(|_| "lock envenenado".to_string())?;
     let dir = resolve_meeting_dir(&base, &input.id)?;
 
-    let living = dir.join("reuniao.md");
+    let living = living_path(&dir);
     let content = std::fs::read_to_string(&living).map_err(|e| e.to_string())?;
     let blocks: Vec<(u64, Option<&str>, String)> = input
         .blocks
@@ -941,7 +1025,7 @@ pub fn brain_meeting_append_timed(
     manifest.atualizado_em = now_iso();
     manifest_write(&dir, &manifest)?;
 
-    let living_rel = format!("{}/reuniao.md", rel_of(&base, &dir));
+    let living_rel = format!("{}/{LIVING_FILE}", rel_of(&base, &dir));
     let bytes: usize = input.blocks.iter().map(|b| b.chunk.len()).sum();
     let _ = app.emit(
         "meeting-appended",
@@ -1101,6 +1185,26 @@ pub fn brain_meeting_marker(input: MarkerInput) -> Result<(), String> {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct OriginInput {
+    id: String,
+    #[serde(default)]
+    origem: String,
+}
+
+// ADR-0026 §11 — records WHICH open point a meeting came from, as an ID. This is
+// the edge that was missing entirely: a hotspot seeds a meeting and the meeting
+// seeds a change, but nothing on disk said so, so "where did this decision come
+// from" had no answer. An ID keeps that edge PII-free, which is why the meeting
+// file staying ephemeral (AGENTS.md) costs nothing here.
+#[tauri::command]
+pub fn brain_meeting_set_origin(input: OriginInput) -> Result<String, String> {
+    let base = acervo_base()?;
+    let dir = resolve_meeting_dir(&base, &input.id)?;
+    set_origin(&dir, &input.origem)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ConsentInput {
     id: String,
     cloud: bool,
@@ -1140,7 +1244,7 @@ pub fn brain_meeting_set_consent(input: ConsentInput) -> Result<Consent, String>
 // Append one JSON event line to the meeting's local audit (ADR-0011 two-tier
 // logging). Event-oriented and PII-free (BR-8); stays under pessoal/ (quarantined).
 fn append_audit(dir: &Path, event: &serde_json::Value) -> Result<(), String> {
-    let path = dir.join("auditoria.jsonl");
+    let path = dir.join("audit.jsonl");
     let mut cur = std::fs::read_to_string(&path).unwrap_or_default();
     cur.push_str(&event.to_string());
     cur.push('\n');
@@ -1191,7 +1295,7 @@ fn rename_meeting(dir: &Path, titulo: &str) -> Result<Manifest, String> {
     m.titulo = t.to_string();
     m.atualizado_em = now_iso();
     manifest_write(dir, &m)?;
-    let living = dir.join("reuniao.md");
+    let living = living_path(dir);
     if let Ok(txt) = std::fs::read_to_string(&living) {
         std::fs::write(&living, replace_title_heading(&txt, t)).map_err(|e| e.to_string())?;
     }
@@ -1227,13 +1331,13 @@ pub struct FinishOut {
 
 // ADR-0018 — close a meeting: `status: "done"`, and nothing is authored. The
 // report this command used to assemble is gone; the meeting's output is the
-// analysis in `notas/`, written by the habilidade when the USER asks for it.
+// analysis in `notes/`, written by the habilidade when the USER asks for it.
 //
 // `done` is what enables **analisar** and **enviar para a fila** in the `⋯` menu,
 // so it stays exactly as it was — it simply stopped being a side effect of
 // building a document.
 //
-// ADR-0013's sidecar incorporation SURVIVES here: folding `marcadores.jsonl` into
+// ADR-0013's sidecar incorporation SURVIVES here: folding `markers.jsonl` into
 // the manifest was never about the report, and the app remains the only writer of
 // `manifest.json`. Its reach is unchanged too — the fold happens when the
 // recording ends, so markers a habilidade appends later stay in the sidecar,
@@ -1248,7 +1352,7 @@ pub fn brain_meeting_finish(app: AppHandle, id: String) -> Result<FinishOut, Str
     let dir = resolve_meeting_dir(&base, &id)?;
 
     let mut manifest = manifest_read(&dir)?;
-    let sidecar = dir.join("marcadores.jsonl");
+    let sidecar = dir.join("markers.jsonl");
     if sidecar.is_file() {
         manifest.marcadores = fold_markers_file(&dir, &manifest.marcadores);
         let _ = std::fs::remove_file(&sidecar);
@@ -1338,7 +1442,7 @@ pub struct PurgeAudioInput {
 
 // Owner decision (2026-07-27): meeting audio is TRANSIENT — never stored long-term.
 // Deletes every track under the meeting's audio/ dir and clears all audio keys.
-// The transcript (reuniao.md) and the analyses in notas/ are the durable
+// The transcript (reuniao.md) and the analyses in notes/ are the durable
 // artifacts; audio is only
 // a means to it. Called after the authoritative stop-transcription. Idempotent.
 fn purge_audio_core(dir: &Path) -> Result<Manifest, String> {
@@ -1667,13 +1771,13 @@ mod tests {
         let base = tmp("create");
         let c = seed(&base);
         assert_eq!(c.id, "2026-07-27-1430-semanal-de-custos");
-        let dir = base.join("brainstorming/frota-2026/reunioes/2026-07-27-1430-semanal-de-custos");
+        let dir = base.join("brainstorming/frota-2026/meetings/2026-07-27-1430-semanal-de-custos");
         assert!(dir.join("audio").is_dir());
         for k in ARTIFACT_KINDS {
             assert!(dir.join("artefatos").join(k).is_dir());
         }
         // living file header: front-matter + title + stable marker
-        let living = std::fs::read_to_string(dir.join("reuniao.md")).unwrap();
+        let living = std::fs::read_to_string(dir.join(LIVING_FILE)).unwrap();
         assert!(living.starts_with("---\nloro: 1\n"));
         assert!(living.contains("id: 2026-07-27-1430-semanal-de-custos"));
         assert!(living.contains("tema: frota-2026"));
@@ -1700,7 +1804,7 @@ mod tests {
         // id/folder untouched: open tabs and artefatos keep resolving
         assert_eq!(m.id, c.id);
         assert!(c.dir.join("manifest.json").is_file());
-        let living = std::fs::read_to_string(c.dir.join("reuniao.md")).unwrap();
+        let living = std::fs::read_to_string(c.dir.join(LIVING_FILE)).unwrap();
         assert!(living.contains("# Custos da frota — revisão"));
         assert!(!living.contains("# Semanal de custos"));
         // transcript and front-matter survive the heading swap
@@ -1800,7 +1904,7 @@ mod tests {
         let before_at = manifest_read(&c.dir).unwrap().atualizado_em;
         std::thread::sleep(std::time::Duration::from_millis(1100));
         append_one(&c.dir, "[00:00] linha").unwrap();
-        let living = std::fs::read_to_string(c.dir.join("reuniao.md")).unwrap();
+        let living = std::fs::read_to_string(c.dir.join(LIVING_FILE)).unwrap();
         assert!(living
             .split(TRANSCRIPT_MARKER)
             .nth(1)
@@ -1813,7 +1917,7 @@ mod tests {
 
     // Small fs helper mirroring brain_meeting_append without the AppHandle/emit.
     fn append_one(dir: &Path, chunk: &str) -> Result<(), String> {
-        let living = dir.join("reuniao.md");
+        let living = living_path(dir);
         let content = std::fs::read_to_string(&living).map_err(|e| e.to_string())?;
         std::fs::write(&living, append_below_marker(&content, chunk)).map_err(|e| e.to_string())?;
         let mut m = manifest_read(dir)?;
@@ -1882,7 +1986,7 @@ mod tests {
             &serde_json::json!({"em":"2026-07-27T14:31:00Z","event":"consent-set","cloud":true,"mcp":false}),
         )
         .unwrap();
-        let audit = std::fs::read_to_string(c.dir.join("auditoria.jsonl")).unwrap();
+        let audit = std::fs::read_to_string(c.dir.join("audit.jsonl")).unwrap();
         assert!(audit.contains("\"event\":\"consent-set\""));
         assert!(audit.contains("\"cloud\":true"));
         // BR-8: the audit event is structural only — no transcript/prose fields
@@ -1923,7 +2027,7 @@ mod tests {
 
     // T-1 · T-2 · AC-1 (ADR-0018) — finishing a meeting sets `done` and authors
     // NOTHING. The report is gone: the meeting's output is the analysis the user
-    // asks for, in `notas/`.
+    // asks for, in `notes/`.
     #[test]
     fn finish_sets_status_done_and_writes_no_report() {
         let base = tmp("finish");
@@ -1941,7 +2045,7 @@ mod tests {
             "no report is ever authored"
         );
         // the transcript is untouched and remains the only place it lives
-        assert!(std::fs::read_to_string(c.dir.join("reuniao.md"))
+        assert!(std::fs::read_to_string(c.dir.join(LIVING_FILE))
             .unwrap()
             .contains("[00:00] abertura"));
     }
@@ -2205,8 +2309,8 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("loro-remap-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let velho = "brainstorming/origem/reunioes/m1";
-        let novo = "brainstorming/destino/reunioes/m1";
+        let velho = "brainstorming/origem/meetings/m1";
+        let novo = "brainstorming/destino/meetings/m1";
         let m = Manifest {
             id: "m1".into(),
             tema: "origem".into(),
@@ -2218,28 +2322,28 @@ mod tests {
             },
             artifacts: vec![Artifact {
                 id: "a1".into(),
-                kind: "notas".into(),
+                kind: "notes".into(),
                 name: "n.md".into(),
-                rel: format!("{velho}/artefatos/notas/n.md"),
+                rel: format!("{velho}/artefatos/notes/n.md"),
                 ..Default::default()
             }],
             refs: vec![
                 RefItem {
                     id: "r1".into(),
                     tipo: "anexo".into(),
-                    caminho: format!("{velho}/notas/analise.md"),
+                    caminho: format!("{velho}/notes/analise.md"),
                 },
                 // a ref OUTSIDE the meeting is not the move's business
                 RefItem {
                     id: "r2".into(),
                     tipo: "anexo".into(),
-                    caminho: "brainstorming/origem/anexos/planilha.csv".into(),
+                    caminho: "brainstorming/origem/attachments/planilha.csv".into(),
                 },
             ],
             ..Default::default()
         };
         manifest_write(&dir, &m).unwrap();
-        std::fs::write(dir.join("reuniao.md"), "---\ntema: origem\n---\n\nx\n").unwrap();
+        std::fs::write(dir.join(LIVING_FILE), "---\ntema: origem\n---\n\nx\n").unwrap();
 
         super::remap_meeting_locked(&dir, "destino", velho, novo).unwrap();
 
@@ -2249,11 +2353,11 @@ mod tests {
         assert_eq!(back.audio.system.unwrap(), format!("{novo}/audio/sys.webm"));
         assert_eq!(
             back.artifacts[0].rel,
-            format!("{novo}/artefatos/notas/n.md")
+            format!("{novo}/artefatos/notes/n.md")
         );
-        assert_eq!(back.refs[0].caminho, format!("{novo}/notas/analise.md"));
+        assert_eq!(back.refs[0].caminho, format!("{novo}/notes/analise.md"));
         assert_eq!(
-            back.refs[1].caminho, "brainstorming/origem/anexos/planilha.csv",
+            back.refs[1].caminho, "brainstorming/origem/attachments/planilha.csv",
             "a path outside the meeting is left alone"
         );
     }
@@ -2261,19 +2365,90 @@ mod tests {
     // A prefix that merely LOOKS like the old rel is a different meeting.
     #[test]
     fn repath_matches_only_whole_segments() {
-        let velho = "brainstorming/origem/reunioes/m1";
-        let novo = "brainstorming/destino/reunioes/m1";
+        let velho = "brainstorming/origem/meetings/m1";
+        let novo = "brainstorming/destino/meetings/m1";
         assert_eq!(super::repath(velho, velho, novo).as_deref(), Some(novo));
         assert_eq!(
             super::repath(&format!("{velho}/audio/a.webm"), velho, novo).as_deref(),
             Some(format!("{novo}/audio/a.webm").as_str())
         );
         assert_eq!(
-            super::repath("brainstorming/origem/reunioes/m10/x.md", velho, novo),
+            super::repath("brainstorming/origem/meetings/m10/x.md", velho, novo),
             None,
             "m10 is not m1"
         );
         assert_eq!(super::repath("outro/caminho.md", velho, novo), None);
+    }
+
+    // ADR-0026 §11 — the genealogy is an ID. Anything that could carry meaning a
+    // person wrote (a sentence, a path, a title) is refused, because that is the
+    // road by which a transcript fragment reaches a versioned file (BR-8).
+    #[test]
+    fn an_origin_is_an_id_or_it_is_refused() {
+        assert_eq!(
+            normalize_origin("assinatura#H-3").unwrap(),
+            "assinatura#H-3"
+        );
+        assert_eq!(
+            normalize_origin(" rac/agendamento#H-12 ").unwrap(),
+            "rac/agendamento#H-12"
+        );
+        assert_eq!(
+            normalize_origin("D-2026-07-23-correcao-upgrade").unwrap(),
+            "D-2026-07-23-correcao-upgrade"
+        );
+        assert_eq!(normalize_origin("").unwrap(), "");
+        for refused in [
+            "meetings/2026-08-04-1212-reuniao/reuniao.md",
+            "veio da conversa com o time sobre a multa",
+            "assinatura#H-",
+            "assinatura#3",
+            "Assinatura#H-3",
+            "../assinatura#H-3",
+            "D-2026-7-23-slug",
+            "H-3",
+        ] {
+            assert!(
+                normalize_origin(refused).is_err(),
+                "accepted an origin that is not an id: {refused}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_origin_lands_in_the_manifest_and_nothing_else_does() {
+        let dir = std::env::temp_dir().join(format!("loro-origin-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let m = Manifest {
+            id: "2026-08-13-1000-reuniao".into(),
+            tema: "risco".into(),
+            ..Default::default()
+        };
+        manifest_write(&dir, &m).unwrap();
+
+        assert_eq!(set_origin(&dir, "riscos#H-2").unwrap(), "riscos#H-2");
+        let back = manifest_read(&dir).unwrap();
+        assert_eq!(back.origem, "riscos#H-2");
+        assert_eq!(
+            back.id, "2026-08-13-1000-reuniao",
+            "the write kept the rest"
+        );
+
+        // A refused origin leaves the recorded one alone — a failed write that
+        // half-lands is worse than one that does not happen.
+        assert!(set_origin(&dir, "porque o time decidiu na reunião").is_err());
+        assert_eq!(manifest_read(&dir).unwrap().origem, "riscos#H-2");
+
+        // Absent by default, and absent from the JSON when empty (old manifests
+        // stay byte-identical after a rewrite).
+        set_origin(&dir, "").unwrap();
+        let txt = std::fs::read_to_string(dir.join("manifest.json")).unwrap();
+        assert!(
+            !txt.contains("origem"),
+            "an empty origin still shows up: {txt}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // The manifest is rewritten through the TYPE, so field order follows the
@@ -2298,13 +2473,13 @@ mod tests {
             ..Default::default()
         };
         manifest_write(&dir, &m).unwrap();
-        std::fs::write(dir.join("reuniao.md"), "---\ntema: origem\n---\n\nx\n").unwrap();
+        std::fs::write(dir.join(LIVING_FILE), "---\ntema: origem\n---\n\nx\n").unwrap();
 
         super::remap_meeting_locked(
             &dir,
             "destino",
-            "brainstorming/origem/reunioes/m1",
-            "brainstorming/destino/reunioes/m1",
+            "brainstorming/origem/meetings/m1",
+            "brainstorming/destino/meetings/m1",
         )
         .unwrap();
 

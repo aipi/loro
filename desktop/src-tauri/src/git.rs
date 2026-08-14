@@ -821,13 +821,19 @@ pub fn git_available() -> bool {
 // this single entry — one gitignore line disjoints it from the versioned tree.
 // The legacy `pessoal/` line stays as a safety belt for acervos not yet migrated
 // (ADR-0009 named that world `pessoal/`); either line alone quarantines its world.
-// Owner decision (2026-07-28): root `notas/` is personal too — the `/notas/`
+// Owner decision (2026-07-28): root `notes/` is personal too — the `/notes/`
 // pattern is anchored so only the acervo-root folder is ignored, never a
-// `notas/` that a context might legitimately version.
-pub const GIT_IGNORED: [&str; 8] = [
+// `notes/` that a context might legitimately version.
+// ADR-0026 §14 renamed these folders, and the legacy names stay for the same
+// reason `pessoal/` does: an acervo that has not been migrated still has
+// `reunioes/` on disk, and a .gitignore written by the new version would stop
+// quarantining it — which is how a raw transcript reaches a versioned tree (BR-8).
+pub const GIT_IGNORED: [&str; 10] = [
     ".DS_Store",
     "inbox/",
     "processed/",
+    "meetings/",
+    "/notes/",
     "reunioes/",
     "/notas/",
     ".brain/prompt-history/",
@@ -836,12 +842,12 @@ pub const GIT_IGNORED: [&str; 8] = [
 ];
 
 // ADR-0009/0013 write guard: meeting audio, the transcript (`reuniao.md`) and the
-// content-bearing audit (`auditoria.jsonl`) must NEVER enter the versioned tree.
+// content-bearing audit (`audit.jsonl`) must NEVER enter the versioned tree.
 // True when `rel` (acervo-relative, forward slashes) is such an artifact under
-// `contextos/`. Pure so the quarantine is unit-testable without a git repo.
+// `contexts/`. Pure so the quarantine is unit-testable without a git repo.
 pub fn is_versioning_denied(rel: &str) -> bool {
     let r = rel.trim_start_matches("./").replace('\\', "/");
-    if !r.starts_with("contextos/") {
+    if !r.starts_with("contexts/") {
         return false;
     }
     let lower = r.to_ascii_lowercase();
@@ -849,7 +855,7 @@ pub fn is_versioning_denied(rel: &str) -> bool {
     lower.ends_with(".wav")
         || lower.ends_with(".webm")
         || leaf == "reuniao.md"
-        || leaf == "auditoria.jsonl"
+        || leaf == "audit.jsonl"
 }
 
 // Idempotent: guarantees the ignore entries exist in the acervo's .gitignore
@@ -1082,8 +1088,8 @@ pub fn stage_and_commit(base: &Path, message: String) -> Result<String, String> 
             "-q",
             "inbox",
             "processed",
-            "reunioes",
-            "notas",
+            "meetings",
+            "notes",
             ".brain/prompt-history",
             "brainstorming",
             "pessoal",
@@ -1099,7 +1105,7 @@ pub fn stage_and_commit(base: &Path, message: String) -> Result<String, String> 
         return Err(String::from_utf8_lossy(&add.stderr).to_string());
     }
     // ADR-0009 write guard: unstage any meeting audio/transcript/audit that
-    // slipped under contextos/ (files stay on disk; they just never get committed).
+    // slipped under contexts/ (files stay on disk; they just never get committed).
     unstage_versioning_denied(base);
     let msg = if message.trim().is_empty() {
         "acervo: versionar".to_string()
@@ -1154,6 +1160,19 @@ fn unstage_versioning_denied(base: &Path) {
 
 #[cfg(test)]
 mod tests {
+
+    // ADR-0026 §14 — renaming the folders must not un-quarantine anything. Both
+    // spellings are ignored: the new one for a migrated acervo, the old one for a
+    // clone that has not migrated yet. A transcript in a versioned tree is BR-8.
+    #[test]
+    fn both_spellings_of_the_ephemeral_folders_stay_quarantined() {
+        for entry in ["meetings/", "/notes/", "reunioes/", "/notas/"] {
+            assert!(
+                GIT_IGNORED.contains(&entry),
+                "{entry} is not quarantined — a meeting record would be versioned"
+            );
+        }
+    }
     use super::*;
 
     #[test]
@@ -1237,31 +1256,29 @@ mod tests {
 
     #[test]
     fn is_versioning_denied_blocks_audio_transcript_audit_under_contextos() {
-        // ADR-0009: audio/transcript/audit under contextos/ are denied ...
+        // ADR-0009: audio/transcript/audit under contexts/ are denied ...
+        assert!(is_versioning_denied("contexts/frota/meetings/r1/audio.wav"));
+        assert!(is_versioning_denied("contexts/frota/audio.WEBM"));
         assert!(is_versioning_denied(
-            "contextos/frota/reunioes/r1/audio.wav"
-        ));
-        assert!(is_versioning_denied("contextos/frota/audio.WEBM"));
-        assert!(is_versioning_denied(
-            "contextos/frota/reunioes/r1/reuniao.md"
+            "contexts/frota/meetings/r1/reuniao.md"
         ));
         assert!(is_versioning_denied(
-            "contextos/frota/reunioes/r1/auditoria.jsonl"
+            "contexts/frota/meetings/r1/audit.jsonl"
         ));
-        // ... but consolidated knowledge and everything outside contextos/ is fine
-        assert!(!is_versioning_denied("contextos/frota/context.md"));
+        // ... but consolidated knowledge and everything outside contexts/ is fine
+        assert!(!is_versioning_denied("contexts/frota/context.md"));
         assert!(!is_versioning_denied(
-            "contextos/frota/referencias/chart.png"
+            "contexts/frota/referencias/chart.png"
         ));
         // ADR-0013: the non-versioned world is `brainstorming/`; legacy `pessoal/`
-        // stays quarantined too — neither is under contextos/, so never denied.
+        // stays quarantined too — neither is under contexts/, so never denied.
         assert!(!is_versioning_denied(
-            "brainstorming/x/reunioes/r1/audio.wav"
+            "brainstorming/x/meetings/r1/audio.wav"
         ));
         assert!(!is_versioning_denied(
-            "pessoal/temas/x/reunioes/r1/audio.wav"
+            "pessoal/temas/x/meetings/r1/audio.wav"
         ));
-        assert!(!is_versioning_denied("notas/reuniao.md"));
+        assert!(!is_versioning_denied("notes/reuniao.md"));
     }
 
     #[test]
@@ -1271,25 +1288,21 @@ mod tests {
         }
         let root = std::env::temp_dir().join(format!("loro-quar-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(root.join("contextos/frota/reunioes/r1")).unwrap();
+        std::fs::create_dir_all(root.join("contexts/frota/meetings/r1")).unwrap();
         std::fs::create_dir_all(root.join("brainstorming/x")).unwrap();
         std::fs::create_dir_all(root.join("pessoal/temas/x")).unwrap();
         git_init_repo(&root).unwrap();
         set_identity(&root, "Teste", "teste@exemplo.com").unwrap();
 
-        std::fs::write(root.join("contextos/frota/context.md"), "conhecimento").unwrap();
-        std::fs::write(root.join("contextos/frota/reunioes/r1/audio.wav"), b"RIFF").unwrap();
-        std::fs::write(root.join("contextos/frota/reunioes/r1/reuniao.md"), "fala").unwrap();
-        std::fs::write(
-            root.join("contextos/frota/reunioes/r1/auditoria.jsonl"),
-            "{}\n",
-        )
-        .unwrap();
+        std::fs::write(root.join("contexts/frota/context.md"), "conhecimento").unwrap();
+        std::fs::write(root.join("contexts/frota/meetings/r1/audio.wav"), b"RIFF").unwrap();
+        std::fs::write(root.join("contexts/frota/meetings/r1/reuniao.md"), "fala").unwrap();
+        std::fs::write(root.join("contexts/frota/meetings/r1/audit.jsonl"), "{}\n").unwrap();
         std::fs::write(root.join("brainstorming/x/nota.md"), "brainstorming").unwrap();
         std::fs::write(root.join("pessoal/temas/x/nota.md"), "pessoal").unwrap();
-        // owner decision (2026-07-28): root notas/ is personal — never versioned
-        std::fs::create_dir_all(root.join("notas")).unwrap();
-        std::fs::write(root.join("notas/2026-07-28-anotacao.md"), "pessoal").unwrap();
+        // owner decision (2026-07-28): root notes/ is personal — never versioned
+        std::fs::create_dir_all(root.join("notes")).unwrap();
+        std::fs::write(root.join("notes/2026-07-28-anotacao.md"), "pessoal").unwrap();
 
         stage_and_commit(&root, "base".into()).unwrap();
 
@@ -1299,14 +1312,14 @@ mod tests {
             .output()
             .unwrap();
         let files = String::from_utf8_lossy(&tracked.stdout);
-        assert!(files.contains("contextos/frota/context.md"));
+        assert!(files.contains("contexts/frota/context.md"));
         assert!(!files.contains(".wav"), "audio is never versioned");
         assert!(
             !files.contains("reuniao.md"),
             "the transcript is never versioned"
         );
         assert!(
-            !files.contains("auditoria.jsonl"),
+            !files.contains("audit.jsonl"),
             "the audit is never versioned"
         );
         assert!(
@@ -1318,8 +1331,8 @@ mod tests {
             "the legacy pessoal/ world is never versioned"
         );
         assert!(
-            !files.contains("notas/"),
-            "root notas/ is personal — never versioned"
+            !files.contains("notes/"),
+            "root notes/ is personal — never versioned"
         );
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -1468,14 +1481,14 @@ mod tests {
         let root = temp_repo("seeded-baseline");
         git_init_repo(&root).unwrap();
         set_identity(&root, "Teste", "teste@exemplo.com").unwrap();
-        std::fs::create_dir_all(root.join("contextos/frota")).unwrap();
-        std::fs::write(root.join("contextos/frota/context.md"), "semente").unwrap();
+        std::fs::create_dir_all(root.join("contexts/frota")).unwrap();
+        std::fs::write(root.join("contexts/frota/context.md"), "semente").unwrap();
 
         ensure_baseline_commit(&root, Baseline::Seeded).unwrap();
 
         assert!(ref_exists(&root, "refs/heads/main"));
         let tracked = run_git(&root, &["ls-tree", "-r", "--name-only", "main"]);
-        assert!(String::from_utf8_lossy(&tracked.stdout).contains("contextos/frota/context.md"));
+        assert!(String::from_utf8_lossy(&tracked.stdout).contains("contexts/frota/context.md"));
         assert!(
             !is_dirty(&root),
             "the seeded project starts fully versioned"
@@ -1833,9 +1846,9 @@ mod tests {
             return;
         }
         let root = temp_repo("docs-empty-main");
-        std::fs::create_dir_all(root.join("contextos/frota")).unwrap();
+        std::fs::create_dir_all(root.join("contexts/frota")).unwrap();
         std::fs::create_dir_all(root.join(".github/workflows")).unwrap();
-        std::fs::write(root.join("contextos/frota/context.md"), "conhecimento").unwrap();
+        std::fs::write(root.join("contexts/frota/context.md"), "conhecimento").unwrap();
         std::fs::write(root.join("INDEX.md"), "índice").unwrap();
         std::fs::write(root.join(".github/workflows/ci.yml"), "on: push").unwrap();
         git_init_repo(&root).unwrap();

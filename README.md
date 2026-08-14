@@ -36,6 +36,12 @@ people and AI agents can use as context.
   notes, and attached files into one `context.md` source of truth per topic,
   versioned in Git and evolved by pull request — with Git hidden behind two
   buttons ("Salvar versão" / "Enviar para revisão do time").
+- **Topics that point at each other** — a topic cites its neighbours with plain
+  markdown links carrying the direction of the handoff. Those links *are* the
+  graph: Loro computes the backlinks ("Citado por"), an index of every word the
+  knowledge has written, and the list of topics nobody cites — **on read, never
+  as a generated file**, so no derived index can drift from the markdown
+  (ADR-0026).
 - **Bring your own AI agent** — Loro wraps any AI agent CLI (`claude` by
   default, including local models) in an embedded terminal, and turns its
   skills into one-click actions. Nine ship built-in; you can author your own.

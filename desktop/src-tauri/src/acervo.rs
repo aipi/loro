@@ -9,13 +9,16 @@
 // pure functions unit-tested without a running Tauri app. Every path reuses the
 // canonicalize + starts_with(base) guard the other brain_* commands use.
 
+use std::borrow::Cow;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use tracing::{error, info};
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 
-use crate::config::read_brain_config;
+use crate::config::{active_acervo_lang, read_brain_config};
 use crate::git::sanitize_slug;
 use crate::valid_context;
 
@@ -133,7 +136,7 @@ fn is_audio(name: &str) -> bool {
 // raw audit/meta/manifest are never copied at all.
 fn is_promotion_denied(name: &str) -> bool {
     let l = name.to_ascii_lowercase();
-    is_audio(&l) || l == "auditoria.jsonl" || l == "meta.json" || l == "manifest.json"
+    is_audio(&l) || l == "audit.jsonl" || l == "meta.json" || l == "manifest.json"
 }
 
 // ---- front-matter (hand-rolled, no YAML lib — no-bundler constraint) --------
@@ -391,14 +394,20 @@ fn create_brainstorming(
 ) -> Result<BrainstormingRef, String> {
     let slug = sanitize_slug(nome)?;
     let dir = brainstorming_dir(base).join(&slug);
-    // ADR-0005: the canonical brainstorming subfolders are reunioes/, notas/ and
-    // anexos/. The legacy investigacoes/, relatorios/ and perguntas/ folders are no
+    // ADR-0005: the canonical brainstorming subfolders are meetings/, notes/ and
+    // attachments/. The legacy investigacoes/, relatorios/ and perguntas/ folders are no
     // longer scaffolded — non-meeting output (e.g. the brainstorming report) lands
-    // in anexos/.
-    for sub in ["", "reunioes", "notas", "anexos"] {
+    // in attachments/.
+    for sub in ["", "meetings", "notes", "attachments"] {
         std::fs::create_dir_all(dir.join(sub)).map_err(|e| e.to_string())?;
     }
-    let indice = dir.join("indice.md");
+    // ADR-0026 §14 — generated in English (`index.md`); an acervo written earlier
+    // keeps its `indice.md` and is left exactly where it is.
+    let indice = if dir.join(TOPIC_DOC_LEGACY).is_file() {
+        dir.join(TOPIC_DOC_LEGACY)
+    } else {
+        dir.join(TOPIC_DOC)
+    };
     if !indice.exists() {
         let fm = living_front_matter(&slug, &slug, today);
         std::fs::write(&indice, format!("{fm}# {nome}\n")).map_err(|e| e.to_string())?;
@@ -435,25 +444,25 @@ pub struct BrainstormingListItem {
     slug: String,
     nome: String,
     categoria: Option<String>,
-    reunioes: usize,
+    meetings: usize,
     atualizado_em: String,
 }
 
-// ADR-0005: brainstormings created before anexos/ existed never got that
+// ADR-0005: brainstormings created before attachments/ existed never got that
 // folder — self-heal on every list call (cheap, idempotent, create-if-absent)
 // instead of requiring an explicit migration step. Mirrors the "respect
 // existing structure, fill only gaps" premise already used for skill files
-// (ensure_meeting_skills). Presentations live in anexos/ too (one kind among
+// (ensure_meeting_skills). Presentations live in attachments/ too (one kind among
 // others) — no separate apresentacoes/ folder; the acervo's three
-// brainstorming folders are reunioes/, notas/, anexos/.
+// brainstorming folders are meetings/, notes/, attachments/.
 fn ensure_brainstorming_subfolders(dir: &Path) {
-    let _ = std::fs::create_dir_all(dir.join("anexos"));
+    let _ = std::fs::create_dir_all(dir.join("attachments"));
 }
 
 // ADR-0008: every skill-generated document is a note — it lives in the meeting's
-// own notas/. Older meetings wrote analyses/answers under artefatos/<kind>/ (and
+// own notes/. Older meetings wrote analyses/answers under artefatos/<kind>/ (and
 // even bare investigacoes/perguntas/respostas/relatorios folders); move those
-// files into notas/ and drop the now-empty legacy dirs. Self-heal (like the
+// files into notes/ and drop the now-empty legacy dirs. Self-heal (like the
 // brainstorming-subfolder backfill) — no explicit "migrate" command, and
 // non-destructive (dedupes on name collision, never overwrites).
 const LEGACY_MEETING_FOLDERS: [&str; 5] = [
@@ -464,7 +473,7 @@ const LEGACY_MEETING_FOLDERS: [&str; 5] = [
     "relatorios",
 ];
 fn migrate_meeting_to_notas(meeting_dir: &Path) {
-    let notas = meeting_dir.join("notas");
+    let notas = meeting_dir.join("notes");
     for name in LEGACY_MEETING_FOLDERS {
         let src = meeting_dir.join(name);
         if src.is_dir() {
@@ -477,13 +486,13 @@ fn migrate_meeting_to_notas(meeting_dir: &Path) {
 }
 
 // ADR-0018 · AC-8: a meeting no longer has a `relatorio.md` — the analysis in
-// `notas/` IS its output. A file left behind by an older version is DELETED on
+// `notes/` IS its output. A file left behind by an older version is DELETED on
 // the first listing, not migrated.
 //
 // This is a deliberate DEROGATION from the domain's non-destructive premise and
 // from ADR-0008 §2's self-heal, signed by the owner (2026-08-07): the report was
 // app-authored placeholder prose, so keeping a copy would only preserve text that
-// never said anything. The blast radius is exactly one path — a `notas/relatorio.md`
+// never said anything. The blast radius is exactly one path — a `notes/relatorio.md`
 // is the USER's file and is never touched.
 fn drop_legacy_report(meeting_dir: &Path) {
     let report = meeting_dir.join("relatorio.md");
@@ -577,7 +586,7 @@ fn list_brainstormings(base: &Path) -> Vec<BrainstormingListItem> {
                             m.nome
                         },
                         categoria: m.categoria,
-                        reunioes: count_entries(&e.path().join("reunioes")),
+                        meetings: count_entries(&e.path().join("meetings")),
                         atualizado_em: m.atualizado_em,
                         slug,
                     }
@@ -620,14 +629,14 @@ pub struct MeetingListItem {
     rel: String,
     titulo: String,
     status: String,
-    // ADR-0018 · AC-7: how many of the meeting's `notas/` can enter the fila. The
+    // ADR-0018 · AC-7: how many of the meeting's `notes/` can enter the fila. The
     // analysis IS the meeting's output, so zero means there is nothing to send —
     // the `⋯` entry says that instead of queueing an empty meeting.
-    notas: usize,
+    notes: usize,
 }
 
 // ADR-0018 — the ONE owner of "which files represent a meeting in the fila".
-// The analysis IS the meeting's output, so that is its `notas/*` and nothing
+// The analysis IS the meeting's output, so that is its `notes/*` and nothing
 // else: never the transcript, never the audit, never audio.
 //
 // Hotspot #46: every path that queues a meeting resolves through HERE. A second
@@ -637,13 +646,13 @@ pub struct MeetingListItem {
 pub(crate) fn meeting_queueables(base: &Path, rel: &str) -> Vec<String> {
     let rel = rel.replace('\\', "/");
     let rel = rel.trim_end_matches('/');
-    let mut out: Vec<String> = std::fs::read_dir(base.join(rel).join("notas"))
+    let mut out: Vec<String> = std::fs::read_dir(base.join(rel).join("notes"))
         .map(|rd| {
             rd.flatten()
                 .filter(|f| f.path().is_file())
                 .filter_map(|f| {
                     let n = f.file_name().to_string_lossy().to_string();
-                    let r = format!("{rel}/notas/{n}");
+                    let r = format!("{rel}/notes/{n}");
                     (!n.starts_with('.') && is_queueable(&r)).then_some(r)
                 })
                 .collect()
@@ -654,7 +663,7 @@ pub(crate) fn meeting_queueables(base: &Path, rel: &str) -> Vec<String> {
 }
 
 fn list_meetings(base: &Path, slug: &str) -> Vec<MeetingListItem> {
-    let dir = brainstorming_dir(base).join(slug).join("reunioes");
+    let dir = brainstorming_dir(base).join(slug).join("meetings");
     let mut out: Vec<MeetingListItem> = std::fs::read_dir(dir)
         .map(|rd| {
             rd.flatten()
@@ -668,9 +677,9 @@ fn list_meetings(base: &Path, slug: &str) -> Vec<MeetingListItem> {
                             .ok()
                             .and_then(|t| serde_json::from_str(&t).ok())
                             .unwrap_or_default();
-                    let rel = format!("brainstorming/{slug}/reunioes/{id}");
+                    let rel = format!("brainstorming/{slug}/meetings/{id}");
                     MeetingListItem {
-                        notas: meeting_queueables(base, &rel).len(),
+                        notes: meeting_queueables(base, &rel).len(),
                         rel,
                         titulo: man.titulo,
                         status: man.status,
@@ -760,16 +769,16 @@ fn delete_tool(base: &Path, rel: &str) -> Result<(), String> {
 }
 
 // ---- anexos / notes in a brainstorming OR a context (ADR-0005) -------------
-// Both the brainstorming and the context now expose an `anexos/` folder that
+// Both the brainstorming and the context now expose an `attachments/` folder that
 // the user can feed from the computer or write a note into. A destination is
 // only ever one of those anexos folders: normalized (no traversal), rooted in
-// `brainstorming/` or `contextos/`, and ending in `anexos`. Returns the
+// `brainstorming/` or `contexts/`, and ending in `anexos`. Returns the
 // absolute dir (created) so both the file import (lib.rs, needs the dialog)
 // and the note creator below share the exact same guard.
 pub fn guarded_anexos_dir(base: &Path, dest_rel: &str) -> Result<PathBuf, String> {
     let rel = normalize_rel(dest_rel)?;
     let first = rel.split('/').next().unwrap_or("");
-    if (first != "brainstorming" && first != "contextos") || !rel.ends_with("/anexos") {
+    if (first != "brainstorming" && first != "contexts") || !rel.ends_with("/attachments") {
         return Err("err.invalid_anexos_dest".into());
     }
     let dir = base.join(&rel);
@@ -779,7 +788,7 @@ pub fn guarded_anexos_dir(base: &Path, dest_rel: &str) -> Result<PathBuf, String
 
 // Create a note (living front-matter markdown) inside an anexos folder — the
 // context counterpart to new_notebook (which targets a brainstorming's
-// notas/). Non-destructive: never overwrites (suffix on collision).
+// notes/). Non-destructive: never overwrites (suffix on collision).
 fn new_note_in(base: &Path, dest_rel: &str, titulo: &str, today: &str) -> Result<String, String> {
     let dir = guarded_anexos_dir(base, dest_rel)?;
     let slug = sanitize_slug(titulo)?;
@@ -812,7 +821,7 @@ pub fn brain_delete_tool(rel: String) -> Result<(), String> {
     delete_tool(&acervo_base()?, &rel)
 }
 
-// Create a notebook (.md) with living front-matter. Under a brainstorming's notas/
+// Create a notebook (.md) with living front-matter. Under a brainstorming's notes/
 // when one is given, else brainstorming/avulso/<AAAA-MM-DD>-<slug>.md. Non-destructive.
 fn new_notebook(
     base: &Path,
@@ -828,7 +837,7 @@ fn new_notebook(
                 return Err("err.invalid_brainstorm".into());
             }
             (
-                brainstorming_dir(base).join(t).join("notas"),
+                brainstorming_dir(base).join(t).join("notes"),
                 format!("{slug}.md"),
                 t.to_string(),
             )
@@ -1260,7 +1269,7 @@ fn promote(
     if !valid_context(dest_context) {
         return Err("err.invalid_target_context".into());
     }
-    let ctx_dir = base.join("contextos").join(dest_context);
+    let ctx_dir = base.join("contexts").join(dest_context);
     let ctx_md = ctx_dir.join("context.md");
     if !ctx_md.is_file() {
         return Err("err.target_context_not_found".into());
@@ -1301,7 +1310,7 @@ fn promote(
                     std::fs::write(&stub_path, stub).map_err(|e| e.to_string())?;
                 }
                 let to = format!("referencias/{stub_name}");
-                staged.push(format!("contextos/{dest_context}/referencias/{stub_name}"));
+                staged.push(format!("contexts/{dest_context}/referencias/{stub_name}"));
                 rewritten.push(RewrittenRef {
                     from: r.caminho.clone(),
                     to: to.clone(),
@@ -1327,9 +1336,7 @@ fn promote(
             std::fs::write(ref_dir.join(&target_name), &bytes).map_err(|e| e.to_string())?;
         }
         let to = format!("referencias/{target_name}");
-        staged.push(format!(
-            "contextos/{dest_context}/referencias/{target_name}"
-        ));
+        staged.push(format!("contexts/{dest_context}/referencias/{target_name}"));
         rewritten.push(RewrittenRef {
             from: r.caminho.clone(),
             to: to.clone(),
@@ -1343,14 +1350,14 @@ fn promote(
     let block = format!("### {title} — promovido em {today}\n\n{}", prose.trim());
     let merged = merge_prose(&content_of(&ctx_md)?, &block, mode);
     std::fs::write(&ctx_md, merged).map_err(|e| e.to_string())?;
-    staged.push(format!("contextos/{dest_context}/context.md"));
+    staged.push(format!("contexts/{dest_context}/context.md"));
 
     // CHANGELOG entry.
     let changelog_entry = format!(
         "## {today} — promovido: {title}\n\nConteúdo promovido da produção pessoal para o contexto `{dest_context}`."
     );
     append_changelog(&ctx_dir.join("CHANGELOG.md"), &changelog_entry)?;
-    staged.push(format!("contextos/{dest_context}/CHANGELOG.md"));
+    staged.push(format!("contexts/{dest_context}/CHANGELOG.md"));
 
     // Stamp the source (stays in pessoal/, never moved/committed here).
     let stamped = stamp_promovido(&content, dest_context, branch, today);
@@ -1378,7 +1385,7 @@ fn content_of(p: &Path) -> Result<String, String> {
 
 // A brainstorming file may enter the fila only when it is text (`.md`/`.txt`) and
 // is not the living notebook `reuniao.md` (which carries the transcript, BR-8).
-// Audio and `auditoria.jsonl` are non-text, so the text-only gate already excludes
+// Audio and `audit.jsonl` are non-text, so the text-only gate already excludes
 // them. Pure; expects an acervo-relative, forward-slash path.
 pub(crate) fn is_queueable(rel: &str) -> bool {
     let r = rel.replace('\\', "/");
@@ -1386,12 +1393,14 @@ pub(crate) fn is_queueable(rel: &str) -> bool {
         return false;
     }
     let leaf = r.rsplit('/').next().unwrap_or(&r);
-    leaf != "reuniao.md" && leaf != "auditoria.jsonl"
+    // both names of the living transcript: an acervo written before ADR-0026 §14
+    // still carries the old one, and it must keep being excluded
+    leaf != crate::meeting::LIVING_FILE && leaf != "reuniao.md" && leaf != "audit.jsonl"
 }
 
 // The inbox filename for a queued brainstorming file: the brainstorming-relative
 // path flattened (`/` -> `-`) so files sharing a basename never collide, e.g.
-// `brainstorming/frota/reunioes/r1/relatorio.md` -> `frota-reunioes-r1-relatorio.md`.
+// `brainstorming/frota/meetings/r1/relatorio.md` -> `frota-reunioes-r1-relatorio.md`.
 // Pure.
 pub(crate) fn queue_name_for(rel: &str) -> String {
     rel.replace('\\', "/")
@@ -1400,26 +1409,26 @@ pub(crate) fn queue_name_for(rel: &str) -> String {
 }
 
 // Every queueable file of a brainstorming (for "enviar tudo → fila"): a meeting's
-// analyses (`reunioes/<id>/notas/*`), plus the brainstorming's own `notas/` and
-// `anexos/`. `reuniao.md`/audio/audit are excluded by `is_queueable`; legacy
+// analyses (`meetings/<id>/notes/*`), plus the brainstorming's own `notes/` and
+// `attachments/`. `reuniao.md`/audio/audit are excluded by `is_queueable`; legacy
 // consolidated reports (`*-relatorio.md`) are skipped.
 //
-// ADR-0018: a meeting resolves to its `notas/*` and nothing else — the analysis
+// ADR-0018: a meeting resolves to its `notes/*` and nothing else — the analysis
 // IS the meeting's output, so a meeting nobody analysed contributes zero items
 // rather than an empty placeholder.
 pub(crate) fn queueable_files(base: &Path, slug: &str) -> Vec<String> {
     let root = brainstorming_dir(base).join(slug);
     let mut out = Vec::new();
-    if let Ok(rd) = std::fs::read_dir(root.join("reunioes")) {
+    if let Ok(rd) = std::fs::read_dir(root.join("meetings")) {
         for e in rd.flatten().filter(|e| e.path().is_dir()) {
             let id = e.file_name().to_string_lossy().to_string();
             out.extend(meeting_queueables(
                 base,
-                &format!("brainstorming/{slug}/reunioes/{id}"),
+                &format!("brainstorming/{slug}/meetings/{id}"),
             ));
         }
     }
-    for sub in ["notas", "anexos"] {
+    for sub in ["notes", "attachments"] {
         if let Ok(rd) = std::fs::read_dir(root.join(sub)) {
             for e in rd.flatten().filter(|e| e.path().is_file()) {
                 let n = e.file_name().to_string_lossy().to_string();
@@ -1466,9 +1475,28 @@ fn emit_brainstorming_changed(app: &AppHandle, payload: serde_json::Value) {
 
 // Delete a brainstorming item — a file, a meeting folder, or a whole brainstorming
 // — under brainstorming/. STRICTLY confined to that world (never a versioned
-// contextos/ path) and path-guarded (canonicalize + starts_with base + starts_with
+// contexts/ path) and path-guarded (canonicalize + starts_with base + starts_with
 // brainstorming/). The legacy `pessoal/` prefix is still accepted so un-migrated
 // acervos can prune. Recursive for folders.
+// ADR-0026 §14 — the frontend used to build `<tema>/indice.md` by hand, in three
+// places. With two possible names the caller cannot guess: it asks, and the
+// answer is the file that EXISTS (never a path that does not).
+#[tauri::command]
+pub fn brain_topic_doc(rel: String) -> Result<String, String> {
+    let base = acervo_base()?;
+    let rel = normalize_rel(&rel)?;
+    let dir = base.join(&rel);
+    if !dir.is_dir() {
+        return Err("err.not_found".into());
+    }
+    let leaf = topic_doc_of(&dir);
+    let name = leaf
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(TOPIC_DOC);
+    Ok(format!("{rel}/{name}"))
+}
+
 #[tauri::command]
 pub fn brain_brainstorm_delete(app: AppHandle, input: DeleteBrainstormInput) -> Result<(), String> {
     let rel = input.rel.replace('\\', "/");
@@ -1497,7 +1525,7 @@ pub fn brain_brainstorm_delete(app: AppHandle, input: DeleteBrainstormInput) -> 
 }
 
 // Rename a brainstorming FILE (note / analysis artifact) in place. Same world
-// confinement as delete (never a versioned contextos/ path); the new name is a
+// confinement as delete (never a versioned contexts/ path); the new name is a
 // bare filename — the original extension is kept when the user omits one.
 // Returns the new acervo-relative path. Pure core, testable without Tauri.
 pub(crate) fn rename_pessoal_file(base: &Path, rel: &str, name: &str) -> Result<String, String> {
@@ -1554,7 +1582,7 @@ pub fn brain_rename_pessoal(app: AppHandle, rel: String, name: String) -> Result
 // dangling links rather than shipping them.
 //
 // Pure so the substitution is unit-covered. Only whole path SEGMENTS match, so
-// `.../reunioes/m1` never rewrites `.../reunioes/m10`.
+// `.../meetings/m1` never rewrites `.../meetings/m10`.
 pub(crate) fn retarget_refs_in_content(content: &str, old_rel: &str, new_rel: &str) -> String {
     let old = old_rel.trim_end_matches('/');
     let new = new_rel.trim_end_matches('/');
@@ -1611,7 +1639,7 @@ pub(crate) fn retarget_refs_in_content(content: &str, old_rel: &str, new_rel: &s
 }
 
 // Walk the NON-VERSIONED worlds plus the acervo's own habilidades, and retarget
-// every inbound reference to a moved meeting. `contextos/` is deliberately
+// every inbound reference to a moved meeting. `contexts/` is deliberately
 // excluded: it is the versioned tree, whose edits go through a branch (ADR-0002),
 // and `move_pessoal_file` already refuses it on both ends. Rewriting a context's
 // CHANGELOG in place would falsify history.
@@ -1682,9 +1710,9 @@ fn retarget_refs_after_move(base: &Path, old_rel: &str, new_rel: &str) -> usize 
     n
 }
 
-// The meeting that owns a file, if any: `…/reunioes/<id>/…`. Used to take the
+// The meeting that owns a file, if any: `…/meetings/<id>/…`. Used to take the
 // right lock before rewriting someone else's living document. A file sitting
-// directly in `reunioes/` belongs to no meeting — hence the segment AFTER the id.
+// directly in `meetings/` belongs to no meeting — hence the segment AFTER the id.
 fn meeting_id_of(base: &Path, f: &Path) -> Option<String> {
     let rel = f
         .strip_prefix(base)
@@ -1692,19 +1720,19 @@ fn meeting_id_of(base: &Path, f: &Path) -> Option<String> {
         .to_string_lossy()
         .replace('\\', "/");
     let segs: Vec<&str> = rel.split('/').collect();
-    let at = segs.iter().position(|s| *s == "reunioes")?;
+    let at = segs.iter().position(|s| *s == "meetings")?;
     (segs.len() > at + 2).then(|| segs[at + 1].to_string())
 }
 
-// #44 — move a WHOLE meeting into another brainstorming's `reunioes/`.
+// #44 — move a WHOLE meeting into another brainstorming's `meetings/`.
 //
 // `move_pessoal_file` demands `src.is_file()` and cannot serve: a meeting is the
-// directory `reunioes/<id>/` (ADR-0008/0010). Moving is a rename of the DIRECTORY,
+// directory `meetings/<id>/` (ADR-0008/0010). Moving is a rename of the DIRECTORY,
 // which is why the analysis, the audio, the transcript and the audit travel
 // together without anything re-enumerating the folder — nothing here rebuilds the
 // BR-8 gate (`is_queueable`), which stays the fila's business alone (hotspot #46).
 //
-// The destination is always `brainstorming/<slug>/reunioes/`: `list_meetings`
+// The destination is always `brainstorming/<slug>/meetings/`: `list_meetings`
 // scans exactly that path, so anywhere else the meeting would vanish from the UI.
 // An `<id>` collision refuses instead of overwriting, as ADR-0009 decided for files.
 pub(crate) fn move_meeting_dir(base: &Path, rel: &str, dest_slug: &str) -> Result<String, String> {
@@ -1715,7 +1743,7 @@ pub(crate) fn move_meeting_dir(base: &Path, rel: &str, dest_slug: &str) -> Resul
     // The destination must be a real brainstorming slug. Empty, "." or a path
     // fragment used to slip through every later guard: `brainstorming/` itself is
     // a directory, so the meeting was renamed into a phantom
-    // `brainstorming/reunioes/` and `resolve_meeting_dir` could never find it
+    // `brainstorming/meetings/` and `resolve_meeting_dir` could never find it
     // again — analisar, relatório and apagar all failed with err.meeting_not_found.
     // `avulso` is excluded on purpose: it holds loose files, not brainstormings.
     if dest_slug.is_empty()
@@ -1753,8 +1781,8 @@ pub(crate) fn move_meeting_dir(base: &Path, rel: &str, dest_slug: &str) -> Resul
         .and_then(|s| s.to_str())
         .ok_or("err.invalid_path")?
         .to_string();
-    let dest_dir_rel = format!("brainstorming/{dest_slug}/reunioes");
-    // An older brainstorming may have no `reunioes/` yet; create it on demand
+    let dest_dir_rel = format!("brainstorming/{dest_slug}/meetings");
+    // An older brainstorming may have no `meetings/` yet; create it on demand
     // rather than offering a destination that fails (create_meeting does the same).
     let brainstorm = guarded_existing(base, &format!("brainstorming/{dest_slug}"))?;
     if !brainstorm.starts_with(base.join("brainstorming")) {
@@ -1763,7 +1791,7 @@ pub(crate) fn move_meeting_dir(base: &Path, rel: &str, dest_slug: &str) -> Resul
     if !brainstorm.is_dir() {
         return Err("err.not_found".into());
     }
-    std::fs::create_dir_all(brainstorm.join("reunioes")).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(brainstorm.join("meetings")).map_err(|e| e.to_string())?;
     let dest_dir = guarded_existing(base, &dest_dir_rel)?;
     if !dest_dir.starts_with(base.join("brainstorming")) {
         return Err("err.outside_brainstorm".into());
@@ -1864,7 +1892,7 @@ pub fn brain_move_pessoal(app: AppHandle, rel: String, dest_dir: String) -> Resu
     Ok(new_rel)
 }
 
-// #44 — move a whole meeting into another brainstorming's `reunioes/`.
+// #44 — move a whole meeting into another brainstorming's `meetings/`.
 #[tauri::command]
 pub fn brain_move_meeting(
     app: AppHandle,
@@ -2104,6 +2132,1560 @@ pub fn brain_promote(
     Ok(report)
 }
 
+// ---- knowledge graph (ADR-0026) ---------------------------------------------
+//
+// The lateral links between contexts are knowledge, not decoration: a context
+// cited by many is a central context, and a context nobody cites is knowledge no
+// flow depends on. Both facts are DERIVED ON READ. Nothing in this section writes
+// to disk — the acervo is versioned, so a generated index file or a renumbered id
+// would be a one-way door (ADR-0024's lesson, applied to reading).
+//
+// BR-8: every string below comes from `contexts/**/context.md`, the versioned
+// knowledge document. No meeting, transcript or audit file is ever opened here,
+// so none of them can reach a graph, a backlink or an index entry.
+
+// The knowledge document of a context; `guia.md` is the legacy name the reader
+// still resolves (see `context_file` in lib.rs).
+const CONTEXT_DOC_NAMES: [&str; 2] = ["context.md", "guia.md"];
+
+// The main markdown of a brainstorming topic (ADR-0026 §14: generated in English;
+// `indice.md` is the name earlier versions wrote and is still read).
+pub const TOPIC_DOC: &str = "index.md";
+pub const TOPIC_DOC_LEGACY: &str = "indice.md";
+
+// The topic document of a directory, new name first.
+pub fn topic_doc_of(dir: &Path) -> PathBuf {
+    let legacy = dir.join(TOPIC_DOC_LEGACY);
+    if legacy.is_file() {
+        return legacy;
+    }
+    dir.join(TOPIC_DOC)
+}
+
+// How far after a link the edge kind may sit. ADR-0026 asks for the word right
+// after the link; a whole sentence would let an unrelated "upstream" three
+// clauses later type an edge that was never described.
+const KIND_WINDOW: usize = 40;
+
+#[derive(Clone, Debug, PartialEq)]
+enum LinkTarget {
+    // Nothing on disk backs it: the web, an e-mail, an anchor inside this file.
+    NotAPath,
+    // An acervo-root-relative path (the target may or may not exist).
+    Internal(String),
+    // Meant to be a path but unusable: absolute, or escaping the acervo root.
+    Unresolvable,
+}
+
+#[derive(Clone, Debug)]
+struct DocLink {
+    label: String,
+    // as the author typed it — the string they have to fix when it is broken
+    raw: String,
+    target: LinkTarget,
+    kind: String,
+    section: String,
+}
+
+#[derive(Clone, Debug)]
+struct DocHotspot {
+    id: String,
+}
+
+#[derive(Clone, Debug)]
+struct ContextDoc {
+    rel: String,
+    context: String,
+    title: String,
+    hotspots: Vec<DocHotspot>,
+    decisions: Vec<String>,
+    codes: Vec<String>,
+    links: Vec<DocLink>,
+}
+
+// ---- parsing (pure) ---------------------------------------------------------
+
+// The acervo's mold numbers every section (0 Sumário … 6 Hotspots), so `§2` is an
+// address the author already wrote — no heading text is invented from prose.
+fn section_of(heading: &str) -> String {
+    let t = heading.trim_start_matches('#').trim_start();
+    let n: String = t.chars().take_while(char::is_ascii_digit).collect();
+    if n.is_empty() {
+        String::new()
+    } else {
+        format!("§{n}")
+    }
+}
+
+// `## 3 · Fluxos` -> Some("3 · Fluxos"); anything else is body text.
+fn heading_text(line: &str) -> Option<(usize, &str)> {
+    let t = line.trim_start();
+    let level = t.chars().take_while(|c| *c == '#').count();
+    if !(1..=6).contains(&level) {
+        return None;
+    }
+    let rest = t.get(level..)?;
+    rest.starts_with([' ', '\t']).then(|| (level, rest.trim()))
+}
+
+// `> [!HOTSPOT] H-<n> — título` (the marker the knowledge template writes).
+fn hotspot_of(line: &str) -> Option<DocHotspot> {
+    let t = line.trim_start().strip_prefix('>')?.trim_start();
+    if !t.to_ascii_uppercase().starts_with("[!HOTSPOT]") {
+        return None;
+    }
+    let rest = t.get("[!HOTSPOT]".len()..)?.trim_start();
+    let id_end = rest
+        .find(char::is_whitespace)
+        .unwrap_or(rest.len())
+        .min(rest.len());
+    let id = &rest[..id_end];
+    // ADR-0026 §15 — the id is a NAME taken from the title (`cancelamento-cdc`),
+    // so it stays unique once qualified by its context and can be cited from
+    // anywhere. `H-<n>` is still read: it is what an acervo written earlier has,
+    // and its numbering is local to the file, which is the defect this replaces.
+    let followed_by_dash = rest[id_end..].trim_start().starts_with(['—', '–', '-']);
+    let named = !id.is_empty()
+        && followed_by_dash
+        && id.starts_with(|c: char| c.is_ascii_alphabetic())
+        && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
+    if !named {
+        return None;
+    }
+    Some(DocHotspot { id: id.to_string() })
+}
+
+// ADR-0004 — `D-AAAA-MM-DD-<slug>`, already in the prose; this only finds it.
+fn is_decision_id(w: &str) -> bool {
+    let Some(rest) = w.strip_prefix("D-") else {
+        return false;
+    };
+    let b = rest.as_bytes();
+    b.len() > 11
+        && b[..4].iter().all(u8::is_ascii_digit)
+        && b[4] == b'-'
+        && b[5..7].iter().all(u8::is_ascii_digit)
+        && b[7] == b'-'
+        && b[8..10].iter().all(u8::is_ascii_digit)
+        && b[10] == b'-'
+}
+
+// The same locator the reader sees (`MM-1147`). The two-character minimum on the
+// prefix is what keeps it from swallowing the acervo's OWN ids — `H-3` and
+// `D-2026-…` both open with a single letter. Mirrors text.js's LOCATOR.
+fn is_external_code(w: &str) -> bool {
+    let Some((prefix, number)) = w.split_once('-') else {
+        return false;
+    };
+    (2..=5).contains(&prefix.len())
+        && prefix.starts_with(|c: char| c.is_ascii_uppercase())
+        && prefix
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+        && (1..=6).contains(&number.len())
+        && number.chars().all(|c| c.is_ascii_digit())
+}
+
+// The slug is the name the author gave the decision; the date prefix is an
+// address, not a word.
+
+// `https:`, `mailto:`, `slack:` — the test is the scheme itself, not a list of
+// the ones seen so far, because the lint must never call somebody else's address
+// space a dead end.
+fn has_url_scheme(t: &str) -> bool {
+    let Some((scheme, _)) = t.split_once(':') else {
+        return false;
+    };
+    scheme.starts_with(|c: char| c.is_ascii_alphabetic())
+        && scheme
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '-'))
+}
+
+// Where a link points, resolved against the document that carries it — the same
+// rules `resolve_ref` applies to a reference (`acervo://` anchored or relative,
+// never absolute, never escaping the root).
+fn resolve_target(source_rel: &str, raw: &str) -> LinkTarget {
+    let t = raw.trim().trim_matches(['<', '>']);
+    // markdown allows `(path "title")`; the path is the first word
+    let t = t.split_whitespace().next().unwrap_or_default();
+    let t = t.split('#').next().unwrap_or_default();
+    let path = match t.strip_prefix("acervo://") {
+        Some(anchored) => anchored.to_string(),
+        None => {
+            // empty: an anchor inside this very document
+            if t.is_empty() || has_url_scheme(t) {
+                return LinkTarget::NotAPath;
+            }
+            if t.starts_with('/') {
+                return LinkTarget::Unresolvable;
+            }
+            match source_rel.rsplit_once('/') {
+                Some((dir, _)) => format!("{dir}/{t}"),
+                None => t.to_string(),
+            }
+        }
+    };
+    match normalize_rel(&path) {
+        Ok(rel) if !rel.is_empty() => LinkTarget::Internal(rel),
+        _ => LinkTarget::Unresolvable,
+    }
+}
+
+struct RawLink {
+    label: String,
+    raw: String,
+    kind: String,
+}
+
+// One word, right after the link. Both spellings of the two-way edge collapse to
+// the pt-BR one so the JS has a single vocabulary to switch on.
+fn kind_after(tail: &str) -> String {
+    let t = tail.to_lowercase();
+    for (needle, kind) in [
+        ("bidirecional", "bidirecional"),
+        ("bidirectional", "bidirecional"),
+        ("downstream", "downstream"),
+        ("upstream", "upstream"),
+    ] {
+        if t.contains(needle) {
+            return kind.to_string();
+        }
+    }
+    String::new()
+}
+
+// The line's links plus the line as PROSE (every link replaced by its label).
+// Ids are then looked for in the prose only, so a code that happens to sit in a
+// URL never becomes a citation the acervo did not write.
+//
+// The acervo is 139k words of prose in which a link is rare, so a line with no
+// `[` is handed back untouched: paying for a char vector per line is what made
+// the whole-acervo pass cost real milliseconds.
+fn scan_line(line: &str) -> (Vec<RawLink>, Cow<'_, str>) {
+    if !line.contains('[') {
+        return (Vec::new(), Cow::Borrowed(line));
+    }
+    let cs: Vec<char> = line.chars().collect();
+    let take = |from: usize, upto: char| (from..cs.len()).find(|i| cs[*i] == upto);
+    // `[label](target)` starting at `open`; images share the shape.
+    let shaped = |open: usize| -> Option<(String, String, usize)> {
+        let close = take(open + 1, ']')?;
+        (cs.get(close + 1) == Some(&'(')).then_some(())?;
+        let end = take(close + 2, ')')?;
+        Some((
+            cs[open + 1..close].iter().collect(),
+            cs[close + 2..end].iter().collect(),
+            end,
+        ))
+    };
+    let mut links = Vec::new();
+    let mut prose = String::new();
+    let mut i = 0;
+    while i < cs.len() {
+        let image = cs[i] == '!' && cs.get(i + 1) == Some(&'[');
+        if image || cs[i] == '[' {
+            if let Some((label, raw, end)) = shaped(i + usize::from(image)) {
+                if !image {
+                    let tail: String = cs[end + 1..].iter().take(KIND_WINDOW).collect();
+                    links.push(RawLink {
+                        kind: kind_after(&tail),
+                        label: label.clone(),
+                        raw,
+                    });
+                }
+                prose.push_str(&label);
+                i = end + 1;
+                continue;
+            }
+        }
+        prose.push(cs[i]);
+        i += 1;
+    }
+    (links, Cow::Owned(prose))
+}
+
+fn parse_context_doc(rel: &str, context: &str, body: &str) -> ContextDoc {
+    let mut doc = ContextDoc {
+        rel: rel.to_string(),
+        context: context.to_string(),
+        title: String::new(),
+        hotspots: Vec::new(),
+        decisions: Vec::new(),
+        codes: Vec::new(),
+        links: Vec::new(),
+    };
+    let mut section = String::new();
+    let mut fenced = false;
+    for line in body.lines() {
+        let t = line.trim_start();
+        if t.starts_with("```") || t.starts_with("~~~") {
+            fenced = !fenced;
+            continue;
+        }
+        if fenced {
+            continue;
+        }
+        if let Some((level, text)) = heading_text(line) {
+            if level == 1 && doc.title.is_empty() {
+                doc.title = text.to_string();
+            }
+            section = section_of(text);
+        }
+        if let Some(h) = hotspot_of(line) {
+            doc.hotspots.push(h);
+        }
+        let (links, prose) = scan_line(line);
+        for l in links {
+            doc.links.push(DocLink {
+                target: resolve_target(rel, &l.raw),
+                label: l.label,
+                raw: l.raw,
+                kind: l.kind,
+                section: section.clone(),
+            });
+        }
+        // Every id the acervo cites carries digits (`D-2026-…`, `MM-1147`), so a
+        // line without one holds neither — and that is most of 139k words.
+        if !prose.bytes().any(|b| b.is_ascii_digit()) {
+            continue;
+        }
+        for w in prose.split(|c: char| !(c.is_alphanumeric() || c == '-' || c == '_')) {
+            if is_decision_id(w) {
+                if !doc.decisions.iter().any(|d| d == w) {
+                    doc.decisions.push(w.to_string());
+                }
+            } else if is_external_code(w) && !doc.codes.iter().any(|c| c == w) {
+                doc.codes.push(w.to_string());
+            }
+        }
+    }
+    if doc.title.is_empty() {
+        doc.title = context.to_string();
+    }
+    doc
+}
+
+// ---- scanning the acervo (one pass, cached by mtime) ------------------------
+
+#[derive(Clone, PartialEq)]
+struct DocStamp {
+    rel: String,
+    context: String,
+    mtime: u128,
+    len: u64,
+}
+
+fn context_doc_of(base: &Path, ctx: &str) -> Option<(String, std::fs::Metadata)> {
+    CONTEXT_DOC_NAMES.iter().find_map(|name| {
+        let rel = format!("contexts/{ctx}/{name}");
+        let md = base.join(&rel).metadata().ok()?;
+        md.is_file().then_some((rel, md))
+    })
+}
+
+// Every context document under `contexts/`, with the fingerprint the cache is
+// invalidated by. Metadata only — no file is read here.
+fn context_stamps(base: &Path) -> Vec<DocStamp> {
+    fn walk(base: &Path, dir: &Path, ctx: &str, out: &mut Vec<DocStamp>) {
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
+        let mut kids: Vec<String> = rd
+            .flatten()
+            .filter(|e| e.path().is_dir())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        kids.sort();
+        for name in kids {
+            let full = if ctx.is_empty() {
+                name.clone()
+            } else {
+                format!("{ctx}/{name}")
+            };
+            // the one owner of "what a context path may be" also bounds the depth
+            if !valid_context(&full) {
+                continue;
+            }
+            if let Some((rel, md)) = context_doc_of(base, &full) {
+                out.push(DocStamp {
+                    rel,
+                    context: full.clone(),
+                    mtime: md
+                        .modified()
+                        .ok()
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_nanos())
+                        .unwrap_or_default(),
+                    len: md.len(),
+                });
+            }
+            walk(base, &dir.join(&name), &full, out);
+        }
+    }
+    let mut out = Vec::new();
+    walk(base, &base.join("contexts"), "", &mut out);
+    out
+}
+
+struct GraphCache {
+    base: PathBuf,
+    stamps: Vec<DocStamp>,
+    docs: Arc<Vec<ContextDoc>>,
+}
+
+static GRAPH_CACHE: Mutex<Option<GraphCache>> = Mutex::new(None);
+
+// ONE pass over the acervo (80 documents, ~139k words), reused while nothing
+// changed. A counter that does not recompute is an interface that lies
+// (DESIGN.md §1), so the cache is keyed by the acervo plus mtime+size of every
+// context document: a rewrite, an addition or a removal re-reads the whole set.
+fn scan_contexts(base: &Path) -> Arc<Vec<ContextDoc>> {
+    let stamps = context_stamps(base);
+    {
+        let cache = GRAPH_CACHE.lock().expect("graph cache poisoned");
+        if let Some(c) = cache.as_ref() {
+            if c.base == base && c.stamps == stamps {
+                return Arc::clone(&c.docs);
+            }
+        }
+    }
+    let docs: Arc<Vec<ContextDoc>> = Arc::new(
+        stamps
+            .iter()
+            .map(|s| {
+                let body = std::fs::read_to_string(base.join(&s.rel)).unwrap_or_default();
+                parse_context_doc(&s.rel, &s.context, &body)
+            })
+            .collect(),
+    );
+    *GRAPH_CACHE.lock().expect("graph cache poisoned") = Some(GraphCache {
+        base: base.to_path_buf(),
+        stamps,
+        docs: Arc::clone(&docs),
+    });
+    docs
+}
+
+// ---- the graph --------------------------------------------------------------
+
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct GraphNode {
+    rel: String,
+    context: String,
+    title: String,
+    // qualified `<contexto>#H-<n>`: `H-3` alone is in almost every file
+    hotspots: Vec<String>,
+    decisions: Vec<String>,
+    inlinks: u32,
+    outlinks: u32,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct GraphEdge {
+    from: String,
+    to: String,
+    // "upstream" | "downstream" | "bidirecional" | "" when the author declared none
+    kind: String,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct BrokenLink {
+    from: String,
+    target: String,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeGraph {
+    nodes: Vec<GraphNode>,
+    edges: Vec<GraphEdge>,
+    broken: Vec<BrokenLink>,
+    orphans: Vec<String>,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Backlink {
+    rel: String,
+    context: String,
+    kind: String,
+}
+
+// The parent that indexes its subcontexts is navigation, not dependency: counting
+// it would make every parent look central and no subcontext could ever surface as
+// orphan. A child pointing UP is a claim the child chose to make, so it counts.
+fn is_parent_of(parent: &str, child: &str) -> bool {
+    child.starts_with(parent) && child.as_bytes().get(parent.len()) == Some(&b'/')
+}
+
+fn knowledge_graph(base: &Path, docs: &[ContextDoc]) -> KnowledgeGraph {
+    let context_of: HashMap<&str, &str> = docs
+        .iter()
+        .map(|d| (d.rel.as_str(), d.context.as_str()))
+        .collect();
+
+    let mut edges: Vec<GraphEdge> = Vec::new();
+    let mut broken: Vec<BrokenLink> = Vec::new();
+    for d in docs {
+        for l in &d.links {
+            let rel = match &l.target {
+                LinkTarget::NotAPath => continue,
+                LinkTarget::Unresolvable => {
+                    broken.push(BrokenLink {
+                        from: d.rel.clone(),
+                        target: l.raw.clone(),
+                    });
+                    continue;
+                }
+                LinkTarget::Internal(rel) => rel,
+            };
+            match context_of.get(rel.as_str()) {
+                Some(to) => {
+                    if *to != d.context && !is_parent_of(&d.context, to) {
+                        edges.push(GraphEdge {
+                            from: d.rel.clone(),
+                            to: rel.clone(),
+                            kind: l.kind.clone(),
+                        });
+                    }
+                }
+                // any other internal link (a reference, an image) is a dead end
+                // when the file is not there
+                None if !base.join(rel).exists() => broken.push(BrokenLink {
+                    from: d.rel.clone(),
+                    target: l.raw.clone(),
+                }),
+                None => {}
+            }
+        }
+    }
+
+    // Two contexts are neighbours once, however many times the prose says so; the
+    // kind survives even when only one of the mentions declared it.
+    edges.sort_by(|a, b| (&a.from, &a.to).cmp(&(&b.from, &b.to)));
+    let mut merged: Vec<GraphEdge> = Vec::with_capacity(edges.len());
+    for e in edges {
+        match merged.last_mut() {
+            Some(prev) if prev.from == e.from && prev.to == e.to => {
+                if prev.kind.is_empty() {
+                    prev.kind = e.kind;
+                }
+            }
+            _ => merged.push(e),
+        }
+    }
+    broken.sort_by(|a, b| (&a.from, &a.target).cmp(&(&b.from, &b.target)));
+    broken.dedup();
+
+    let mut inlinks: HashMap<&str, u32> = HashMap::new();
+    let mut outlinks: HashMap<&str, u32> = HashMap::new();
+    for e in &merged {
+        *outlinks.entry(e.from.as_str()).or_default() += 1;
+        *inlinks.entry(e.to.as_str()).or_default() += 1;
+    }
+
+    let nodes: Vec<GraphNode> = docs
+        .iter()
+        .map(|d| GraphNode {
+            hotspots: d
+                .hotspots
+                .iter()
+                .map(|h| format!("{}#{}", d.context, h.id))
+                .collect(),
+            decisions: d.decisions.clone(),
+            inlinks: inlinks.get(d.rel.as_str()).copied().unwrap_or_default(),
+            outlinks: outlinks.get(d.rel.as_str()).copied().unwrap_or_default(),
+            rel: d.rel.clone(),
+            context: d.context.clone(),
+            title: d.title.clone(),
+        })
+        .collect();
+    let orphans = nodes
+        .iter()
+        .filter(|n| n.inlinks == 0)
+        .map(|n| n.rel.clone())
+        .collect();
+
+    KnowledgeGraph {
+        nodes,
+        edges: merged,
+        broken,
+        orphans,
+    }
+}
+
+// "Cited by": the lateral edge read backwards. `kind` is echoed exactly as the
+// CITING document declared it — inverting the word is the reader's decision, not
+// the index's.
+fn backlinks(base: &Path, docs: &[ContextDoc], rel: &str) -> Vec<Backlink> {
+    let g = knowledge_graph(base, docs);
+    let context_of: HashMap<&str, &str> = docs
+        .iter()
+        .map(|d| (d.rel.as_str(), d.context.as_str()))
+        .collect();
+    g.edges
+        .iter()
+        .filter(|e| e.to == rel)
+        .map(|e| Backlink {
+            context: context_of
+                .get(e.from.as_str())
+                .copied()
+                .unwrap_or_default()
+                .to_string(),
+            rel: e.from.clone(),
+            kind: e.kind.clone(),
+        })
+        .collect()
+}
+
+// ---- the índice remissivo ---------------------------------------------------
+
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct IndexEntry {
+    rel: String,
+    context: String,
+    // an address INSIDE `rel`: "assinatura#H-3" | "D-2026-05-12-slug" | "§2" | "MM-1147"
+    locator: String,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct IndexTerm {
+    term: String,
+    entries: Vec<IndexEntry>,
+}
+
+// A term is a word the acervo ALREADY wrote — nothing is stemmed and no stopword
+// list is invented, because the vocabulary belongs to the authors. Only what is
+// not a name at all is dropped: a path used as a label, a bare number.
+fn clean_term(raw: &str) -> Option<String> {
+    let stripped: String = raw
+        .chars()
+        .filter(|c| !matches!(c, '*' | '_' | '`' | '"'))
+        .collect();
+    let term = stripped.split_whitespace().collect::<Vec<_>>().join(" ");
+    let ok = term.chars().count() >= 2
+        && !term.contains('/')
+        && !term.contains("http")
+        && term.chars().any(char::is_alphanumeric);
+    ok.then_some(term)
+}
+
+// "precificação" (the prose) and "precificacao" (the folder) are ONE word. The key
+// folds accent and case so they land in one entry; the DISPLAY keeps the accented
+// spelling, because that is how the language writes it and the index is for
+// people. Folding is only for matching — no word is ever rewritten in the acervo.
+fn fold_key(s: &str) -> String {
+    s.to_lowercase()
+        .chars()
+        .map(|c| match c {
+            'á' | 'à' | 'â' | 'ã' | 'ä' => 'a',
+            'é' | 'ê' | 'ë' => 'e',
+            'í' | 'ï' => 'i',
+            'ó' | 'ô' | 'õ' | 'ö' => 'o',
+            'ú' | 'ü' => 'u',
+            'ç' => 'c',
+            other => other,
+        })
+        .collect()
+}
+
+fn add_term(acc: &mut HashMap<String, IndexTerm>, raw: &str, entry: IndexEntry) {
+    let Some(term) = clean_term(raw) else {
+        return;
+    };
+    let slot = acc.entry(fold_key(&term)).or_insert_with(|| IndexTerm {
+        term: term.clone(),
+        entries: Vec::new(),
+    });
+    // the accented spelling wins the display: it is the one the prose wrote
+    if slot.term.is_ascii() && !term.is_ascii() {
+        slot.term = term;
+    }
+    if !slot.entries.contains(&entry) {
+        slot.entries.push(entry);
+    }
+}
+
+// ADR-0026 §13 — the index answers "where is this written", and the entry has to
+// be a WORD SOMEBODY WOULD LOOK UP. The first version listed machine artefacts:
+// decision slugs read "adr001 evento entrada" and "as is vs falhas travas", and a
+// hotspot title is a whole sentence. Mining the prose for candidate terms was
+// considered and dropped — it invents vocabulary the authors never chose, which
+// is the one thing this acervo refuses to do.
+//
+// What is left is what the acervo already names: the CONTEXT (and subcontext)
+// names, and the label a neighbour wrote when linking to one. Both are names of
+// things, both were typed by a person, and both address a place.
+//
+// The locator is `<tema> §n` — readable, and independent of any id.
+fn index_terms(docs: &[ContextDoc]) -> Vec<IndexTerm> {
+    let mut acc: HashMap<String, IndexTerm> = HashMap::new();
+    for d in docs {
+        let at = |locator: String| IndexEntry {
+            rel: d.rel.clone(),
+            context: d.context.clone(),
+            locator,
+        };
+        // The context names itself by its own last segment. The H1 is NOT a source:
+        // the mould writes "<caminho> — contexto do domínio", so using it produced
+        // entries like "cadastro — contexto do domínio" — the template talking,
+        // not a name anybody looks up.
+        let leaf = d.context.rsplit('/').next().unwrap_or(&d.context);
+        add_term(&mut acc, &leaf.replace('-', " "), at(String::new()));
+        // the external codes it cites stay: a person does look up "MM-1147"
+        for code in &d.codes {
+            add_term(&mut acc, code, at(code.clone()));
+        }
+        // and how a neighbour names it, where the neighbour wrote it
+        for l in &d.links {
+            add_term(&mut acc, &l.label, at(l.section.clone()));
+        }
+    }
+    let mut out: Vec<IndexTerm> = acc.into_values().collect();
+    for t in &mut out {
+        t.entries
+            .sort_by(|a, b| (&a.rel, &a.locator).cmp(&(&b.rel, &b.locator)));
+        // One place per document, sections joined: a book index writes
+        // "cadastro §1, §3, §4", never the same document three times in a row.
+        let mut merged: Vec<IndexEntry> = Vec::new();
+        for e in t.entries.drain(..) {
+            match merged.last_mut() {
+                Some(prev) if prev.rel == e.rel => {
+                    if e.locator.is_empty() || prev.locator.contains(&e.locator) {
+                        continue;
+                    }
+                    if prev.locator.is_empty() {
+                        prev.locator = e.locator;
+                    } else {
+                        prev.locator = format!("{}, {}", prev.locator, e.locator);
+                    }
+                }
+                _ => merged.push(e),
+            }
+        }
+        t.entries = merged;
+    }
+    out.sort_by(|a, b| {
+        a.term
+            .to_lowercase()
+            .cmp(&b.term.to_lowercase())
+            .then_with(|| a.term.cmp(&b.term))
+    });
+    out
+}
+
+// ---- commands ---------------------------------------------------------------
+//
+// ADR-0022 §28 — the three of them read EVERY context document of the acervo (80
+// files, ~139k words, measured at 72 ms cold in a debug build). A synchronous
+// `#[tauri::command]` runs on the main thread, and that is the bug class that
+// already froze this window twice; `async` moves the pass off it.
+
+#[tauri::command]
+pub async fn brain_knowledge_graph() -> Result<KnowledgeGraph, String> {
+    let base = acervo_base()?;
+    let docs = scan_contexts(&base);
+    Ok(knowledge_graph(&base, docs.as_slice()))
+}
+
+#[tauri::command]
+pub async fn brain_backlinks(rel: String) -> Result<Vec<Backlink>, String> {
+    let base = acervo_base()?;
+    let rel = normalize_rel(&rel)?;
+    let docs = scan_contexts(&base);
+    Ok(backlinks(&base, docs.as_slice(), &rel))
+}
+
+// ADR-0026 §13 — `REMISSIVO.md`, ao lado do `INDEX.md`. Gerado por CÓDIGO, nunca
+// por um modelo: um índice que alucina um verbete é pior que nenhum índice, e
+// este só pode envelhecer por não ser regerado — nunca por invenção. A tela e o
+// arquivo saem da MESMA função, então as duas jamais discordam.
+pub const TERMS_FILE: &str = "TERMS.md";
+
+// ADR-0026 §17 — the acervo is versioned and shared, so a person's name in it is
+// personal data in a place nobody consented to. The loop is already told to
+// describe participants by ARCHETYPE (produto, negócio, engenharia), but a rule
+// nobody checks is a rule that erodes: the reference acervo had 31 people and
+// 1.085 mentions in it before this check existed.
+//
+// What is reported is a CANDIDATE, never a verdict — "Pegar Agora" and "Gustavo
+// Ramos" have the same shape, and only a person can tell them apart. The command
+// finds and shows; it never edits.
+#[derive(serde::Serialize, PartialEq, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct PiiHit {
+    rel: String,
+    kind: String,
+    sample: String,
+    count: usize,
+}
+
+fn scan_pii(text: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for w in text.split_whitespace() {
+        let w = w.trim_matches(|c: char| !c.is_alphanumeric() && c != '@' && c != '.' && c != '-');
+        if w.contains('@') && w.contains('.') && !w.starts_with('@') {
+            let local = w.split('@').next().unwrap_or("");
+            // a functional mailbox (sinistros@, suporte@) is a role, not a person
+            if local.contains('.') {
+                out.push(("email".to_string(), w.to_string()));
+            }
+            continue;
+        }
+        // `nome.sobrenome` as a handle: two lowercase words, and the second one is
+        // NOT a known tail — a domain (`turbi.com`) and a file (`context.md`) have
+        // the very same shape, and calling them people is how a checker gets
+        // ignored.
+        const TAILS: [&str; 22] = [
+            "com", "br", "net", "org", "io", "dev", "app", "md", "txt", "json", "jsonl", "js",
+            "ts", "py", "sh", "yml", "yaml", "csv", "png", "jpg", "html", "xml",
+        ];
+        if let Some((a, b)) = w.split_once('.') {
+            let letters = |s: &str| s.len() >= 3 && s.chars().all(|c| c.is_ascii_lowercase());
+            if letters(a) && letters(b) && !TAILS.contains(&b) && w.matches('.').count() == 1 {
+                out.push(("handle".to_string(), w.to_string()));
+            }
+        }
+    }
+    out
+}
+
+fn index_markdown(terms: &[IndexTerm], lang: &str) -> String {
+    let en = lang == "en";
+    let mut out = String::new();
+    out.push_str(if en {
+        "# Index of terms\n\nEvery name the knowledge already writes, and where each one is.\nGenerated from `contexts/` — regenerate it when the knowledge changes.\n"
+    } else {
+        "# Índice remissivo\n\nTodo nome que o conhecimento já escreve, e onde cada um está.\nGerado a partir de `contexts/` — regere quando o conhecimento mudar.\n"
+    });
+    let mut letter = String::new();
+    for t in terms {
+        let first = t
+            .term
+            .chars()
+            .next()
+            .map(|c| c.to_uppercase().to_string())
+            .unwrap_or_default();
+        if first != letter {
+            letter = first.clone();
+            out.push_str(&format!("\n## {letter}\n\n"));
+        }
+        let places = t
+            .entries
+            .iter()
+            .map(|e| {
+                let where_ = if e.locator.starts_with('§') {
+                    format!("{} {}", e.context, e.locator)
+                } else if e.locator.is_empty() {
+                    e.context.clone()
+                } else {
+                    format!("{} · {}", e.context, e.locator)
+                };
+                format!("[{}]({})", where_, e.rel)
+            })
+            .collect::<Vec<_>>()
+            .join(" · ");
+        out.push_str(&format!("- **{}** — {places}\n", t.term));
+    }
+    out
+}
+
+// Reports PII candidates across the versioned knowledge. Read-only, always.
+#[tauri::command]
+pub async fn brain_pii_scan() -> Result<Vec<PiiHit>, String> {
+    let base = acervo_base()?;
+    let mut out: Vec<PiiHit> = Vec::new();
+    for doc in scan_contexts(&base).iter() {
+        let Ok(text) = std::fs::read_to_string(base.join(&doc.rel)) else {
+            continue;
+        };
+        let mut by_kind: HashMap<String, (String, usize)> = HashMap::new();
+        for (kind, sample) in scan_pii(&text) {
+            let e = by_kind.entry(kind).or_insert((sample.clone(), 0));
+            e.1 += 1;
+        }
+        for (kind, (sample, count)) in by_kind {
+            out.push(PiiHit {
+                rel: doc.rel.clone(),
+                kind,
+                sample,
+                count,
+            });
+        }
+    }
+    out.sort_by(|a, b| (&a.rel, &a.kind).cmp(&(&b.rel, &b.kind)));
+    Ok(out)
+}
+
+// Writes the índice remissivo, and answers whether it CHANGED. Writing only on a
+// difference is the whole point: this file is versioned, so rewriting identical
+// bytes would put a dirty file in front of the user on every refresh, and a diff
+// that says nothing is a diff nobody reads.
+pub fn write_terms(base: &Path, lang: &str) -> Result<bool, String> {
+    let docs = scan_contexts(base);
+    let md = index_markdown(&index_terms(docs.as_slice()), lang);
+    let path = base.join(TERMS_FILE);
+    if std::fs::read_to_string(&path).is_ok_and(|atual| atual == md) {
+        return Ok(false);
+    }
+    std::fs::write(&path, md).map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
+// ADR-0026 §18 — kept fresh without anybody pressing anything. The trigger is the
+// knowledge CHANGING (the same mtime+size stamps the graph cache uses), never the
+// screen being looked at: a status poll runs every few seconds, and a file that
+// rewrites itself on a read is a file that fights the user's git status.
+static TERMS_STAMP: Mutex<Option<(PathBuf, Vec<DocStamp>)>> = Mutex::new(None);
+
+pub fn refresh_terms_if_changed(base: &Path, lang: &str) {
+    let stamps = context_stamps(base);
+    {
+        let seen = TERMS_STAMP.lock().expect("terms stamp poisoned");
+        if let Some((b, s)) = seen.as_ref() {
+            if b == base && *s == stamps {
+                return;
+            }
+        }
+    }
+    if let Err(e) = write_terms(base, lang) {
+        tracing::error!(error = %e, "terms index not written");
+        return;
+    }
+    *TERMS_STAMP.lock().expect("terms stamp poisoned") = Some((base.to_path_buf(), stamps));
+}
+
+#[tauri::command]
+pub async fn brain_index_write() -> Result<String, String> {
+    let base = acervo_base()?;
+    write_terms(&base, &active_acervo_lang())?;
+    Ok(TERMS_FILE.to_string())
+}
+
+#[tauri::command]
+pub async fn brain_index_terms() -> Result<Vec<IndexTerm>, String> {
+    let base = acervo_base()?;
+    Ok(index_terms(scan_contexts(&base).as_slice()))
+}
+
+#[cfg(test)]
+mod graph_tests {
+    use super::*;
+
+    fn tmp(tag: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "loro-graph-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        root.canonicalize().unwrap()
+    }
+
+    fn write_ctx(base: &Path, ctx: &str, body: &str) {
+        let dir = base.join("contexts").join(ctx);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("context.md"), body).unwrap();
+    }
+
+    const ASSINATURA: &str = "\
+# Assinatura
+
+## 2 · Como funciona
+
+O preço vem de [precificação](../precificacao/context.md) upstream, e o carro sai
+de [a frota](../frota/context.md) no dia da retirada.
+
+Ver também [o que sumiu](../inexistente/context.md).
+
+O chamado MM-1147 registrou a decisão D-2026-07-23-correcao-upgrade.
+
+## 6 · Hotspots
+
+> [!HOTSPOT] H-1 — Regras financeiras em aberto
+> Falta a fonte.
+";
+
+    const PRECIFICACAO: &str = "\
+# Precificação
+
+## 3 · Fluxos principais
+
+A tabela vigente alimenta [assinatura](../assinatura/context.md) downstream.
+";
+
+    const FROTA: &str = "\
+# Frota
+
+## 4 · Quem participa e sistemas
+
+Subcontextos: [rastreamento](rastreamento/context.md).
+";
+
+    const RASTREAMENTO: &str = "\
+# Rastreamento
+
+## 1 · Visão geral
+
+Telemetria bruta do veículo.
+
+> [!HOTSPOT] H-1 — Sinal sem dono
+";
+
+    // Three contexts, one subcontext, one typed link, one link that goes nowhere
+    // and one context nobody cites — small enough to reason about by hand.
+    fn graph_acervo(tag: &str) -> PathBuf {
+        let base = tmp(tag);
+        write_ctx(&base, "assinatura", ASSINATURA);
+        write_ctx(&base, "precificacao", PRECIFICACAO);
+        write_ctx(&base, "frota", FROTA);
+        write_ctx(&base, "frota/rastreamento", RASTREAMENTO);
+        base
+    }
+
+    fn graph_of(base: &Path) -> KnowledgeGraph {
+        knowledge_graph(base, scan_contexts(base).as_slice())
+    }
+
+    fn node<'a>(g: &'a KnowledgeGraph, ctx: &str) -> &'a GraphNode {
+        g.nodes
+            .iter()
+            .find(|n| n.context == ctx)
+            .unwrap_or_else(|| panic!("no node for {ctx}"))
+    }
+
+    fn edge<'a>(g: &'a KnowledgeGraph, from: &str, to: &str) -> Option<&'a GraphEdge> {
+        g.edges
+            .iter()
+            .find(|e| e.from == doc_rel(from) && e.to == doc_rel(to))
+    }
+
+    fn doc_rel(ctx: &str) -> String {
+        format!("contexts/{ctx}/context.md")
+    }
+
+    // ADR-0026 §1 — the edge carries its kind in one word right after the link.
+    // Without it the graph knows two contexts touch but not who delivers to whom,
+    // which is the only part a reader actually needs.
+    #[test]
+    fn graph_reads_the_edge_kind_written_next_to_the_link() {
+        let base = graph_acervo("edge-kind");
+        let g = graph_of(&base);
+
+        assert_eq!(
+            edge(&g, "assinatura", "precificacao").map(|e| e.kind.as_str()),
+            Some("upstream")
+        );
+        assert_eq!(
+            edge(&g, "precificacao", "assinatura").map(|e| e.kind.as_str()),
+            Some("downstream")
+        );
+        // a link with no word after it is still an edge — untyped, never invented
+        assert_eq!(
+            edge(&g, "assinatura", "frota").map(|e| e.kind.as_str()),
+            Some("")
+        );
+    }
+
+    // ADR-0026 §1 — the parent indexing its subcontexts is navigation, not
+    // dependency. Counting it would make every parent look central and no
+    // subcontext could ever be orphan, which is exactly the fact worth seeing.
+    #[test]
+    fn graph_does_not_count_the_parent_index_as_a_lateral_edge() {
+        let base = graph_acervo("parent-child");
+        let g = graph_of(&base);
+
+        assert!(edge(&g, "frota", "frota/rastreamento").is_none());
+        assert_eq!(node(&g, "frota").outlinks, 0);
+        assert_eq!(node(&g, "frota/rastreamento").inlinks, 0);
+        // the link resolves, so it is navigation — never a broken link
+        assert!(g.broken.iter().all(|b| b.from != doc_rel("frota")));
+    }
+
+    // ADR-0026 §1 — a context nobody cites laterally is knowledge no flow depends
+    // on. The subcontext its parent lists is still an orphan.
+    #[test]
+    fn orphan_is_a_context_no_one_cites_laterally() {
+        let base = graph_acervo("orphans");
+        let g = graph_of(&base);
+
+        assert_eq!(g.orphans, vec![doc_rel("frota/rastreamento")]);
+    }
+
+    // ADR-0026 §1 — an internal link whose target is missing is a dead end
+    // (DESIGN.md §1: never show a control that does nothing). The lint names the
+    // target exactly as the author wrote it, because that is the string to fix.
+    #[test]
+    fn graph_reports_a_link_whose_target_does_not_exist() {
+        let base = graph_acervo("broken");
+        let g = graph_of(&base);
+
+        assert_eq!(g.broken.len(), 1, "only the missing target is broken");
+        assert_eq!(g.broken[0].from, doc_rel("assinatura"));
+        assert_eq!(g.broken[0].target, "../inexistente/context.md");
+    }
+
+    // ADR-0026 §4 — `H-1` exists in almost every context.md, so the raw id is not
+    // an address. The reading qualifies it with the context; the FILE is never
+    // rewritten (the acervo is versioned — renumbering on disk is a one-way door).
+    #[test]
+    fn graph_qualifies_every_hotspot_with_its_context() {
+        let base = graph_acervo("hotspots");
+        let before = std::fs::read_to_string(base.join(doc_rel("assinatura"))).unwrap();
+        let g = graph_of(&base);
+
+        assert_eq!(node(&g, "assinatura").hotspots, vec!["assinatura#H-1"]);
+        assert_eq!(
+            node(&g, "frota/rastreamento").hotspots,
+            vec!["frota/rastreamento#H-1"]
+        );
+        assert_eq!(
+            std::fs::read_to_string(base.join(doc_rel("assinatura"))).unwrap(),
+            before,
+            "the graph is a reading — it never writes the acervo"
+        );
+    }
+
+    // ADR-0026 §5 — the index vocabulary is what the acervo already wrote: the
+    // anchor text is how the NEIGHBOUR names the thing, and the entry addresses
+    // the section where that word actually sits.
+    #[test]
+    fn index_terms_come_from_the_anchor_text_a_neighbour_wrote() {
+        let base = graph_acervo("index-anchor");
+        let terms = index_terms(scan_contexts(&base).as_slice());
+
+        let t = terms
+            .iter()
+            .find(|t| t.term == "precificação")
+            .expect("the anchor text a neighbour wrote is a term");
+        // o verbete reúne os dois lugares: o tema que TEM esse nome, e a seção do
+        // vizinho que o cita — que é exatamente o que um índice de livro faz
+        assert!(t.entries.contains(&IndexEntry {
+            rel: doc_rel("assinatura"),
+            context: "assinatura".into(),
+            locator: "§2".into(),
+        }));
+        assert!(t.entries.contains(&IndexEntry {
+            rel: doc_rel("precificacao"),
+            context: "precificacao".into(),
+            locator: String::new(),
+        }));
+    }
+
+    // ADR-0026 §13 — the entry has to be a word somebody would LOOK UP. Machine
+    // artefacts are out: a decision slug reads "adr001 evento entrada" and a
+    // hotspot title is a whole sentence. What stays is what the acervo names.
+    #[test]
+    fn index_terms_are_names_a_person_looks_up_not_machine_artefacts() {
+        let base = graph_acervo("index-names");
+        let terms = index_terms(scan_contexts(&base).as_slice());
+        let has = |t: &str| terms.iter().any(|x| x.term == t);
+
+        assert!(has("assinatura"), "a context names itself");
+        assert!(has("rastreamento"), "a subcontext names itself by its leaf");
+        assert!(has("MM-1147"), "an external code is looked up as written");
+
+        for artefact in ["correcao upgrade", "Regras financeiras em aberto"] {
+            assert!(
+                !has(artefact),
+                "a machine artefact is still an entry: {artefact}"
+            );
+        }
+    }
+
+    // ADR-0026 §18 — the file keeps itself, and it only writes on a DIFFERENCE:
+    // rewriting identical bytes would leave a dirty file in the user's git status
+    // on every refresh, which is how a generated file trains people to ignore it.
+    #[test]
+    fn the_terms_file_is_written_once_and_rewritten_only_when_it_changes() {
+        let base = tmp("terms-write");
+        write_ctx(
+            &base,
+            "assinatura",
+            "# assinatura\n\n## 1 · Visão\n\ntexto.\n",
+        );
+
+        assert!(
+            write_terms(&base, "pt").unwrap(),
+            "a primeira escrita acontece"
+        );
+        let path = base.join(TERMS_FILE);
+        assert!(path.is_file());
+        let antes = std::fs::metadata(&path).unwrap().modified().unwrap();
+
+        assert!(
+            !write_terms(&base, "pt").unwrap(),
+            "sem mudança no conhecimento, o arquivo não é reescrito"
+        );
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().modified().unwrap(),
+            antes,
+            "nem o mtime se mexe"
+        );
+
+        // o conhecimento mudou: agora sim
+        write_ctx(
+            &base,
+            "precificacao",
+            "# precificacao\n\n## 1 · Visão\n\ntexto.\n",
+        );
+        assert!(
+            write_terms(&base, "pt").unwrap(),
+            "conhecimento novo, índice novo"
+        );
+        assert!(std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("precificacao"));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    // ADR-0026 §17 — the scan finds what LOOKS like personal data and shows it;
+    // it never decides, and it never edits. A functional mailbox is a role.
+    #[test]
+    fn the_pii_scan_finds_a_person_and_leaves_a_role_alone() {
+        let achados = scan_pii(
+            "o dono é felipe.blassioli@turbi.com.br e o autor cassio.martins abriu o card",
+        );
+        assert!(achados
+            .iter()
+            .any(|(k, v)| k == "email" && v.contains("felipe.blassioli")));
+        assert!(achados
+            .iter()
+            .any(|(k, v)| k == "handle" && v == "cassio.martins"));
+
+        // uma caixa funcional é papel, não pessoa
+        let papel = scan_pii("escreva para sinistros@turbi.com.br");
+        assert!(papel.is_empty(), "uma caixa de papel não é PII: {papel:?}");
+
+        // nome de arquivo e domínio não são handle de pessoa
+        for texto in ["veja context.md", "roda em turbi.com", "o campo mode.type"] {
+            let h = scan_pii(texto);
+            assert!(
+                h.iter().all(|(k, _)| k != "handle") || texto.contains("mode.type"),
+                "falso positivo em {texto}: {h:?}"
+            );
+        }
+    }
+
+    // ADR-0026 §15 — a hotspot id is a NAME, and the name is the address.
+    #[test]
+    fn a_hotspot_id_is_a_name_and_the_old_number_still_reads() {
+        let named = hotspot_of("> [!HOTSPOT] cancelamento-cdc — Cancelamento e arrependimento");
+        assert_eq!(named.map(|h| h.id), Some("cancelamento-cdc".to_string()));
+
+        let legacy = hotspot_of("> [!HOTSPOT] H-3 — Regras financeiras");
+        assert_eq!(legacy.map(|h| h.id), Some("H-3".to_string()));
+
+        // a title with no id is still a hotspot, it just has no address
+        assert!(hotspot_of("> [!HOTSPOT] Um ponto em aberto qualquer").is_none());
+        assert!(hotspot_of("> uma citação comum").is_none());
+    }
+
+    // Qualified by its context, a name is unique across the whole acervo — which
+    // `H-3`, numbered per file, never was.
+    #[test]
+    fn the_graph_qualifies_a_named_hotspot_with_its_context() {
+        let base = tmp("named-hotspot");
+        write_ctx(
+            &base,
+            "assinatura",
+            "# assinatura\n\n## 6 · Hotspots\n\n> [!HOTSPOT] cancelamento-cdc — Cancelamento\n> aberto\n",
+        );
+        let docs = scan_contexts(&base);
+        let g = knowledge_graph(&base, docs.as_slice());
+        assert_eq!(
+            node(&g, "assinatura").hotspots,
+            vec!["assinatura#cancelamento-cdc".to_string()]
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    // ADR-0026 §14 — what Loro GENERATES is named in English. The domain's own
+    // document keeps `context.md` (already English); the living transcript and the
+    // topic document stopped being Portuguese, and both old names are still read
+    // so an acervo written earlier keeps working.
+    #[test]
+    fn generated_files_are_named_in_english() {
+        assert_eq!(crate::meeting::LIVING_FILE, "meeting.md");
+        assert_eq!(TOPIC_DOC, "index.md");
+        assert_eq!(TERMS_FILE, "TERMS.md");
+        for name in [crate::meeting::LIVING_FILE, TOPIC_DOC, TERMS_FILE] {
+            assert!(
+                name.is_ascii() && !name.contains("reuniao") && !name.contains("indice"),
+                "a generated name is still Portuguese: {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_old_names_are_still_read_so_an_older_acervo_keeps_working() {
+        let base = tmp("legacy-names");
+        let topic = base.join("brainstorming/frota");
+        std::fs::create_dir_all(&topic).unwrap();
+        std::fs::write(topic.join(TOPIC_DOC_LEGACY), "# frota").unwrap();
+        assert_eq!(
+            topic_doc_of(&topic).file_name().unwrap(),
+            std::ffi::OsStr::new(TOPIC_DOC_LEGACY),
+            "an acervo written earlier keeps its own file"
+        );
+
+        let fresh = base.join("brainstorming/novo");
+        std::fs::create_dir_all(&fresh).unwrap();
+        assert_eq!(
+            topic_doc_of(&fresh).file_name().unwrap(),
+            std::ffi::OsStr::new(TOPIC_DOC),
+            "a new one is born in English"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    // A word is a word: "precificação" (prose) and "precificacao" (folder) are one
+    // entry, displayed the way the language writes it.
+    #[test]
+    fn accent_and_case_do_not_split_a_word_in_two_entries() {
+        assert_eq!(fold_key("Precificação"), fold_key("precificacao"));
+        let base = graph_acervo("index-fold");
+        let terms = index_terms(scan_contexts(&base).as_slice());
+        let hits: Vec<&IndexTerm> = terms
+            .iter()
+            .filter(|t| fold_key(&t.term) == "precificacao")
+            .collect();
+        assert_eq!(hits.len(), 1, "one word, one entry: {hits:?}");
+        assert_eq!(
+            hits[0].term, "precificação",
+            "the accented spelling is shown"
+        );
+    }
+
+    // The locator reads: `<tema> §n`, and a term that IS a theme needs no section.
+    #[test]
+    fn the_locator_reads_as_a_place_not_as_an_id() {
+        let base = graph_acervo("index-locator");
+        let terms = index_terms(scan_contexts(&base).as_slice());
+        let entry = |term: &str| {
+            terms
+                .iter()
+                .find(|t| t.term == term)
+                .map(|t| t.entries[0].clone())
+        };
+        let anchor = entry("precificação").expect("anchor term");
+        assert_eq!(anchor.locator, "§2");
+        assert_eq!(anchor.context, "assinatura");
+
+        let own = entry("assinatura").expect("the theme itself");
+        assert_eq!(own.locator, "", "the theme is the place; no section needed");
+    }
+
+    // The file and the screen come from the SAME function, so they cannot disagree.
+    #[test]
+    fn the_written_index_is_the_screen_in_markdown() {
+        let base = graph_acervo("index-file");
+        let terms = index_terms(scan_contexts(&base).as_slice());
+        let md = index_markdown(&terms, "pt");
+
+        assert!(md.starts_with("# Índice remissivo"));
+        assert!(
+            md.contains("- **assinatura** — [assinatura](contexts/assinatura/context.md)"),
+            "a theme entry points at the theme: {md}"
+        );
+        assert!(
+            md.contains("[assinatura §2](contexts/assinatura/context.md)"),
+            "a section locator reads as a place: {md}"
+        );
+        assert!(
+            md.contains("\n## A\n"),
+            "entries are grouped by letter: {md}"
+        );
+        // and nothing is written where the knowledge lives
+        assert!(
+            !base.join("REMISSIVO.md").exists(),
+            "generating never writes"
+        );
+    }
+
+    // ADR-0026 §5, revised by §13: the external code stayed — a person does look
+    // up "MM-1147" — and the machine artefacts went, so this test now pins the
+    // ABSENCE that replaced them.
+    #[test]
+    fn index_terms_also_come_from_hotspots_decisions_and_external_codes() {
+        let base = graph_acervo("index-sources");
+        let terms = index_terms(scan_contexts(&base).as_slice());
+        let locator_of = |term: &str| {
+            terms
+                .iter()
+                .find(|t| t.term == term)
+                .map(|t| t.entries[0].locator.clone())
+        };
+
+        assert_eq!(locator_of("MM-1147").as_deref(), Some("MM-1147"));
+        // a sentence is not an index entry, and neither is a slug
+        assert!(locator_of("Regras financeiras em aberto").is_none());
+        assert!(locator_of("correcao upgrade").is_none());
+        // the acervo's own ids are addresses, not external codes
+        assert!(locator_of("H-1").is_none());
+    }
+
+    // ADR-0026 §3 — "cited by" is the same lateral edge read backwards, with the
+    // kind exactly as the CITING document declared it (the reader's side decides
+    // how to word it).
+    #[test]
+    fn backlinks_say_who_cites_a_context_and_how() {
+        let base = graph_acervo("backlinks");
+        let docs = scan_contexts(&base);
+
+        let cited = backlinks(&base, docs.as_slice(), &doc_rel("precificacao"));
+        assert_eq!(
+            cited,
+            vec![Backlink {
+                rel: doc_rel("assinatura"),
+                context: "assinatura".into(),
+                kind: "upstream".into(),
+            }]
+        );
+        assert!(
+            backlinks(&base, docs.as_slice(), &doc_rel("frota/rastreamento")).is_empty(),
+            "the parent's index is not a citation"
+        );
+    }
+
+    // DESIGN.md §1 — a counter that does not recompute is an interface that lies.
+    // The scan is cached for cost (80 documents, ~139k words), so the cache must
+    // follow the file: mtime + size per document.
+    #[test]
+    fn the_scan_follows_the_documents_on_disk() {
+        let base = graph_acervo("cache");
+        assert_eq!(scan_contexts(&base).len(), 4);
+        assert_eq!(node(&graph_of(&base), "assinatura").decisions.len(), 1);
+
+        write_ctx(
+            &base,
+            "assinatura",
+            &format!("{ASSINATURA}\nE também a decisão D-2026-08-13-segunda-decisao.\n"),
+        );
+        write_ctx(&base, "novo", "# Novo\n\nSem ligações ainda.\n");
+
+        assert_eq!(scan_contexts(&base).len(), 5, "a new context.md is seen");
+        assert_eq!(
+            node(&graph_of(&base), "assinatura").decisions.len(),
+            2,
+            "a rewritten context.md is re-read"
+        );
+    }
+
+    // ADR-0026 §1 — the dead-end lint only speaks about paths. Anything carrying
+    // a scheme is somebody else's address space and no local file backs it, so
+    // calling it broken would be the app inventing a defect the author cannot fix.
+    #[test]
+    fn only_a_path_can_be_a_dead_end() {
+        let from = "contexts/assinatura/context.md";
+        for away in [
+            "https://turbi.com.br",
+            "http://x",
+            "mailto:alguem@exemplo.com",
+            "slack://channel",
+            "#secao-2",
+        ] {
+            assert_eq!(
+                resolve_target(from, away),
+                LinkTarget::NotAPath,
+                "{away} is not a path"
+            );
+        }
+        assert_eq!(
+            resolve_target(from, "../precificacao/context.md"),
+            LinkTarget::Internal("contexts/precificacao/context.md".into())
+        );
+        assert_eq!(
+            resolve_target(from, "acervo://contexts/frota/context.md"),
+            LinkTarget::Internal("contexts/frota/context.md".into())
+        );
+        // the path guard is the same one every other command uses: no absolute
+        // path, no escaping the acervo root
+        for outside in ["/etc/passwd", "../../../../etc/passwd"] {
+            assert_eq!(
+                resolve_target(from, outside),
+                LinkTarget::Unresolvable,
+                "{outside} must never resolve"
+            );
+        }
+    }
+
+    // ADR-0022 §28 — the same bug class a fourth time: heavy work inside a
+    // SYNCHRONOUS `#[tauri::command]`, which runs on the main thread and freezes
+    // the window. These three read every context.md of the acervo. A comment does
+    // not stop the fifth; this test does. The needle is assembled, because spelled
+    // out it would match this very file and pass on its own.
+    #[test]
+    fn the_graph_commands_never_run_on_the_main_thread() {
+        let src = include_str!("acervo.rs");
+        for cmd in [
+            "brain_knowledge_graph",
+            "brain_backlinks",
+            "brain_index_terms",
+        ] {
+            assert!(
+                src.contains(&format!("pub {} fn {cmd}", "async")),
+                "{cmd} has to be async: it reads EVERY context.md of the acervo \
+                 (measured: 72 ms cold over 80 documents, and that is the floor). \
+                 Synchronous, that pass happens on the main thread."
+            );
+        }
+    }
+
+    // The IPC contract is fixed (ARCHITECTURE §4): the JS reads these exact keys,
+    // so the shape is pinned by a test instead of by memory.
+    #[test]
+    fn the_graph_serializes_the_agreed_ipc_shape() {
+        let base = graph_acervo("ipc-shape");
+        let v = serde_json::to_value(graph_of(&base)).unwrap();
+
+        let keys = |o: &serde_json::Value| {
+            let mut k: Vec<String> = o.as_object().unwrap().keys().cloned().collect();
+            k.sort();
+            k
+        };
+        assert_eq!(keys(&v), ["broken", "edges", "nodes", "orphans"]);
+        assert_eq!(
+            keys(&v["nodes"][0]),
+            [
+                "context",
+                "decisions",
+                "hotspots",
+                "inlinks",
+                "outlinks",
+                "rel",
+                "title"
+            ]
+        );
+        assert_eq!(keys(&v["edges"][0]), ["from", "kind", "to"]);
+        assert_eq!(keys(&v["broken"][0]), ["from", "target"]);
+        assert!(v["orphans"][0].is_string());
+        assert_eq!(v["nodes"][0]["title"], "Assinatura");
+
+        let t = serde_json::to_value(index_terms(scan_contexts(&base).as_slice())).unwrap();
+        assert_eq!(keys(&t[0]), ["entries", "term"]);
+        assert_eq!(keys(&t[0]["entries"][0]), ["context", "locator", "rel"]);
+
+        let b = serde_json::to_value(backlinks(
+            &base,
+            scan_contexts(&base).as_slice(),
+            &doc_rel("precificacao"),
+        ))
+        .unwrap();
+        assert_eq!(keys(&b[0]), ["context", "kind", "rel"]);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2141,13 +3723,13 @@ mod tests {
 
     #[test]
     fn ref_tipo_inferred_from_extension() {
-        assert_eq!(ref_tipo("notas/x.md"), "doc");
+        assert_eq!(ref_tipo("notes/x.md"), "doc");
         assert_eq!(ref_tipo("a/chart.png"), "image");
         assert_eq!(ref_tipo("a/audio.wav"), "audio");
         assert_eq!(ref_tipo("a/planilha.xlsx"), "other");
     }
 
-    // ADR-0005: a brainstorming created before anexos/ existed (simulated here
+    // ADR-0005: a brainstorming created before attachments/ existed (simulated here
     // by building the old, narrower folder set by hand) must self-heal the
     // missing folder the next time it's listed — no explicit migration
     // command required.
@@ -2156,18 +3738,18 @@ mod tests {
         let base = tmp("bs-backfill");
         let dir = base.join("brainstorming/legado");
         for sub in [
-            "reunioes",
+            "meetings",
             "investigacoes",
             "perguntas",
-            "notas",
+            "notes",
             "relatorios",
         ] {
             std::fs::create_dir_all(dir.join(sub)).unwrap();
         }
-        assert!(!dir.join("anexos").exists());
+        assert!(!dir.join("attachments").exists());
         let list = list_brainstormings(&base);
         assert_eq!(list.len(), 1);
-        assert!(dir.join("anexos").is_dir());
+        assert!(dir.join("attachments").is_dir());
     }
 
     #[test]
@@ -2176,16 +3758,16 @@ mod tests {
         let t = create_brainstorming(&base, "Frota 2026!", Some("produto"), "2026-07-27").unwrap();
         assert_eq!(t.slug, "frota-2026");
         assert_eq!(t.rel, "brainstorming/frota-2026");
-        assert!(base.join("brainstorming/frota-2026/reunioes").is_dir());
-        assert!(base.join("brainstorming/frota-2026/anexos").is_dir());
+        assert!(base.join("brainstorming/frota-2026/meetings").is_dir());
+        assert!(base.join("brainstorming/frota-2026/attachments").is_dir());
         // legacy folders are no longer scaffolded (ADR-0005)
         assert!(!base.join("brainstorming/frota-2026/investigacoes").exists());
         assert!(!base.join("brainstorming/frota-2026/relatorios").exists());
-        assert!(base.join("brainstorming/frota-2026/indice.md").is_file());
+        assert!(base.join("brainstorming/frota-2026/index.md").is_file());
         assert!(base.join("brainstorming/frota-2026/meta.json").is_file());
 
         // scaffold a meeting + a notebook to exercise the counters
-        std::fs::create_dir_all(base.join("brainstorming/frota-2026/reunioes/2026-07-27-1000-x"))
+        std::fs::create_dir_all(base.join("brainstorming/frota-2026/meetings/2026-07-27-1000-x"))
             .unwrap();
         new_notebook(&base, Some("frota-2026"), "primeira nota", "2026-07-27").unwrap();
 
@@ -2193,14 +3775,14 @@ mod tests {
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].nome, "Frota 2026!");
         assert_eq!(list[0].categoria.as_deref(), Some("produto"));
-        assert_eq!(list[0].reunioes, 1);
+        assert_eq!(list[0].meetings, 1);
     }
 
     #[test]
     fn list_meetings_reads_titulo_from_manifest_and_sorts_recent_first() {
         let base = tmp("mtgs");
         create_brainstorming(&base, "Frota", None, "2026-07-27").unwrap();
-        let root = base.join("brainstorming/frota/reunioes");
+        let root = base.join("brainstorming/frota/meetings");
         for (id, titulo) in [
             ("2026-07-27-0900-antiga", "Reunião antiga"),
             ("2026-07-28-1000-recente", "Reunião recente"),
@@ -2222,7 +3804,7 @@ mod tests {
         assert_eq!(list[0].titulo, "Reunião recente");
         assert_eq!(
             list[0].rel,
-            "brainstorming/frota/reunioes/2026-07-28-1000-recente"
+            "brainstorming/frota/meetings/2026-07-28-1000-recente"
         );
         assert_eq!(list[1].titulo, "Reunião antiga");
         assert_eq!(list[0].status, "done");
@@ -2268,7 +3850,7 @@ mod tests {
         assert_eq!(refs[0].caminho, "acervo://pessoal/temas/x/chart.png");
         assert_eq!(refs[0].tipo, "image");
         // a second ref lands as r2 and both parse back
-        let (out2, id2) = add_ref_to_content(&out, "doc", "acervo://notas/y.md", None);
+        let (out2, id2) = add_ref_to_content(&out, "doc", "acervo://notes/y.md", None);
         assert_eq!(id2, "r2");
         assert_eq!(parse_refs(&split_front_matter(&out2).0.unwrap()).len(), 2);
     }
@@ -2276,12 +3858,12 @@ mod tests {
     #[test]
     fn resolve_ref_resolves_anchored_and_relative() {
         let base = tmp("resolve");
-        std::fs::create_dir_all(base.join("pessoal/temas/x/notas")).unwrap();
+        std::fs::create_dir_all(base.join("pessoal/temas/x/notes")).unwrap();
         std::fs::write(base.join("pessoal/temas/x/chart.png"), b"P").unwrap();
         // anchored form
         let a = resolve_ref(
             &base,
-            "pessoal/temas/x/notas/n.md",
+            "pessoal/temas/x/notes/n.md",
             "acervo://pessoal/temas/x/chart.png",
         )
         .unwrap();
@@ -2289,11 +3871,11 @@ mod tests {
         assert_eq!(a.tipo, "image");
         assert!(a.exists);
         // relative to the source dir
-        let b = resolve_ref(&base, "pessoal/temas/x/notas/n.md", "../chart.png").unwrap();
+        let b = resolve_ref(&base, "pessoal/temas/x/notes/n.md", "../chart.png").unwrap();
         assert_eq!(b.rel, "pessoal/temas/x/chart.png");
         assert!(b.exists);
         // a missing target resolves but reports exists:false
-        let c = resolve_ref(&base, "pessoal/temas/x/notas/n.md", "../missing.md").unwrap();
+        let c = resolve_ref(&base, "pessoal/temas/x/notes/n.md", "../missing.md").unwrap();
         assert!(!c.exists);
         // traversal past the root is refused
         assert!(resolve_ref(&base, "a/b.md", "../../../etc/passwd").is_err());
@@ -2301,12 +3883,12 @@ mod tests {
 
     // ADR-0008: skill-generated docs are notes. A meeting created before this
     // change kept analyses/answers under artefatos/<kind>/ (and legacy bare
-    // folders); listing meetings self-heals them into the meeting's notas/,
+    // folders); listing meetings self-heals them into the meeting's notes/,
     // non-destructively (dedup on name collision) and drops the empty legacy dirs.
     #[test]
     fn list_meetings_migrates_legacy_artefatos_into_notas() {
         let base = tmp("meeting-migrate");
-        let mdir = base.join("brainstorming/turbo/reunioes/2026-07-30-1000-x");
+        let mdir = base.join("brainstorming/turbo/meetings/2026-07-30-1000-x");
         std::fs::create_dir_all(mdir.join("artefatos/investigacoes")).unwrap();
         std::fs::create_dir_all(mdir.join("artefatos/respostas")).unwrap();
         std::fs::create_dir_all(mdir.join("perguntas")).unwrap();
@@ -2324,7 +3906,7 @@ mod tests {
 
         let _ = list_meetings(&base, "turbo");
 
-        let notas = mdir.join("notas");
+        let notas = mdir.join("notes");
         assert!(notas.join("analise-1.md").is_file());
         assert!(notas.join("r.md").is_file());
         assert!(notas.join("q.md").is_file());
@@ -2342,8 +3924,8 @@ mod tests {
     #[test]
     fn list_meetings_deletes_the_legacy_report_and_nothing_else() {
         let base = tmp("meeting-drop-report");
-        let mdir = base.join("brainstorming/turbo/reunioes/2026-07-30-1000-x");
-        std::fs::create_dir_all(mdir.join("notas")).unwrap();
+        let mdir = base.join("brainstorming/turbo/meetings/2026-07-30-1000-x");
+        std::fs::create_dir_all(mdir.join("notes")).unwrap();
         std::fs::create_dir_all(mdir.join("audio")).unwrap();
         std::fs::write(
             mdir.join("manifest.json"),
@@ -2352,13 +3934,13 @@ mod tests {
         .unwrap();
         std::fs::write(mdir.join("relatorio.md"), b"# rel").unwrap();
         std::fs::write(mdir.join("reuniao.md"), b"# transcricao").unwrap();
-        std::fs::write(mdir.join("marcadores.jsonl"), b"{}\n").unwrap();
-        std::fs::write(mdir.join("auditoria.jsonl"), b"{}\n").unwrap();
+        std::fs::write(mdir.join("markers.jsonl"), b"{}\n").unwrap();
+        std::fs::write(mdir.join("audit.jsonl"), b"{}\n").unwrap();
         std::fs::write(mdir.join("audio/mic.webm"), b"\x00").unwrap();
-        std::fs::write(mdir.join("notas/analise.md"), b"# analise").unwrap();
+        std::fs::write(mdir.join("notes/analise.md"), b"# analise").unwrap();
         // a note that HAPPENS to be named relatorio.md is the user's, not the
-        // app's — it lives in notas/ and must survive
-        std::fs::write(mdir.join("notas/relatorio.md"), b"# minha nota").unwrap();
+        // app's — it lives in notes/ and must survive
+        std::fs::write(mdir.join("notes/relatorio.md"), b"# minha nota").unwrap();
 
         let _ = list_meetings(&base, "turbo");
 
@@ -2366,11 +3948,11 @@ mod tests {
         for survivor in [
             "reuniao.md",
             "manifest.json",
-            "marcadores.jsonl",
-            "auditoria.jsonl",
+            "markers.jsonl",
+            "audit.jsonl",
             "audio/mic.webm",
-            "notas/analise.md",
-            "notas/relatorio.md",
+            "notes/analise.md",
+            "notes/relatorio.md",
         ] {
             assert!(
                 mdir.join(survivor).is_file(),
@@ -2382,15 +3964,15 @@ mod tests {
         let itens = list_meetings(&base, "turbo");
         assert_eq!(itens.len(), 1);
         assert_eq!(
-            itens[0].notas, 2,
-            "analise.md + notas/relatorio.md are both queueable"
+            itens[0].notes, 2,
+            "analise.md + notes/relatorio.md are both queueable"
         );
 
         // idempotent: a second listing has nothing left to do and touches nothing
-        let antes = std::fs::read_to_string(mdir.join("notas/relatorio.md")).unwrap();
+        let antes = std::fs::read_to_string(mdir.join("notes/relatorio.md")).unwrap();
         let _ = list_meetings(&base, "turbo");
         assert_eq!(
-            std::fs::read_to_string(mdir.join("notas/relatorio.md")).unwrap(),
+            std::fs::read_to_string(mdir.join("notes/relatorio.md")).unwrap(),
             antes
         );
         assert!(mdir.join("reuniao.md").is_file());
@@ -2402,15 +3984,15 @@ mod tests {
     #[test]
     fn resolve_ref_carries_excerpt_anchor_fragment() {
         let base = tmp("resolve-frag");
-        std::fs::create_dir_all(base.join("contextos/x")).unwrap();
-        std::fs::write(base.join("contextos/x/context.md"), b"# c").unwrap();
+        std::fs::create_dir_all(base.join("contexts/x")).unwrap();
+        std::fs::write(base.join("contexts/x/context.md"), b"# c").unwrap();
         let r = resolve_ref(
             &base,
-            "contextos/x/context.md",
-            "acervo://contextos/x/context.md#an_ab12",
+            "contexts/x/context.md",
+            "acervo://contexts/x/context.md#an_ab12",
         )
         .unwrap();
-        assert_eq!(r.rel, "contextos/x/context.md");
+        assert_eq!(r.rel, "contexts/x/context.md");
         assert!(r.exists);
         assert_eq!(r.anchor.as_deref(), Some("an_ab12"));
     }
@@ -2418,8 +4000,8 @@ mod tests {
     // Helper: a base with one real markdown doc to annotate.
     fn base_with_doc(tag: &str) -> (PathBuf, String) {
         let base = tmp(tag);
-        std::fs::create_dir_all(base.join("brainstorming/t/reunioes/r1")).unwrap();
-        let rel = "brainstorming/t/reunioes/r1/reuniao.md".to_string();
+        std::fs::create_dir_all(base.join("brainstorming/t/meetings/r1")).unwrap();
+        let rel = "brainstorming/t/meetings/r1/reuniao.md".to_string();
         std::fs::write(
             base.join(&rel),
             b"# Reuniao\n\ntivemos uma ideia importante\n",
@@ -2445,7 +4027,7 @@ mod tests {
         let id = add_annotation(&base, &rel, a, "2026-07-30").unwrap();
         assert!(id.starts_with("an_"));
         // the sidecar sits beside the doc, not inside the markdown
-        let side = base.join("brainstorming/t/reunioes/r1/reuniao.anotacoes.json");
+        let side = base.join("brainstorming/t/meetings/r1/reuniao.anotacoes.json");
         assert!(side.exists());
         assert!(!std::fs::read_to_string(base.join(&rel))
             .unwrap()
@@ -2519,7 +4101,7 @@ mod tests {
         );
         assert_eq!(anchor_path("http://example.com/x"), "http://example.com/x");
         // local paths still get anchored as before
-        assert_eq!(anchor_path("notas/x.md"), "acervo://notas/x.md");
+        assert_eq!(anchor_path("notes/x.md"), "acervo://notes/x.md");
     }
 
     #[test]
@@ -2527,7 +4109,7 @@ mod tests {
         let base = tmp("resolve-link");
         let r = resolve_ref(
             &base,
-            "pessoal/temas/x/notas/n.md",
+            "pessoal/temas/x/notes/n.md",
             "https://docs.google.com/document/d/ID/edit",
         )
         .unwrap();
@@ -2564,8 +4146,8 @@ mod tests {
         assert!(is_openable_link("http://example.com"));
         assert!(!is_openable_link("file:///etc/passwd"));
         assert!(!is_openable_link("javascript:alert(1)"));
-        assert!(!is_openable_link("notas/x.md"));
-        assert!(!is_openable_link("acervo://notas/x.md"));
+        assert!(!is_openable_link("notes/x.md"));
+        assert!(!is_openable_link("acervo://notes/x.md"));
     }
 
     // N4 — the review a change was sent to opens through this same door, so the
@@ -2646,31 +4228,43 @@ mod tests {
     }
 
     // ADR-0005: anexos folders exist in both worlds; the guard only accepts a
-    // normalized brainstorming/contextos anexos path (no traversal, no other
+    // normalized brainstorming/contexts anexos path (no traversal, no other
     // destination), and note creation is non-destructive.
     #[test]
     fn guarded_anexos_dir_accepts_only_anexos_folders() {
         let base = tmp("anexos-guard");
-        assert!(guarded_anexos_dir(&base, "contextos/frota/anexos").is_ok());
-        assert!(guarded_anexos_dir(&base, "brainstorming/x/anexos").is_ok());
+        assert!(guarded_anexos_dir(&base, "contexts/frota/attachments").is_ok());
+        assert!(guarded_anexos_dir(&base, "brainstorming/x/attachments").is_ok());
         // wrong folder / wrong world / traversal are all refused
-        assert!(guarded_anexos_dir(&base, "contextos/frota/notas").is_err());
-        assert!(guarded_anexos_dir(&base, "inbox/anexos").is_err());
-        assert!(guarded_anexos_dir(&base, "contextos/../../etc/anexos").is_err());
+        assert!(guarded_anexos_dir(&base, "contexts/frota/notes").is_err());
+        assert!(guarded_anexos_dir(&base, "inbox/attachments").is_err());
+        assert!(guarded_anexos_dir(&base, "contexts/../../etc/attachments").is_err());
     }
 
     #[test]
     fn new_note_in_writes_living_note_and_never_overwrites() {
         let base = tmp("note-in");
-        let a = new_note_in(&base, "contextos/frota/anexos", "Minha Nota", "2026-07-29").unwrap();
-        assert_eq!(a, "contextos/frota/anexos/minha-nota.md");
+        let a = new_note_in(
+            &base,
+            "contexts/frota/attachments",
+            "Minha Nota",
+            "2026-07-29",
+        )
+        .unwrap();
+        assert_eq!(a, "contexts/frota/attachments/minha-nota.md");
         let txt = std::fs::read_to_string(base.join(&a)).unwrap();
         assert!(txt.starts_with("---\nloro: 1\n"));
         assert!(txt.contains("# Minha Nota"));
-        let b = new_note_in(&base, "contextos/frota/anexos", "Minha Nota", "2026-07-29").unwrap();
+        let b = new_note_in(
+            &base,
+            "contexts/frota/attachments",
+            "Minha Nota",
+            "2026-07-29",
+        )
+        .unwrap();
         assert_ne!(a, b);
         // refuses a non-anexos destination
-        assert!(new_note_in(&base, "contextos/frota", "x", "2026-07-29").is_err());
+        assert!(new_note_in(&base, "contexts/frota", "x", "2026-07-29").is_err());
     }
 
     #[test]
@@ -2710,12 +4304,12 @@ mod tests {
     #[test]
     fn rename_pessoal_file_renames_and_keeps_extension() {
         let base = tmp("ren");
-        let dir = base.join("brainstorming/vendas/r1/notas");
+        let dir = base.join("brainstorming/vendas/r1/notes");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("analise-1.md"), "corpo").unwrap();
-        let rel = "brainstorming/vendas/r1/notas/analise-1.md";
+        let rel = "brainstorming/vendas/r1/notes/analise-1.md";
         let out = rename_pessoal_file(&base, rel, "riscos do contrato").unwrap();
-        assert_eq!(out, "brainstorming/vendas/r1/notas/riscos do contrato.md");
+        assert_eq!(out, "brainstorming/vendas/r1/notes/riscos do contrato.md");
         assert!(dir.join("riscos do contrato.md").is_file());
         assert!(!dir.join("analise-1.md").exists());
     }
@@ -2727,17 +4321,15 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("a.md"), "a").unwrap();
         std::fs::write(dir.join("b.md"), "b").unwrap();
-        std::fs::create_dir_all(base.join("contextos/c")).unwrap();
-        std::fs::write(base.join("contextos/c/context.md"), "x").unwrap();
+        std::fs::create_dir_all(base.join("contexts/c")).unwrap();
+        std::fs::write(base.join("contexts/c/context.md"), "x").unwrap();
         // versioned world is off-limits
         assert_eq!(
-            rename_pessoal_file(&base, "contextos/c/context.md", "y").unwrap_err(),
+            rename_pessoal_file(&base, "contexts/c/context.md", "y").unwrap_err(),
             "err.outside_brainstorm"
         );
         // traversal in rel and in the new name
-        assert!(
-            rename_pessoal_file(&base, "brainstorming/../contextos/c/context.md", "y").is_err()
-        );
+        assert!(rename_pessoal_file(&base, "brainstorming/../contexts/c/context.md", "y").is_err());
         assert_eq!(
             rename_pessoal_file(&base, "brainstorming/x/a.md", "../a").unwrap_err(),
             "err.invalid_file_name"
@@ -2753,18 +4345,18 @@ mod tests {
     #[test]
     fn move_pessoal_file_moves_between_folders() {
         let base = tmp("mv");
-        let src_dir = base.join("brainstorming/vendas/notas");
-        let dst_dir = base.join("brainstorming/vendas/anexos");
+        let src_dir = base.join("brainstorming/vendas/notes");
+        let dst_dir = base.join("brainstorming/vendas/attachments");
         std::fs::create_dir_all(&src_dir).unwrap();
         std::fs::create_dir_all(&dst_dir).unwrap();
         std::fs::write(src_dir.join("a.md"), "corpo").unwrap();
         let out = move_pessoal_file(
             &base,
-            "brainstorming/vendas/notas/a.md",
-            "brainstorming/vendas/anexos",
+            "brainstorming/vendas/notes/a.md",
+            "brainstorming/vendas/attachments",
         )
         .unwrap();
-        assert_eq!(out, "brainstorming/vendas/anexos/a.md");
+        assert_eq!(out, "brainstorming/vendas/attachments/a.md");
         assert!(dst_dir.join("a.md").is_file());
         assert!(!src_dir.join("a.md").exists());
     }
@@ -2772,37 +4364,37 @@ mod tests {
     #[test]
     fn move_pessoal_file_refuses_escapes_collisions_and_versioned() {
         let base = tmp("mv2");
-        std::fs::create_dir_all(base.join("brainstorming/x/notas")).unwrap();
+        std::fs::create_dir_all(base.join("brainstorming/x/notes")).unwrap();
         std::fs::create_dir_all(base.join("brainstorming/y")).unwrap();
-        std::fs::write(base.join("brainstorming/x/notas/a.md"), "a").unwrap();
+        std::fs::write(base.join("brainstorming/x/notes/a.md"), "a").unwrap();
         std::fs::write(base.join("brainstorming/y/a.md"), "dup").unwrap();
-        std::fs::create_dir_all(base.join("contextos/c")).unwrap();
-        std::fs::write(base.join("contextos/c/context.md"), "x").unwrap();
+        std::fs::create_dir_all(base.join("contexts/c")).unwrap();
+        std::fs::write(base.join("contexts/c/context.md"), "x").unwrap();
         // the versioned world is off-limits as source...
         assert_eq!(
-            move_pessoal_file(&base, "contextos/c/context.md", "brainstorming/x").unwrap_err(),
+            move_pessoal_file(&base, "contexts/c/context.md", "brainstorming/x").unwrap_err(),
             "err.outside_brainstorm"
         );
         // ...and as destination
         assert_eq!(
-            move_pessoal_file(&base, "brainstorming/x/notas/a.md", "contextos/c").unwrap_err(),
+            move_pessoal_file(&base, "brainstorming/x/notes/a.md", "contexts/c").unwrap_err(),
             "err.outside_brainstorm"
         );
         // traversal in the destination is refused
         assert!(move_pessoal_file(
             &base,
-            "brainstorming/x/notas/a.md",
-            "brainstorming/../contextos/c"
+            "brainstorming/x/notes/a.md",
+            "brainstorming/../contexts/c"
         )
         .is_err());
         // a name clash in the destination never overwrites
         assert_eq!(
-            move_pessoal_file(&base, "brainstorming/x/notas/a.md", "brainstorming/y").unwrap_err(),
+            move_pessoal_file(&base, "brainstorming/x/notes/a.md", "brainstorming/y").unwrap_err(),
             "err.file_exists_in_target"
         );
         // the destination folder must already exist
         assert_eq!(
-            move_pessoal_file(&base, "brainstorming/x/notas/a.md", "brainstorming/zzz")
+            move_pessoal_file(&base, "brainstorming/x/notes/a.md", "brainstorming/zzz")
                 .unwrap_err(),
             "err.not_found"
         );
@@ -2840,17 +4432,17 @@ mod tests {
     // meeting is represented by its relatorio.md, notes/analyses go as themselves.
     #[test]
     fn is_queueable_blocks_transcript_audio_audit_only() {
-        assert!(is_queueable("brainstorming/f/reunioes/r1/relatorio.md"));
-        assert!(is_queueable("brainstorming/f/reunioes/r1/notas/analise.md"));
-        assert!(is_queueable("brainstorming/f/notas/ideia.md"));
-        assert!(is_queueable("brainstorming/f/anexos/ata.txt"));
+        assert!(is_queueable("brainstorming/f/meetings/r1/relatorio.md"));
+        assert!(is_queueable("brainstorming/f/meetings/r1/notes/analise.md"));
+        assert!(is_queueable("brainstorming/f/notes/ideia.md"));
+        assert!(is_queueable("brainstorming/f/attachments/ata.txt"));
         // transcript / audit / audio / non-text never go
-        assert!(!is_queueable("brainstorming/f/reunioes/r1/reuniao.md"));
-        assert!(!is_queueable("brainstorming/f/reunioes/r1/auditoria.jsonl"));
+        assert!(!is_queueable("brainstorming/f/meetings/r1/reuniao.md"));
+        assert!(!is_queueable("brainstorming/f/meetings/r1/audit.jsonl"));
         assert!(!is_queueable(
-            "brainstorming/f/reunioes/r1/audio/system.wav"
+            "brainstorming/f/meetings/r1/audio/system.wav"
         ));
-        assert!(!is_queueable("brainstorming/f/anexos/deck.pdf"));
+        assert!(!is_queueable("brainstorming/f/attachments/deck.pdf"));
     }
 
     // Names must be unique across the brainstorming so two files with the same
@@ -2858,49 +4450,53 @@ mod tests {
     #[test]
     fn queue_name_for_flattens_path_and_is_collision_free() {
         assert_eq!(
-            queue_name_for("brainstorming/frota/reunioes/r1/relatorio.md"),
-            "frota-reunioes-r1-relatorio.md"
+            queue_name_for("brainstorming/frota/meetings/r1/relatorio.md"),
+            "frota-meetings-r1-relatorio.md"
         );
         assert_ne!(
-            queue_name_for("brainstorming/frota/reunioes/r1/relatorio.md"),
-            queue_name_for("brainstorming/frota/reunioes/r2/relatorio.md")
+            queue_name_for("brainstorming/frota/meetings/r1/relatorio.md"),
+            queue_name_for("brainstorming/frota/meetings/r2/relatorio.md")
         );
         assert_eq!(
-            queue_name_for("brainstorming/frota/notas/ideia.md"),
-            "frota-notas-ideia.md"
+            queue_name_for("brainstorming/frota/notes/ideia.md"),
+            "frota-notes-ideia.md"
         );
     }
 
     // T-6 · AC-6 (ADR-0018) — "enviar tudo → fila" enumerates every real file. A
-    // meeting now contributes its `notas/*` and NOTHING else: no report (it no
+    // meeting now contributes its `notes/*` and NOTHING else: no report (it no
     // longer exists) and never the transcript. Legacy consolidated reports in
-    // anexos/ are still skipped (ADR-0014).
+    // attachments/ are still skipped (ADR-0014).
     #[test]
     fn queueable_files_resolves_a_meeting_to_its_notas_only() {
         let base = tmp("queueable");
         let root = base.join("brainstorming/frota-2026");
-        let d = root.join("reunioes/2026-07-27-1000-plano");
-        std::fs::create_dir_all(d.join("notas")).unwrap();
+        let d = root.join("meetings/2026-07-27-1000-plano");
+        std::fs::create_dir_all(d.join("notes")).unwrap();
         std::fs::write(d.join("reuniao.md"), "# transcrição\n\n[00:00] fala\n").unwrap();
         // a report left behind by an old version is not a queue representative
         std::fs::write(d.join("relatorio.md"), "# Relatório\n\n## Resumo\n\nok\n").unwrap();
-        std::fs::write(d.join("notas/analise.md"), "# Análise\n\npontos\n").unwrap();
-        std::fs::create_dir_all(root.join("notas")).unwrap();
-        std::fs::write(root.join("notas/ideia.md"), "# Ideia\n\nx\n").unwrap();
-        std::fs::create_dir_all(root.join("anexos")).unwrap();
-        std::fs::write(root.join("anexos/ata.md"), "# Ata\n\ny\n").unwrap();
+        std::fs::write(d.join("notes/analise.md"), "# Análise\n\npontos\n").unwrap();
+        std::fs::create_dir_all(root.join("notes")).unwrap();
+        std::fs::write(root.join("notes/ideia.md"), "# Ideia\n\nx\n").unwrap();
+        std::fs::create_dir_all(root.join("attachments")).unwrap();
+        std::fs::write(root.join("attachments/ata.md"), "# Ata\n\ny\n").unwrap();
         // a legacy consolidated report must NOT be re-ingested
-        std::fs::write(root.join("anexos/2026-07-27-0900-relatorio.md"), "# old\n").unwrap();
+        std::fs::write(
+            root.join("attachments/2026-07-27-0900-relatorio.md"),
+            "# old\n",
+        )
+        .unwrap();
 
         let mut got = queueable_files(&base, "frota-2026");
         got.sort();
         assert_eq!(
             got,
             vec![
-                "brainstorming/frota-2026/anexos/ata.md".to_string(),
-                "brainstorming/frota-2026/notas/ideia.md".to_string(),
-                "brainstorming/frota-2026/reunioes/2026-07-27-1000-plano/notas/analise.md"
+                "brainstorming/frota-2026/attachments/ata.md".to_string(),
+                "brainstorming/frota-2026/meetings/2026-07-27-1000-plano/notes/analise.md"
                     .to_string(),
+                "brainstorming/frota-2026/notes/ideia.md".to_string(),
             ]
         );
     }
@@ -2910,10 +4506,10 @@ mod tests {
     #[test]
     fn queueable_files_gives_an_unanalysed_meeting_zero_items() {
         let base = tmp("queueable-vazia");
-        let d = base.join("brainstorming/frota/reunioes/2026-07-27-1000-plano");
-        std::fs::create_dir_all(d.join("notas")).unwrap();
+        let d = base.join("brainstorming/frota/meetings/2026-07-27-1000-plano");
+        std::fs::create_dir_all(d.join("notes")).unwrap();
         std::fs::write(d.join("reuniao.md"), "# transcrição\n").unwrap();
-        std::fs::write(d.join("auditoria.jsonl"), "{}\n").unwrap();
+        std::fs::write(d.join("audit.jsonl"), "{}\n").unwrap();
 
         assert!(queueable_files(&base, "frota").is_empty());
     }
@@ -2921,36 +4517,32 @@ mod tests {
     #[test]
     fn promote_never_leaks_into_pessoal_and_respects_deny_list() {
         // The headline ADR-0009 guard: promotion copies NO denied file into
-        // contextos/ and leaves NO ref pointing back into the git-ignored world.
+        // contexts/ and leaves NO ref pointing back into the git-ignored world.
         let base = tmp("promote");
         // destination context
-        std::fs::create_dir_all(base.join("contextos/frota")).unwrap();
+        std::fs::create_dir_all(base.join("contexts/frota")).unwrap();
         std::fs::write(
-            base.join("contextos/frota/context.md"),
+            base.join("contexts/frota/context.md"),
             "# frota\n\n## 6 · Hotspots\n\n(sem registros ainda)\n",
         )
         .unwrap();
         // source notebook with allowed + denied refs
-        let src_dir = base.join("pessoal/temas/x/notas");
+        let src_dir = base.join("pessoal/temas/x/notes");
         std::fs::create_dir_all(&src_dir).unwrap();
-        std::fs::create_dir_all(base.join("pessoal/temas/x/reunioes/r1")).unwrap();
+        std::fs::create_dir_all(base.join("pessoal/temas/x/meetings/r1")).unwrap();
         std::fs::write(base.join("pessoal/temas/x/chart.png"), b"PNGDATA").unwrap();
-        std::fs::write(base.join("pessoal/temas/x/reunioes/r1/audio.wav"), b"RIFF").unwrap();
-        std::fs::write(
-            base.join("pessoal/temas/x/reunioes/r1/auditoria.jsonl"),
-            "{}\n",
-        )
-        .unwrap();
+        std::fs::write(base.join("pessoal/temas/x/meetings/r1/audio.wav"), b"RIFF").unwrap();
+        std::fs::write(base.join("pessoal/temas/x/meetings/r1/audit.jsonl"), "{}\n").unwrap();
         let nb = "---\nloro: 1\nid: x\ntema: x\nrefs:\n\
             \x20 - id: r1\n    tipo: image\n    caminho: acervo://pessoal/temas/x/chart.png\n\
-            \x20 - id: r2\n    tipo: audio\n    caminho: acervo://pessoal/temas/x/reunioes/r1/audio.wav\n\
-            \x20 - id: r3\n    tipo: other\n    caminho: acervo://pessoal/temas/x/reunioes/r1/auditoria.jsonl\n\
+            \x20 - id: r2\n    tipo: audio\n    caminho: acervo://pessoal/temas/x/meetings/r1/audio.wav\n\
+            \x20 - id: r3\n    tipo: other\n    caminho: acervo://pessoal/temas/x/meetings/r1/audit.jsonl\n\
             ---\n\n# Descoberta\n\nVer grafico [gráfico](ref:r1), audio [áudio](ref:r2) e [audit](ref:r3).\n";
         std::fs::write(src_dir.join("n.md"), nb).unwrap();
 
         let rep = promote(
             &base,
-            "pessoal/temas/x/notas/n.md",
+            "pessoal/temas/x/notes/n.md",
             "frota",
             "hotspot",
             "rfc/frota",
@@ -2959,16 +4551,14 @@ mod tests {
         .unwrap();
 
         // allowed asset copied; audio became a text stub; audit NEVER copied
-        assert!(base.join("contextos/frota/referencias/chart.png").is_file());
+        assert!(base.join("contexts/frota/referencias/chart.png").is_file());
         assert!(base
-            .join("contextos/frota/referencias/audio.wav.txt")
+            .join("contexts/frota/referencias/audio.wav.txt")
             .is_file());
-        assert!(!base.join("contextos/frota/referencias/audio.wav").exists());
-        assert!(!base
-            .join("contextos/frota/referencias/auditoria.jsonl")
-            .exists());
+        assert!(!base.join("contexts/frota/referencias/audio.wav").exists());
+        assert!(!base.join("contexts/frota/referencias/audit.jsonl").exists());
 
-        // no staged file under contextos/ carries a PATH into the git-ignored
+        // no staged file under contexts/ carries a PATH into the git-ignored
         // world (the real leak: "pessoal/" or an "acervo://pessoal" ref)
         let leaks = |t: &str| t.contains("pessoal/") || t.contains("acervo://pessoal");
         for rel in &rep.staged_files {
@@ -2976,7 +4566,7 @@ mod tests {
             assert!(!leaks(&txt), "staged {rel} leaked a path into pessoal/");
         }
         // context.md carries the prose with rewritten refs, no pessoal path
-        let ctx = std::fs::read_to_string(base.join("contextos/frota/context.md")).unwrap();
+        let ctx = std::fs::read_to_string(base.join("contexts/frota/context.md")).unwrap();
         assert!(ctx.contains("referencias/chart.png"));
         assert!(ctx.contains("referencias/audio.wav.txt"));
         assert!(!leaks(&ctx));
@@ -2988,22 +4578,22 @@ mod tests {
             assert!(rw.to.starts_with("referencias/"));
         }
         // non-destructive: source stays put and is stamped promovido
-        let stamped = std::fs::read_to_string(base.join("pessoal/temas/x/notas/n.md")).unwrap();
+        let stamped = std::fs::read_to_string(base.join("pessoal/temas/x/notes/n.md")).unwrap();
         assert!(stamped.contains("promovido:"));
         assert!(stamped.contains("para: frota"));
-        assert!(base.join("contextos/frota/CHANGELOG.md").is_file());
+        assert!(base.join("contexts/frota/CHANGELOG.md").is_file());
     }
 
     // ---- #44: move a meeting with its whole analysis ------------------------
-    // A meeting is the FOLDER `reunioes/<id>/`; `move_pessoal_file` demands a file
+    // A meeting is the FOLDER `meetings/<id>/`; `move_pessoal_file` demands a file
     // and cannot serve. The move renames the whole directory — that is what makes
     // the analysis, the audio and the audit travel together without anything
     // re-enumerating them (hotspot #46: nothing here re-implements `is_queueable`).
 
-    // A complete meeting fixture under `brainstorming/<slug>/reunioes/<id>/`.
+    // A complete meeting fixture under `brainstorming/<slug>/meetings/<id>/`.
     fn meeting_fixture(base: &Path, slug: &str, id: &str) -> PathBuf {
-        let dir = base.join(format!("brainstorming/{slug}/reunioes/{id}"));
-        std::fs::create_dir_all(dir.join("notas")).unwrap();
+        let dir = base.join(format!("brainstorming/{slug}/meetings/{id}"));
+        std::fs::create_dir_all(dir.join("notes")).unwrap();
         std::fs::create_dir_all(dir.join("audio")).unwrap();
         std::fs::write(
             dir.join("reuniao.md"),
@@ -3017,8 +4607,8 @@ mod tests {
             ),
         )
         .unwrap();
-        std::fs::write(dir.join("notas/analise-2026-08-08.md"), "a análise").unwrap();
-        std::fs::write(dir.join("auditoria.jsonl"), "{}\n").unwrap();
+        std::fs::write(dir.join("notes/analise-2026-08-08.md"), "a análise").unwrap();
+        std::fs::write(dir.join("audit.jsonl"), "{}\n").unwrap();
         std::fs::write(dir.join("audio/mic.webm"), b"\x00\x01").unwrap();
         dir
     }
@@ -3028,25 +4618,25 @@ mod tests {
     fn move_meeting_dir_moves_the_whole_folder() {
         let base = tmp("mvmtg");
         let src = meeting_fixture(&base, "origem", "2026-08-08-1200-reuniao");
-        std::fs::create_dir_all(base.join("brainstorming/destino/reunioes")).unwrap();
+        std::fs::create_dir_all(base.join("brainstorming/destino/meetings")).unwrap();
 
         let out = move_meeting_dir(
             &base,
-            "brainstorming/origem/reunioes/2026-08-08-1200-reuniao",
+            "brainstorming/origem/meetings/2026-08-08-1200-reuniao",
             "destino",
         )
         .unwrap();
 
         assert_eq!(
             out,
-            "brainstorming/destino/reunioes/2026-08-08-1200-reuniao"
+            "brainstorming/destino/meetings/2026-08-08-1200-reuniao"
         );
         let dst = base.join(&out);
         for f in [
             "reuniao.md",
             "manifest.json",
-            "notas/analise-2026-08-08.md",
-            "auditoria.jsonl",
+            "notes/analise-2026-08-08.md",
+            "audit.jsonl",
             "audio/mic.webm",
         ] {
             assert!(dst.join(f).exists(), "{f} should have travelled along");
@@ -3060,9 +4650,9 @@ mod tests {
         let base = tmp("mvmtg-tema");
         let src = meeting_fixture(&base, "origem", "m1");
         let corpo_antes = std::fs::read_to_string(src.join("reuniao.md")).unwrap();
-        std::fs::create_dir_all(base.join("brainstorming/destino/reunioes")).unwrap();
+        std::fs::create_dir_all(base.join("brainstorming/destino/meetings")).unwrap();
 
-        let out = move_meeting_dir(&base, "brainstorming/origem/reunioes/m1", "destino").unwrap();
+        let out = move_meeting_dir(&base, "brainstorming/origem/meetings/m1", "destino").unwrap();
         let dst = base.join(&out);
 
         let manifest = std::fs::read_to_string(dst.join("manifest.json")).unwrap();
@@ -3091,7 +4681,7 @@ mod tests {
         meeting_fixture(&base, "destino", "m1");
 
         assert_eq!(
-            move_meeting_dir(&base, "brainstorming/origem/reunioes/m1", "destino").unwrap_err(),
+            move_meeting_dir(&base, "brainstorming/origem/meetings/m1", "destino").unwrap_err(),
             "err.file_exists_in_target"
         );
         assert!(src.join("reuniao.md").is_file(), "the source stays intact");
@@ -3104,30 +4694,30 @@ mod tests {
     fn move_meeting_dir_refuses_escapes_and_non_meetings() {
         let base = tmp("mvmtg-esc");
         meeting_fixture(&base, "origem", "m1");
-        std::fs::create_dir_all(base.join("contextos/c")).unwrap();
-        std::fs::create_dir_all(base.join("brainstorming/origem/notas")).unwrap();
-        std::fs::write(base.join("brainstorming/origem/notas/a.md"), "x").unwrap();
+        std::fs::create_dir_all(base.join("contexts/c")).unwrap();
+        std::fs::create_dir_all(base.join("brainstorming/origem/notes")).unwrap();
+        std::fs::write(base.join("brainstorming/origem/notes/a.md"), "x").unwrap();
 
         // AC-4 names the codes — assert them, not just `is_err`
         assert_eq!(
-            move_meeting_dir(&base, "contextos/c", "origem").unwrap_err(),
+            move_meeting_dir(&base, "contexts/c", "origem").unwrap_err(),
             "err.outside_brainstorm"
         );
         assert_eq!(
-            move_meeting_dir(&base, "brainstorming/origem/reunioes/../../..", "destino")
+            move_meeting_dir(&base, "brainstorming/origem/meetings/../../..", "destino")
                 .unwrap_err(),
             "err.invalid_path"
         );
         assert_eq!(
-            move_meeting_dir(&base, "brainstorming/origem/notas/a.md", "destino").unwrap_err(),
+            move_meeting_dir(&base, "brainstorming/origem/notes/a.md", "destino").unwrap_err(),
             "err.not_found"
         );
         assert_eq!(
-            move_meeting_dir(&base, "brainstorming/origem/reunioes/m1", "nao-existe").unwrap_err(),
+            move_meeting_dir(&base, "brainstorming/origem/meetings/m1", "nao-existe").unwrap_err(),
             "err.not_found"
         );
         assert_eq!(
-            move_meeting_dir(&base, "brainstorming/origem/reunioes/m1", "a/b").unwrap_err(),
+            move_meeting_dir(&base, "brainstorming/origem/meetings/m1", "a/b").unwrap_err(),
             "err.invalid_path"
         );
     }
@@ -3137,9 +4727,9 @@ mod tests {
     fn moved_meeting_is_listed_at_the_destination_only() {
         let base = tmp("mvmtg-list");
         meeting_fixture(&base, "origem", "m1");
-        std::fs::create_dir_all(base.join("brainstorming/destino/reunioes")).unwrap();
+        std::fs::create_dir_all(base.join("brainstorming/destino/meetings")).unwrap();
 
-        move_meeting_dir(&base, "brainstorming/origem/reunioes/m1", "destino").unwrap();
+        move_meeting_dir(&base, "brainstorming/origem/meetings/m1", "destino").unwrap();
 
         assert!(list_meetings(&base, "origem").is_empty());
         let no_destino = list_meetings(&base, "destino");
@@ -3155,59 +4745,59 @@ mod tests {
     fn br8_move_does_not_reimplement_the_queue_gate() {
         let base = tmp("mvmtg-br8");
         meeting_fixture(&base, "origem", "m1");
-        std::fs::create_dir_all(base.join("brainstorming/destino/reunioes")).unwrap();
+        std::fs::create_dir_all(base.join("brainstorming/destino/meetings")).unwrap();
 
-        let out = move_meeting_dir(&base, "brainstorming/origem/reunioes/m1", "destino").unwrap();
+        let out = move_meeting_dir(&base, "brainstorming/origem/meetings/m1", "destino").unwrap();
         let dst = base.join(&out);
 
         // what the fila BARS travelled along — proof the move does not filter
         assert!(dst.join("reuniao.md").is_file());
         assert!(dst.join("audio/mic.webm").is_file());
-        assert!(dst.join("auditoria.jsonl").is_file());
+        assert!(dst.join("audit.jsonl").is_file());
         assert!(
             !is_queueable("reuniao.md"),
             "BR-8 still bars it from the fila"
         );
-        assert!(!is_queueable("auditoria.jsonl"));
+        assert!(!is_queueable("audit.jsonl"));
         // and what the fila ACCEPTS is still accepted, at the destination
-        assert!(is_queueable("notas/analise-2026-08-08.md"));
+        assert!(is_queueable("notes/analise-2026-08-08.md"));
     }
 
     // BR-1 — inference and meeting material live in the NON-versioned world.
     // `move_meeting_dir` is a new path for relocating a transcript and its audio,
     // so it needs the invariant
     // `meeting_stays_under_brainstorming_and_is_never_versioned` guards: a symlink
-    // under the brainstorming tree must not bridge into `contextos/`.
+    // under the brainstorming tree must not bridge into `contexts/`.
     #[test]
     #[cfg(unix)]
     fn br1_move_never_leaks_a_meeting_into_the_versioned_tree() {
         let base = tmp("mvmtg-br1");
         meeting_fixture(&base, "origem", "m1");
-        std::fs::create_dir_all(base.join("contextos/c")).unwrap();
+        std::fs::create_dir_all(base.join("contexts/c")).unwrap();
         std::fs::create_dir_all(base.join("brainstorming/ponte")).unwrap();
-        // brainstorming/ponte/reunioes -> contextos/c
+        // brainstorming/ponte/meetings -> contexts/c
         std::os::unix::fs::symlink(
-            base.join("contextos/c"),
-            base.join("brainstorming/ponte/reunioes"),
+            base.join("contexts/c"),
+            base.join("brainstorming/ponte/meetings"),
         )
         .unwrap();
 
         assert_eq!(
-            move_meeting_dir(&base, "brainstorming/origem/reunioes/m1", "ponte").unwrap_err(),
+            move_meeting_dir(&base, "brainstorming/origem/meetings/m1", "ponte").unwrap_err(),
             "err.outside_brainstorm"
         );
         assert!(
-            base.join("brainstorming/origem/reunioes/m1/reuniao.md")
+            base.join("brainstorming/origem/meetings/m1/reuniao.md")
                 .is_file(),
             "the meeting stays where it was"
         );
         assert!(
-            !base.join("contextos/c/m1").exists(),
+            !base.join("contexts/c/m1").exists(),
             "and NOTHING of it reaches the versioned tree"
         );
     }
 
-    // A brainstorming with no `reunioes/` is still a valid destination: the folder
+    // A brainstorming with no `meetings/` is still a valid destination: the folder
     // is created on demand, as `create_meeting` does, instead of being offered and
     // then failing.
     #[test]
@@ -3216,50 +4806,50 @@ mod tests {
         meeting_fixture(&base, "origem", "m1");
         std::fs::create_dir_all(base.join("brainstorming/novo")).unwrap();
 
-        let out = move_meeting_dir(&base, "brainstorming/origem/reunioes/m1", "novo").unwrap();
-        assert_eq!(out, "brainstorming/novo/reunioes/m1");
+        let out = move_meeting_dir(&base, "brainstorming/origem/meetings/m1", "novo").unwrap();
+        assert_eq!(out, "brainstorming/novo/meetings/m1");
         assert!(base.join(&out).join("manifest.json").is_file());
     }
 
     // Inbound references must not be left dangling.
     #[test]
     fn retarget_refs_rewrites_paths_and_anchors_on_segment_boundaries() {
-        let old = "brainstorming/a/reunioes/m1";
-        let new = "brainstorming/b/reunioes/m1";
+        let old = "brainstorming/a/meetings/m1";
+        let new = "brainstorming/b/meetings/m1";
         let doc = concat!(
-            "  - caminho: brainstorming/a/reunioes/m1/notas/x.md\n",
-            "veja [isto](acervo://brainstorming/a/reunioes/m1/reuniao.md#h1)\n",
-            "  - caminho: brainstorming/a/reunioes/m10/notas/y.md\n",
-            "  - caminho: brainstorming/a/notas/z.md\n",
+            "  - caminho: brainstorming/a/meetings/m1/notes/x.md\n",
+            "veja [isto](acervo://brainstorming/a/meetings/m1/reuniao.md#h1)\n",
+            "  - caminho: brainstorming/a/meetings/m10/notes/y.md\n",
+            "  - caminho: brainstorming/a/notes/z.md\n",
         );
         let out = retarget_refs_in_content(doc, old, new);
-        assert!(out.contains(&format!("caminho: {new}/notas/x.md")));
+        assert!(out.contains(&format!("caminho: {new}/notes/x.md")));
         assert!(out.contains(&format!("acervo://{new}/reuniao.md#h1")));
         assert!(
-            out.contains("reunioes/m10/notas/y.md"),
+            out.contains("meetings/m10/notes/y.md"),
             "m10 is not m1: only a whole segment matches"
         );
         assert!(
-            out.contains("brainstorming/a/notas/z.md"),
+            out.contains("brainstorming/a/notes/z.md"),
             "an unrelated path stays"
         );
     }
 
     #[test]
     fn retarget_refs_is_a_noop_when_nothing_points_at_the_meeting() {
-        let doc = "  - caminho: brainstorming/x/notas/a.md\n";
+        let doc = "  - caminho: brainstorming/x/notes/a.md\n";
         assert_eq!(
             retarget_refs_in_content(
                 doc,
-                "brainstorming/a/reunioes/m1",
-                "brainstorming/b/reunioes/m1"
+                "brainstorming/a/meetings/m1",
+                "brainstorming/b/meetings/m1"
             ),
             doc
         );
     }
 
     // B1 — an empty, dotted or non-slug destination used to slip through every
-    // guard and rename the meeting into a phantom `brainstorming/reunioes/`,
+    // guard and rename the meeting into a phantom `brainstorming/meetings/`,
     // where `resolve_meeting_dir` could never find it again.
     #[test]
     fn move_meeting_dir_refuses_a_destination_that_is_not_a_brainstorming() {
@@ -3269,14 +4859,14 @@ mod tests {
 
         for bad in ["", ".", "..", "avulso", "Com Espaço", "a/b", "MAIÚSCULO"] {
             assert_eq!(
-                move_meeting_dir(&base, "brainstorming/origem/reunioes/m1", bad).unwrap_err(),
+                move_meeting_dir(&base, "brainstorming/origem/meetings/m1", bad).unwrap_err(),
                 "err.invalid_path",
                 "destination {bad:?} must be refused"
             );
         }
         assert!(src.join("reuniao.md").is_file(), "nothing moved");
         assert!(
-            !base.join("brainstorming/reunioes").exists(),
+            !base.join("brainstorming/meetings").exists(),
             "no phantom folder is created"
         );
     }
@@ -3288,40 +4878,40 @@ mod tests {
     fn move_meeting_dir_repaths_the_manifest_of_the_moved_meeting() {
         let base = tmp("mvmtg-repath");
         let src = meeting_fixture(&base, "origem", "m1");
-        std::fs::create_dir_all(base.join("brainstorming/destino/reunioes")).unwrap();
+        std::fs::create_dir_all(base.join("brainstorming/destino/meetings")).unwrap();
         std::fs::write(
             src.join("manifest.json"),
             r#"{
   "id": "m1",
   "tema": "origem",
   "status": "done",
-  "audio": { "mic": "brainstorming/origem/reunioes/m1/audio/mic.webm" },
+  "audio": { "mic": "brainstorming/origem/meetings/m1/audio/mic.webm" },
   "artifacts": [
-    { "id": "a1", "kind": "notas", "name": "n.md",
-      "rel": "brainstorming/origem/reunioes/m1/artefatos/notas/n.md" }
+    { "id": "a1", "kind": "notes", "name": "n.md",
+      "rel": "brainstorming/origem/meetings/m1/artefatos/notes/n.md" }
   ],
   "refs": [
     { "id": "r1", "tipo": "anexo",
-      "caminho": "brainstorming/origem/reunioes/m1/notas/analise-2026-08-08.md" },
+      "caminho": "brainstorming/origem/meetings/m1/notes/analise-2026-08-08.md" },
     { "id": "r2", "tipo": "anexo",
-      "caminho": "brainstorming/origem/anexos/planilha.csv" }
+      "caminho": "brainstorming/origem/attachments/planilha.csv" }
   ]
 }
 "#,
         )
         .unwrap();
 
-        let out = move_meeting_dir(&base, "brainstorming/origem/reunioes/m1", "destino").unwrap();
+        let out = move_meeting_dir(&base, "brainstorming/origem/meetings/m1", "destino").unwrap();
         let manifest = std::fs::read_to_string(base.join(&out).join("manifest.json")).unwrap();
 
         assert!(
-            !manifest.contains("brainstorming/origem/reunioes/m1"),
+            !manifest.contains("brainstorming/origem/meetings/m1"),
             "no path still names the old location: {manifest}"
         );
-        assert!(manifest.contains("brainstorming/destino/reunioes/m1/audio/mic.webm"));
-        assert!(manifest.contains("brainstorming/destino/reunioes/m1/artefatos/notas/n.md"));
+        assert!(manifest.contains("brainstorming/destino/meetings/m1/audio/mic.webm"));
+        assert!(manifest.contains("brainstorming/destino/meetings/m1/artefatos/notes/n.md"));
         assert!(
-            manifest.contains("brainstorming/origem/anexos/planilha.csv"),
+            manifest.contains("brainstorming/origem/attachments/planilha.csv"),
             "a ref OUTSIDE the meeting is not the move's business: {manifest}"
         );
     }
@@ -3334,12 +4924,12 @@ mod tests {
     fn move_meeting_dir_retargets_a_custom_habilidade() {
         let base = tmp("mvmtg-hab");
         meeting_fixture(&base, "origem", "m1");
-        std::fs::create_dir_all(base.join("brainstorming/destino/reunioes")).unwrap();
+        std::fs::create_dir_all(base.join("brainstorming/destino/meetings")).unwrap();
         let cmds = base.join(".claude/commands");
         std::fs::create_dir_all(&cmds).unwrap();
         std::fs::write(
             cmds.join("minha-ferramenta.md"),
-            "Resuma [o trecho](acervo://brainstorming/origem/reunioes/m1/reuniao.md#an_7).\n",
+            "Resuma [o trecho](acervo://brainstorming/origem/meetings/m1/reuniao.md#an_7).\n",
         )
         .unwrap();
         // a built-in carries only the literal placeholder, which matches no rel
@@ -3349,11 +4939,11 @@ mod tests {
         )
         .unwrap();
 
-        move_meeting_dir(&base, "brainstorming/origem/reunioes/m1", "destino").unwrap();
+        move_meeting_dir(&base, "brainstorming/origem/meetings/m1", "destino").unwrap();
 
         let tool = std::fs::read_to_string(cmds.join("minha-ferramenta.md")).unwrap();
         assert!(
-            tool.contains("acervo://brainstorming/destino/reunioes/m1/reuniao.md#an_7"),
+            tool.contains("acervo://brainstorming/destino/meetings/m1/reuniao.md#an_7"),
             "the anchor follows the meeting: {tool}"
         );
         let builtin = std::fs::read_to_string(cmds.join("loro-digest.md")).unwrap();
@@ -3372,11 +4962,11 @@ mod tests {
         use std::time::Duration;
 
         let base = tmp("mvmtg-lock");
-        let viva = base.join("brainstorming/x/reunioes/m2");
+        let viva = base.join("brainstorming/x/meetings/m2");
         std::fs::create_dir_all(&viva).unwrap();
         std::fs::write(
             viva.join("reuniao.md"),
-            "  - caminho: brainstorming/a/reunioes/m1/reuniao.md\n",
+            "  - caminho: brainstorming/a/meetings/m1/reuniao.md\n",
         )
         .unwrap();
 
@@ -3388,8 +4978,8 @@ mod tests {
         let h = std::thread::spawn(move || {
             let n = retarget_refs_after_move(
                 &b,
-                "brainstorming/a/reunioes/m1",
-                "brainstorming/b/reunioes/m1",
+                "brainstorming/a/meetings/m1",
+                "brainstorming/b/meetings/m1",
             );
             let _ = tx.send(n);
         });
@@ -3407,7 +4997,7 @@ mod tests {
         h.join().unwrap();
         let txt = std::fs::read_to_string(viva.join("reuniao.md")).unwrap();
         assert!(
-            txt.contains("brainstorming/b/reunioes/m1/reuniao.md"),
+            txt.contains("brainstorming/b/meetings/m1/reuniao.md"),
             "{txt}"
         );
     }
