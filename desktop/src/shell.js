@@ -35,8 +35,8 @@
   if (osDark && osDark.addEventListener) osDark.addEventListener("change", () => { if (themePref === "system") paintTheme(); });
   function onThemeChange(fn) { themeListeners.push(fn); }
 
-  // ---- destinos: Início · Organizar · Conhecimento ------------------------
-  const DESTS = { home: "destHome", organize: "destOrganize", knowledge: "destKnowledge" };
+  // ---- destinos: Início · Organizar · Conhecimento · Revisão --------------
+  const DESTS = { home: "destHome", organize: "destOrganize", knowledge: "destKnowledge", review: "destReview" };
   let dest = "home";
   function setDestination(name) {
     if (!DESTS[name]) name = "home";
@@ -50,6 +50,29 @@
     return name;
   }
   const destination = () => dest;
+
+  // ---- Revisão: mudanças de agora ⇄ revisões do time ----------------------
+  // Which of the two panes shows is CHROME — a class and a hidden flag, no IPC
+  // behind it — so it lives here, next to the destinations it belongs to, and
+  // the strip works (mouse and keyboard) from the markup alone. app.js still
+  // routes into the destination and loads what each pane needs; calling
+  // setReviewTab("team") from there lands on the same switch.
+  const REVTABS = { now: "revNow", team: "revTeam" };
+  let revTab = "now";
+  function setReviewTab(name) {
+    if (!REVTABS[name]) name = "now";
+    revTab = name;
+    document.querySelectorAll("#revTabs .segbtn").forEach((b) =>
+      b.classList.toggle("on", b.dataset.revtab === name));
+    for (const [k, id] of Object.entries(REVTABS)) {
+      const node = $(id);
+      if (node) node.hidden = k !== name;
+    }
+    return name;
+  }
+  const reviewTab = () => revTab;
+  document.querySelectorAll("#revTabs .segbtn").forEach((b) =>
+    b.addEventListener("click", () => setReviewTab(b.dataset.revtab)));
 
   // ---- barra lateral: 250px ⇄ 60px ---------------------------------------
   function setSidebarCollapsed(on) {
@@ -94,6 +117,7 @@
   window.LoroShell = {
     setTheme, resolvedTheme, onThemeChange,
     setDestination, destination,
+    setReviewTab, reviewTab,
     setSidebarCollapsed, setPanelOpen, setPanelTab, mountTerminal,
   };
 })();

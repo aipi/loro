@@ -44,7 +44,10 @@
     "err.ffmpeg_not_found": "ffmpeg não encontrado. Instale ({detail}).",
     "err.file_exists_in_target": "já existe um arquivo com esse nome no destino",
     "err.file_too_large": "arquivo grande demais (máx. 5 MiB)",
-    "err.gh_auth_required": "autentique no GitHub (gh auth login) para propor",
+    // ADR-0027 · o mesmo bloqueio agora aparece ao revisar, juntar e responder,
+    // não só ao enviar: dizer "para propor" nomearia o ato errado em quatro dos
+    // cinco caminhos (DESIGN.md §1 — o estado nunca mente).
+    "err.gh_auth_required": "autentique no GitHub (gh auth login) para trabalhar com o time",
     "err.gh_not_found": "GitHub CLI (gh) não encontrado",
     "err.git_identity_required": "nome e e-mail são obrigatórios",
     "err.git_identity_invalid_email": "informe um e-mail válido (ex.: ana@exemplo.com)",
@@ -105,6 +108,17 @@
     "err.nothing_recorded": "nada gravado",
     "err.nothing_to_propose": "nada para enviar: salve uma versão primeiro",
     "err.on_main_branch": "você está no conhecimento oficial: salve uma versão para abrir um rascunho",
+    // ADR-0027 · a revisão acontece dentro do app, então cada chamada ao gh
+    // precisa de um código estável: sem ele o inglês cru do gh cai num toast.
+    // `looks_offline` decide antes de todos eles — quando é a rede, o código é
+    // err.github_unreachable.
+    "err.pr_read_failed": "não consegui ler esta revisão agora",
+    "err.pr_review_failed": "não consegui registrar a sua revisão",
+    "err.pr_merge_failed": "não consegui juntar a mudança ao conhecimento oficial",
+    "err.pr_reply_failed": "não consegui enviar a resposta",
+    "err.pr_review_body_required": "escreva um comentário antes de enviar",
+    "err.pr_template_empty": "o modelo precisa de pelo menos uma seção",
+    "err.pr_template_write_failed": "não consegui salvar o modelo do time",
     "err.syscap_not_found": "capturador de áudio do sistema não encontrado: {detail}",
     "err.outside_acervo": "fora do projeto",
     "err.outside_brainstorm": "fora da ideia",
@@ -124,6 +138,7 @@
     "err.title_required": "informe um título",
     "err.unsupported_file_type": "tipo de arquivo não suportado",
     "err.working_tree_dirty": "há mudanças ainda não guardadas — salve uma versão antes de trocar de rascunho",
+    "err.switch_would_lose_change": "este documento é diferente no outro rascunho: trocar apagaria a sua mudança. Salve uma versão primeiro.",
     "err.branch_not_found": "rascunho não encontrado",
     "err.git_repo_required": "este projeto ainda não guarda histórico de versões",
     "err.github_unreachable": "sem conexão — não consegui falar com o GitHub agora",
@@ -198,7 +213,7 @@
     "err.ffmpeg_not_found": "ffmpeg not found. Install it ({detail}).",
     "err.file_exists_in_target": "a file with that name already exists at the destination",
     "err.file_too_large": "file too large (max 5 MiB)",
-    "err.gh_auth_required": "authenticate with GitHub (gh auth login) to propose",
+    "err.gh_auth_required": "authenticate with GitHub (gh auth login) to work with the team",
     "err.gh_not_found": "GitHub CLI (gh) not found",
     "err.git_identity_required": "name and e-mail are required",
     "err.git_identity_invalid_email": "enter a valid e-mail (e.g.: ana@exemplo.com)",
@@ -279,6 +294,13 @@
     "err.nothing_recorded": "nothing recorded",
     "err.nothing_to_propose": "nothing to send: save a version first",
     "err.on_main_branch": "you are on the official knowledge: save a version to open a draft",
+    "err.pr_read_failed": "I could not read this review right now",
+    "err.pr_review_failed": "I could not record your review",
+    "err.pr_merge_failed": "I could not merge the change into the official knowledge",
+    "err.pr_reply_failed": "I could not send the reply",
+    "err.pr_review_body_required": "write a comment before sending",
+    "err.pr_template_empty": "the template needs at least one section",
+    "err.pr_template_write_failed": "I could not save the team template",
     "err.syscap_not_found": "system audio capturer not found: {detail}",
     "err.outside_acervo": "outside the project",
     "err.outside_brainstorm": "outside the idea",
@@ -298,6 +320,7 @@
     "err.title_required": "enter a title",
     "err.unsupported_file_type": "unsupported file type",
     "err.working_tree_dirty": "there are unsaved changes — save a version before switching drafts",
+    "err.switch_would_lose_change": "this document differs in the other draft: switching would discard your change. Save a version first.",
     "err.branch_not_found": "draft not found",
     "err.git_repo_required": "this project does not keep a version history yet",
     "err.github_unreachable": "offline — I could not reach GitHub right now",
@@ -1447,11 +1470,12 @@
     "ver revisões": "see reviews",
     "copiar link": "copy link",
     "link copiado": "link copied",
-    "Revisões abertas": "Open reviews",
+    // ADR-0027 · «Revisões abertas» era o título da folha que o destino Revisão
+    // substitui, e «a revisão acontece no GitHub» deixou de ser verdade no
+    // instante em que a leitura passou a acontecer aqui (DESIGN.md §1). As duas
+    // saem do catálogo junto com a folha: um msgid órfão é cromo morto.
     "abrir a revisão": "open the review",
     "não abri a revisão no navegador": "I could not open the review in the browser",
-    "a revisão acontece no GitHub — “abrir” leva você até ela no navegador.":
-      "the review happens on GitHub — “open” takes you to it in the browser.",
     "nenhuma revisão aberta ainda — envie uma mudança para revisão do time.":
       "no open review yet — send a change for the team to review.",
     "Dispensar este aviso": "Dismiss this notice",
@@ -1509,6 +1533,226 @@
     // ---- N24 · o painel que a largura da janela retira ---------------------
     "o painel ✦ IA não cabe nesta largura — alargue a janela":
       "the ✦ AI panel does not fit at this width — widen the window",
+    // ---- ADR-0027 · Revisão: o destino, as duas metades, a revisão aberta ----
+    "Revisão": "Review",
+    "Mudanças de agora": "What you changed",
+    "Revisões do time": "Team reviews",
+    "o que você quer revisar": "what you want to review",
+    "Nada sai do seu computador sozinho: salvar guarda uma versão no seu rascunho de trabalho; enviar para revisão é um passo separado, e o time aprova antes de virar conhecimento oficial.":
+      "Nothing leaves your computer on its own: saving keeps a version in your working draft; sending it for review is a separate step, and the team approves before it becomes official knowledge.",
+    "Mudanças propostas ao conhecimento oficial. Nada entra sem aprovação — e a sua leitura acontece aqui, sem sair do Loro.":
+      "Changes proposed to the official knowledge. Nothing enters without approval — and you read it here, without leaving Loro.",
+    "Aguardam a sua revisão": "Waiting for your review",
+    "Suas mudanças · e as que você já revisou": "Your changes · and the ones you reviewed",
+    // ---- o que VOCÊ mudou ---------------------------------------------------
+    "renomeado": "renamed",
+    "documento novo": "new document",
+    "documento removido": "document removed",
+    "como era": "before",
+    "como fica": "after",
+    "ver a mudança completa": "see the whole change",
+    "esconder a mudança completa": "hide the whole change",
+    "como mostrar a mudança": "how to show the change",
+    "lado a lado": "side by side",
+    "unificado": "unified",
+    "marcar como visto": "mark as read",
+    "✓ visto": "✓ read",
+    "%1 de %2 vistos": "%1 of %2 read",
+    "%1 linha sem mudança": "%1 unchanged line",
+    "%1 linhas sem mudança": "%1 unchanged lines",
+    "%1 trechos mudaram": "%1 passages changed",
+    "%1 trecho mudou": "%1 passage changed",
+    "… e mais %1 linha": "… and %1 more line",
+    "… e mais %1 linhas": "… and %1 more lines",
+    "não dá para mostrar as linhas deste arquivo": "the lines of this file cannot be shown",
+    "tudo salvo": "everything saved",
+    "sem versões ainda": "no versions yet",
+    "nada aqui ainda": "nothing here yet",
+    "não consegui ler as mudanças agora": "I could not read the changes right now",
+    "não consegui ler as revisões agora": "I could not read the reviews right now",
+    "tentar de novo": "try again",
+    "nada mudou desde a última versão salva.": "nothing changed since the last saved version.",
+    "este projeto ainda não guarda versões — salve a primeira para que o time possa revisar.":
+      "this project does not keep versions yet — save the first one so the team can review.",
+    "a versão está guardada no rascunho «%1». Envie para revisão quando quiser que o time leia.":
+      "the version is kept in the draft “%1”. Send it for review whenever you want the team to read it.",
+    // rodada 5 · o mesmo estado quando a metade do time está trancada: orientar
+    // para o envio seria nomear a porta que a própria tela acabou de desarmar
+    "a versão está guardada no rascunho «%1». Para o time ler, conecte o GitHub em Configurações.":
+      "the version is kept in the draft “%1”. For the team to read it, connect GitHub in Settings.",
+    "a versão está guardada no rascunho «%1». Sem conexão agora — envie para revisão quando a rede voltar.":
+      "the version is kept in the draft “%1”. Offline right now — send it for review when the network comes back.",
+    "no rascunho": "in the draft",
+    "no conhecimento oficial": "on the official knowledge",
+    // rodada 3 · a folha que ESCOLHE o lugar chamava os lugares de `main
+    // (principal)` e `rfc/<slug>`, um clique ao lado do chip que diz «no
+    // conhecimento oficial» / «no rascunho <slug>»
+    "conhecimento oficial": "official knowledge",
+    "rascunho «%1»": "draft “%1”",
+    "vai para": "goes to",
+    "salve uma versão primeiro": "save a version first",
+    "você tem mudança que ainda não está em nenhuma versão: ela vai com você para o rascunho escolhido. Se lá o documento for diferente, a troca é recusada e a tela diz qual.":
+      "you have a change that is not in any version yet: it travels with you to the draft you pick. If the document differs there, the switch is refused and the screen says which one.",
+    "o Loro não conseguiu falar com o GitHub agora — o diagnóstico em Configurações diz o que falta.":
+      "Loro could not talk to GitHub right now — the diagnosis in Settings says what is missing.",
+    "revisão #%1 aberta": "review #%1 opened",
+    "responder a %1": "reply to %1",
+    "%1 escreveu nesta conversa": "%1 wrote in this conversation",
+    "a conversa da revisão": "the review’s conversation",
+    "não deu para concluir agora": "it could not be finished right now",
+    "Descreva a mudança em uma linha": "Describe the change in one line",
+    "ex.: onboarding atualizado com o novo prazo do convite": "e.g. onboarding updated with the new invite deadline",
+    "descreva a mudança em uma linha antes de salvar": "describe the change in one line before saving",
+    // a segunda metade do preço de salvar: sem rascunho de trabalho, salvar CRIA um
+    "salvar cria o rascunho «%1» e guarda a versão nele — o conhecimento oficial só recebe mudanças por revisão.":
+      "saving creates the draft “%1” and keeps the version in it — the official knowledge only takes changes through review.",
+    "salvar cria um rascunho de trabalho com o nome da sua descrição — o conhecimento oficial só recebe mudanças por revisão.":
+      "saving creates a working draft named after your description — the official knowledge only takes changes through review.",
+    "não consegui salvar a versão agora": "I could not save the version right now",
+    "mostrar mais linhas": "show more lines",
+    // ---- as revisões do time e a revisão aberta -----------------------------
+    "%1 pediu a sua revisão": "%1 asked for your review",
+    "rascunho «%1» → conhecimento oficial": "draft “%1” → official knowledge",
+    "sua mudança": "your change",
+    "proposta de %1": "%1’s proposal",
+    "aprovada": "approved",
+    "✓ verificações ok": "✓ checks passed",
+    "✗ verificações falharam": "✗ checks failed",
+    "verificações em curso": "checks running",
+    // o que bloqueia, COM NOME: o chip dobrava a lista inteira numa palavra
+    "Verificações que falharam": "Failing checks",
+    "ver a verificação ↗": "see the check ↗",
+    "verificação sem nome": "unnamed check",
+    "%1 de %2 aprovações": "%1 of %2 approvals",
+    "%1 comentário": "%1 comment",
+    "%1 comentários": "%1 comments",
+    "mudanças pedidas": "changes requested",
+    "conflita com o oficial": "conflicts with the official",
+    "pronta para entrar": "ready to land",
+    "você aprovou ✓": "you approved ✓",
+    "entrou no oficial ✓": "landed in the official ✓",
+    "aprovação de versão anterior": "approval of an earlier version",
+    "nova revisão pedida": "new review requested",
+    "← revisões do time": "← team reviews",
+    "sem descrição": "no description",
+    "O que muda": "What changes",
+    "Conversa": "Conversation",
+    "responder": "reply",
+    "sua resposta": "your reply",
+    "resolvida ✓": "resolved ✓",
+    "Sua revisão": "Your review",
+    "um comentário para o time (opcional)": "a comment for the team (optional)",
+    "✓ Aprovar": "✓ Approve",
+    "pedir mudanças": "request changes",
+    "só comentar": "comment only",
+    "aprovar conta como uma das %1 aprovações que a mudança precisa para entrar no conhecimento oficial.":
+      "approving counts as one of the %1 approvals the change needs to enter the official knowledge.",
+    "as verificações ainda falham — mesmo aprovada, a mudança só entra quando elas passarem.":
+      "the checks still fail — even approved, the change only lands once they pass.",
+    "você aprovou": "you approved",
+    "a mudança entra no conhecimento oficial quando todas as aprovações chegarem.":
+      "the change enters the official knowledge once every approval arrives.",
+    // rodada 5 · uma decisão minha pode VOLTAR: o autor salvou outra versão, ou
+    // pediu a minha revisão de novo. O bloco dizia «você aprovou» sem controle
+    // nenhum, numa linha que a lista filava em «Aguardam a sua revisão»
+    "a sua aprovação era de uma versão anterior: uma nova versão foi salva depois dela, e ela não conta mais.":
+      "your approval was for an earlier version: a new version was saved after it, so it no longer counts.",
+    "o seu pedido de mudanças era de uma versão anterior: uma nova versão foi salva depois dele.":
+      "your change request was for an earlier version: a new version was saved after it.",
+    "%1 pediu a sua revisão de novo.": "%1 asked for your review again.",
+    "Juntar ao conhecimento oficial": "Merge into the official knowledge",
+  "%1 de %2 aprovações. Juntar cria a versão no conhecimento oficial e encerra o rascunho «%3».":
+    "%1 of %2 approvals. Merging creates the version in the official knowledge and closes the draft “%3”.",
+  "As verificações passaram.": "The checks passed.",
+    "esta mudança é sua — falta a aprovação de %1. Você será avisado aqui quando alguém revisar.":
+      "this change is yours — %1 still has to approve. You will be told here when someone reviews it.",
+    "alguém do time": "someone on the team",
+    "✓ entrou no conhecimento oficial — o rascunho «%1» foi encerrado.":
+      "✓ it landed in the official knowledge — the draft “%1” was closed.",
+    "%1 pediu mudanças": "%1 requested changes",
+    "responda na conversa, salve uma nova versão no rascunho e peça nova revisão — a mudança não entra no oficial enquanto o pedido estiver aberto.":
+      "answer in the conversation, save a new version in the draft and ask for a new review — the change does not enter the official while the request is open.",
+    // rodada 5 · o mesmo fato lido pelo REVISOR: o pedido é dele, o rascunho não
+    "você pediu mudanças": "you requested changes",
+    "a mudança não entra no oficial enquanto o pedido estiver aberto — %1 responde na conversa e salva uma nova versão, e você é avisado aqui quando pedirem a sua revisão de novo.":
+      "the change does not enter the official while the request is open — %1 answers in the conversation and saves a new version, and you are told here when your review is asked for again.",
+    "o conhecimento oficial andou desde que você enviou — esta mudança conflita com ele. Resolva as diferenças no terminal ou no GitHub; nada se perde.":
+      "the official knowledge moved since you sent this — the change conflicts with it. Resolve the differences in the terminal or on GitHub; nothing is lost.",
+    "⎇ abrir para editar": "⎇ open to edit",
+    "abrir no GitHub ↗": "open on GitHub ↗",
+    "este rascunho ainda não está neste computador — abra no GitHub":
+      "this draft is not on this computer yet — open it on GitHub",
+    "você está editando o rascunho «%1» — mudança #%2 em revisão. O que você vê é a mudança inteira contra o conhecimento oficial; salvar versão atualiza a revisão aberta.":
+      "you are editing the draft “%1” — change #%2 under review. What you see is the whole change against the official knowledge; saving a version updates the open review.",
+    "voltar ao meu rascunho": "back to my draft",
+    // ---- estados vazios e degradados ---------------------------------------
+    "sem conexão": "offline",
+    "esta mudança já está em revisão (#%1) — salvar versão atualiza a revisão aberta.":
+    "this change is already under review (#%1) — saving a version updates the open review.",
+  "este rascunho é de outra pessoa e já está em revisão (#%1) — salvar versão atualiza a revisão aberta.":
+    "this draft belongs to someone else and is already under review (#%1) — saving a version updates the open review.",
+  "ver a revisão #%1": "see review #%1",
+  "comentário de uma versão anterior": "comment from an earlier version",
+  "sugestão de mudança": "suggested change",
+  "buscando as revisões do time…": "fetching the team's reviews…",
+  "lendo o que você mudou…": "reading what you changed…",
+  "lendo a revisão…": "reading the review…",
+  "oficial": "official",
+  "aplicar uma sugestão acontece no GitHub — o Loro não reescreve o seu conhecimento por adivinhação.":
+    "applying a suggestion happens on GitHub — Loro does not rewrite your knowledge by guesswork.",
+  "versão salva no rascunho «%1» — a revisão #%2 foi atualizada.":
+    "version saved in the draft “%1” — review #%2 was updated.",
+  "versão salva neste computador — a revisão #%1 recebe a atualização quando a rede voltar.":
+    "version saved on this computer — review #%1 gets the update when the network comes back.",
+  "esta é a leitura anterior — buscando as revisões de agora…":
+    "this is the previous reading — fetching the current reviews…",
+  "sem conexão agora — esta lista é a última leitura feita. Ela atualiza sozinha quando a rede voltar.":
+      "offline right now — this list is the last reading taken. It refreshes on its own when the network comes back.",
+    "o time ainda não está conectado — conecte o GitHub em Configurações para enviar e receber revisões.":
+      "the team is not connected yet — connect GitHub in Settings to send and receive reviews.",
+    "abrir Configurações": "open Settings",
+    // ---- as duas folhas ----------------------------------------------------
+    "Rascunhos de trabalho": "Working drafts",
+    "cada mudança vive num rascunho. Trocar de rascunho troca o que você vê em «mudanças de agora» — nada se perde.":
+      "every change lives in a draft. Switching drafts switches what you see under “what you changed” — nothing is lost.",
+    "Novo rascunho": "New draft",
+    "o nome diz o assunto — curto e objetivo, até 24 letras, sem espaços.":
+      "the name says the subject — short and to the point, up to 24 letters, no spaces.",
+    "assunto-do-rascunho": "draft-subject",
+    "criar e trocar para ele": "create it and switch",
+    "%1/24": "%1/24",
+    "o time recebe a mudança do rascunho «%1» com a descrição abaixo. Nada entra no conhecimento oficial sem aprovação.":
+      "the team receives the change from the draft “%1” with the description below. Nothing enters the official knowledge without approval.",
+    "Título": "Title",
+    "uma linha sobre a mudança": "one line about the change",
+    "modelo do time · %1": "team template · %1",
+    "configurar o modelo": "configure the template",
+    "seções do modelo": "template sections",
+    "uma seção por linha — vale para todo o time, e a mudança passa pela mesma revisão que qualquer outra.":
+      "one section per line — it applies to the whole team, and the change goes through the same review as any other.",
+    "salvar o modelo do time": "save the team template",
+    "o modelo precisa de pelo menos uma seção": "the template needs at least one section",
+    "↗ enviar para o time": "↗ send to the team",
+    // ---- os avisos ---------------------------------------------------------
+    "revisão registrada — %1 será avisado": "review recorded — %1 will be told",
+    "pedido de mudanças enviado": "change request sent",
+    "comentário enviado": "comment sent",
+    "resposta enviada": "reply sent",
+    "mudança entrou no conhecimento oficial ✓": "the change entered the official knowledge ✓",
+    "escreva o que precisa mudar antes de pedir mudanças": "write what needs to change before requesting changes",
+    "escreva o comentário primeiro": "write the comment first",
+    "escreva a resposta primeiro": "write the reply first",
+    // ---- rodada 4 · o disco não é o editor, e o portão do time ------------
+    "%1 documento mudado": "%1 changed document",
+    "%1 documentos mudados": "%1 changed documents",
+    "texto não salvo em %1 — a mudança aparece aqui depois de salvar.":
+      "unsaved text in %1 — the change shows up here once you save.",
+    "texto não salvo em %1: a versão guarda o que já está no arquivo, então salve o documento primeiro.":
+      "unsaved text in %1: a version keeps what is already in the file, so save the document first.",
+    "abrir o documento": "open the document",
+    "salve o documento primeiro": "save the document first",
+    "dê um nome curto ao rascunho": "give the draft a short name",
+    "modelo do time atualizado — vale para as próximas revisões": "team template updated — it applies to the next reviews",
   };
 
   let lang = "pt";
@@ -1518,9 +1762,17 @@
   function getLang() {
     return lang;
   }
-  function t(msgid) {
-    if (lang !== "en") return msgid;
-    return Object.prototype.hasOwnProperty.call(EN, msgid) ? EN[msgid] : msgid;
+  // ADR-0027 · positional interpolation. A sentence like «o rascunho “%1” foi
+  // encerrado» has to survive translation AS A SENTENCE: shredded into three
+  // template-literal fragments, the English word order is no longer the
+  // translator's to choose, and the fragments escape the msgid scanners. `%1..%9`
+  // are replaced AFTER the English lookup, so both languages read the same
+  // placeholders. A `%N` with no argument is left standing rather than blanked —
+  // a visible defect beats a sentence that silently loses a word.
+  function t(msgid, args) {
+    const s = lang !== "en" || !Object.prototype.hasOwnProperty.call(EN, msgid) ? msgid : EN[msgid];
+    if (!args || !args.length) return s;
+    return String(s).replace(/%([1-9])/g, (m, i) => (args[i - 1] === undefined ? m : String(args[i - 1])));
   }
   // N20 · o backend também devolve erros do SISTEMA DE ARQUIVOS crus
   // ("Not a directory (os error 20)"): um errno em inglês não é uma mensagem que o

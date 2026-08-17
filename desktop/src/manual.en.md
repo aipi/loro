@@ -17,15 +17,17 @@ source of truth, with a version history.
 Every screen shares one anatomy:
 
 ```
-HEADER 54px — [project ⌄] [Home · Organize · Knowledge] ··· [Record] [✦ AI]
+HEADER 54px — [project ⌄] [Home · Organize · Knowledge · Review] ··· [Record] [✦ AI]
 SIDEBAR      │ TABS (only when a document is open) │ PANEL 330px
 250px or 60px│ CONTENT                             │ Document · Chat · Terminal
 ```
 
-- **The three destinations** live in the header: **Home** (what do you want to
+- **The four destinations** live in the header: **Home** (what do you want to
   keep today), **Organize** (what you captured that has not become knowledge
-  yet — the amber number is the count) and **Knowledge** (the team's official
-  topics).
+  yet — the amber number is the count), **Knowledge** (the team's official
+  topics) and **Review** (what you changed and have not saved, and what the team
+  proposed and is waiting for someone to read — the amber number is how many
+  reviews are waiting on you).
 - **Record** is the red header button; while recording it becomes **Stop**, and
   recording continues if you switch tabs — a `recording · mm:ss` pill in the
   header takes you back.
@@ -433,6 +435,180 @@ for team review normally).
   in the text, it just is not clickable — Loro does not guess where another
   tool's codes live.
 
+## Review
+
+The **Review** destination is the other half of the product: nothing enters the
+official knowledge without someone reading it. It has two halves, and the
+sentence at the top follows the one you pick.
+
+### What you changed
+
+- This is what **you** changed and have not saved as a version yet. It works
+  **with no internet, no GitHub and no account** — it is your computer's history.
+- One card per document, with **new · modified · removed**, the name, the path and
+  how much changed (`+6 −2 · 2 passages changed`).
+- **Click the card** and the change shows up in your own words: **before** (a
+  reddish fill) and **after** (a greenish one). A brand-new document shows as
+  **new document**, with its opening. A summary is a summary: if it is long, the
+  app says how many lines it left out.
+- **See the whole change** opens the exact lines, inside the same card, with line
+  numbers. **Unified** (the default) reads like the document, with `−` and `+`
+  lines; **side by side** puts the before on the left and the after on the right.
+  Where there was no line, the space is hatched. A run between two pieces is
+  announced (`⋯ 12 unchanged lines`) — a notice, not a button: those lines did not
+  change.
+- On a very long change the card draws 400 rows at a time, says how many are left
+  (`⋯ … and 500 more lines`) and offers **show more lines** right there — the
+  reading continues inside the screen, and the notice goes away when it is done.
+- **Mark as read** is for you: the `3 of 8 read` counter at the top helps you not
+  lose a document in a big change. The mark belongs to **that change**: if the
+  document changes again (or you save the version and edit it once more), the card
+  comes back as unread — it is another text to read.
+- A file that is not text (an image, an audio file) says **the lines of this file
+  cannot be shown** instead of drawing an empty diff.
+- If the project keeps no versions yet, the screen says so and what to do. If
+  nothing changed, it says **everything saved** and which draft holds the last
+  version — and the next step it offers is always one that works: with the team
+  connected, **send it for review**; with GitHub not connected, **connect GitHub in
+  Settings** (with the door right there); offline, it says the sending comes back
+  **when the network does**.
+- **A version keeps what is already in the file.** If an open document has text you
+  have not saved yet (the tab shows ●), the screen says **unsaved text in
+  ‹document›** and offers **open the document** — save it there, and the change
+  shows up here. With an empty list that is the screen's answer, instead of
+  “everything saved”.
+
+### Saving the version from here
+
+- The **Describe the change in one line** field sits next to the changes it
+  describes, so the button **commits directly** — no sheet in between. The
+  sentence above it states the price before the click: it keeps the **whole
+  project**, every topic, not only the open document.
+- **⎇ in the draft ‹name›** says where you are; **switch draft** opens the list.
+  It calls the places what the screen calls them: **official knowledge** and
+  **draft “name”** — and the switch sheet says **where** you are going and **how**
+  to come back, with the price (how many documents leave the screen, and that
+  nothing is deleted). Creating a new draft is a single field, with the `0/24`
+  counter and the name preview live as you type.
+- After the switch, the toast calls the place **by the same name** (“⎇ draft
+  “invite-deadline””, “⎇ official knowledge”) and repeats the price that was paid
+  (“7 documents stayed in the previous draft”). Git's internal name appears nowhere —
+  and the chip, the empty state and the toast change **together**.
+- While there is a change that is **not in any version yet**, switching drafts is
+  not possible — Loro would keep half a change behind. The rows are dimmed and say
+  **save a version first**, and **＋ new draft…** still works: a new draft **takes
+  the change with you**.
+- If you are **on the official knowledge** (or on a branch that is not a Loro
+  draft), saving **creates a working draft** — nothing is written straight into the
+  official knowledge. The screen says so before the click and shows the name your
+  description will give it (`saving creates the draft “invite-deadline”…`), by the
+  same 24-letter rule as the **New draft** sheet.
+- With no description the app asks for one and commits nothing. With nothing
+  changed the button is switched off (the empty state right above explains why).
+- If the **team is not connected yet** (or the network is down), the screen says so
+  **before the click**, right above the buttons, and **↗ Send for team review** is
+  switched off: saving a version keeps working (it is local), and **open Settings**
+  goes straight to the **Versions and GitHub** section, where everything that is
+  missing is named with its remedy.
+- **↗ Send for team review** opens the sending sheet. The fields are the
+  **sections of the team's template** — the file the repository already carries,
+  not a list Loro invented. **Configure the template** lets you change the
+  sections (one per line): the change applies to the whole team and goes through
+  the **same review** as any other.
+- If sending **fails** (GitHub down, the team not connected), the sheet **does not
+  close**: the reason appears inside it, what you typed is still there and the
+  button is still armed. When what is missing is a setting, the sheet itself offers
+  **open Settings** — fix it, come back, click again.
+
+### Team reviews
+
+- Two lists: **Waiting for your review** and **Your changes · and the ones you
+  reviewed**. Each row carries the number, the subject, the state (**changes
+  requested**, **approved**), whose it is, which draft it comes from and when it
+  moved. **The title opens the review** — by mouse or by keyboard, and anyone using
+  a screen reader hears the state along with the subject. **⧉ Copy link**, beside
+  it, takes the address to paste in the team's chat.
+- **A version lands on the draft you are on.** Saving a version does not move you:
+  it is recorded in the working draft you are already standing on. Only when you are
+  on the **official knowledge** does saving create a draft — and its name is stated
+  before the click, because the official branch takes no direct change.
+- **Switching drafts takes your unsaved change with you.** If the document differs in
+  the target draft the switch is refused and the screen says which document — saving a
+  version first is what resolves it.
+- **The draft lives in the header.** The `⎇` chip beside Record says which working
+  draft you are on — that is where your next version lands — and opens the sheet to
+  switch or create one. In a narrow window it keeps only the glyph, and the name stays
+  in its title and in the sheet it opens.
+- **Saving the document writes the file, and nothing else.** In edit mode, **Save**
+  writes the text to disk. A project version is a separate act with its own door:
+  Review (or the ✦ IA panel's TEAM section) — a commit keeps the whole project, not
+  the document in focus.
+- **The screen stays live.** With Review open, the app re-reads your changes and the
+  team's reviews on the same 10-second clock as the rest of the screen — there is no
+  "refresh" button because none is needed, and the list never sits there saying
+  "everything saved" while the sidebar shows the unsaved-change dot.
+- **Sending is a step only the first time.** While the draft has no open review,
+  **↗ Send for team review** is the decision to share, and nothing leaves your
+  computer before it. Once the review exists that button **leaves the screen** —
+  there is no step left to offer: **Save a project version** already records the
+  version and takes it to the open review, and the screen says which one (#N), with
+  the door to it. With no network the version stays saved here and the review gets
+  the update when the network comes back — the screen says that too, instead of
+  claiming it updated.
+- **The list opens at once.** Reading the team costs a network round trip, so Review
+  shows the list it already knows immediately and fetches the current one behind it.
+  While what is on screen is the previous reading, the screen says so — and with no
+  network it says that one is the last reading taken, and that it refreshes on its own
+  when the network comes back.
+- **The reading happens here.** Opening a review shows the description in the
+  template's sections — **read as markdown**, the same way a project document is:
+  headings, lists, tables, emphasis and code blocks come out formatted, not as the
+  characters the author typed. The same holds for every comment in the
+  conversation. **What changes** (the documents, each with the same card and
+  the same diff as "what you changed") and **Conversation** (each commented line,
+  with the quoted excerpt, who wrote it and when; **reply** sends the answer from
+  inside the app). Each **reply** says which conversation it belongs to
+  (`reply — contexts/…:13`), and the reply sheet repeats the address, who wrote
+  there and the excerpt — a reply cannot land in the wrong conversation.
+- **Your review** offers **✓ Approve**, **request changes** or **comment only** —
+  and says what your approval is worth. Requesting changes or commenting with
+  nothing written is refused, with the reason.
+- **A review can come back to you.** If the author saves a new version after your
+  approval (the chip says **approval of an earlier version**), or if your review is
+  requested again, the decision is **offered once more** — and the screen says why:
+  “your approval was for an earlier version…”, “%1 asked for your review again.”. A
+  decision that still stands remains just the **state**, with no button again.
+- After **requesting changes**, the reader is you: the screen says **you requested
+  changes** and that the change does not enter the official knowledge while the
+  request is open — the next step is the author's, and you are told here when your
+  review is asked for again. For the **author** of the change, the same screen says
+  who asked and what they have to do (answer, save a new version in the draft, ask
+  for a new review).
+- When the change is **yours** and the approvals and checks are in order,
+  **Merge into the official knowledge** appears — and the copy says, before the
+  click, what merging does and which draft it closes. The two never appear at
+  once: whoever can approve cannot merge, and a review already decided shows its
+  **state** instead of offering the button again.
+- When there is a **conflict** with the official knowledge, or a failing check,
+  the merge button is **not offered**: the screen says what happened and where to
+  resolve it. Nothing is lost.
+- **Failing checks** lists each one **by name** (the name your team gave it in
+  CI), with **see the check ↗** to open its run. Being told that "the checks"
+  failed without being told which one forced you to leave the app.
+- **⎇ Open to edit** switches to the other person's draft, through the same price
+  notice as any switch. Under **what you changed** an amber banner then says whose
+  draft it is and which review it updates, with **back to my draft**.
+- **Open on GitHub ↗** is still there for what the app does not do: applying a
+  code suggestion and marking a conversation resolved happen there.
+- With GitHub not connected, this half says what is missing and takes you to
+  **Settings**. Offline, it says the list is the **last reading taken** and that it
+  comes back on its own when the network does — and **saving versions keeps
+  working**.
+
+**How to get there:** the **Review** destination in the header, ⌘K (**Review** and
+**See the team's reviews**), the **TEAM** section of the ✦ AI panel, and the notice
+at the top of **Knowledge**. None of those doors expires.
+
 ## Save version and send for team review
 
 - **⎇** shows the current **working draft**; click it to switch drafts or create
@@ -447,14 +623,15 @@ for team review normally).
   switched off: there is no empty version. Ask for one anyway (from ⌘K, say) and
   the app answers **nothing changed since the last version** — and no draft is
   created.
-- **↗ Send for team review** publishes the working draft and opens the review on
-  GitHub. The topic owners review it; when they approve, the change becomes the
-  official knowledge. After sending, the notice offers **open the review** (it
-  goes straight to it in your browser) and **see reviews** — the list of open
-  reviews, each with **open** and **copy link**.
-- **See the team's reviews** is always within reach: in the **TEAM** section of
-  the ✦ AI panel and in ⌘K, besides the notice at the top of **Knowledge**. You
-  never depend on catching a notice as it goes by.
+- **↗ Send for team review** publishes the working draft and opens the review.
+  The topic owners review it; when they approve, the change becomes the official
+  knowledge. After sending, the notice offers **open the review** and **see
+  reviews**, which lands on the **Review** destination — where the reading
+  happens, without leaving Loro.
+- **See the team's reviews** is always within reach: the **Review** destination in
+  the header, the **TEAM** section of the ✦ AI panel, ⌘K, and the notice at the
+  top of **Knowledge**. You never depend on catching a notice as it goes by, and
+  a destination cannot be dismissed.
 - Without GitHub configured, saving versions still works **locally** and the
   **TEAM** section points at where to connect it (**Settings → Versions and
   GitHub**). On the **remote repository** row of **Settings → Versions and
@@ -470,6 +647,10 @@ for team review normally).
   (`ana@exemplo.com`), otherwise the signature reaches nobody.
 - Switching drafts with changes not saved into a version yet is blocked — save
   the version first.
+- This section is the **per-document** route, in the ✦ AI panel: the changes are
+  not on screen here, so saving goes through a sheet that states the price. Under
+  **Review → what you changed** the changes are right there and the button commits
+  directly, with the same price written above it.
 - In **⎇**, every row says **how much that draft keeps** ("18 documents", or
   "nothing kept here yet"). Switching to a draft that does not have your
   documents **takes those documents off the screen** — nothing is deleted, they

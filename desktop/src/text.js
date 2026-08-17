@@ -5,8 +5,18 @@
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.LoroText = api;
 })(typeof window !== "undefined" ? window : globalThis, function () {
+  // AS CINCO, não três. Isto escapava só `& < >`, e o app interpola texto de
+  // TERCEIROS dentro de ATRIBUTOS: título de PR (qualquer autor de fork),
+  // caminho de arquivo, nome de check, endereço de conversa. Uma aspa fechava o
+  // atributo — `Prazo" style="position:fixed;inset:0;…` punha um style na linha, e
+  // o CSP do app permite style inline. E mesmo sem malícia, um caminho com `"`
+  // (legal no macOS/Linux) truncava `data-rvfull`, e o cartão virava um controle
+  // que não faz nada. Escapar aspas é correto nos dois contextos: dentro de
+  // atributo o navegador decodifica, e em texto também.
   function esc(s) {
-    return String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+    return String(s).replace(/[&<>"']/g, (c) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+    }[c]));
   }
 
   // live-transcript inline formatting: speaker label + bold + italic + code.

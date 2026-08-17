@@ -305,3 +305,28 @@ test("ADR-0026 — hotspot sem apelido não inventa âncora", () => {
   assert.match(html, /<blockquote class="hotspot">/);
   assert.match(html, /<p class="hstitle">Um ponto em aberto qualquer<\/p>/);
 });
+
+// ------------------------------------------------------------------ R67
+// Achado na revisão de código do PR #71. `esc()` escapava só `& < >`, e o app
+// interpola texto de TERCEIROS dentro de ATRIBUTOS: título de PR (qualquer autor
+// de fork), caminho de arquivo, nome de check, endereço de conversa. Uma aspa
+// fecha o atributo — e o CSP do app permite style inline, então um título como
+// `Prazo" style="position:fixed;inset:0` cobre a janela. Sem malícia nenhuma, um
+// caminho com `"` (legal no macOS/Linux) truncava `data-rvfull` e o cartão virava
+// um controle que não faz nada.
+test("R67 — esc() escapa as CINCO, porque o app interpola em atributo", () => {
+  assert.equal(esc('a"b'), "a&quot;b", "uma aspa dupla fecha o atributo");
+  assert.equal(esc("a'b"), "a&#39;b", "e a simples também, onde o atributo usa ela");
+  assert.equal(esc("a&b<c>d"), "a&amp;b&lt;c&gt;d", "as três antigas continuam");
+  // o caso concreto do achado: um título de PR hostil não sai do atributo
+  const hostil = 'Prazo" style="position:fixed;inset:0;background:#fff;z-index:99';
+  const attr = `<button aria-label="${esc(hostil)}">x</button>`;
+  assert.ok(!/style=/.test(attr.replace(/&quot;/g, "")) || !attr.includes('" style="'),
+    "o atributo não pode ser fechado pelo dado");
+  assert.equal((attr.match(/"/g) || []).length, 2, "sobram exatamente as duas aspas do próprio atributo");
+  // e um caminho com aspa continua endereçável
+  const p = 'contexts/a"b/context.md';
+  const card = `<details data-rvcard="${esc(p)}">`;
+  assert.match(card, /data-rvcard="contexts\/a&quot;b\/context\.md"/,
+    "um caminho com aspa truncava o atributo e o cartão perdia o endereço");
+});

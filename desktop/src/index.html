@@ -28,6 +28,10 @@
           <button class="dest on" data-dest="home" data-i18n>Início</button>
           <button class="dest" data-dest="organize"><span data-i18n>Organizar</span><span id="destQueueBadge" class="destbadge" hidden>0</span></button>
           <button class="dest" data-dest="knowledge" data-i18n>Conhecimento</button>
+          <!-- ADR-0027 · a outra metade do produto tinha número e não tinha porta:
+               "2 aguardam sua revisão" só existia num toast que expira e numa
+               faixa que se dispensa. Um destino não se dispensa. -->
+          <button class="dest" data-dest="review"><span data-i18n>Revisão</span><span id="destReviewBadge" class="destbadge" hidden>0</span></button>
         </nav>
 
         <!-- estado de gravação em outras telas: pill que volta para a aba -->
@@ -35,6 +39,13 @@
 
         <div class="headright">
           <span id="appVersion" class="localtag mono" title="tudo roda 100% no seu computador" data-i18n-attrs="title">—</span>
+          <!-- R64 · O RASCUNHO NO CABEÇALHO, como o desenho previu. Ele vivia só na
+               seção TIME do painel ✦ IA, então em que rascunho você está — o fato que
+               decide onde a próxima versão cai — só era visível com o painel aberto e
+               um documento em foco. É o PRIMEIRO controle a ceder largura (rule 9):
+               abaixo de 1015px fica só o glifo, com o nome no título e no menu. -->
+          <button id="headDraft" class="pbranch inline mono headbranch" hidden
+            title="Escolher ou criar o rascunho de trabalho" data-i18n-attrs="title"></button>
           <!-- R4 · nem title nem aria-label fixos: os dois nomeavam duas ações opostas
                ("Gravar / Parar") e nunca mudavam. paintRecControl() é o dono do que o
                controle diz — rótulo visível, nome acessível e tooltip, da mesma fonte. -->
@@ -335,6 +346,134 @@
                   <div id="knowGaps" class="kmgaps"></div>
                 </section>
               </div>
+
+              <!-- ============ 1g · REVISÃO (ADR-0027) ============
+                   Duas metades do mesmo assunto: o que VOCÊ mudou e ainda não
+                   salvou, e o que o TIME propôs e espera alguém ler. A leitura
+                   acontece aqui — o navegador deixa de ser o único lugar onde
+                   uma mudança pode ser lida. -->
+              <div id="destReview" class="dest-view" hidden>
+                <div class="viewhead">
+                  <h1 data-i18n>Revisão</h1>
+                  <!-- a frase acompanha a aba: quem escreve em tempo de execução
+                       também traduz (F25) -->
+                  <p id="revIntro" data-i18n-dyn>Nada sai do seu computador sozinho: salvar guarda uma versão no seu rascunho de trabalho; enviar para revisão é um passo separado, e o time aprova antes de virar conhecimento oficial.</p>
+                </div>
+
+                <div class="revtabs">
+                  <!-- controle segmentado, não uma segunda faixa de abas: o app
+                       tem UM espelho de estado (.on → aria-pressed) e a única
+                       aba em mono continua sendo a de visualizar/editar -->
+                  <div id="revTabs" class="segrow" role="group" aria-label="o que você quer revisar" data-i18n-attrs="aria-label">
+                    <button class="segbtn on" data-revtab="now" aria-controls="revNow"><span data-i18n>Mudanças de agora</span><span id="revNowBadge" class="destbadge" hidden>0</span></button>
+                    <button class="segbtn" data-revtab="team" aria-controls="revTeam"><span data-i18n>Revisões do time</span><span id="revTeamBadge" class="destbadge" hidden>0</span></button>
+                  </div>
+                  <span id="revOffline" class="pillamber" hidden data-i18n>sem conexão</span>
+                </div>
+
+                <!-- 1g.1 · o que VOCÊ mudou -->
+                <div id="revNow">
+                  <!-- F11 · editando o rascunho de outra pessoa: a tela diz de
+                       quem é a mudança que está na sua frente, e como voltar -->
+                  <div id="revEditBanner" class="notifbar warm" role="status" aria-live="polite" hidden>
+                    <span id="revEditMsg" data-i18n-dyn></span>
+                    <button id="revBackToMine" class="mini act" data-i18n>voltar ao meu rascunho</button>
+                  </div>
+
+                  <div id="revChanges" class="revlist"></div>
+
+                  <!-- R63 · «não carreguei ainda» é um terceiro fato, distinto de
+                       «carreguei e não há nada». role=status porque ele aparece e
+                       some sem a pessoa mexer em nada. -->
+                  <p id="revNowLoading" class="rvloading" role="status" aria-live="polite" hidden></p>
+                  <div id="revEmpty" class="revempty" hidden>
+                    <b id="revEmptyTitle" data-i18n-dyn>tudo salvo</b>
+                    <p id="revEmptyMsg" class="hint" data-i18n-dyn></p>
+                    <button id="revEmptyGo" class="btn" hidden data-i18n-dyn></button>
+                  </div>
+
+                  <!-- D4 · o campo está ao lado do que ele descreve, então o
+                       botão grava direto: o preço é dito ANTES do clique, em vez
+                       de numa folha que só aparece depois dele -->
+                  <div id="revSave" class="revcard revsave">
+                    <div class="revsaveline">
+                      <button id="revDraft" class="pbranch inline mono" data-i18n-dyn>no rascunho</button>
+                    </div>
+                    <label class="wfield stack"><span data-i18n>Descreva a mudança em uma linha</span>
+                      <input id="revMsg" type="text" placeholder="ex.: onboarding atualizado com o novo prazo do convite" data-i18n-attrs="placeholder" />
+                    </label>
+                    <p id="revSavePrice" class="hint" data-i18n>guarda o projeto inteiro — todos os temas, não só o documento aberto.</p>
+                    <!-- a SEGUNDA metade do preço: sem um rascunho de trabalho,
+                         salvar CRIA um, com o nome da descrição. Era feito em
+                         silêncio, e o chip acima dizia "no conhecimento oficial"
+                         (paintReviewDraft escreve as duas coisas) -->
+                    <p id="revSaveNote" class="hint" hidden data-i18n-dyn></p>
+                    <!-- R36 · a versão guarda o que já está no ARQUIVO: um
+                         documento aberto com texto não salvo fica fora dela, e
+                         isso era feito em silêncio (paintUnsavedDocs) -->
+                    <p id="revUnsavedNote" class="hint" hidden data-i18n-dyn></p>
+                    <button id="revUnsavedGo" class="plink" hidden data-i18n-dyn></button>
+                    <!-- R44 · o que o app já sabe da outra metade, ANTES do
+                         clique: a nota é a descrição do botão de envio, e o
+                         remédio é a seção que ela nomeia (paintTeamGate) -->
+                    <p id="revTeamNote" class="hint" hidden data-i18n-dyn></p>
+                    <button id="revTeamGo" class="plink" hidden data-i18n-dyn></button>
+                    <!-- R58 · quando o rascunho JÁ está em revisão, enviar não é um
+                         passo: o botão sai e este estado toma o lugar dele, com a
+                         porta para a revisão que já existe (paintOpenReviewState).
+                         role=status porque o texto aparece sozinho, quando a leitura
+                         do time chega. -->
+                    <p id="revOpenState" class="hint" role="status" aria-live="polite" hidden data-i18n-dyn></p>
+                    <button id="revOpenStateGo" class="plink" hidden data-i18n-dyn></button>
+                    <div class="revacts">
+                      <!-- o preço é DITO a quem não vê a tela também: quem chega
+                           ao botão pelo teclado ouve as duas frases (WCAG 3.3.2).
+                           #revSaveNote escondido é ignorado pelo leitor, que é
+                           exatamente o certo quando já existe um rascunho -->
+                      <button id="revSaveBtn" class="btn solid" aria-describedby="revSavePrice revSaveNote revUnsavedNote revOpenState" data-i18n>Salvar versão do projeto</button>
+                      <button id="revProposeBtn" class="btn" aria-describedby="revTeamNote" data-i18n>↗ Enviar para revisão do time</button>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 1g.2 · o que o TIME propôs -->
+                <div id="revTeam" hidden>
+                  <!-- ADR-0027 R57 · a tela pinta a leitura que já conhece na hora e
+                       revalida atrás. A idade do que está na tela nunca fica escondida:
+                       role=status porque o texto troca sozinho, sem a pessoa mexer. -->
+                  <p id="revAge" class="hint" role="status" aria-live="polite" hidden data-i18n-dyn></p>
+                  <div id="revList">
+                    <section class="revgroup">
+                      <h2 class="rvhead" data-i18n>Aguardam a sua revisão</h2>
+                      <div id="revForMe" class="revlist"></div>
+                    </section>
+                    <section class="revgroup">
+                      <h2 class="rvhead" data-i18n>Suas mudanças · e as que você já revisou</h2>
+                      <div id="revMine" class="revlist"></div>
+                    </section>
+                    <p id="revTeamLoading" class="rvloading" role="status" aria-live="polite" hidden></p>
+                    <div id="revTeamEmpty" class="revempty" hidden>
+                      <b id="revTeamEmptyTitle" data-i18n-dyn></b>
+                      <p id="revTeamEmptyMsg" class="hint" data-i18n-dyn></p>
+                      <button id="revTeamEmptyGo" class="btn" hidden data-i18n-dyn></button>
+                    </div>
+                  </div>
+
+                  <!-- 1g.3 · uma revisão aberta, lida dentro do Loro -->
+                  <div id="revOpen" hidden>
+                    <button id="revBack" class="plink" data-i18n>← revisões do time</button>
+                    <div id="revPrHead" class="revprhead"></div>
+                    <div id="revPrBody" class="revcard"></div>
+                    <!-- o que bloqueia, com nome: a verificação que falhou e o
+                         caminho até ela (o chip só dizia "✗ verificações
+                         falharam") -->
+                    <div id="revPrChecks" class="revlist"></div>
+                    <div id="revPrFiles" class="revlist"></div>
+                    <div id="revPrDecision" class="revcard"></div>
+                    <div id="revPrThreads" class="revlist"></div>
+                  </div>
+                </div>
+              </div>
             </div>
 
             <!-- ======== 1d/1e · DOCUMENTO ======== -->
@@ -476,7 +615,7 @@
         <div id="editWrap" class="sheet-wrap" role="dialog" aria-modal="true" aria-labelledby="editTitle" hidden>
           <div class="sheet editor">
             <div class="sheet-head">
-              <span id="editTitle" class="mono sheet-title" data-i18n>editar</span>
+              <span id="editTitle" class="sheet-title" data-i18n>editar</span>
               <button id="editClose" class="glyph" aria-label="Fechar" data-i18n-attrs="aria-label">×</button>
             </div>
             <div id="editModalBar" class="mdbar"></div>
@@ -492,10 +631,19 @@
           <div class="sheet">
             <div class="sheet-head">
               <!-- título e rótulo do confirmar são SEMPRE escritos por openModal -->
-              <span id="pmTitle" class="mono sheet-title" data-i18n-dyn>juntar a um conhecimento</span>
+              <span id="pmTitle" class="sheet-title" data-i18n-dyn>juntar a um conhecimento</span>
               <button id="pmClose" class="glyph" aria-label="Fechar" data-i18n-attrs="aria-label">×</button>
             </div>
             <div id="pmBody" class="pmbody"></div>
+            <!-- o motivo de um confirmar que FALHOU mora dentro da folha: ela
+                 deixou de fechar no erro (fechar levava embora os campos
+                 digitados) e um toast que expira era o único registro da
+                 tentativa. role=alert porque a pessoa está esperando a resposta
+                 daquele clique -->
+            <div id="pmErr" class="pmerr" role="alert" hidden>
+              <span id="pmErrMsg" data-i18n-dyn></span>
+              <button id="pmErrGo" class="plink" hidden data-i18n>abrir Configurações</button>
+            </div>
             <div class="editbar">
               <button id="pmConfirm" class="btn solid" data-i18n-dyn>confirmar</button>
               <button id="pmCancel" class="link mono muted" data-i18n>cancelar</button>
@@ -815,6 +963,7 @@
     <script src="mdedit.js"></script>
     <script src="i18n.js"></script>
     <script src="workspace.js"></script>
+    <script src="review.js"></script>
     <script src="fuzzy.js"></script>
     <script src="world.js"></script>
     <script src="refs.js"></script>

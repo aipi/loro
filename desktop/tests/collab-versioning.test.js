@@ -183,22 +183,84 @@ test("N4 — a revisão ABRE: o app não devolve o endereço para o usuário abr
   assert.match(handler, /openProposalUrl\(/);
   pair("abrir a revisão");
 
-  const sheet = fnBody("openReviewsSheet");
-  assert.match(sheet, /data-propen/, "cada revisão da folha abre");
-  assert.match(sheet, /openProposalUrl\(/);
-  assert.ok(!/copie o link e abra no navegador/.test(sheet),
+  // ADR-0027 · a folha `openReviewsSheet` virou o destino Revisão. Cada
+  // afirmação abaixo é a MESMA, repontada — e a linha deixou de só "abrir algo"
+  // para abrir a revisão que a pessoa veio ler, DENTRO do Loro.
+  //
+  // A lista são DUAS funções: a linha (markup) e o pintor (ligação). Somadas num
+  // bloco só, `/data-prdetail/` era satisfeita por QUALQUER uma das duas: tirar o
+  // atributo da linha (nenhuma linha ligada, todas com role="button" que não faz
+  // nada) ou trocar o seletor do leitor (NodeList vazia, nenhuma linha ligada)
+  // passava a suíte inteira verde. Cada metade é afirmada contra o seu PRÓPRIO
+  // texto, e `wireActivateKeys` é fixado DENTRO do laço que roda.
+  const row = fnBody("teamRowHtml");
+  const painter = fnBody("renderTeamReviews");
+  const wire = painter.slice(painter.indexOf("const wire = (box)"));
+  assert.ok(wire.includes("querySelectorAll("),
+    "o ligador da lista é uma função só, e é ela que percorre as linhas");
+  assert.match(row, /data-prdetail="\$\{num\}"/,
+    "a LINHA carrega o gancho que a abre — sem ele nada é ligado");
+  assert.match(wire, /querySelectorAll\("\[data-prdetail\]"\)/,
+    "e o LEITOR procura o MESMO gancho — outro seletor percorre uma lista vazia");
+  assert.match(wire, /openReview\(Number\(row\.dataset\.prdetail\)\)/,
+    "clicar na linha abre a revisão AQUI DENTRO, e a linha diz qual é");
+  const detail = fnBody("renderReviewDetail") + fnBody("wireReviewDetail");
+  const sheet = row + painter;
+  assert.match(detail, /gh_pr_detail|REV\.detail/,
+    "e o que abre é a revisão LIDA, não o endereço dela");
+  assert.match(fnBody("loadReviewDetail"), /gh_pr_detail/);
+  // a porta para o navegador continua existindo, na revisão aberta, e continua
+  // sendo a única do app: nenhuma outra função fala com brain_open_link
+  assert.match(detail, /openProposalUrl\(/);
+  assert.match(fnBody("openProposalUrl"), /brain_open_link/);
+  // e é o único: nenhuma superfície da revisão fala com brain_open_link por fora
+  // dela (a outra chamada do app é a referência externa da ADR-0026, outro assunto)
+  for (const fn of ["renderTeamReviews", "renderReviewDetail", "wireReviewDetail",
+    "loadReviewDetail", "openReview", "decisionHtml", "threadHtml"]) {
+    assert.ok(!/brain_open_link/.test(fnBody(fn)),
+      `${fn} abre URL por fora de openProposalUrl — a porta tem de ser uma`);
+  }
+  assert.ok(!/copie o link|abra no navegador/.test(sheet + detail),
     "a cópia não pode mais mandar o usuário fazer o trabalho do app");
-  pair("a revisão acontece no GitHub — “abrir” leva você até ela no navegador.");
-  // "abrir"/"copiar link" repetidos em N linhas não dizem QUAL revisão (2.4.6)
-  assert.match(sheet, /aria-label="\$\{t\("abrir a revisão"\)\} #\$\{num\}"/);
+  // e a frase que dizia que a leitura acontecia FORA saiu do catálogo junto com
+  // a folha: com a revisão aberta aqui dentro ela virou mentira (DESIGN.md §1)
+  assert.ok(!("a revisão acontece no GitHub — “abrir” leva você até ela no navegador." in EN),
+    "msgid de superfície retirada ainda no catálogo");
+  pair("Mudanças propostas ao conhecimento oficial. Nada entra sem aprovação — e a sua leitura acontece aqui, sem sair do Loro.");
+  // "abrir"/"copiar link" repetidos em N linhas não dizem QUAL revisão (2.4.6).
+  // Agora o nome acessível está na LINHA inteira, que é o alvo — e ela é operável
+  // pelo teclado, coisa que a linha .fitem2 fstatic da folha não precisava ser.
+  // MIGRADAS (rodada 3): eram `role="button"` + `tabindex="0"` + `wireActivateKeys`
+  // na LINHA inteira. Achado na árvore de acessibilidade do Chrome: o <button> real
+  // do ⧉ copiar link morava DENTRO desse div[role=button] — aninhamento interativo,
+  // e o ARIA dá filhos apresentacionais a um role=button, então a exposição do botão
+  // de dentro é indefinida. Quem abre passou a ser um <button> de verdade com o
+  // título dentro: papel, Enter/Espaço e foco vêm do elemento (mais forte que a
+  // imitação), e os dois controles são irmãos.
+  assert.match(row, /<button class="rvopen" data-prdetail=/,
+    "quem abre a revisão é um botão de verdade, e não um div fingindo ser um");
+  assert.ok(!/role="button"/.test(row), "sem papel de mentira na linha");
+  assert.ok(row.indexOf("</button>") < row.indexOf("data-prurl"),
+    "o ⧉ copiar link é IRMÃO do botão que abre, não filho dele");
+  assert.match(sheet, /aria-label="\$\{t\("abrir a revisão"\)\} #\$\{num\}/);
   assert.match(sheet, /aria-label="\$\{t\("copiar link"\)\} #\$\{num\}"/);
+  // e o nome acessível carrega o ESTADO: um aria-label na linha substituía o
+  // conteúdo dela, e «mudanças pedidas» ficava só em pixels (WCAG 4.1.2)
+  assert.match(row, /\$\{estado \? " · " \+ esc\(estado\) : ""\}/);
+  assert.match(row, /esc\(meta\)/);
 });
 
 test("N4 — existe uma superfície de revisões (gh_pr_list) e a faixa tem um controle", () => {
   assert.match(APP, /gh_pr_list/, "o comando existia no contrato e ninguém o chamava");
   assert.match(HTML, /id="ghNotifOpen"/, "a faixa tinha só contadores e um ×");
   assert.match(APP, /ghNotifOpen/);
-  assert.match(APP, /function openReviewsSheet/);
+  // ADR-0027 · a superfície deixou de ser uma folha que se dispensa
+  assert.match(APP, /function renderTeamReviews/);
+  assert.match(APP, /function renderReviewDetail/);
+  assert.match(HTML, /id="destReview"/, "é um destino, não uma folha");
+  assert.match(fnBody("goDest"), /review/, "e o destino é alcançável pela navegação");
+  assert.ok(!/function openReviewsSheet/.test(APP),
+    "a folha antiga não pode continuar viva ao lado do destino que a substituiu");
 });
 
 test("N4 — dispensar vale para AQUELE aviso, não para a sessão inteira", () => {
@@ -422,11 +484,25 @@ test("N4 — o bloqueio que sobra depois de autenticar tem um botão", () => {
 
 // ---------------------------------------------------------------- N5
 test("N5 — a metade da revisão tem uma porta permanente, não só um toast", () => {
-  const calls = (APP.match(/openReviewsSheet\(\)/g) || []).length;
-  assert.ok(calls >= 4, `openReviewsSheet só tinha 2 chamadores (toast + faixa dispensável), achei ${calls}`);
+  // ADR-0027 · eram ≥4 chamadores de uma folha dispensável. Agora as rotas são
+  // NOMEADAS uma por uma — perder qualquer uma reprova, o que uma contagem com
+  // folga não faz — e todas chegam a um destino da nav, que não se dispensa.
+  const rotas = (APP.match(/goDest\("review"/g) || []).length;
+  assert.ok(rotas >= 4, `a revisão perdeu rotas: achei ${rotas}`);
+  const rota = (re, quem) => assert.match(APP, re, `a revisão perdeu a rota: ${quem}`);
+  rota(/label: "Revisão", run: \(\) => \{ openHome\(\); goDest\("review", "now"\); \}/, "⌘K → ir para");
+  rota(/label: "Ver revisões do time"[^\n]*goDest\("review", "team"\)/, "⌘K → fazer");
+  rota(/label: t\("ver revisões"\), run: \(\) => goDest\("review", "team"\)/, "o aviso do envio");
+  rota(/\$\("ghNotifOpen"\)\.addEventListener\("click", \(\) => goDest\("review", "team"\)\)/, "a faixa de avisos");
+  rota(/rev\.addEventListener\("click", \(\) => goDest\("review", "team"\)\)/, "a seção TIME do painel ✦ IA");
+  assert.match(HTML, /data-dest="review"/, "e a porta principal é permanente: um destino da nav");
+  const SHELL = fs.readFileSync(path.join(SRC, "shell.js"), "utf8");
+  assert.match(SHELL, /review:\s*"destReview"/, "o casco conhece o destino, senão o botão não liga nada");
   assert.match(APP, /label: "Ver revisões do time"/, "não estava na paleta ⌘K");
+  assert.match(APP, /label: "Revisão"/, "e o destino também tem a sua linha em ⌘K");
   assert.match(HTML, /id="pReviewsBtn"/, "nem tinha controle na seção TIME do painel ✦ IA");
   pair("Ver revisões do time");
+  pair("Revisão");
 });
 
 test("N5 — a faixa de avisos é anunciada a quem não a vê", () => {

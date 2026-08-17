@@ -1671,12 +1671,55 @@ pub fn codeowners_template(contexts: &[String], lang: &str) -> String {
     format!("{header}{lines}\n")
 }
 
-// ---- Pull Request template = the RFC body ----
-pub const PR_TEMPLATE: &str = r#"## Resumo da mudança
+// ---- Pull Request template = the review description the team asks for ----
+// These `## ` headings are NOT agent-only text: `brain_pr_template` reads this
+// file and the send-for-review sheet prints each heading as a field LABEL and
+// each `<!-- … -->` line as that field's placeholder (ADR-0027). So DESIGN.md §4
+// governs every word here. It did not: the sheet asked a person to fill in
+// "Contexto afetado" and "Hotspots" — two internal words the vocabulary sweep had
+// already removed from the product — and Loro itself had written them, through
+// `lib.rs`'s setup. The words below are the ones the review screen uses, and
+// there are three because a description a reviewer reads is a summary, an origin
+// and a way to check; what changed in the knowledge is the diff, which the screen
+// already shows in full.
+//
+// A section with no `<!-- … -->` line is a blank box with a title: the hint is
+// what says what to write, so every section here has one.
+pub const PR_TEMPLATE: &str = r#"## Resumo
+<!-- o que muda e por quê -->
+
+## De onde vem
+<!-- a reunião, decisão ou documento que originou a mudança -->
+
+## Como conferir
+<!-- como um revisor confere que está certo -->
+"#;
+
+pub const PR_TEMPLATE_EN: &str = r#"## Summary
+<!-- what changes and why -->
+
+## Where it comes from
+<!-- the meeting, decision or document the change came from -->
+
+## How to check
+<!-- how a reviewer checks it is right -->
+"#;
+
+// The review templates Loro shipped BEFORE ADR-0027, in both languages. A file
+// byte-identical to one of them was written by this app at setup, never by the
+// team — the same reasoning `SHIPPED_LEGACY_DESCRIPTIONS` uses for skills — so the
+// migration may replace it. A file the team touched is theirs and is never
+// rewritten.
+//
+// `{DIR}` is the ONE token that differs between the two generations that shipped:
+// ADR-0026 renamed the knowledge folder, and the example inside the hint moved
+// with it. Both spellings are on real disks, so both have to be recognised.
+pub const SHIPPED_LEGACY_PR_TEMPLATES: [&str; 2] = [
+    r#"## Resumo da mudança
 <!-- O que muda e por quê, em 1–2 frases. -->
 
 ## Contexto afetado
-<!-- Qual domínio/pasta (ex.: contexts/frota). -->
+<!-- Qual domínio/pasta (ex.: {DIR}/frota). -->
 
 ## O que muda no conhecimento
 <!-- As alterações no context.md (seções 1–5). -->
@@ -1689,13 +1732,12 @@ pub const PR_TEMPLATE: &str = r#"## Resumo da mudança
 
 ## Riscos e pendências
 <!-- O que ainda fica em aberto. -->
-"#;
-
-pub const PR_TEMPLATE_EN: &str = r#"## Change summary
+"#,
+    r#"## Change summary
 <!-- What changes and why, in 1–2 sentences. -->
 
 ## Affected context
-<!-- Which domain/folder (e.g. contexts/frota). -->
+<!-- Which domain/folder (e.g. {DIR}/frota). -->
 
 ## What changes in the knowledge
 <!-- The edits to context.md (sections 1–5). -->
@@ -1708,7 +1750,28 @@ pub const PR_TEMPLATE_EN: &str = r#"## Change summary
 
 ## Risks and open points
 <!-- What remains open. -->
-"#;
+"#,
+];
+
+// The knowledge folder's two names, ADR-0026 before and after.
+const LEGACY_PR_TEMPLATE_DIRS: [&str; 2] = ["contexts", "contextos"];
+
+// Was this file written by Loro, exactly as shipped? Only then may a refresh
+// replace it.
+pub fn is_shipped_pr_template(md: &str) -> bool {
+    let seen = md.trim();
+    if [PR_TEMPLATE, PR_TEMPLATE_EN]
+        .iter()
+        .any(|t| t.trim() == seen)
+    {
+        return true;
+    }
+    SHIPPED_LEGACY_PR_TEMPLATES.iter().any(|tpl| {
+        LEGACY_PR_TEMPLATE_DIRS
+            .iter()
+            .any(|dir| tpl.replace("{DIR}", dir).trim() == seen)
+    })
+}
 
 // ---- language selectors ----
 pub fn context_template(lang: &str) -> &'static str {
@@ -1872,6 +1935,106 @@ mod tests {
             assert!(tpl.contains("{{CONTEXT}}"));
             assert!(tpl.contains("[!HOTSPOT]"));
         }
+    }
+
+    // DESIGN.md §4 on the ONE template whose text the app prints as its own UI:
+    // every `## ` heading is a field label in the send-for-review sheet and every
+    // `<!-- … -->` line is that field's placeholder. The two JS vocabulary sweeps
+    // cannot see this file — the labels leave `app.js` entirely and arrive from
+    // Rust — so the guard lives where the words are written. It asked for
+    // "Contexto afetado" and "Hotspots", authored by Loro's own setup.
+    #[test]
+    fn the_review_template_asks_in_the_words_the_product_uses() {
+        // internal vocabulary DESIGN.md §4 retires, plus the mechanism names the
+        // user never has to learn
+        let retired = [
+            "contexto",
+            "context",
+            "acervo",
+            "hotspot",
+            "fila",
+            "brainstorming",
+            "rfc",
+            "pull request",
+            "branch",
+            "changelog",
+        ];
+        for (lang, tpl) in [("pt", PR_TEMPLATE), ("en", PR_TEMPLATE_EN)] {
+            for line in tpl.lines() {
+                let user_reads = line.starts_with("## ") || line.contains("<!--");
+                if !user_reads {
+                    continue;
+                }
+                let low = line.to_lowercase();
+                for word in retired {
+                    assert!(
+                        !low.contains(word),
+                        "review template/{lang}: a field the user fills in says \"{word}\": {line}"
+                    );
+                }
+            }
+            // and every field says what to write: a label with no hint is a blank
+            // box with a title
+            let fields = crate::git::pr_body_sections(tpl);
+            assert!(
+                !fields.is_empty(),
+                "review template/{lang}: the sheet would have no fields at all"
+            );
+            for f in &fields {
+                assert!(
+                    !f.label.is_empty(),
+                    "review template/{lang}: a section with no label"
+                );
+                assert!(
+                    !f.hint.is_empty(),
+                    "review template/{lang}: \"{}\" asks for prose and explains nothing",
+                    f.label
+                );
+            }
+        }
+    }
+
+    // The fix above only reaches a NEW project: the file is created if absent, so
+    // every project already on disk keeps asking for "Contexto afetado" forever.
+    // The migration may replace a file that is still byte-identical to what Loro
+    // wrote — and must never touch one the team edited, which is exactly the rule
+    // the skills and AGENTS.md already follow.
+    #[test]
+    fn a_review_template_loro_wrote_can_be_refreshed_and_the_teams_own_never_is() {
+        for legacy in SHIPPED_LEGACY_PR_TEMPLATES {
+            assert!(
+                legacy.contains("## Contexto afetado") || legacy.contains("## Affected context"),
+                "the legacy body has to be the one that shipped, or it matches nothing on disk"
+            );
+            // both generations are on real disks: ADR-0026 renamed the folder the
+            // hint's example names, and a project set up before that rename still
+            // has the older spelling. The two spellings are written out LITERALLY:
+            // feeding this loop from LEGACY_PR_TEMPLATE_DIRS made the assertion
+            // unable to fail, because dropping a spelling also dropped the input
+            // that would have caught it.
+            for dir in ["contexts", "contextos"] {
+                let on_disk = legacy.replace("{DIR}", dir);
+                assert!(
+                    is_shipped_pr_template(&on_disk),
+                    "a template Loro shipped ({dir}) is not recognised, so the retired words stay forever"
+                );
+                assert!(
+                    LEGACY_PR_TEMPLATE_DIRS.contains(&dir),
+                    "the acervo folder spelling {dir} left the list a real disk is matched against"
+                );
+            }
+        }
+        // the current one is recognised too, so the refresh is idempotent
+        for lang in ["pt", "en"] {
+            assert!(is_shipped_pr_template(pr_template(lang)));
+        }
+        // a team that wrote its own template is never rewritten
+        assert!(!is_shipped_pr_template(
+            "## Resumo\n<!-- o que muda e por quê -->\n\n## Nosso passo extra\n"
+        ));
+        // nor is one the team merely added a line to
+        let edited = String::from(PR_TEMPLATE) + "\n## Impacto no time\n";
+        assert!(!is_shipped_pr_template(&edited));
     }
 
     // ADR-0002 §5 — every skill forbids unstated premises and instructs

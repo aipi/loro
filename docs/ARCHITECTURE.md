@@ -58,6 +58,12 @@ separate, user-chosen folder and is **not** part of the codebase.
 - **Settings & platform** — persisted user settings, window/tray/background
   behavior, global shortcut, diagnostics.
 
+The backend modules follow the same split (CLAUDE.md §5). Two of them carry the
+knowledge-review concern: `git.rs` owns everything that shells out to git/gh and
+owns GitHub's vocabulary, and `diff.rs` is **pure** unified-diff parsing — no
+framework, no process, no filesystem. The working tree and a pull request share
+that one parser, so a change never gets two renderings.
+
 ## 3. External engine (whisper)
 
 The transcription engine is **not vendored** (ADR-0001 §1). Loro resolves the
@@ -91,6 +97,21 @@ where the user typed the input that failed**: everything written into a project
 folder maps its `io::Error` through `paths::folder_write_error`, so the wizard
 only ever shows `err.acervo_dir_is_file` / `err.acervo_dir_not_writable` /
 `err.acervo_dir_unusable`, each naming the next step.
+
+The same rule governs every `gh` call (`git.rs::gh_failure`, ADR-0027): a failed
+call becomes `err.github_unreachable` when `looks_offline` recognises the
+*transport* failure, and the specific code of the act that failed otherwise —
+`err.pr_read_failed`, `err.pr_review_failed`, `err.pr_merge_failed`,
+`err.pr_reply_failed`, plus `err.pr_review_body_required`,
+`err.pr_template_empty` and `err.pr_template_write_failed` for the refusals the
+backend takes on its own. Raw gh English never reaches a toast.
+
+`git push` goes through the same rule (`git.rs::push_branch`): git words a
+transport failure its own way ("Could not resolve host"), which `looks_offline`
+now recognises, so an offline push says `err.github_unreachable` instead of
+forwarding git's English. The one failure that used to be pure gh prose — "a pull
+request for branch … already exists" — no longer happens at all: sending a draft
+that is already under review updates it (see `brain_propose_change`).
 
 ### 4.1 Commands (representative)
 
@@ -181,23 +202,35 @@ Brainstorming world + the fila → contexto flow (ADR-0001 §7):
 | `brain_send_files_to_queue` | `rels[], destContext?` | `name[]` | send the selected brainstorming files to the fila (`inbox/`), one item per file, steered by `<ctx>--`; validates all before writing any; rejects transcript/audio/audit (BR-8) |
 | `brain_send_brainstorm_to_queue` | `slug, destContext?` | `name[]` | "enviar tudo → fila": send every queueable file of the brainstorming, each its own item |
 
-Knowledge versioning & collaboration (ADR-0001 §5) — all opt-in, no credentials stored:
+Knowledge versioning & collaboration (ADR-0001 §5) — all opt-in, no credentials stored.
+Every `gh` call runs with the user's **ambient** credential: no token is ever
+requested, stored or logged (**BR-9**), and no command below logs a diff, a
+description or a review comment — the log lines carry counts, review numbers and
+`err.*` codes only (**BR-8**):
 
 | Command | Args | Returns | Purpose |
 |---|---|---|---|
-| `brain_git_state` / `brain_git_files` | — | state / per-file status | local repo status (button label, VSCode-like tree colors) |
+| `brain_git_state` / `brain_git_files` | — | state / per-file status | local repo status (button label, VSCode-like tree colors). Both read `git status --porcelain -uall` through ONE authority (`pending_entries`), the same one `brain_git_diff` and the dirty-tree refusals use, so the count on the tab, the cards on the review screen, the sidebar's markers and "this draft cannot be switched" can never disagree (ADR-0027) |
 | `env_doctor` | — | checklist + `versioningEnabled` + `offline` | validate git/gh/auth/identity/remote; gates the remote flow. `offline` tells a network failure apart from a missing configuration, so a connected machine with no network is never reported as unconfigured; each check carries `detail` AND `hint`, and the screen prints both |
 | `env_set_identity` | `name, email` | `()` / err | the one safe wizard fix — sets git identity scoped to the acervo; the e-mail's shape is validated here (`err.git_identity_invalid_email`), because this identity signs every version the team reads |
-| `brain_version` | `slug, message` | `{branch, saved, warn?}` | Versionar (ADR-0002 §2): with nothing pending it refuses FIRST — no fetch, no draft, `saved:false`. Otherwise sync local default with origin (fetch + ff-only, degradable — `warn` = `err.git_offline`/`err.main_diverged`), then `rfc/<slug>` + add + commit (local) |
-| `git_branches` / `git_switch_branch` / `git_create_branch` | — / `branch` / `slug` | `{current, default, branches:[{name, docs, leaving}], dirty}` / branch / branch | branch-first flow (ADR-0002 §2): picker data, switch (blocked on dirty tree), create `rfc/<slug>` off the synced default. Each stand carries what the branch KEEPS (`docs`) and what leaves the screen on the way there (`leaving`) — the price the picker states before the click |
+| `brain_version` | `slug, message` | `{branch, saved, warn?, review?, pushed}` | Versionar (ADR-0002 §2): with nothing pending it refuses FIRST — no fetch, no draft, `saved:false`. Otherwise sync local default with origin (fetch + ff-only, degradable — `warn` = `err.git_offline`/`err.main_diverged`), then `rfc/<slug>` + add + commit (local) | **Not local-only since ADR-0027 round 6:** when the draft already carries an open review the commit is followed by the push that review reads, so `review` names it and `pushed` says whether it arrived (the commit must not be lost to a dead network). A draft with no open review pushes nothing. Runs off the main thread (`spawn_blocking`) because of that push, and invalidates the PR-list cache when it pushes |
+| `git_branches` / `git_switch_branch` / `git_create_branch` | — / `branch` / `slug` | `{current, default, branches:[{name, docs, leaving}], dirty}` / branch / branch | branch-first flow (ADR-0002 §2): picker data, switch (blocked on dirty tree), create `rfc/<slug>`. Each stand carries what the branch KEEPS (`docs`) and what leaves the screen on the way there (`leaving`) — the price the picker states before the click. The new draft is rooted in the synced default only while that changes **nothing on disk** (`git diff --quiet HEAD <default>`); otherwise it starts from `HEAD`. Naming a draft is not a price the user agreed to pay, and on a project whose knowledge lives on a draft — every project until a review lands — the default branch is the empty baseline, so rooting there took the documents, `.github/` and the `.gitignore` off the disk (ADR-0027) |
 | `term_status` | — | `{open, agentRunning}` | readiness handshake (ADR-0002 §4, ADR-0003 §3): skill invocations are injected only when the acervo's agent process lives under the PTY shell |
 | `term_agent` | — | command string | the active acervo's AI agent command (frontend launches it in the PTY; non-Claude agents get skills as plain prompts) |
-| `brain_propose_change` | `title, body` | `{number, url}` | Propor: push the rfc/ branch + `gh pr create` (the RFC); gated |
-| `gh_pr_list` / `gh_pr_status` | — / `number` | PR(s) | read open PRs / one PR's review status via `gh --json`; backs the "Revisões abertas" sheet |
+| `brain_propose_change` | `title, body` | `{number, url, updated}` | Propor: push the rfc/ branch, then `gh pr create` (the RFC) — gated. A draft that ALREADY has an open review is **updated**, never proposed twice (ADR-0027): the open reviews of that draft are read first (`open_reviews_for_branch`), the push IS what the review reads, and `pr_create` is reached only through `ProposeAct::Create`. `updated:true` says which of the two happened, so the screen can name it; it is also the author's route after `mudanças pedidas` |
+| `gh_pr_list` / `gh_pr_status` | — / `number` | `{prs, ageMs}` / PR | read open PRs / one PR's review status via `gh --json`; backs the team half of the Revisão destination. `gh_pr_list` answers from a 30s cache shared with `brain_notifications` and returns the reading's AGE, so the screen can say when it is showing the previous one; any write to a review invalidates it. Both run off the main thread (`spawn_blocking`) |
+| `brain_git_diff` | `rel?` | `[FileDiff]` | the working tree against HEAD, parsed by `diff.rs`; untracked documents render as all-add and the index is never touched; the ADR-0009/0013 quarantine applies exactly as on the save path (BR-8). The read path applies the `GIT_IGNORED` list ITSELF (`is_quarantined`, gitignore semantics, pure) instead of trusting the `.gitignore` on disk: that file is written only by WRITE paths, so an acervo created by an earlier release keeps the previous list until something saves — and that gap is how the intake's own bookkeeping (`.brain/state.json`, `.brain/activity.log`) opened the screen with two rows the person never wrote (ADR-0027). Writing it on a read is not an option: a read that changes the tree is not a read. An already-tracked quarantined file stays visible, because the next version is what takes it out of the index. A file marked `binary` carries no rows and no `+/−` counts: the card says it cannot be shown as text and must not also count lines it has nothing to show for |
+| `gh_pr_detail` | `number` | `PrDetail` | one review, whole: description already split into the team template's sections, files, checks, reviews (with `stale`), conversation threads, `mergeStateStatus`. Three gh calls; `approvalsRequired` is deliberately absent (branch protection is not readable by a non-admin) |
+| `gh_pr_diff` | `number` | `[FileDiff]` | the proposed change, through the same parser as `brain_git_diff` |
+| `gh_pr_review` | `number, action, body` | `()` / err | decide: `action ∈ approve \| request_changes \| comment` (typed, so an unknown value fails before any subprocess runs); a blank body on the last two is refused here, not by the screen |
+| `gh_pr_merge` | `number, headRef` | `()` / err | `--squash --delete-branch`; refuses first with `err.working_tree_dirty` when the head branch is current and dirty, because deleting it moves the working tree |
+| `gh_pr_reply` | `number, commentId, body` | `()` / err | reply inside a conversation thread (`commentId` = the thread's first comment) |
+| `brain_pr_template` | — | `{rel, sections, hints}` | the team's review template: first existing of five spellings wins; with no file, `rel` is the lowercase path this app scaffolds and `sections` come from the seeded template. `hints[i]` is section `i`'s own `<!-- … -->` sentence — the guidance the template hides in markup, which is what the field's placeholder says; a section with no comment has an empty hint |
+| `brain_set_pr_template` | `sections` | `rel` / err | write the template into the **versioned** tree — it lands as a pending change and is reviewed like any other; does not commit, does not push. The sheet edits LABELS, so the writer puts back everything it was never shown: a section that survives keeps its whole block (`<!-- … -->` hint included — that sentence is the field's placeholder for the whole team), and the block before the first heading (an H1, a line to whoever is contributing, the team's own note) stays where it was. `previous` is the template the sheet was SHOWING, which on a project with no file of its own is the one this app ships — reading the file alone made the team's first save strip every sentence the sheet had just printed (ADR-0027) |
 | `brain_open_link` | `url` | `()` / err | open a review (or an external ref) in the OS default browser: http(s) only, no whitespace/control characters, never through a shell (`err.unsupported_link_scheme`) —  |
 | `brain_notifications` | — | inbox by category | collaboration inbox from open PRs; `connected:false` when local-only |
 | `brain_timeline` | `rel?` | `[{id,when,author,label}]` | abstracted history (git log) for the timeline UI |
-| `brain_migrate` | `apply?` | report | non-destructive `guia.md`→`context.md` + scaffolding (dry-run default) |
+| `brain_migrate` | `apply?` | report | non-destructive `guia.md`→`context.md` + scaffolding (dry-run default). The one file it may rewrite instead of create is `.github/pull_request_template.md`, and only while the bytes are still exactly what Loro shipped (`is_shipped_pr_template`): the headings are the send-for-review sheet's field labels, so an old one keeps asking for the retired words, while a template the team wrote is the team's and is never touched |
 
 ### 4.2 Events
 
@@ -300,12 +333,28 @@ Path resolution: `LORO_HOME` (exported by `loro.sh`) or a sensible default;
   it the first version renamed the unborn branch and approval had nothing to become
   official into. *Salvar versão do projeto* → `brain_version` puts the WHOLE acervo
   (`git add -A`, minus the ADR-0009/0013 quarantine) on `rfc/<slug>` and commits
-  locally, signed with the user's own git identity; the draft is the one the user is
+  locally, signed with the user's own git identity. The quarantine
+  (`git::GIT_IGNORED`) also covers the **intake's own bookkeeping** —
+  `.brain/state.json` and `.brain/activity.log`, which every intake run rewrites
+  (ADR-0027): the queue that feeds them (`inbox/`) and the queue it drains into
+  (`processed/`) are already local-only, so neither file says anything to a
+  teammate, and the activity log is prose an agent wrote over raw queue items, so
+  versioning it is one more route from a transcript to a shared remote (BR-8).
+  A pre-rule acervo carries them in its tree, and `.gitignore` does not apply to a
+  tracked file, so the next version untracks them (`git rm --cached`; the files
+  stay on disk), and the READ path applies the same list itself so an acervo whose
+  `.gitignore` predates the rule never shows either file as a change the person
+  made. `.loro/settings.json` stays versioned on purpose: `autoContext`
+  is the acervo's policy, and it travels with the acervo. The draft is the one the user is
   already on (the description is the message, never the branch address), and a new
-  draft with pending edits starts from `HEAD`. *Enviar para revisão do time* →
+  draft starts from `HEAD` unless rooting it in the default branch would leave the
+  working tree byte-identical. *Enviar para revisão do time* →
   `brain_propose_change` pushes that branch and opens the PR (the RFC) via `gh`,
   gated on `env_doctor`'s `versioningEnabled`, and its url is opened/listed through
-  `brain_open_link` + `gh_pr_list`. Owners approve on GitHub via
+  `brain_open_link` + `gh_pr_list`. Saving a version stays **local** — nothing
+  leaves the machine on its own; the same *Enviar para revisão do time* is what
+  carries a new version to a review that is already open, and it says so (`updated`)
+  instead of asking gh for a second review of the same draft. Owners approve on GitHub via
   `.github/CODEOWNERS` + branch protection; merging into `main` makes the change the
   official source of truth. Local-only stays the default;
   `brain_notifications`/`brain_timeline` surface review status and history without

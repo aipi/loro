@@ -64,14 +64,47 @@ test("F30 — renderActive pinta o rodapé nos dois estados", () => {
     `renderActive deve pintar o rodapé ao entrar e ao sair da edição (achei ${calls.length})`);
 });
 
-test("F30 — o salvar do rodapé grava o buffer antes de versionar", () => {
+// MIGRADO (rodada 4) — a asserção era de ORDEM no texto do handler, e a ordem no
+// texto não é a ordem no tempo: `saveActive()` grava o arquivo por `invoke` e o
+// clique seguinte acontecia ANTES do disco responder. Pior: ele era um clique em
+// `B.gitBtn`, que com a árvore limpa está DESABILITADO (é o estado «tudo salvo ✓»)
+// — e um clique programático num controle desabilitado não dispara. Medido no app
+// rodando: com o buffer sujo e a árvore limpa, «Salvar versão» no rodapé do editor
+// gravava o arquivo, dizia «salvo» e não abria versão nenhuma. O fluxo não fechava.
+// F30 foi REVERTIDA por decisão do dono (2026-08-17): «o salvar no arquivo não
+// deveria gerar um commit». A asserção original garantia que o salvar do rodapé
+// CHEGAVA à folha de versão — o fluxo existia e morria em silêncio. Agora o fluxo
+// não existe: gravar o arquivo e versionar o projeto são dois atos, e o commit tem
+// casa própria (o destino Revisão, que está no relógio e mostra a mudança assim que
+// o arquivo é gravado). A claim que fica é MAIS forte, porque proíbe em vez de
+// exigir: este clique não commita, e o rótulo não promete versão nenhuma.
+test("F30 — o salvar do rodapé grava o ARQUIVO, e não abre commit nenhum", () => {
   const m = APP.match(/\$\("bSaveVersion"\)\.addEventListener\("click",[\s\S]*?\n\}\);/);
   assert.ok(m, "o botão do rodapé continua wired");
   const h = m[0];
-  assert.ok(h.indexOf("saveActive()") < h.indexOf("gitBtn"),
-    "salvar o buffer vem antes do commit — versionar o disco descartava a edição");
-  assert.match(h, /kind === "context"/,
-    "num rascunho pessoal não há versão a salvar: só o buffer é gravado");
+  assert.match(h, /await saveActive\(\)/,
+    "gravar o buffer é assíncrono: quem chama espera o disco");
+  assert.match(fnBody("saveActive"), /return saveTab\(/,
+    "e saveActive devolve a promessa do disco, senão não há o que esperar");
+  assert.ok(!/promptVersionar/.test(h),
+    "um commit é do PROJETO inteiro, não do documento em foco: salvar o arquivo não o dispara");
+  assert.ok(!/brain_version|brain_git_commit/.test(h),
+    "e não há caminho indireto para o commit a partir daqui");
+  assert.ok(!/gitBtn/.test(h),
+    "um clique programático num controle desabilitado não dispara nada");
+
+  // o rótulo diz UM ato, para os dois tipos de documento
+  const foot = fnBody("paintEditFoot");
+  assert.match(foot, /save\.textContent = t\("Salvar"\)/,
+    "«Salvar versão» prometia um commit que este clique não faz mais");
+  assert.ok(!/kind === "context" \? t\("Salvar versão"\)/.test(foot),
+    "e o rótulo não volta a depender do tipo do documento");
+
+  // a versão continua alcançável — só não por aqui
+  assert.match(APP, /function promptVersionar/, "a folha de versão continua existindo");
+  assert.match(APP, /B\.gitBtn\.addEventListener\("click", promptVersionar\)/,
+    "a seção TIME do painel ✦ IA continua sendo uma porta para ela");
+  assert.match(APP, /saveVersionFromReview/, "e o destino Revisão é a casa dela");
 });
 
 test("F30 — 'Salvar' tem par em inglês", () => {

@@ -69,6 +69,10 @@
   --term-danger: #e08488;
   --term-ok: #2fc7bf;
   --term-cur: #e6b13a;
+  /* a hairline da faixa do terminal era o ÚNICO literal de cor da folha fora dos
+     blocos de token (rgba(255,255,255,.07)) e por isso não seguia tema nenhum.
+     Como todo o resto da paleta do terminal, ela tem UM valor nos dois temas. */
+  --term-line: #35312a;
   /* sombras */
   --sh-card: 0 2px 10px rgba(32, 29, 24, .04);
   --sh-card2: 0 2px 12px rgba(32, 29, 24, .05);
@@ -459,7 +463,7 @@ body {
    tinta que o chat já usa para o mesmo conteúdo e uma borda de controle (3:1),
    que é o que torna a caixa achável — e declara --mono: só o <code> filho
    resolvia a família, o pre computava o `monospace` genérico do navegador. */
-.doc pre {
+.doc pre, .rvprose pre {
   background: color-mix(in srgb, var(--ink) 4%, transparent);
   border: 1px solid var(--line-control); border-radius: 8px;
   padding: 12px 14px; overflow: auto; font-family: var(--mono); font-size: .85em;
@@ -669,7 +673,12 @@ body {
 .dochead { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
 .crumbpath { font-size: 10.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
 .badge.ro { color: var(--muted); }
-.badge.ok { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
+/* A tinta de um ESTADO não é a cor que o usuário escolheu para o projeto: com o
+   âmbar, «novo» (.ok) e «modificado» (.warn2) mediam 1,02:1 de diferença — dois
+   estados do git indistinguíveis na mesma lista (medido, rodada 3). O verde já é
+   o "adicionado" do app (o ponto da lateral, o preenchimento da linha do diff),
+   então é ele que diz ok/novo/aprovado/resolvido. */
+.badge.ok { color: var(--green); border-color: color-mix(in srgb, var(--green) 50%, transparent); }
 .badge.warn2 { color: var(--yellow-ink); border-color: color-mix(in srgb, var(--yellow) 50%, transparent); }
 .tabs.small { margin-left: auto; }
 .tabs.small .tab { font-size: 10px; padding: 2px 10px; }
@@ -826,14 +835,14 @@ body {
 .doc h4 { font-size: .95em; margin: .7em 0 .3em; font-weight: 650; }
 .doc h5, .doc h6 { font-size: .85em; margin: .6em 0 .25em; font-weight: 650; color: var(--muted); }
 .doc ol { margin: .4em 0 .8em 1.4em; }
-.doc table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: .92em; display: block; overflow-x: auto; }
+.doc table, .rvprose table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: .92em; display: block; overflow-x: auto; }
 /* N24 · the header was the AUTHOR's text rewritten by the stylesheet: 10.5px
    mono, force-uppercased, at --muted, inside a document. DESIGN.md §3 is explicit
    ("mono is never prose", and 10.5px is the machine label's step) — a table header
    a person wrote is prose, and the casing they chose is content. It stays a header
    through weight and ink, on the cell's own step. */
-.doc th { font-weight: 650; color: var(--ink); text-align: left; }
-.doc th, .doc td { padding: 7px 10px; border-bottom: 1px solid var(--line); }
+.doc th, .rvprose th { font-weight: 650; color: var(--ink); text-align: left; }
+.doc th, .doc td, .rvprose th, .rvprose td { padding: 7px 10px; border-bottom: 1px solid var(--line); }
 .doc blockquote {
   border-left: 3px solid var(--accent);
   background: color-mix(in srgb, var(--accent) 7%, transparent);
@@ -851,7 +860,7 @@ body {
    two MULTIPLY — the code inside a code block computed 10.4762px (measured), under
    every step of DESIGN.md §3 that is meant to be read and at the 10.5px the scale
    reserves for a micro-label. A code block is content: it keeps the pre's step. */
-.doc pre code { display: block; font-size: 1em; }
+.doc pre code, .rvprose pre code { display: block; font-size: 1em; }
 
 /* ---- acervo: seletor de projeto (switcher) ---- */
 .switch { position: relative; margin-bottom: 10px; }
@@ -876,6 +885,15 @@ body {
 .fitem2:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); }
 .fitem2.on { color: var(--accent); }
 .fitem2 .fn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* O SELETOR DE RASCUNHOS é a única tela cuja função é ESCOLHER qual base de
+   conhecimento entra na frente, e o nome era cortado em 170px pela coluna fixa do
+   .fmeta: dois rascunhos com 24 letras de prefixo comum pintavam o MESMO rótulo
+   visível. Os nomes acessíveis estavam completos, então quem ouvia distinguia e
+   quem via não. Aqui o nome tem a linha inteira e quebra (§7), e o contador desce
+   para a segunda linha em vez de comer a identidade. */
+.fitem2.draftrow { flex-wrap: wrap; align-items: baseline; }
+.fitem2.draftrow .fn { white-space: normal; overflow: visible; overflow-wrap: anywhere; flex: 1 1 100%; }
+.fitem2.draftrow .fmeta { margin-left: 0; }
 .fitem2 .pill { margin-left: auto; }
 /* N2 · o que a linha guarda — um contador, o papel de 10.5px mono do §3 */
 .fitem2 .fmeta {
@@ -896,9 +914,11 @@ body {
 }
 .gitbtn { cursor: pointer; }
 .gitbtn:hover { border-color: var(--accent); color: var(--accent); }
-/* ações rotuladas e SEMPRE visíveis (mover/apagar) */
+/* ações rotuladas e SEMPRE visíveis (mover/apagar). A caixa É a affordance, então
+   a borda tem de clarear 3:1 (WCAG 1.4.11): com --line ela media 1,25:1 no claro
+   e 1,16:1 no escuro — uma ação que o olho não acha. */
 .mini.act {
-  border: 1px solid var(--line); border-radius: 6px; padding: 2px 9px;
+  border: 1px solid var(--line-control); border-radius: 6px; padding: 2px 9px;
   color: var(--muted); background: var(--panel); opacity: 1;
 }
 .mini.act:hover { color: var(--accent); border-color: var(--accent); }
@@ -1258,6 +1278,16 @@ body {
   border-left: 3px solid color-mix(in srgb, var(--yellow) 55%, transparent);
   padding-left: 8px;
 }
+/* O motivo de um confirmar que falhou mora DENTRO da folha: ela não fecha mais no
+   erro (fechar levava embora os campos digitados), e um toast que expira era o
+   único registro da tentativa. Mesma tinta de recusa do resto do app. */
+.pmerr {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  border: 1px solid color-mix(in srgb, var(--red) 45%, transparent);
+  background: color-mix(in srgb, var(--red) 7%, transparent);
+  border-radius: 8px; padding: 8px 10px;
+  font: 11.5px/1.5 var(--sans); color: var(--ink2);
+}
 .pmfield { display: flex; align-items: center; gap: 10px; font-size: 12px; }
 .pmfield > span:first-child { flex: none; width: 56px; color: var(--muted); }
 .pmsrc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1481,25 +1511,42 @@ body { background: var(--paper); color: var(--ink); }
 #app { display: flex; flex-direction: column; height: 100vh; min-height: 0; }
 .ic { width: 14px; height: 14px; flex: none; fill: currentColor; }
 
-/* ---- botão base: uma ação primária por tela (só ela é "sólida") ---- */
+/* ---- botão base: uma ação primária por tela (só ela é "sólida") ----
+   O preenchimento de um secundário é o MESMO do cartão em que ele se apoia
+   (1,00:1 medido), então quem diz "isto é um botão" é a borda — e ela precisa dos
+   3:1 da WCAG 1.4.11. Com --line (a régua entre superfícies, 1,2:1 por projeto)
+   ela media 1,16:1 no escuro e 1,25:1 no claro: a caixa do «↗ Enviar para revisão
+   do time» e do «pedir mudanças» não era perceptível. Os irmãos rotulados
+   (.mini.act, .pbranch) já tinham passado por esta medição; o botão base ficou
+   atrás dela. */
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 7px;
-  border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+  border: 1px solid var(--line-control); background: var(--panel); color: var(--ink);
   font: 600 12.5px var(--sans); padding: 8px 16px; border-radius: 999px;
   cursor: pointer; white-space: nowrap;
 }
 .btn:hover { border-color: var(--teal); color: var(--teal); }
 /* N3 · "tudo salvo ✓" É o estado, e o mesmo controle abria a folha de salvar
    assim mesmo. Desabilitado ele precisa PARECER desabilitado — e o hover não
-   pode continuar prometendo uma ação (o texto fica em --ink3: 4,9:1). */
+   pode continuar prometendo uma ação (o texto fica em --ink3: 4,9:1). Um
+   desabilitado continua sendo um controle: a caixa dele é a mesma do repouso. */
 .btn:disabled { color: var(--ink3); cursor: default; }
-.btn:disabled:hover { border-color: var(--line); color: var(--ink3); }
+.btn:disabled:hover { border-color: var(--line-control); color: var(--ink3); }
 .btn.solid {
   background: var(--accent); border-color: transparent; color: var(--on-accent);
   box-shadow: 0 2px 10px color-mix(in srgb, var(--accent) 25%, transparent);
 }
 .btn.solid:hover { filter: brightness(1.06); color: var(--on-accent); }
-.btn.solid:disabled { background: color-mix(in srgb, var(--ink) 10%, transparent); color: var(--muted); box-shadow: none; cursor: not-allowed; }
+/* UM estado, UMA aparência (DESIGN.md §5): um primário desabilitado é um botão
+   desabilitado, então ele usa a mesma forma de `.btn:disabled` duas regras acima —
+   sem preenchimento, com a borda do repouso e o texto em --ink3 (4,9:1 medido).
+   O preenchimento de 10% da tinta deixava --muted em 3,72:1 no escuro e 3,97:1 no
+   claro, e este é o estado em que o botão primário da Revisão passa a maior parte
+   do tempo (tudo salvo). */
+.btn.solid:disabled {
+  background: var(--panel); border-color: var(--line-control); color: var(--ink3);
+  box-shadow: none; cursor: not-allowed;
+}
 .btn.solid.amber { background: var(--yellow); color: var(--on-solid); box-shadow: none; }
 .btn.sm { padding: 7px 14px; font-size: 12px; }
 .btn.wide { width: 100%; }
@@ -1518,14 +1565,19 @@ body { background: var(--paper); color: var(--ink); }
   height: 54px; padding: 0 18px 0 14px;
   border-bottom: 1px solid var(--line-soft); background: var(--paper);
 }
-.apphead .switch { position: relative; margin: 0; flex: none; }
+/* O ÚNICO item encolhível do cabeçalho é este — e é PROSA. Todos os outros blocos
+   são `flex: none`, então quem sobrar com o déficit é quem pode encolher: era o
+   pill de gravação (um controle, cortado a 35px dos 151px que pede entre 901 e
+   1015px, medido) e passou a ser o nome do projeto, que já elide e cujo texto
+   inteiro está no `title` e no menu de troca — DESIGN.md §2 regra 9, na ordem. */
+.apphead .switch { position: relative; margin: 0; display: flex; flex: 0 1 auto; min-width: 0; }
 .projbtn {
-  display: inline-flex; align-items: center; gap: 10px;
+  display: inline-flex; align-items: center; gap: 10px; min-width: 0;
   background: none; border: none; cursor: pointer; color: var(--ink); padding: 4px 6px; border-radius: 9px;
 }
 .projbtn:hover { background: color-mix(in srgb, var(--ink) 5%, transparent); }
 .projlogo { border-radius: 8px; flex: none; }
-.projname { font: 650 14px var(--sans); max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.projname { font: 650 14px var(--sans); max-width: 180px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .projbtn .swcaret { margin: 0; color: var(--muted); font-size: 11px; }
 .apphead .switchmenu { left: 6px; right: auto; min-width: 240px; top: calc(100% + 2px); }
 
@@ -1533,8 +1585,12 @@ body { background: var(--paper); color: var(--ink); }
   display: flex; gap: 2px; flex: none;
   border: 1px solid var(--line); border-radius: 999px; padding: 3px; background: var(--panel);
 }
+/* O rótulo NÃO quebra: o cabeçalho está preso em 54px, então uma pílula de
+   quatro destinos que quebrasse "Conhecimento" em duas linhas entregaria um
+   controle cortado (DESIGN.md §2 regra 9) — o que cede é o nome do projeto,
+   abaixo, que é prosa e já tem o texto inteiro no title e no menu de troca. */
 .dest {
-  display: inline-flex; align-items: center; gap: 5px;
+  display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
   border: none; border-radius: 999px; padding: 6px 16px; cursor: pointer;
   font: 600 12.5px var(--sans); color: var(--ink3); background: none;
 }
@@ -1545,8 +1601,9 @@ body { background: var(--paper); color: var(--ink); }
    selecionada viravam azuis — três cores de "ativo" na mesma tela. O acento é a
    cor do que está ativo/primário, e ele acompanha o projeto. */
 .dest.on { background: var(--accent); color: var(--on-accent); }
+/* §3 · um contador é um micro-rótulo, e o degrau dele é 10.5px — não 10 */
 .destbadge, .cbadge {
-  font: 600 10px var(--mono); color: var(--on-solid); background: var(--yellow);
+  font: 600 10.5px var(--mono); color: var(--on-solid); background: var(--yellow);
   border-radius: 999px; padding: 1px 6px; flex: none;
 }
 /* Em cima do destino ativo o contador troca de par: o âmbar sobre o acento
@@ -1554,15 +1611,23 @@ body { background: var(--paper); color: var(--ink); }
    preenchimento, a leitura garantida é a tinta dele com o acento por cima —
    o mesmo par que o botão primário usa, invertido. */
 .dest.on .destbadge { background: var(--on-accent); color: var(--accent); }
+/* O pill é um CONTROLE: clicar nele volta para a gravação. Ele não encolhe.
+   MEDIDO (rodada 3, Chrome 151, quatro destinos e os dois contadores da nav): com
+   `min-width: 0` ele era o único item encolhível do flex do cabeçalho — todos os
+   outros blocos são `flex: none` — e absorvia o déficit inteiro entre 901px e
+   1015px: 35px dos 151px de que precisa, sem relógio e sem a palavra "gravando",
+   justamente o estado que o cabeçalho existe para dizer quando você está em outra
+   tela. Quem cede é a prosa, depois a decoração, depois o ar (bloco de 1015px
+   abaixo) — DESIGN.md §2 regras 8 e 9. */
 .headrec {
-  display: inline-flex; align-items: center; gap: 7px; cursor: pointer;
+  display: inline-block; cursor: pointer; flex: none;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   border: 1.5px solid var(--red); border-radius: 999px; padding: 5px 13px;
   background: color-mix(in srgb, var(--red) 7%, transparent);
   color: var(--red); font: 11px var(--mono); letter-spacing: .03em;
 }
 .headright { margin-left: auto; display: inline-flex; align-items: center; gap: 10px; flex: none; }
 .localtag { font: 11px var(--mono); color: var(--muted); letter-spacing: .02em; }
-@media (max-width: 900px) { .localtag { display: none; } }
 .recbtn {
   display: inline-flex; align-items: center; gap: 8px;
   border: none; background: var(--red); color: var(--on-red); border-radius: 999px;
@@ -1673,7 +1738,7 @@ body { background: var(--paper); color: var(--ink); }
 .minisep { width: 28px; height: 1px; background: var(--line); flex: none; }
 .minibadge {
   position: absolute; top: -3px; right: -3px;
-  font: 600 9px var(--mono); color: var(--on-solid); background: var(--yellow);
+  font: 600 10.5px var(--mono); color: var(--on-solid); background: var(--yellow);
   border: 2px solid var(--paper); border-radius: 999px; padding: 0 4px;
 }
 .sidegrip { cursor: col-resize; background: var(--line); opacity: .35; }
@@ -1763,12 +1828,19 @@ body { background: var(--paper); color: var(--ink); }
 .tl.now .tldot { background: var(--yellow); }
 .tl.saved .tldot { background: var(--teal); }
 .tl .tlmeta { display: block; font: 10.5px var(--mono); color: var(--muted); margin-top: 2px; }
+/* o preenchimento do chip difere do cartão em 1,04:1, então quem diz que ele é um
+   controle é a BORDA — e ela precisa dos 3:1 da 1.4.11 (media 1,25:1 com --line) */
 .pbranch {
   display: flex; align-items: center; gap: 6px; width: 100%;
-  border: 1px solid var(--line); border-radius: 9px; background: var(--paper);
+  border: 1px solid var(--line-control); border-radius: 9px; background: var(--paper);
   padding: 7px 10px; font: 11.5px var(--mono); color: var(--ink3); cursor: pointer;
 }
 .pbranch:hover { border-color: var(--teal); color: var(--teal); }
+/* no cabeçalho ele é uma pílula da linha, não um campo de largura cheia */
+/* uma pílula de UMA linha: o endereço cede largura com reticências, e nada quebra */
+.headbranch { width: auto; flex: 0 1 auto; min-width: 0; max-width: 190px; border-radius: 999px; padding: 5px 10px; gap: 5px; white-space: nowrap; }
+.headbranch .mono { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.headbranch .rvchipcaret { color: var(--ink3); flex: none; }
 .pnote { font: 11px/1.55 var(--sans); color: var(--muted); }
 
 /* ---- painel: chat ---- */
@@ -1826,7 +1898,7 @@ body { background: var(--paper); color: var(--ink); }
 .termdock > .termpanel { flex: 1; min-width: 0; }
 .termstrip {
   flex: none; display: flex; align-items: center; gap: 10px;
-  padding: 8px 12px; border-bottom: 1px solid rgba(255, 255, 255, .07);
+  padding: 8px 12px; border-bottom: 1px solid var(--term-line);
 }
 .termname { color: var(--term-ok); font-size: 11px; letter-spacing: .04em; }
 .termstrip .ulink { color: var(--term-dim); font: 11px var(--mono); }
@@ -1951,6 +2023,221 @@ body { background: var(--paper); color: var(--ink); }
   color: var(--muted); font: 600 12.5px var(--sans); cursor: pointer;
 }
 .knowadd:hover { border-color: var(--teal); color: var(--teal); }
+
+/* ============ 1g · REVISÃO (ADR-0027) ============
+   Quase tudo aqui é componente que já existia: .dest-view e .viewhead como nos
+   outros destinos, .segrow/.segbtn para as duas metades, .badge para os estados,
+   .pillamber para "sem conexão", .notifbar para a faixa de F11, .pbranch para o
+   rascunho, .btn/.plink para as ações. O que não tinha classe nenhuma é UMA
+   coisa: a linha de diff. Ela é uma superfície de código, então herda o
+   contêiner que DESIGN.md §3 já fixa para um bloco de código — preenchimento de
+   4% da tinta, borda de controle (3:1, para a caixa ser achável) e var(--mono)
+   na própria caixa. */
+.revtabs { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
+/* escopado: os segmentos de Configurações são só texto e não podem ganhar gap */
+#revTabs .segbtn { display: inline-flex; align-items: center; gap: 6px; }
+/* MEDIDO: a tira pede 337px e a coluna tem 298px no piso de 860 com o painel
+   ✦ IA aberto — ela responde à COLUNA, não à janela (§7). As duas metades
+   empilham inteiras: nenhuma palavra é cortada e nenhum contador some. */
+@container (max-width: 400px) {
+  #revTabs { display: flex; width: 100%; flex-wrap: wrap; border-radius: 14px; }
+  #revTabs .segbtn { flex: 1 1 100%; justify-content: center; }
+  /* a frase fica com a linha inteira e o controle desce: espremida ao lado do
+     botão ela virava uma coluna de seis linhas de duas palavras */
+  .notifbar.warm { flex-wrap: wrap; }
+  .notifbar.warm > span { flex: 1 1 100%; }
+}
+#revNow, #revTeam, #revOpen { display: flex; flex-direction: column; gap: 18px; }
+.revlist { max-width: 720px; display: flex; flex-direction: column; gap: 10px; }
+.revgroup { display: flex; flex-direction: column; gap: 10px; }
+.revgroup .phead { margin-bottom: 2px; }
+.revprhead { max-width: 720px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+/* o cartão do documento mudado: DESIGN.md §5, sem invenção */
+.revcard {
+  max-width: 720px; background: var(--panel);
+  border: 1px solid var(--line); border-radius: 12px; overflow: hidden;
+}
+/* <details>/<summary>, não um div com onclick: o teclado e o aria-expanded vêm
+   de graça, e o app não inventa uma segunda maneira de abrir uma seção */
+/* MEDIDO no piso de 860px com o painel ✦ IA aberto: a coluna tem 342px e a
+   linha do cartão pedia 313px dentro de 296px. Um item de flex não encolhe
+   abaixo do seu min-content sem `min-width: 0`, então o caminho do documento
+   (que já tem reticências) inflava o cartão e o destino rolava de lado. */
+.revcard > summary.revsum {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 12px 14px; cursor: pointer; list-style: none;
+}
+.revcard > summary.revsum::-webkit-details-marker { display: none; }
+.revcard[open] > .revsum { border-bottom: 1px solid var(--line-soft); }
+.revsum .rvname { min-width: 0; font: 600 13.5px var(--sans); color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.revsum .rvpath { min-width: 0; flex: 0 1 auto; font: 11px var(--mono); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.revsum .rvmeta { margin-left: auto; flex: none; font: 10.5px var(--mono); color: var(--muted); }
+.revrow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 12px 14px; }
+.revrow .rvtitle { font: 600 13.5px var(--sans); color: var(--ink); }
+.revrow .rvsub { width: 100%; font: 11.5px/1.5 var(--sans); color: var(--muted); }
+/* Quem ABRE a revisão é um <button> de verdade, com o título dentro: a linha era
+   um div[role=button] com um <button> real aninhado (o ⧉ copiar link), e o ARIA dá
+   filhos apresentacionais a um role=button — a exposição do botão de dentro é
+   indefinida. Dois irmãos, dois nomes próprios. A caixa do botão é a própria
+   linha, então ele não desenha borda nenhuma; o anel de foco global é que o
+   encontra. */
+.revrow .rvopen {
+  flex: 1 1 auto; min-width: 0; text-align: left;
+  background: none; border: none; padding: 0; cursor: pointer; border-radius: 6px;
+}
+.revrow .rvopen:hover .rvtitle { color: var(--accent); }
+/* uma ação rotulada da Revisão é PROSA: 9,5px na fonte da máquina («marcar como
+   visto», «voltar ao meu rascunho») é o passo do §3 usado pela metade errada */
+.revacts .mini.act, .revrow .mini.act, .notifbar .mini.act {
+  font: 600 11.5px var(--sans); letter-spacing: normal;
+}
+
+/* "como era / como fica" — a mudança na língua de quem escreveu. A tinta é a do
+   corpo (--ink2, a mesma que o bloco de código do leitor usa sobre o mesmo tipo
+   de preenchimento); o verde e o vermelho ficam no fundo, porque como TEXTO
+   eles caem entre 3:1 e 4.5:1 e a cor nunca é a única pista (WCAG 1.4.1). */
+.rvbits { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; }
+.rvbit {
+  border-radius: 8px; padding: 8px 12px;
+  font: 13px/1.6 var(--sans); white-space: pre-wrap; overflow-wrap: break-word;
+}
+.rvbit.before { color: var(--ink2); background: color-mix(in srgb, var(--red) 7%, transparent); }
+.rvbit.after { color: var(--ink2); background: color-mix(in srgb, var(--green) 8%, transparent); }
+/* micro-rótulo: --ink3 sobre os dois tons (4.58:1 claro · 5.37:1 escuro), onde
+   --muted daria 4.19:1 — abaixo do piso de texto */
+.rvlabel { display: block; font: 10.5px var(--mono); color: var(--ink3); margin-bottom: 4px; }
+
+/* A TERCEIRA superfície de leitura. A descrição de uma revisão e os comentários
+   da conversa são markdown escrito por uma pessoa, e vinham escapados dentro do
+   `white-space: pre-wrap` do .rvbit: o `**` e o `|` da tabela chegavam à tela e
+   as quebras do fonte viravam linhas em branco. Agora o bloco é markup, então a
+   pré-formatação sai — e o pre, a tabela e as células reusam as decisões que
+   .doc já tomou (§3: um bloco de código é uma CAIXA em toda superfície de
+   leitura; §7: conteúdo largo rola dentro do próprio container).
+   A escada de títulos só DESCE e o h4 nunca fica menor que a prosa que ele
+   apresenta (§3), na escala do cartão — não na do documento, que tem o dobro da
+   largura. */
+/* O TÍTULO DE SEÇÃO DO DESTINO É PROSA. «Aguardam a sua revisão», «O que muda»,
+   «Conversa», «Sua revisão» são frases que uma pessoa escreveu, e estavam no
+   .phead — 11px mono MAIÚSCULO em --muted, que é a máquina nomeando um cesto
+   (IDEIAS · PARA ORGANIZAR · COM ESTE DOCUMENTO). Duas consequências: §3 («mono
+   nunca é prosa, e uma frase não é gritada») e a escada INVERTIA — um h2 de 11px
+   a 4,65:1 apresentando títulos de cartão de 13,5px em --ink. Aqui ela desce:
+   h2 15.5 > h3 14.5 > título do cartão 13.5 > prosa 13. */
+.rvhead { font: 650 15.5px var(--sans); color: var(--ink); margin: 18px 0 8px; letter-spacing: normal; text-transform: none; }
+h3.rvhead { font: 650 14.5px var(--sans); margin: 16px 0 6px; }
+.rvhead:first-child { margin-top: 0; }
+/* o chip do rascunho: o glifo e a prosa em --sans, o nome (um endereço) em mono */
+.pbranch .rvchipglyph { color: var(--ink3); }
+.pbranch > span:not(.mono) { font-family: var(--sans); }
+
+/* A sugestão de mudança se apresenta pelo que é: a mesma caixa de um bloco de
+   código (§3), com o seu nome e a saída dita. */
+.rvsug { margin-top: 10px; border-radius: 8px; padding: 8px 12px;
+  background: color-mix(in srgb, var(--green) 8%, transparent); }
+.rvsug pre { margin: 4px 0 6px; background: color-mix(in srgb, var(--ink) 4%, transparent);
+  border: 1px solid var(--line-control); border-radius: 8px; padding: 8px 10px;
+  overflow-x: auto; font-family: var(--mono); font-size: 12.3px; }
+.rvsug .hint { margin: 0; }
+
+.rvprose { white-space: normal; }
+.rvprose > :first-child { margin-top: 0; }
+.rvprose > :last-child { margin-bottom: 0; }
+.rvprose p, .rvprose ul, .rvprose ol { margin: 0 0 .6em; }
+.rvprose li { margin: 0 0 .2em; }
+.rvprose h1, .rvprose h2, .rvprose h3, .rvprose h4, .rvprose h5, .rvprose h6 {
+  color: var(--ink); margin: .9em 0 .35em; line-height: 1.35;
+}
+.rvprose h1 { font-size: 16px; font-weight: 650; }
+.rvprose h2 { font-size: 14.5px; font-weight: 650; }
+.rvprose h3 { font-size: 13.5px; font-weight: 650; }
+.rvprose h4, .rvprose h5, .rvprose h6 { font-size: 13px; font-weight: 600; }
+.rvprose blockquote {
+  margin: .6em 0; padding: 6px 12px; color: var(--ink3);
+  border-left: 2px solid var(--line-strong);
+}
+.rvprose hr { border: 0; border-top: 1px solid var(--line); margin: .9em 0; }
+.rvprose code { font-family: var(--mono); font-size: .92em; }
+
+/* a linha de diff */
+.rvdiff {
+  margin: 0 14px 12px; border: 1px solid var(--line-control); border-radius: 8px;
+  overflow: hidden; background: color-mix(in srgb, var(--ink) 4%, transparent);
+  font-family: var(--mono);
+}
+.rvrow { display: grid; font: 12.3px/1.7 var(--mono); }
+.rvrow.uni { grid-template-columns: 42px 42px 14px minmax(0, 1fr); }
+.rvrow.split { grid-template-columns: 42px minmax(0, 1fr) 42px minmax(0, 1fr); }
+/* a régua responde à COLUNA (o painel ✦ IA a estreita), nunca à janela — §7 */
+@container (max-width: 520px) {
+  .rvrow.uni { grid-template-columns: 34px 34px 12px minmax(0, 1fr); }
+  .rvrow.split { grid-template-columns: 30px minmax(0, 1fr) 30px minmax(0, 1fr); }
+}
+.rvrow.add { color: var(--ink); background: color-mix(in srgb, var(--green) 10%, transparent); }
+.rvrow.del { color: var(--ink); background: color-mix(in srgb, var(--red) 8%, transparent); }
+/* o número é um valor que a pessoa lê para citar a linha: --ink2 o mantém
+   legível também sobre os dois tons (8.75:1 no pior caso), onde --muted cai a
+   3.75:1 e --ghost, que é o token de desabilitado, a 1.9:1 */
+.rvnum { text-align: right; padding: 0 8px; color: var(--ink2); user-select: none; }
+.rvsign { text-align: center; color: var(--ink); user-select: none; }
+/* conhecimento é prosa: a linha QUEBRA em vez de rolar de lado, então o corpo
+   nunca rola horizontalmente (§7 / WCAG 1.4.10) */
+.rvtxt { padding: 0 12px; white-space: pre-wrap; overflow-wrap: break-word; }
+/* "aqui não havia linha" — o hachurado é construído da própria tinta, então
+   segue o tema; não declara cor de texto porque não é texto */
+.rvhatch {
+  background: repeating-linear-gradient(45deg,
+    transparent, transparent 6px,
+    color-mix(in srgb, var(--ink) 6%, transparent) 6px,
+    color-mix(in srgb, var(--ink) 6%, transparent) 7px);
+}
+/* a linha entre pedaços. O INTERVALO é um aviso, não um controle: o backend manda
+   três linhas de contexto e mais nada, então um botão de "abrir" ali abriria coisa
+   nenhuma (DESIGN.md §1). O CORTE das 400 linhas usa a mesma linha e carrega o
+   controle que continua a leitura — essas linhas já estão na memória, e uma
+   leitura truncada sem caminho é um beco sem saída. */
+/* .rvgap CARREGA UM CONTROLE (o corte de 400 linhas, com «mostrar mais linhas»).
+   .rvgap.quiet é a NOTÍCIA de um intervalo que não abre nada: sem o ⋯ na frente,
+   com borda tracejada e mais apagada, para as duas não se parecerem no mesmo
+   cartão (DESIGN.md §1 — nunca um controle que não faz nada, e nunca a aparência
+   de um). */
+.rvgap.quiet {
+  border-top-style: dashed; border-bottom-style: dashed;
+  color: var(--ink3); background: none; justify-content: center;
+}
+.rvgap {
+  display: flex; align-items: center; gap: 8px; padding: 5px 12px;
+  border-top: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft);
+  font: 10.5px var(--mono); color: var(--ink2);
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
+}
+
+/* o compositor: o preço fica ACIMA dos botões, dito antes do clique (D4) */
+.revcard.revsave { display: flex; flex-direction: column; gap: 10px; padding: 14px; }
+.revsaveline { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.revacts { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.pbranch.inline { width: auto; }
+/* rótulo em cima do campo: numa tela (não numa folha estreita) a coluna de
+   78px do formulário deixaria a frase espremida contra o campo */
+.wfield.stack { flex-direction: column; align-items: stretch; gap: 4px; }
+.wfield.stack > span { width: auto; }
+/* um <input> carrega uma largura intrínseca (o `size` padrão): numa coluna ele
+   não encolhia abaixo dela e esticava o cartão 28px além da coluna de 298px */
+.wfield.stack > input { min-width: 0; }
+/* a faixa de F11 é a mesma .notifbar, na variante âmbar: "pendente, precisa de
+   você" é exatamente o que o âmbar quer dizer (DESIGN.md §3) */
+.notifbar.warm {
+  border-color: color-mix(in srgb, var(--yellow) 35%, var(--line));
+  background: color-mix(in srgb, var(--yellow) 8%, transparent);
+}
+
+.revempty {
+  max-width: 720px; display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 40px 0; text-align: center;
+}
+.revempty > b { font: 600 14px var(--sans); color: var(--ink); }
+.revempty > .hint { max-width: 42ch; }
 
 /* ============ 1d / 1e · DOCUMENTO ============ */
 #bDocWrap { padding: 26px 34px 32px; display: flex; gap: 22px; align-items: flex-start; }
@@ -2146,7 +2433,13 @@ body { background: var(--paper); color: var(--ink); }
 .rowmenu:hover { color: var(--ink); border: none; background: color-mix(in srgb, var(--ink) 7%, transparent); }
 .btree .pill { display: none; }
 .bitem.addctx { border-radius: 8px; font-family: var(--sans); font-size: 11.5px; }
-.badge { border-radius: 999px; font-size: 10px; }
+/* DESIGN.md §5: distintivo é MONO. A família estava só na mão de quem escrevia o
+   markup (`class="mono badge"`), então os sete distintivos do destino Revisão
+   nasceram herdando a prosa do cartão — 10px em --sans (medido). A família é do
+   componente. */
+/* §3 reserva 11px para um distintivo e o piso da escala é 10.5px: 10px ficava
+   sob os dois, numa marca que existe para ser lida de relance. */
+.badge { border-radius: 999px; font-size: 11px; font-family: var(--mono); }
 .mini-select {
   font: 11.5px var(--sans); color: var(--ink3); background: var(--panel);
   border: 1px solid var(--line-control); border-radius: 999px; padding: 5px 10px;
@@ -2196,7 +2489,7 @@ body { background: var(--paper); color: var(--ink); }
 }
 @media (max-width: 900px) {
   .bshell { grid-template-columns: minmax(0, min(var(--side-w, var(--side-w-default)), 34%)) 5px minmax(0, 1fr); }
-  .dest { padding: 6px 11px; }
+  .dest { padding: 6px 9px; }
   .dest-view { padding: 26px 22px 24px; }
   .recacts, .recscroll, .recfoot, .endbar { padding-left: 22px; padding-right: 22px; }
   .endbar { margin-left: 22px; margin-right: 22px; }
@@ -2287,15 +2580,21 @@ body.resizing #mainRow * { pointer-events: none; }
 }
 .cfgcard .field select:focus, .wizcard .wfield select:focus,
 .cfgcard .field input:focus, .wizcard .wfield input:focus { border-color: var(--accent); }
-/* R14 · dentro de uma folha o anel de foco simplesmente não existia: a regra
+/* R14 · o anel de foco do campo simplesmente não existia: a regra
    `.wfield input, .wfield select, .wfield textarea { outline: none }` (0,1,1)
    vence o `:focus-visible` global (0,1,0) nos dois sentidos, e um <select> não
    tem cursor de texto para sobrar como pista — o controle que decide ONDE a
    gravação vai morar ficava pixel a pixel igual ao não focado (WCAG 2.4.7).
-   Numa folha a caixa visível do controle é a linha inteira, então é ela que
-   recebe o anel; onde o campo tem caixa própria (Configurações, primeiro uso), o
-   anel é do campo. */
-.sheet .wfield:focus-within { outline: 1.5px solid var(--accent); outline-offset: 2px; }
+   A caixa visível do campo é a LINHA inteira, então é ela que recebe o anel.
+   R14 (rodada 4) · e ele segue a CAIXA, não a tela: preso a `.sheet`, o remendo
+   deixava de fora os dois campos de texto do destino Revisão («Descreva a mudança
+   em uma linha» e «um comentário para o time»), que moram num `.revcard` — as
+   duas ÚNICAS paradas de Tab do destino sem indicador de foco, medidas nos dois
+   temas, e o destino das duas recusas que mandam o teclado para um campo. */
+.wfield:focus-within { outline: 1.5px solid var(--accent); outline-offset: 2px; }
+/* onde o campo tem caixa PRÓPRIA (primeiro uso), o anel é dele: dois anéis
+   concêntricos seriam duas afirmações do mesmo foco */
+.wizcard .wfield:focus-within { outline: none; }
 .cfgcard .field select:focus-visible, .wizcard .wfield select:focus-visible,
 .cfgcard .field input:focus-visible, .wizcard .wfield input:focus-visible,
 .cfgcard .field .dirinfo:focus-visible, .wizcard .wfield .dirbtn:focus-visible,
@@ -2396,17 +2695,20 @@ body.resizing #mainRow * { pointer-events: none; }
 .bgroup .secttl:hover { color: var(--ink); }
 
 /* ---- chat: sinal de que está trabalhando + passos discretos ---- */
-.chatthinking { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
-.chatthinking .lbl { font: 11.5px var(--mono); color: var(--muted); }
-.chatthinking .dots { display: inline-flex; gap: 3px; }
-.chatthinking .dots i {
+/* O INDICADOR DE CARREGANDO É O MESMO DA CASA. O chat já tinha «pensando…» com
+   três pontos, o embrulho de prefers-reduced-motion e o anúncio; um segundo
+   indicador só para a Revisão seria uma segunda anatomia para o mesmo fato. */
+.chatthinking, .rvloading { display: flex; align-items: center; gap: 8px; padding: 2px 0; margin: 0; }
+.chatthinking .lbl, .rvloading .lbl { font: 11.5px var(--mono); color: var(--muted); }
+.chatthinking .dots, .rvloading .dots { display: inline-flex; gap: 3px; }
+.chatthinking .dots i, .rvloading .dots i {
   width: 5px; height: 5px; border-radius: 50%; background: var(--teal);
   animation: chatblink 1.1s ease-in-out infinite;
 }
-.chatthinking .dots i:nth-child(2) { animation-delay: .18s; }
-.chatthinking .dots i:nth-child(3) { animation-delay: .36s; }
+.chatthinking .dots i:nth-child(2), .rvloading .dots i:nth-child(2) { animation-delay: .18s; }
+.chatthinking .dots i:nth-child(3), .rvloading .dots i:nth-child(3) { animation-delay: .36s; }
 @keyframes chatblink { 0%, 80%, 100% { opacity: .25; } 40% { opacity: 1; } }
-@media (prefers-reduced-motion: reduce) { .chatthinking .dots i { animation: none; opacity: .7; } }
+@media (prefers-reduced-motion: reduce) { .chatthinking .dots i, .rvloading .dots i { animation: none; opacity: .7; } }
 /* o realce que confirma "abri o chat para você" */
 .composerbox.flash { animation: composerflash .9s ease; }
 @keyframes composerflash {
@@ -2622,8 +2924,53 @@ details.chatstep pre {
    janela estreita ela volta ao fluxo, antes de colidir com os dois lados. */
 .apphead { position: relative; }
 .destnav { position: absolute; left: 50%; transform: translateX(-50%); }
-@media (max-width: 1080px) {
+/* 1140px, não 1080: com o quarto destino a pílula pede 419px, e enquanto ela
+   está ABSOLUTA o bloco da direita tem de caber na metade do vão. A 1080 esse
+   vão é de 330px contra os 348px que a direita pede com o pill de gravação
+   visível — 18px de colisão exatamente na largura em que a pílula ainda é
+   absoluta. Em 1140 ela volta ao fluxo antes disso (o fluxo estático pede
+   1074px), e no piso de 860 o que cede é o nome do projeto: prosa já elidida,
+   com o texto inteiro no title e no menu de troca, nunca um controle. */
+@media (max-width: 1140px) {
   .destnav { position: static; transform: none; }
+  .projname { max-width: 110px; }
+}
+/* 1015px, não 900: MEDIDO (rodada 3) com os quatro destinos, os DOIS contadores
+   da nav e a gravação em curso, o cabeçalho pede 1015px. Este bloco valia a
+   partir de 900, e entre 901 e 1015 o déficit inteiro caía no único item
+   encolhível do flex — o pill de gravação, cortado a 35px dos 151px que pede —
+   enquanto a etiqueta da versão (decoração) e o ar entre os blocos mantinham os
+   seus pixels. A ordem da regra 9 é a inversa, e é esta:
+     1. PROSA — o nome do projeto elide para 70px (o texto inteiro segue no title
+        e no menu de troca);
+     2. DECORAÇÃO — a etiqueta da versão e o ponto de estado saem (o ● do botão
+        diz o mesmo);
+     3. AR — o vão entre os blocos e o preenchimento dos dois controles da
+        direita fecham, sem tocar nos rótulos.
+   Nenhum controle encolhe e nenhum rótulo é cortado. Resultado medido: 844px numa
+   janela de 860 (o piso do tauri.conf). Vem DEPOIS do bloco de 1140 porque as
+   duas regras têm a mesma especificidade e a última é que vale. */
+@media (max-width: 1015px) {
+  .apphead { gap: 10px; }
+  /* O PISO É DO BLOCO, não do rótulo. `.apphead .switch` era `flex: 0 1 auto` com
+     `min-width: 0`, então depois que a decoração e o ar acabaram todo o déficit
+     restante caía no .projname — medido até uma tira de 7px, com o cabeçalho
+     sabendo em que projeto você está e não dizendo. O max-width abaixo é o teto do
+     rótulo; este min-width é o piso do bloco que o carrega (logo + 70px + caret). */
+  .apphead .switch { min-width: 118px; }
+  .projname { max-width: 70px; }
+  .destnav { gap: 0; }
+  /* R64 · o chip do rascunho é o PRIMEIRO a ceder: abaixo daqui fica só o glifo,
+     e o nome continua no título e na folha que ele abre. Nenhum rótulo é cortado
+     porque este não é um rótulo — é um endereço, e ele tem outra casa. */
+  .headbranch .mono, .headbranch .rvchipcaret { display: none; }
+  .headbranch { padding: 6px 8px; }
+  /* o ar dos dois controles da direita, não os seus rótulos */
+  .apphead .recbtn { padding: 8px 13px; }
+  .apphead .aibtn { padding: 6px 10px; }
+  /* decoração: a etiqueta da versão e o ponto (aria-hidden, e o ● já diz) */
+  .localtag { display: none; }
+  .apphead .dot { display: none; }
 }
 
 /* O modo edição ocupa a coluna inteira (ADR-0008). `#bDocWrap` alinha os filhos
