@@ -65,13 +65,13 @@ SIDEBAR 250/60px │ TABS (only when a document is open) │ PANEL 330px
 Inviolable rules — encoded in `shell.js` and the `.bshell` grid, not just here:
 
 1. The tab strip starts **to the right of** the sidebar; the sidebar reaches the header.
-2. **There is no "Home" tab.** Tabs are open documents only; Início/Organizar/Conhecimento are destinations of the header nav.
+2. **There is no "Home" tab.** Tabs are open documents only; Início/Organizar/Conhecimento/Revisão are destinations of the header nav. A destination cannot be dismissed — that is why the review half of the product is one (ADR-0027) and not the sheet it used to be, reachable from a toast that expires and a banner with an ×.
 3. The sidebar collapse control sits **at the bottom**, beside ⚙ Configurações.
 4. **One primary action per screen.**
 5. **No explanatory `ⓘ` tooltips**, no numbered labels in navigation.
 6. **✦ IA** toggles the right panel; its active state is a 12% teal fill.
 7. **Gravar comes before ✦ IA** in the header.
-8. The nav pill is **centred on the window** (absolutely positioned): both side blocks change width with their content, so flex centring would let it drift. Below 1080px it returns to normal flow, before it can collide.
+8. The nav pill is **centred on the window** (absolutely positioned): both side blocks change width with their content, so flex centring would let it drift. Below **1140px** it returns to normal flow, before it can collide — measured with four destinations: while the pill is absolute the right block has to fit in half the gutter, and at 1080px that is 330px against the 348px the right block asks for with the recording pill visible. Below **1015px** — the width where the header actually runs out, measured with the four destinations, **both** nav counters and a recording in progress — the header yields in rule 9's order: **prose** first (the project name truncates to 70px; its full text is in the button `title` and the switch menu), then **decoration** (the `v0.x.y` tag and the status dot go), then the **air** (the gap between blocks and the padding of the two right-hand controls). No control shrinks and no label is clipped; measured result, 844px in an 860px window. The one shrinkable item in the header is the project block (`flex: 0 1 auto; min-width: 0`) — it is prose, and it ellipsizes. The recording pill is `flex: none` because it is a control: it had `min-width: 0` and, since every other block is `flex: none`, it absorbed the whole deficit between 901px and 1015px — 35px of the 151px it needs, with the clock and the word «gravando» cut off, which is the one thing the header exists to say while you are on another screen.
 9. The **recording footer is shared** by the loose recording and the meeting — one clock, one canvas. Meeting-specific controls (⏸ pausar, ■ Encerrar) sit **left of the clock**; the explanatory sentence truncates before any control shrinks, and **a control is never clipped**: the sentence truncates, the sentence goes, the wave gives up its width, and only then does the row wrap onto a second line. The seal that says whether audio is being kept was being cut off 38.6px past the column edge, which is the one claim the footer exists to make.
 10. A window width may take a pane's **space**; it may never take the **pane**. Below
    1041px the ✦ IA panel yields *width* (never more than 45vw, whatever was persisted)
@@ -100,6 +100,7 @@ Inviolable rules — encoded in `shell.js` and the `.bshell` grid, not just here
 | Sidebar | 250px / 60px collapsed (drag floor 180px, ceiling 45vw) | `--side-w-default` |
 | Right panel | 330px (drag floor 300px, ceiling 60vw) | `--panel-w` |
 | Document card | max-width **700px**, centred — view **and** edit | — |
+| Destination list column (`.orglist`, `.revlist`, `.viewhead`) | max-width **720px**, left-aligned | — |
 | Terminal dock | 34vh default, floor 120px, ceiling 75vh | — |
 
 The panel's floor used to be justified as "the width where its three tabs still
@@ -173,9 +174,15 @@ change a value here without changing the code, the suite says so.
 `--line`, `--line-soft` and `--line-strong` are **hairlines**: they separate two
 surfaces at ~1.2:1 and are not allowed to be the only thing that identifies a
 control. A control whose box *is* its affordance — text field, select, the
-field-shaped folder pickers, the chat composer, the editor host, the find bar —
-draws its border with `--line-control`, which clears 3:1 on paper, panel and
-sidebar in both themes (WCAG 2.1 AA 1.4.11).
+field-shaped folder pickers, the chat composer, the editor host, the find bar, the
+labelled row actions (`.mini.act`), the draft chip (`.pbranch`) and **every
+secondary `.btn`** — draws its border with `--line-control`, which clears 3:1 on
+paper, panel and sidebar in both themes (WCAG 2.1 AA 1.4.11). `.btn` was the last
+one left behind: its fill is the same as the card it sits on (1.00:1 measured), so
+the border was the whole box, and with `--line` it measured 1.16:1 in dark and
+1.25:1 in light — the pill of «↗ Enviar para revisão do time», «pedir mudanças» and
+the empty state's «abrir Configurações» was not perceivable. A disabled `.btn` keeps
+that same box: unavailable is not invisible.
 
 **Focus is part of the palette.** `:focus-visible` is a 1.5px `--accent` outline
 2px outside the control, so it contrasts with the surface *behind* the control,
@@ -185,10 +192,15 @@ accent gave 2.76:1 in light) and on the toast, which is painted with `--ink`, it
 is `--paper` (16.1:1 / 14.2:1, where the accent gave 1.79:1 in dark).
 
 A box with more than one focusable child takes the ring on `:focus-within`, on the
-box: the field row of a modal sheet, the find bar and the chat composer. All three had
+box: the field row (`.wfield`), the find bar and the chat composer. All three had
 switched the global ring off on the input and painted nothing in its place, so the
 caret was the only cue and the controls beside it (the find counter and ×, the send
-button) had none at all. The guard for this reads **every** `outline` declaration in
+button) had none at all. **The ring follows the box, not the screen the box appears
+on:** scoped to `.sheet`, the same rule left the two text fields of the Revisão
+destination — which live in a `.revcard` — as the only Tab stops of that screen with
+no focus indicator, in both themes, and both refusal paths send the keyboard straight
+to them. The one place where the field draws its own box (the first-run card) turns
+the row's ring off, because two concentric rings are two claims about one focus. The guard for this reads **every** `outline` declaration in
 the sheet, including `!important`: it used to be an allowlist of nine selectors, so
 switching the ring off on the record button, the destination tabs and the wizard's
 colour swatches broke nothing.
@@ -207,6 +219,16 @@ Two families: `--sans` (`-apple-system, Inter, system-ui`) for content and UI,
 `--mono` (`ui-monospace, SF Mono, Menlo`) for anything the machine owns — paths,
 timecodes, counters, badges, terminal.
 
+**The machine's half goes in its own element.** `class="hint mono"` (or `pmnote
+mono`) does *not* paint mono: the two classes have equal specificity, `.hint` and
+`.pmnote` come later in the sheet and use the `font:` shorthand, which resets the
+family — so what survived was the wrong half of the rule, prose in `--sans` with
+mono's letter-spacing and the path in the sentence set in `--sans` too. A sentence
+that mixes prose and a machine value is written as prose with a `<span class="mono">`
+around the value. Guarded structurally: for every class combination in the markup
+that asks for `mono`, the winning single-class rule has to be the mono one
+(`tokens.test.js`).
+
 The scale in actual use, most frequent first:
 
 | Role | Style |
@@ -220,6 +242,7 @@ The scale in actual use, most frequent first:
 | Micro-label, counter | `10.5px var(--mono)` |
 | Card title, **sheet title** | `600 14px` → `650 19px` for a section heading |
 | Code block in a document | `.85em` of the reader → **12.3px** `var(--mono)` |
+| **Diff row** (`.rvrow`, ADR-0027) | **12.3px/1.7** `var(--mono)` — the code step, because a diff row *is* a code line; the gutter and the gap notice take the micro-label step (`10.5px var(--mono)`) |
 
 **The document's heading ladder** (`.doc.reader`, the product's primary output —
 ADR-0018) is declared whole, not inherited: prose is `14.5px/1.7` at `--ink2`, and
@@ -350,6 +373,23 @@ for **using** the app.
 | branch padrão (main) | **conhecimento oficial** |
 | remote (origin) | **repositório do time** |
 
+Those two names are **one function**, not a habit: `placeName(branch, def)` returns
+«conhecimento oficial» or «rascunho «<slug>»», and it names the rows of the drafts
+sheet (visible label *and* accessible name), both sides of the switch price **and the
+toast that reports the switch**. The sheet whose whole job is *choosing the place* was
+the last screen still calling the places `main (principal)` and
+`rfc/onboarding-atualizado-co` — one click away from the composer chip saying «no
+conhecimento oficial». One fact, one name, whatever the distance between the two
+surfaces.
+
+That rule has a corollary the toast taught: **no user-facing string is built from a
+git ref**. A ref reaches the screen only through `placeName` / `draftChipLabel`, and
+the caller passes the default branch it just read, because "is this the official
+knowledge?" is a question only `def` answers. A surface that says «⎇ rfc/toast-tres»
+or «⎇ main» is the git vocabulary leaking through the screen that exists to hide it —
+and the *same* surface must also be repainted when the place changes, or the frame
+holds two answers to «where am I» at once.
+
 The last three were never product words at all, and they lived where they do the
 most damage: the **error dictionary**. `err.on_main_branch` said "você está na
 branch principal: clique em Versionar primeiro" — a mechanism the screen never
@@ -375,6 +415,20 @@ by "■ Encerrar reunião" — the same action must not have two appearances.
 
 **Pills and badges.** Mono, `999px`, semantic colour. Meeting sources are
 coloured in read mode exactly as they are live: teal for você, amber for sistema.
+The family belongs to the **component**, not to whoever writes the markup: `.badge`
+declared none, every old site wrote `class="mono badge"` by hand, and the seven
+badges the Revisão destination added read as 10px sans (measured) until the rule
+gained `font-family: var(--mono)`. And a **state's ink is a state token, never
+`var(--accent)`**: `.badge.ok` painted with the project colour, so with the amber
+project «novo» and «modificado» measured 1.02:1 apart — two git states with one
+appearance in one list. `--green` / `--yellow-ink` / `--red` carry new / changed /
+removed, matching the fill the diff row uses for the same fact.
+
+**A disabled control.** One state, one appearance: a disabled primary is a disabled
+button — the same fill, border and `--ink3` text as `.btn:disabled` (4.9:1). The
+filled variant kept its accent fill with `--muted` on top and measured 3.72:1
+(dark) / 3.97:1 (light), and that is what the screen looks like whenever there is
+nothing to save.
 
 **Cards.** `12px` radius, `--panel`, `--sh-card2`, `--line` border. The two
 largest surfaces — the document card and the Home hero — go up to `16px` with a
@@ -472,6 +526,92 @@ so the sheet steps out of the way immediately (`dispatchAiFromSheet`).
 **Refusals go to a toast, not into content.** A refusal written into the answer
 bubble repeats on every click and reads as the agent failing.
 
+**A sheet that fails stays open, with the reason inside it.** Closing on failure
+threw away what the person had just typed — seven fields of the send-for-review
+sheet — and the only notice of the error left with the toast that carried it, so the
+screen ended up exactly as before the attempt with no record of it. Failure keeps the
+sheet, re-arms its primary action, and writes the message into a `role="alert"` slot
+(`#pmErr`) that carries `abrir Configurações` when the app knows the remedy is the
+environment. Configurações opens *over* the sheet: fix it, come back, the fields are
+as they were. Success is the only outcome that closes a sheet.
+
+**A row that opens something is a button, and its siblings are siblings.** A card
+with `role="button"` + `tabindex` around a real `<button>` is two defects: ARIA makes
+a button's children presentational (so the inner control's exposure is undefined),
+and the row's `aria-label` *replaces* everything inside it — the state chip, who
+asked, which draft, when. The team review row is a plain card holding a real
+`<button>` with the title, whose accessible name carries the number, the title, the
+state and the meta line, with `⧉ copiar link` beside it, not inside it.
+
+**A control that repaints its own list gets its focus back.** `marcar como visto`,
+`ver a mudança completa` and the diff-mode switch rebuild the list they live in, so
+the element that carried the outcome stops existing: focus fell to `<body>` and the
+next Tab restarted at the top of the card. The repaint re-queries the equivalent
+control by its own data attribute and focuses it, and announces the outcome when the
+outcome is a number on screen (`%1 de %2 vistos`) — the same save/restore
+`enterOverlay`/`leaveOverlay` do for a layer. A view switch inside a destination
+(opening a review, coming back) does the same: forward to the control that closes the
+view, back to the row that was opened. **And a repaint the user did not ask for keeps
+the place too:** the 10 s poll rebuilds the same list when the working tree changes
+under it (an analysis writing a document, a git operation), so the list remembers the
+*address* of the focused control before the swap and gives it back afterwards — only
+when the swap left it orphaned, because a focus that already has an owner is never
+moved (WCAG 2.4.3). A sheet that **replaces** another one is the same rule at the
+layer level: the overlay stack is already entered, so the new body has to be given the
+keyboard and the new dialog name has to be announced, or the keyboard is left on
+`<body>` in front of a dialog nothing named (4.1.2).
+
+**One live region, and it speaks for what is on screen.** The app has a single
+`#srLive` and a single function that writes in it. Two halves painted in the same pass
+(the destination's two tabs) both wrote there, so the one that finished last won and
+the arrival announced the *hidden* half — «nada aqui ainda» about a list the user
+cannot see. A status message is only a status message for the pane that is showing:
+the painter asks which tab is up before it speaks, and the half that just appeared
+repaints so it can speak at all.
+
+**An open item is a heading.** A view that opens *one* thing inside a destination
+gives that thing a heading of its own (`h2` under the destination's `h1`) and pushes
+its own sections down a level. Rendered as a `<span>`, the item's identity is missing
+from the outline, and heading navigation reads three section titles that belong to
+nothing (1.3.1 / 2.4.6).
+
+**The review card** (`.revcard`, ADR-0027) is the ordinary `12px` card, and it is
+a `<details>` with a `.revsum` disclosure row — not a div with an onclick, so the
+keyboard and `aria-expanded` come for free and the destination does not invent a
+second way to open a section. Three layers, each earning its place:
+
+| Layer | What it is | Rule |
+|---|---|---|
+| `.revsum` | status badge · document name · path in `11px var(--mono)` · `+N −N` | the badge word is the **same word** the sidebar dot uses for the same git status — one state never has two names |
+| `.rvbit` | `como era` / `como fica`, the change in the writer's own words | body ink (`--ink2`) on a `--red 7%` / `--green 8%` fill; the micro-label above it is `--ink3`. Capped at 12 lines with the rest **counted**, because a new document is one passage containing a whole file |
+| `.rvdiff` | the exact lines, behind `ver a mudança completa` | the code-block container of §3 — 4% ink fill, `--line-control` (3:1) edge, `var(--mono)` on the box. The row **wraps**; knowledge is prose, so nothing scrolls sideways (§7) |
+
+Green and red live in the **fill**, never in the ink: as text on their own tint
+they measure between the 3:1 and 4.5:1 floors. The `+`/`−` glyph and the row's
+position carry the meaning, which is what WCAG 1.4.1 wants anyway.
+
+**The gap and the cut are two different rows.** The gap between two hunks is a
+**notice**, not a control — the payload carries three lines of context and nothing
+more, so an "expand" there would open nothing. The **cut** at 400 rows is the
+app's own ceiling (§7: nothing grows without bound inside a card), and the rows
+past it are already in memory: it carries `mostrar mais linhas`, which raises the
+ceiling one step per click and disappears when the reading is complete. A counted
+remainder with no way on is a dead end in the one destination that exists to show
+the exact lines.
+
+**What blocks a change is named.** A review whose checks failed lists them under
+`Verificações que falharam` — one `.revrow` per check, the name the CI gave it,
+and `ver a verificação ↗` where the payload carries a URL. The chip in the header
+still folds them into one word (`✗ verificações falharam`); the group's heading
+carries the state, so the rows do not repeat a badge N times.
+
+**Two halves of one subject are a segmented control, not a second tab strip.**
+`Mudanças de agora` / `Revisões do time` are `.segbtn`, because §3 fixes the
+document's view/edit switch as *the* one tab set in mono; a second mono tab strip
+would contradict a written rule. Each half carries the same `.destbadge` the nav
+pill does, fed by the same painter, so the nav count and the tab count can never
+disagree.
+
 **Menus** clamp to the viewport and flip above their anchor rather than being
 clipped. A **picker** is a fixed 196px column of names; a **destructive
 confirmation** borrows the same box but carries a sentence and a path, so it is
@@ -503,6 +643,12 @@ is on the box that shrinks.
 
 Wide content — tables, code, diagrams — scrolls inside its own container. The
 page body never scrolls horizontally.
+
+**A diff is the exception that proves the rule** (ADR-0027). Its rows read the
+column too (`@container (max-width: 520px)` narrows the gutters), but the row
+**wraps** instead of scrolling: knowledge is prose, and a line the reader has to
+drag sideways to finish is a line they will not read. That is also why `unificado`
+is the default in a 720px column — `lado a lado` leaves each side ~330px.
 
 Two ways that was lost, both measured: a **stacked** layout (≤900px, where the
 document's rail moves below the reader) turns `.docbody` into a column, and a column

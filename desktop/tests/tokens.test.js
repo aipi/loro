@@ -528,6 +528,24 @@ const BOUNDARIES = [
   // it closes the same card (one box, two rules — the 4th column says so)
   [".mdbar", "markdown bar (the top edge of the writing box)", ["var(--panel)"],
     "the .edithost under it closes the box"],
+  // MEDIDO na rodada 3: o chip do rascunho («no rascunho ⎇ …», que abre a folha
+  // dos rascunhos) e as ações rotuladas .mini.act («marcar como visto», «voltar
+  // ao meu rascunho», «⧉ copiar link») tinham 1,16–1,28:1 de borda. Os dois são
+  // anteriores ao destino, e a Revisão é a casa mais visível deles agora — a
+  // 1.4.11 pede 3:1 da borda de um controle onde ela estiver.
+  [".pbranch", "draft chip (opens the drafts sheet)", ["var(--panel)"]],
+  [".pbranch", "draft chip on paper", ["var(--paper)"]],
+  [".mini.act", "labelled row action (marcar como visto, copiar link, mover)", ["var(--panel)"]],
+  [".mini.act", "labelled row action on the sidebar", ["var(--side)"]],
+  // MEDIDO na rodada 3, no app rodando: a pílula de TODO `.btn` secundário media
+  // 1,16:1 no escuro e 1,25:1 no claro contra o cartão, com o preenchimento
+  // idêntico a ele (1,00:1) — nada marcava a caixa do «↗ Enviar para revisão do
+  // time», do «pedir mudanças», do «só comentar» e da porta «abrir Configurações»
+  // do estado vazio. A rodada 2 fez esta MESMA medição para os irmãos (.mini.act,
+  // .pbranch) e o botão base ficou atrás; é ele que carrega a segunda metade do
+  // fluxo primário do destino.
+  [".btn", "secondary button (enviar para revisão, pedir mudanças, abrir Configurações)", ["var(--panel)"]],
+  [".btn", "secondary button on paper (the empty state's door)", ["var(--paper)"]],
 ];
 
 // A more specific rule may legitimately take a control's border away when the box
@@ -662,7 +680,10 @@ const FOCUS_RINGS = [
   // `.wfield select { outline: none }` (0,1,1) beat the global `:focus-visible`
   // (0,1,0), so the control that decides where a recording lands had no focus
   // indicator at all — and a <select> has no caret to fall back on.
-  [".sheet .wfield:focus-within", "on the field row of a modal sheet", ["var(--panel)"]],
+  // MIGRADO (rodada 4): o anel da linha do campo deixou de ser da FOLHA e passou
+  // a ser da linha onde ela estiver (`.wfield:focus-within`) — a mesma asserção,
+  // agora sobre um seletor que alcança a folha E o cartão do destino Revisão.
+  [".wfield:focus-within", "on the field row of a sheet or a card", ["var(--panel)"]],
   [".wizcard .wfield select:focus-visible", "on a first-run select", ["var(--panel)"]],
   [".cfgcard .field select:focus-visible", "on a select in Configurações", ["var(--panel)"]],
   // N21 — the same hole, found by reading every outline declaration instead of an
@@ -678,7 +699,7 @@ const FOCUS_RINGS = [
 // fall back to the global :focus-visible, which is exactly what was overridden).
 test("the controls that switch off the global outline paint one of their own", () => {
   for (const sel of [
-    ".sheet .wfield:focus-within",
+    ".wfield:focus-within",
     ".wizcard .wfield select:focus-visible",
     ".cfgcard .field select:focus-visible",
     ".findbar:focus-within",
@@ -690,6 +711,55 @@ test("the controls that switch off the global outline paint one of their own", (
     );
     assert.ok(own, `${sel} must declare a visible outline of its own (WCAG 2.4.7)`);
   }
+});
+
+// MEDIDO na rodada 3 (harness de teclado, os dois temas): das 40+ paradas de Tab
+// do destino Revisão, EXATAMENTE DUAS não tinham indicador de foco nenhum —
+// #revMsg («Descreva a mudança em uma linha») e #revDecisionMsg («um comentário
+// para o time»), os dois campos de texto da tela. E os dois são para onde as duas
+// recusas MANDAM o teclado: «descreva a mudança em uma linha antes de salvar» põe
+// o foco no controle cujo foco não se vê. A causa é a mesma R14 de sempre —
+// `.wfield input { outline: none }` (0,1,1) vence o `:focus-visible` global
+// (0,1,0) — e o remendo estava preso à folha (`.sheet .wfield:focus-within`),
+// enquanto estes dois campos moram num `.revcard`. O anel segue a CAIXA, não a
+// tela em que ela aparece.
+const WFIELD_HOMES = [
+  [".sheet", "uma folha de confirmação (Novo rascunho, Enviar para revisão)"],
+  [".revcard", "o cartão do destino Revisão (#revMsg, #revDecisionMsg)"],
+];
+test("um campo de texto tem anel de foco em TODA superfície onde ele vive (WCAG 2.4.7)", () => {
+  // quem apaga o anel do campo: a regra que o teste R14 nomeia
+  const apaga = RULES.some((r) => !r.keyframes &&
+    r.sel.split(",").some((s) => /^\.wfield (input|select|textarea)$/.test(s.trim())) &&
+    readDecls(r.body).some(([k, v]) => k === "outline" && /^(none|0)/.test(v.trim())));
+  assert.ok(apaga, "a regra que apaga o anel do campo continua existindo — é ela que cria a dívida");
+
+  // quem PINTA um anel para a linha do campo, e onde esse pintor alcança
+  const pintores = [];
+  for (const r of RULES) {
+    if (r.keyframes || r.at.length) continue;
+    for (const [k, v] of readDecls(r.body)) {
+      if (!/^outline$/.test(k) || !/solid|dashed|dotted|double/.test(v)) continue;
+      for (const s of r.sel.split(",").map((x) => x.trim())) {
+        if (!/\.wfield[^ ]*:focus-within$/.test(s)) continue;
+        pintores.push({ chain: s.replace(/:focus-within$/, "").split(/\s+/), colour: lastColour(v) });
+      }
+    }
+  }
+  assert.ok(pintores.length, "alguma regra tem de pintar o anel da linha do campo (WCAG 2.4.7)");
+  const falhas = [];
+  for (const [casa, onde] of WFIELD_HOMES) {
+    // o pintor alcança esta casa quando a cadeia dele é sufixo de <casa> .wfield
+    const alvo = [casa, ".wfield"];
+    const alcanca = pintores.filter((p) =>
+      p.chain.every((t, i) => alvo[alvo.length - p.chain.length + i] === t));
+    if (!alcanca.length) { falhas.push(`${onde} (${casa} .wfield): nenhum anel pintado — WCAG 2.4.7`); continue; }
+    for (const theme of ["light", "dark"]) {
+      const r = ratio(theme, alcanca[0].colour, ["var(--panel)"]);
+      if (r < 3) falhas.push(`${onde}: o anel mede ${round2(r)}:1 em ${theme} (piso 3:1)`);
+    }
+  }
+  assert.deepEqual(falhas, [], `\n  ${falhas.join("\n  ")}\n`);
 });
 
 // R17 — read the same way as a boundary, and for the same reason: `outline: none`
@@ -1282,17 +1352,45 @@ test("the token system is declared only in the top-level :root blocks", () => {
 
 // Colour literals belong in the token blocks; a rule that hardcodes one cannot
 // follow the theme (that is how #fff ended up on the amber counter badges).
+//
+// The guard used to read FIVE property names, so a literal written inside a
+// `border` / `border-top` / `outline` / `background-image` / gradient /
+// `caret-color` / `text-decoration-color` shorthand was invisible to it — and
+// this stylesheet declares hairlines with the shorthand almost everywhere, so the
+// dead half was precisely the one that would bite. It now reads EVERY
+// declaration: a colour is a colour wherever it is written.
+// EMPTY, and that is the point. The one row this map ever carried was
+// `.termstrip { border-bottom }` — an alpha-white hairline that could not resolve
+// from the system because the terminal palette had no line token. The decision the
+// row was waiting for was taken (`--term-line`, beside --term-bg/--term-fg/
+// --term-dim/--term-ok, one value in both themes like the rest of that palette),
+// so the row went, exactly as the self-check below demands. The sheet now has NO
+// colour literal outside the token blocks.
+const COLOUR_LITERALS_ALLOWED = new Map([]);
 test("no colour literal outside the :root token blocks", () => {
-  const props = ["color", "background", "background-color", "box-shadow", "border-color"];
   const offenders = [];
+  const allowedSeen = new Set();
   for (const r of RULES) {
     if (r.keyframes || isRootSel(r.sel)) continue;
     for (const [k, v] of readDecls(r.body)) {
-      if (!props.includes(k)) continue;
-      if (/#[0-9a-fA-F]{3,8}\b/.test(v) || /\brgba?\(/.test(v)) offenders.push(`${r.sel} { ${k}: ${v} }`);
+      if (k.startsWith("--")) continue;
+      // url(#id) is an SVG reference, and a quoted string is content, not paint
+      const paint = v.replace(/url\([^)]*\)/g, "").replace(/"[^"]*"/g, "").replace(/'[^']*'/g, "");
+      if (!/#[0-9a-fA-F]{3,8}\b/.test(paint) && !/\brgba?\(/.test(paint)) continue;
+      const sels = r.sel.split(",").map((s) => s.trim());
+      if (sels.every((s) => COLOUR_LITERALS_ALLOWED.get(s) === k)) {
+        sels.forEach((s) => allowedSeen.add(`${s}|${k}`));
+        continue;
+      }
+      offenders.push(`${r.sel} { ${k}: ${v} }`);
     }
   }
   assert.deepEqual(offenders, [], `\n  ${offenders.join("\n  ")}\n`);
+  // the exception cannot rot: once the rule resolves from a token, the row goes
+  for (const [sel, prop] of COLOUR_LITERALS_ALLOWED) {
+    assert.ok(allowedSeen.has(`${sel}|${prop}`),
+      `${sel} { ${prop} } no longer carries a colour literal: drop the allowlist row`);
+  }
 });
 
 test("every animation is wrapped for prefers-reduced-motion (DESIGN.md §6)", () => {
@@ -1817,4 +1915,271 @@ test("N26 — o manual em modal decide o bloco de código como as outras superf�
   assert.match(table.get("overflow-x") || "", /auto/);
   assert.equal(declsOf(".manualmodal th").get("font-weight"), "650",
     "o cabeçalho da tabela do manual segue a mesma decisão do leitor (N24)");
+});
+
+/* ═════════════ rodada 3 · medido no cabeçalho e nos estados do destino ════════
+   Quatro achados que o desenho novo trouxe e que só a medição pega. */
+
+// ACHADO MEDIDO (Chrome 151, quatro destinos, pill de gravação visível, os dois
+// contadores da nav): entre 901px e ~1015px o `#headRec` era o ÚNICO item
+// encolhível do flex do cabeçalho (`.switch`, `.destnav` e `.headright` são
+// `flex: none`), então ele absorvia o déficit inteiro — 35px dos 151px de que
+// precisa a 901px, sem relógio e sem a palavra "gravando". Enquanto isso a
+// etiqueta da versão (decoração) e o ar entre os blocos mantinham os seus pixels,
+// porque o bloco que os cedia só valia a partir de 900px. A ordem da regra 9 é o
+// inverso: prosa, decoração, ar — e um controle NUNCA é cortado.
+const HEADER_RUNS_OUT = 1015;
+test("o cabeçalho cede prosa e decoração antes de cortar um controle (DESIGN.md §2.8/§2.9)", () => {
+  const pill = declsOf(".headrec");
+  assert.ok(pill.size, ".headrec must exist");
+  assert.equal(pill.get("flex"), "none",
+    "o pill de gravação é um controle (volta para a gravação): ele não pode ser o item que encolhe");
+  assert.ok(!pill.has("min-width"),
+    "`min-width: 0` é o que autoriza um item de flex a encolher abaixo do seu conteúdo");
+  // e quem cede é a PROSA: o bloco do projeto encolhe, e encolhe DE VERDADE — sem
+  // `display: flex` nele o botão de dentro fica no seu tamanho de conteúdo e
+  // transborda a caixa (medido: caixa 142px, conteúdo 177px a 1016px, com o nome
+  // e o ⌄ por cima da pílula da nav)
+  const proseBlock = declsOf(".apphead .switch");
+  assert.equal(proseBlock.get("flex"), "0 1 auto", "o bloco do projeto é o item que cede");
+  assert.equal(proseBlock.get("min-width"), "0");
+  assert.equal(proseBlock.get("display"), "flex",
+    "sem isto o filho não é item de flex e transborda em vez de elidir");
+  assert.equal(declsOf(".projname").get("min-width"), "0");
+  assert.match(declsOf(".projname").get("text-overflow") || "", /ellipsis/);
+
+  // o bloco que cede tem de valer NA LARGURA em que o cabeçalho realmente acaba
+  const cede = AT_CONTEXTS.filter((c) => c && /^@media \(max-width:/.test(c) &&
+    (declsOf(".localtag", c).get("display") === "none" || declsOf(".apphead", c).has("gap")));
+  assert.ok(cede.length, "o cabeçalho tem um bloco de largura estreita");
+  const larguras = cede.map((c) => Number(/max-width:\s*(\d+)px/.exec(c)[1]));
+  for (const w of larguras) {
+    assert.ok(w >= HEADER_RUNS_OUT,
+      `o cabeçalho pede ${HEADER_RUNS_OUT}px com quatro destinos e a gravação em curso, ` +
+      `e este bloco só cede a partir de ${w}px — entre os dois o único item encolhível é o pill`);
+  }
+  // e o que cede é prosa/decoração/ar, nunca o rótulo de um controle
+  const bloco = `@media (max-width: ${Math.max(...larguras)}px)`;
+  assert.equal(declsOf(".localtag", bloco).get("display"), "none", "a etiqueta da versão é decoração");
+  assert.equal(declsOf(".apphead .dot", bloco).get("display"), "none", "o ponto é decoração (aria-hidden)");
+  assert.ok(declsOf(".projname", bloco).has("max-width"), "o nome do projeto é prosa: ele elide");
+  assert.ok(declsOf(".apphead", bloco).has("gap"), "e o ar entre os blocos fecha");
+  for (const sel of [".dest", ".apphead .recbtn", ".apphead .aibtn"]) {
+    const d = declsOf(sel, bloco);
+    assert.ok(!d.has("display") || d.get("display") !== "none",
+      `${sel} é um controle: ele não desaparece numa janela estreita`);
+    // `readDecls` devolve o NOME da propriedade sem os dois pontos, então
+    // `/font:/` sobre as chaves nunca podia casar: metade desta asserção não
+    // podia reprovar, e era justamente a metade que morde — esta folha declara
+    // tipo quase só pelo atalho (`.dest`, `.localtag`, `.mini.act`, `.pbranch`).
+    // Uma asserção que não pode reprovar é um achado (mesma doença do filtro de
+    // grep que já escondeu um diff do cargo fmt neste repositório).
+    assert.ok(!d.has("font-size") && !d.has("font"),
+      `${sel}: o rótulo de um controle não encolhe (regra 8)`);
+  }
+});
+
+// ACHADO MEDIDO: `.revsum .badge` computava para -apple-system 10px — `.badge`
+// nunca declarou família, e os sete distintivos novos do destino não repetiram o
+// `class="mono badge"` que os antigos escrevem à mão. E `.badge.ok` pintava com
+// `var(--accent)`: com o âmbar do projeto, «novo» (ok) e «modificado» (warn2)
+// mediam 1,02:1 de diferença — dois estados do git com a mesma tinta na mesma
+// lista, e a tinta de um estado sendo uma preferência de decoração.
+const BADGE_STATES = [".badge.ok", ".badge.warn", ".badge.warn2"];
+test("um distintivo é mono, e dois estados na mesma lista nunca têm a mesma tinta (DESIGN.md §5/§3)", () => {
+  let family = null;
+  for (const r of RULES) {
+    if (r.keyframes) continue;
+    if (!r.sel.split(",").some((s) => s.trim() === ".badge")) continue;
+    for (const [k, v] of readDecls(r.body)) {
+      const m = (k === "font" || k === "font-family") && /var\(--(sans|mono)\)/.exec(v);
+      if (m) family = m[1];
+    }
+  }
+  assert.equal(family, "mono",
+    "DESIGN.md §5: distintivos são mono — sem família própria o distintivo herda a prosa do cartão");
+  for (const sel of BADGE_STATES) {
+    const ink = declsOf(sel).get("color");
+    assert.ok(ink, `${sel} declara a sua tinta`);
+    assert.ok(!/--accent/.test(ink),
+      `${sel}: a tinta de um ESTADO não pode ser a cor que o usuário escolheu para o projeto`);
+  }
+  for (const theme of ["light", "dark"]) {
+    const inks = BADGE_STATES.map((s) => hexOf(resolve(declsOf(s).get("color"), theme)));
+    assert.equal(new Set(inks).size, inks.length,
+      `dois estados com a mesma tinta no tema ${theme}: ${BADGE_STATES.join(" / ")} = ${inks.join(" / ")}`);
+    // e cada uma continua legível sobre o preenchimento do próprio distintivo
+    for (const [i, sel] of BADGE_STATES.entries()) {
+      const r = ratio(theme, declsOf(sel).get("color"), [declsOf(".badge").get("background") || "var(--panel)"]);
+      assert.ok(r >= 4.5, `${sel} no tema ${theme}: ${inks[i]} = ${round2(r)}:1 (piso 4,5:1)`);
+    }
+  }
+});
+
+// ACHADO MEDIDO: `class="hint mono"` computava para -apple-system 11.5px com
+// letter-spacing de mono, e `class="pmnote mono"` o mesmo — `.mono` e `.hint`/
+// `.pmnote` têm a MESMA especificidade e as segundas vêm depois com o atalho
+// `font:`, que reinicia a família. Sobrava a metade errada da regra: a prosa com
+// o espaçamento da máquina e o caminho do arquivo em --sans (DESIGN.md §3).
+test("uma classe que pede a fonte da máquina realmente a pinta (DESIGN.md §3)", () => {
+  const MARKUP = APP_JS + fs.readFileSync(path.join(__dirname, "..", "src", "index.html"), "utf8");
+  const familyOf = (cls) => {
+    let fam = null;
+    RULES.forEach((r) => {
+      if (r.keyframes || !r.sel.split(",").some((s) => s.trim() === "." + cls)) return;
+      for (const [k, v] of readDecls(r.body)) {
+        const m = (k === "font" || k === "font-family") && /var\(--(sans|mono)\)/.exec(v);
+        if (m) fam = m[1];
+      }
+    });
+    return fam;
+  };
+  const mortos = [];
+  const vistos = new Set();
+  for (const m of MARKUP.matchAll(/class="([^"$]*\bmono\b[^"$]*)"/g)) {
+    const classes = m[1].trim().split(/\s+/).filter(Boolean);
+    if (classes.length < 2 || vistos.has(classes.join(" "))) continue;
+    vistos.add(classes.join(" "));
+    // a última regra de classe única que declara família é a que vence (todas
+    // têm especificidade 0,1,0 — a ordem do arquivo decide)
+    let vencedora = null;
+    for (const r of RULES) {
+      if (r.keyframes) continue;
+      for (const s of r.sel.split(",").map((x) => x.trim())) {
+        if (!/^\.[\w-]+$/.test(s) || !classes.includes(s.slice(1))) continue;
+        for (const [k, v] of readDecls(r.body)) {
+          const f = (k === "font" || k === "font-family") && /var\(--(sans|mono)\)/.exec(v);
+          if (f) vencedora = { cls: s, fam: f[1] };
+        }
+      }
+    }
+    if (vencedora && vencedora.fam !== "mono") {
+      mortos.push(`class="${classes.join(" ")}" → ${vencedora.cls} vence com var(--${vencedora.fam})`);
+    }
+  }
+  assert.ok(vistos.size >= 20, `só ${vistos.size} combinações com .mono foram lidas — o varredor cegou`);
+  assert.ok(familyOf("mono") === "mono", ".mono continua declarando a família da máquina");
+  assert.deepEqual(mortos, [],
+    "a classe pede a fonte da máquina e não a recebe — o que sobra é o espaçamento dela na prosa:\n  " +
+      mortos.join("\n  "));
+});
+
+// ACHADO MEDIDO: `.btn:disabled` fixa `--ink3` e o comentário ao lado diz por quê
+// ("4,9:1"); duas regras abaixo, `.btn.solid:disabled` pintava `--muted` sobre um
+// preenchimento de 10% da tinta = 3,72:1 no escuro e 3,97:1 no claro. Não é falha
+// de SC (1.4.3 isenta o inativo), é o piso que a própria folha declara — e é o
+// estado em que o botão primário do destino passa a maior parte do tempo (tudo
+// salvo).
+test("um controle desabilitado lê no piso que a própria folha declara", () => {
+  const falhas = [];
+  for (const theme of ["light", "dark"]) {
+    for (const sel of [".btn:disabled", ".btn.solid:disabled"]) {
+      const d = declsOf(sel);
+      assert.ok(d.size, `${sel} must exist`);
+      const ink = d.get("color");
+      assert.ok(ink, `${sel} declara a sua tinta`);
+      const fill = d.get("background");
+      for (const base of ["var(--paper)", "var(--panel)"]) {
+        const layers = fill ? [base, fill] : [base];
+        const r = ratio(theme, ink, layers);
+        if (r < 4.5) falhas.push(`${sel} em ${theme} sobre ${hexOf(surface(layers, theme))}: ${round2(r)}:1`);
+      }
+    }
+  }
+  assert.deepEqual(falhas, [], `\n  ${falhas.join("\n  ")}\n`);
+});
+
+// MEDIDO: o rótulo de `.mini.act` é `9.5px var(--mono)` — abaixo do menor passo
+// documentado (§3 vai até 10,5px) e é a fonte da máquina numa FRASE («marcar como
+// visto», «voltar ao meu rascunho»). Onde a etiqueta é prosa, ela é prosa.
+test("uma ação rotulada da Revisão é prosa em --sans, no passo do §3", () => {
+  for (const sel of [".revacts .mini.act", ".revrow .mini.act", ".notifbar .mini.act"]) {
+    const font = declsOf(sel).get("font") || "";
+    assert.match(font, /var\(--sans\)/, `${sel}: uma frase não é escrita na fonte da máquina`);
+    const size = Number((/(\d+(?:\.\d+)?)px/.exec(font) || [])[1]);
+    assert.ok(size >= 11.5, `${sel}: ${size}px está abaixo do passo de 11,5px do §3`);
+  }
+});
+
+/* ============================================== achados abertos no teto da 5ª
+   Dois valores que a rodada 3 deixou fora da escala do §3 e que os críticos
+   voltaram a achar na 5ª. Nenhum dos dois foi corrigido dentro do loop porque a
+   guarda que os pegaria seria VERMELHA — e uma asserção nascida com exceção
+   legaliza o defeito em vez de fechá-lo. Aqui os valores mudaram, e a guarda
+   nasce verde e mordendo.
+*/
+test("R60 — todo distintivo respeita o piso da escala (§3: 11px para um badge)", () => {
+  // .badge era 10px: 0,5px sob o piso de 10.5px que a escala reserva para um
+  // micro-rótulo, e 1px sob os 11px que a tabela do §3 reserva para um distintivo —
+  // numa marca cuja função é ser lida de relance
+  const px = (sel) => {
+    const d = declsOf(sel);
+    const v = d.get("font-size") || d.get("font") || "";
+    const m = /(\d[\d.]*)px/.exec(v);
+    return m ? Number(m[1]) : null;
+  };
+  const badge = px(".badge");
+  assert.ok(badge !== null, ".badge precisa declarar o seu degrau");
+  assert.ok(badge >= 11, `.badge está em ${badge}px — a tabela do §3 reserva 11px para um distintivo`);
+  // §3 declara DOIS degraus e eles não são o mesmo: 11px para um distintivo,
+  // 10.5px para um micro-rótulo/contador. Um contador é a segunda coisa.
+  for (const sel of [".destbadge", ".cbadge", ".minibadge"]) {
+    const v = px(sel);
+    assert.ok(v !== null, `${sel} precisa declarar o seu degrau`);
+    assert.ok(v >= 10.5, `${sel} em ${v}px fica sob o degrau de 10.5px que §3 dá a um contador`);
+  }
+});
+
+test("R60 — o título de seção da Revisão é prosa em --sans, e a escada desce", () => {
+  // .phead é 11px mono MAIÚSCULO em --muted, que é a máquina nomeando um cesto
+  // (IDEIAS · COM ESTE DOCUMENTO). O destino Revisão o usava para FRASES escritas
+  // por uma pessoa («Aguardam a sua revisão», «O que muda», «Conversa»), e §3 é
+  // explícito: mono nunca é prosa, e uma frase não é gritada. A escada também
+  // invertia — um h2 de 11px a 4,65:1 apresentando títulos de cartão de 13,5px.
+  const head = declsOf(".rvhead");
+  const font = head.get("font") || "";
+  assert.match(font, /var\(--sans\)/, "prosa é --sans; mono é a metade da máquina da linha");
+  assert.ok(!/var\(--mono\)/.test(font), ".rvhead não pode cair na letra da máquina");
+  assert.equal(head.get("text-transform"), "none", "uma frase não é gritada");
+  assert.equal(head.get("letter-spacing"), "normal", "o tracking do rótulo de cesto não é de prosa");
+  assert.match(head.get("color") || "", /var\(--ink\)/, "um título é distinguido por tamanho E tinta");
+
+  // A ESCADA DESCE: h2 > h3 > título do cartão > prosa do cartão
+  const px = (sel, d) => {
+    const v = (d || declsOf(sel)).get("font-size") || (d || declsOf(sel)).get("font") || "";
+    const m = /(\d[\d.]*)px/.exec(v);
+    return m ? Number(m[1]) : null;
+  };
+  const h2 = px(".rvhead", head), h3 = px("h3.rvhead");
+  assert.ok(h2 > h3, `h2 ${h2}px tem de ser maior que h3 ${h3}px`);
+  const cartao = px(".rvname");
+  if (cartao !== null) {
+    assert.ok(h3 >= cartao,
+      `h3 ${h3}px apresenta títulos de cartão de ${cartao}px — a escada não pode inverter`);
+  }
+
+  // e o .phead SEGUE mono maiúsculo, porque lá ele está certo: os três rótulos do
+  // painel ✦ IA são a máquina nomeando um cesto
+  const ph = declsOf(".phead");
+  assert.match(ph.get("font") || "", /var\(--mono\)/, "o rótulo de cesto continua sendo da máquina");
+  const HTMLSRC = fs.readFileSync(path.join(__dirname, "..", "src", "index.html"), "utf8");
+  const revBlock = HTMLSRC.slice(HTMLSRC.indexOf('id="destReview"'), HTMLSRC.indexOf('id="bDocWrap"'));
+  assert.ok(!/class="phead"/.test(revBlock),
+    "nenhuma frase do destino pode voltar para a classe do rótulo de cesto");
+});
+
+test("R60 — o chip do rascunho põe a prosa em --sans e só o endereço em mono", () => {
+  // .pbranch é `font: 11.5px var(--mono)` e a frase inteira («no rascunho X», «no
+  // conhecimento oficial») morava dentro dele. §5: o rótulo de um campo é prosa, e
+  // só o VALOR que ele carrega pode ser mono.
+  const prosa = declsOf(".pbranch > span:not(.mono)");
+  assert.match(prosa.get("font-family") || "", /var\(--sans\)/,
+    "a frase do chip é prosa: a tela que promete não exigir git não a escreve na letra da máquina");
+  const APPSRC = fs.readFileSync(path.join(__dirname, "..", "src", "app.js"), "utf8");
+  const m = /function draftChipHtml\([\s\S]*?\n\}/.exec(APPSRC);
+  assert.ok(m, "app.js deve declarar draftChipHtml()");
+  assert.match(m[0], /<span class="mono">\$\{esc\(name\)\}<\/span>/,
+    "o NOME do rascunho é um endereço — ele fica mono");
+  assert.ok(!/class="mono"[^>]*>\$\{esc\(t\(/.test(m[0]),
+    "e nenhuma frase traduzida entra num span mono");
 });

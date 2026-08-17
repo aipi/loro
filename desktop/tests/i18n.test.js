@@ -248,6 +248,56 @@ test("o varredor do index.html não deixa nenhum data-i18n de fora", () => {
   assert.strictEqual(casados, total, `${total - casados} elementos data-i18n não foram varridos`);
 });
 
+// ADR-0027 (rodada 2) — um msgid órfão é cromo morto: ele envelhece como verdade
+// e mente na próxima leitura (DESIGN.md §9). A mesma diferença que RETIROU dois
+// msgids de uma superfície morta ("Revisões abertas", "a revisão acontece no
+// GitHub…") acrescentou um terceiro que nenhuma superfície usava — e nada na
+// suíte varria o catálogo, então só uma varredura ad-hoc o achou. R11 já guarda
+// função sem chamador e estado que ninguém lê; esta é a mesma guarda para o
+// catálogo, no bloco que a ADR-0027 construiu. O catálogo inteiro carrega 197
+// órfãos anteriores a esta ADR (medidos; registrados na ADR-0027 §rodada 2): a
+// dívida é de superfícies que já saíram do app e não se paga às cegas aqui.
+test("ADR-0027 — nenhum msgid do destino Revisão fica sem superfície", () => {
+  const src = fs.readFileSync(path.join(__dirname, "..", "src", "i18n.js"), "utf8");
+  const ini = src.indexOf("// ---- ADR-0027 · Revisão");
+  const fim = src.indexOf("\n  };", ini);
+  assert.ok(ini > 0 && fim > ini, "o bloco da ADR-0027 dentro do mapa EN");
+  const bloco = src.slice(ini, fim);
+  const cruas = [...bloco.matchAll(/^\s{4}"((?:[^"\\]|\\.)*)":/gm)].map((m) => m[1]);
+  assert.ok(cruas.length > 80, `esperava os msgids do destino, achei ${cruas.length}`);
+  // ACHADO (rodada 3): a varredura decidia "usado" por SUBSTRING crua, então todo
+  // msgid contido em outro era invisível para ela — «verificações ok» casava dentro
+  // de `t("✓ verificações ok")`. O bloco está cheio de msgids que são pedaço de um
+  // vizinho vivo (`novo`, `enviar`, `responder`, `unificado`, `Resumo`, `sua
+  // resposta`), e reescrever uma frase deixando a forma curta atrás é exatamente
+  // como um msgid morre. Agora o casamento é do LITERAL INTEIRO: as strings de
+  // app.js e os textos/atributos do index.html.
+  const usados = new Set();
+  const app = fs.readFileSync(path.join(__dirname, "..", "src", "app.js"), "utf8");
+  // Duas leituras, porque um msgid mora em dois lugares: solto numa expressão, e
+  // como ARGUMENTO dentro de um literal de template (`${t("…")}`) — nesse a
+  // varredura de pares de aspas emenda o `"` do HTML com o `"` do argumento e o
+  // msgid vira fronteira em vez de conteúdo. A segunda ancora em `(`/`,`, que é
+  // onde um argumento começa.
+  for (const re of [/"((?:[^"\\\n]|\\.)*)"/g, /'((?:[^'\\\n]|\\.)*)'/g,
+    /[(,]\s*"((?:[^"\\\n]|\\.)*)"/g]) {
+    for (const m of app.matchAll(re)) usados.add(unescapeJs(m[1]));
+  }
+  const html = fs.readFileSync(path.join(__dirname, "..", "src", "index.html"), "utf8");
+  // o texto de um elemento data-i18n É o msgid, e um atributo traduzido é o valor
+  // inteiro do atributo (placeholder, title, aria-label)
+  for (const m of html.matchAll(/<([a-z0-9]+)\b([^>]*\bdata-i18n\b(?!-)[^>]*)>([^<]*)</gi)) {
+    usados.add(m[3].trim());
+  }
+  for (const m of html.matchAll(/=\s*"([^"]*)"/g)) usados.add(m[1].trim());
+  // a varredura só serve se ENCONTRAR as superfícies: um leitor cego diria
+  // "órfão" para o catálogo inteiro, e um piso alto é o que denuncia isso
+  assert.ok(usados.size > 500, `só ${usados.size} literais lidos — o leitor cegou`);
+  const orfaos = cruas.filter((k) => !usados.has(k) && !usados.has(unescapeJs(k)));
+  assert.deepStrictEqual(orfaos, [],
+    "msgid no catálogo e em nenhuma superfície:\n  " + orfaos.join("\n  "));
+});
+
 // #53 (revisão) — o mapa EN é um objeto literal: uma chave repetida não é erro
 // de sintaxe, a última vence em silêncio. Foi assim que a Aparência sequestrou
 // "tema" (o termo do DOMÍNIO, um tema de brainstorming) e a UI em inglês passou

@@ -36,6 +36,11 @@ people and AI agents can use as context.
   notes, and attached files into one `context.md` source of truth per topic,
   versioned in Git and evolved by pull request — with Git hidden behind two
   buttons ("Salvar versão" / "Enviar para revisão do time").
+- **The review happens inside the app** — a **Revisão** destination shows what you
+  changed, in plain language and then line by line, and the team's open reviews:
+  read the description, the changed documents and the conversation, approve, ask
+  for changes, reply, and merge into the official knowledge without leaving Loro
+  or learning Git (ADR-0027).
 - **Topics that point at each other** — a topic cites its neighbours with plain
   markdown links carrying the direction of the handoff. Those links *are* the
   graph: Loro computes the backlinks ("Citado por"), an index of every word the
@@ -63,6 +68,12 @@ speech → brainstormings → queue → shared, versioned contexts → produce w
    material by topic and proposes changes to each topic's `context.md` source
    of truth. Open questions live inline as *hotspots*; a person approves what
    becomes truth.
+4. **Review** — the fourth destination: see your own change before you save a
+   version of it, and read, discuss and approve the team's proposed changes in
+   the app. Nothing enters the official knowledge without a person reading it, and
+   the screen never claims more than it knows: a version keeps what is already in
+   the file, so an unsaved editor buffer is named instead of hidden, and the team
+   half says it is not connected *before* you click.
 
 The knowledge base (the **acervo**) lives in a folder you choose, separate from
 the app. Ideas are cheap; context is earned: a context is production knowledge,

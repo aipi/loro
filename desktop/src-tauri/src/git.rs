@@ -11,7 +11,10 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Output;
 
+use tracing::info;
+
 use crate::config::read_brain_config;
+use crate::diff::FileDiff;
 use crate::paths::which;
 
 // ---- gh (GitHub CLI) — read layer -----------------------------------------
@@ -214,12 +217,15 @@ pub enum RemoteAccess {
 }
 
 // A transport failure names itself in gh's stderr; anything else is an answer
-// FROM GitHub (404/403/not found), which is a real access problem.
+// FROM GitHub (404/403/not found), which is a real access problem. `git push`
+// goes through here too (ADR-0027), and git words the same failure its own way
+// ("Could not resolve host" / "Could not resolve hostname").
 fn looks_offline(stderr: &str) -> bool {
     let s = stderr.to_lowercase();
     [
         "dial tcp",
         "no such host",
+        "could not resolve host",
         "network is unreachable",
         "temporary failure in name resolution",
         "connection refused",
@@ -321,13 +327,13 @@ pub fn local_default_branch(base: &Path) -> String {
     "main".into()
 }
 
+// "Dirty" is what refuses a draft switch and a fast-forward, so it has to be the
+// SAME question «o que você mudou» answers. ADR-0027: on an acervo whose
+// `.gitignore` predates this release the intake's own untracked bookkeeping
+// counted as pending work, which refused every switch while the screen said
+// there was nothing to save — a dead end built out of two files nobody wrote.
 pub fn is_dirty(base: &Path) -> bool {
-    crate::proc::command("git")
-        .args(["status", "--porcelain"])
-        .current_dir(base)
-        .output()
-        .map(|o| !String::from_utf8_lossy(&o.stdout).trim().is_empty())
-        .unwrap_or(false)
+    !pending_entries(base).is_empty()
 }
 
 // Local branches, most recently committed first.
@@ -390,10 +396,33 @@ pub fn documents_leaving(base: &Path, rev: &str, target: &str) -> usize {
         .count()
 }
 
+// Would moving to `target` leave every byte of the working tree where it is?
+// `git diff --quiet HEAD <target>` compares the two TREES, so exit 0 means the
+// move is invisible on disk — documents, `.github/` and the `.gitignore` alike.
+// `documents_leaving` answers what the person LOSES and is what the price copy
+// counts; this answers whether there is a price at all. Any other exit status
+// (including a rev git cannot read) is read as "there is", which is the safe way
+// round: it keeps the work in front of the user.
+fn move_is_invisible_on_disk(base: &Path, target: &str) -> bool {
+    crate::proc::command("git")
+        .args(["diff", "--quiet", "HEAD", target, "--"])
+        .current_dir(base)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+// QUEM DECIDE SE A TROCA PODE É O GIT, não uma pré-checagem mais severa que ele.
+// Isto recusava QUALQUER árvore suja antes de perguntar — e `git checkout` só recusa
+// quando sobrescreveria a modificação; no caso comum (o arquivo é o mesmo nos dois
+// rascunhos, ou não é rastreado) ele leva a mudança com você e nada se perde. O
+// resultado da recusa preventiva era um beco: gravar um documento deixa a árvore
+// suja, e desde que salvar o arquivo parou de commitar (round 8) essa é a situação
+// NORMAL — então todas as linhas do seletor viviam apagadas.
+//
+// Agora a tentativa acontece e a recusa, quando vem, é a do git: ela nomeia o que
+// seria perdido, e o remédio (salvar uma versão) é dito com ela.
 pub fn switch_branch(base: &Path, branch: &str) -> Result<(), String> {
-    if is_dirty(base) {
-        return Err("err.working_tree_dirty".into());
-    }
     if !ref_exists(base, &format!("refs/heads/{branch}")) {
         return Err("err.branch_not_found".into());
     }
@@ -403,10 +432,15 @@ pub fn switch_branch(base: &Path, branch: &str) -> Result<(), String> {
         .output()
         .map_err(|e| e.to_string())?;
     if out.status.success() {
-        Ok(())
-    } else {
-        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+        return Ok(());
     }
+    let err = String::from_utf8_lossy(&out.stderr);
+    // o único caso que o git recusa aqui é a sobrescrita — e é o único em que
+    // «salve uma versão primeiro» é o conserto certo
+    if err.contains("would be overwritten") || err.contains("local changes") {
+        return Err("err.switch_would_lose_change".into());
+    }
+    Err(err.trim().to_string())
 }
 
 #[derive(PartialEq, Debug)]
@@ -586,10 +620,21 @@ pub struct PrInfo {
     pub url: String,
     #[serde(default)]
     pub state: Option<String>,
+    // Os dois fatos que dizem se a mudança está BLOQUEADA, no mesmo `gh pr list`:
+    // a linha do time não podia dizer de quem é a vez sem eles.
+    #[serde(default)]
+    pub mergeable: String,
+    #[serde(default)]
+    pub status_check_rollup: Vec<GhCheck>,
 }
 
-const PR_FIELDS: &str =
-    "number,title,headRefName,author,reviewDecision,reviewRequests,updatedAt,url,state";
+// A LISTA TEM DE PODER DIZER DE QUEM É A VEZ. Sem `statusCheckRollup` e
+// `mergeable` a linha do time não sabia se a mudança está bloqueada por
+// verificação ou em conflito com o oficial — que é exatamente o que F6 existe para
+// mostrar de relance (visto no turbo: duas linhas sem chip nenhum). São dois
+// campos no MESMO `gh pr list`, sem processo a mais.
+const PR_FIELDS: &str = "number,title,headRefName,author,reviewDecision,reviewRequests,\
+updatedAt,url,state,mergeable,statusCheckRollup";
 
 pub fn pr_list(base: &Path) -> Result<Vec<PrInfo>, String> {
     let out = gh(base, &["pr", "list", "--json", PR_FIELDS, "--limit", "50"])?;
@@ -599,6 +644,71 @@ pub fn pr_list(base: &Path) -> Result<Vec<PrInfo>, String> {
     serde_json::from_slice(&out.stdout).map_err(|e| e.to_string())
 }
 
+// UMA LEITURA DO REMOTE, UMA FONTE DA VERDADE. `gh pr list` custa ~1,7s de rede,
+// e dois comandos independentes pediam a MESMA lista no mesmo clique: o destino
+// Revisão (`gh_pr_list`) e a caixa de avisos (`brain_notifications`, que chama
+// `pr_list` por dentro). Duas idas à rede para responder a mesma pergunta.
+//
+// Duas propriedades, uma trava:
+//   - CACHE com idade: quem pede aceita uma leitura de até `max_age`, e recebe
+//     junto a IDADE dela, porque a tela promete não mentir sobre o que mostra
+//     (DESIGN.md §1) — é ela que decide dizer «esta lista é a última leitura».
+//   - SINGLE-FLIGHT: a trava é mantida DURANTE a busca, então um segundo
+//     chamador concorrente espera a primeira terminar e encontra o resultado
+//     pronto, em vez de abrir um segundo processo. É a cura do efeito manada
+//     entre o tique de 10s e um clique que caem juntos.
+//
+// A trava é um Mutex bloqueante mantido através de uma chamada bloqueante: isto
+// só pode ser chamado de dentro de `spawn_blocking`, NUNCA da main thread — que
+// é a regra que valia desde o começo e não estava sendo cumprida.
+pub struct PrCacheRead {
+    pub prs: Vec<PrInfo>,
+    pub age_ms: u128,
+}
+
+struct PrCache {
+    key: PathBuf,
+    at: std::time::Instant,
+    prs: Vec<PrInfo>,
+}
+
+fn pr_cache() -> &'static std::sync::Mutex<Option<PrCache>> {
+    static C: std::sync::OnceLock<std::sync::Mutex<Option<PrCache>>> = std::sync::OnceLock::new();
+    C.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+// Uma escrita no acervo invalida a leitura na hora: enviar para revisão, aprovar,
+// pedir mudanças, juntar. Sem isto a tela mostraria o mundo de antes da própria
+// ação de quem está olhando — o pior tipo de dado velho.
+pub fn pr_cache_invalidate() {
+    if let Ok(mut g) = pr_cache().lock() {
+        *g = None;
+    }
+}
+
+pub fn pr_list_cached(base: &Path, max_age: std::time::Duration) -> Result<PrCacheRead, String> {
+    // envenenamento da trava não pode derrubar uma leitura: cai para o caminho direto
+    let Ok(mut slot) = pr_cache().lock() else {
+        return pr_list(base).map(|prs| PrCacheRead { prs, age_ms: 0 });
+    };
+    if let Some(c) = slot.as_ref() {
+        let age = c.at.elapsed();
+        if c.key == base && age <= max_age {
+            return Ok(PrCacheRead {
+                prs: c.prs.clone(),
+                age_ms: age.as_millis(),
+            });
+        }
+    }
+    let prs = pr_list(base)?; // o erro SOBE: quem chama já mantém a última leitura
+    *slot = Some(PrCache {
+        key: base.to_path_buf(),
+        at: std::time::Instant::now(),
+        prs: prs.clone(),
+    });
+    Ok(PrCacheRead { prs, age_ms: 0 })
+}
+
 pub fn pr_status(base: &Path, number: u64) -> Result<PrInfo, String> {
     let n = number.to_string();
     let out = gh(base, &["pr", "view", &n, "--json", PR_FIELDS])?;
@@ -606,6 +716,948 @@ pub fn pr_status(base: &Path, number: u64) -> Result<PrInfo, String> {
         return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
     }
     serde_json::from_slice(&out.stdout).map_err(|e| e.to_string())
+}
+
+// ---- reading a review INSIDE the app (ADR-0027) -----------------------------
+// Everything below shells out; the parsing of what comes back is pure and lives
+// either in `diff.rs` or in a `pub fn` with its own #[test] beside it.
+//
+// BR-9: no token is requested, stored or logged. gh runs with the machine's
+// ambient credential, exactly as `pr_list` already does.
+// BR-8: the log lines here carry counts, PR numbers and err codes — never a
+// diff row, a description or a review comment.
+
+// The ONE place a failed gh call becomes an error the screen can translate. A
+// transport failure is not the user's setup (N6), so it keeps the existing
+// `err.github_unreachable`; anything else takes the stable code of the act that
+// failed. Raw gh English never reaches a toast — the same rule `create_branch`
+// states for git.
+fn gh_failure(out: &Output, code: &str) -> String {
+    if looks_offline(&String::from_utf8_lossy(&out.stderr)) {
+        "err.github_unreachable".into()
+    } else {
+        code.into()
+    }
+}
+
+// owner/repo of the acervo's remote. Needed because `gh api graphql` has no
+// {owner}/{repo} substitution (REST paths do). This is the PUBLIC repository
+// name, not a credential — BR-9 is untouched.
+pub fn repo_slug(base: &Path) -> Result<(String, String), String> {
+    let out = gh(
+        base,
+        &[
+            "repo",
+            "view",
+            "--json",
+            "nameWithOwner",
+            "-q",
+            ".nameWithOwner",
+        ],
+    )?;
+    if !out.status.success() {
+        return Err(gh_failure(&out, "err.pr_read_failed"));
+    }
+    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    match s.split_once('/') {
+        Some((o, r)) if !o.is_empty() && !r.is_empty() => Ok((o.to_string(), r.to_string())),
+        _ => Err("err.pr_read_failed".into()),
+    }
+}
+
+// ---- the working tree, as a diff --------------------------------------------
+
+// Reading is bounded: a file past the acervo's existing 5 MiB ceiling is
+// reported as `binary` (the honest card) instead of being loaded into the UI.
+const DIFF_READ_MAX_BYTES: u64 = 5 * 1024 * 1024;
+
+// Lexical guard for a path that comes from the screen. `acervo::guarded_existing`
+// cannot serve here: this command is asked about documents that were DELETED,
+// and canonicalize requires the file to exist. Refuses the same escape with the
+// same code the acervo's own normalizer uses.
+fn guard_rel(rel: &str) -> Result<(), String> {
+    let r = rel.replace('\\', "/");
+    let absolute = r.starts_with('/') || r.chars().nth(1) == Some(':');
+    if absolute || r.split('/').any(|p| p == "..") {
+        return Err("err.outside_acervo".into());
+    }
+    Ok(())
+}
+
+fn untracked_files(base: &Path) -> Vec<String> {
+    pending_entries(base)
+        .into_iter()
+        .filter(|e| e.code == "??")
+        .map(|e| e.path)
+        .collect()
+}
+
+fn untracked_diff(base: &Path, rel: &str) -> FileDiff {
+    let abs = base.join(rel);
+    let readable = std::fs::metadata(&abs)
+        .map(|m| m.is_file() && m.len() <= DIFF_READ_MAX_BYTES)
+        .unwrap_or(false);
+    if !readable {
+        return crate::diff::binary_added(rel);
+    }
+    match std::fs::read(&abs) {
+        Ok(bytes) if !crate::diff::is_binary(&bytes) => match String::from_utf8(bytes) {
+            Ok(text) => crate::diff::added_file(rel, &text),
+            Err(_) => crate::diff::binary_added(rel),
+        },
+        _ => crate::diff::binary_added(rel),
+    }
+}
+
+// The working tree against HEAD, parsed. Untracked files are APPENDED as
+// all-add diffs, which is why this read command never touches the index: a read
+// that stages something is not a read.
+//
+// ADR-0009/BR-8: every candidate goes through `is_versioning_denied` — the SAME
+// authority the save path uses (`unstage_versioning_denied`), so the screen
+// shows exactly what a version would carry. Without it an untracked
+// `contexts/<ctx>/audio.wav`, which no GIT_IGNORED pattern covers, would be read
+// and painted onto the screen.
+pub fn working_diff(base: &Path, rel: Option<&str>) -> Result<Vec<FileDiff>, String> {
+    if let Some(r) = rel {
+        guard_rel(r)?;
+    }
+    let mut out: Vec<FileDiff> = Vec::new();
+    if head_commit_exists(base) {
+        let mut args: Vec<&str> = vec![
+            "-c",
+            "core.quotePath=false",
+            "diff",
+            "--no-color",
+            "--no-ext-diff",
+            "-U3",
+            "HEAD",
+        ];
+        if let Some(r) = rel {
+            args.push("--");
+            args.push(r);
+        }
+        let o = crate::proc::command("git")
+            .args(&args)
+            .current_dir(base)
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !o.status.success() {
+            // Same posture as `list_branches`: a read that should not fail
+            // reports what git said rather than inventing a code the user
+            // cannot act on (ARCHITECTURE §4 error contract).
+            return Err(String::from_utf8_lossy(&o.stderr).trim().to_string());
+        }
+        out.extend(
+            crate::diff::parse_unified_diff(&String::from_utf8_lossy(&o.stdout))
+                .into_iter()
+                .filter(|f| !is_versioning_denied(&f.path)),
+        );
+    }
+    for path in untracked_files(base) {
+        if is_versioning_denied(&path) {
+            continue;
+        }
+        if let Some(r) = rel {
+            let r = r.trim_end_matches('/');
+            if path != r && !path.starts_with(&format!("{r}/")) {
+                continue;
+            }
+        }
+        out.push(untracked_diff(base, &path));
+    }
+    info!(target: "review", files = out.len(), "working tree read");
+    Ok(out)
+}
+
+// ---- an open review, whole --------------------------------------------------
+
+#[derive(serde::Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PrSection {
+    pub label: String,
+    pub text: String,
+    // The section's `<!-- … -->` line: invisible in rendered markdown, and the
+    // only place the template says WHAT to write in that field. It used to be
+    // parsed out and dropped, so the send-for-review sheet asked for six
+    // sections and explained none of them (ADR-0027).
+    pub hint: String,
+}
+
+#[derive(serde::Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PrReview {
+    pub author: String,
+    pub state: String,
+    pub body: String,
+    pub when: String,
+    // the review was submitted against an earlier version of the change
+    pub stale: bool,
+}
+
+#[derive(serde::Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PrFile {
+    pub path: String,
+    pub additions: usize,
+    pub deletions: usize,
+}
+
+#[derive(serde::Serialize, Clone, Copy, PartialEq, Eq, Debug)]
+#[serde(rename_all = "lowercase")]
+pub enum CheckState {
+    Ok,
+    Failed,
+    Running,
+}
+
+#[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct CheckRun {
+    pub name: String,
+    pub state: CheckState,
+    pub url: String,
+}
+
+#[derive(serde::Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PrComment {
+    pub author: String,
+    pub body: String,
+    pub when: String,
+}
+
+#[derive(serde::Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PrThread {
+    pub id: u64,
+    pub path: String,
+    pub line: Option<u32>,
+    pub resolved: bool,
+    pub outdated: bool,
+    pub excerpt: String,
+    pub comments: Vec<PrComment>,
+}
+
+// What the review screen receives. Deliberately NOT gh's own key set: the app
+// chooses its field names, so no unexpected gh field can ride along to the
+// screen and no key mismatch can hide behind a shared struct.
+//
+// There is deliberately no `approvalsRequired`: branch protection is not
+// readable by a non-admin, so the denominator of "%1 de %2 aprovações" is the
+// people IN the review (`approvals + reviewRequests.len()`) — a fact, not a
+// guess. `mergeStateStatus` is the truthful signal for whether the change can
+// land, which is why it is returned raw.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrDetail {
+    pub number: u64,
+    pub title: String,
+    pub body: String,
+    pub sections: Vec<PrSection>,
+    pub author: Author,
+    pub head_ref_name: String,
+    pub base_ref_name: String,
+    pub state: String,
+    pub url: String,
+    pub updated_at: String,
+    pub mergeable: String,
+    pub merge_state_status: String,
+    pub is_draft: bool,
+    pub mine: bool,
+    pub approvals: usize,
+    pub changes_requested: usize,
+    pub review_requests: Vec<Reviewer>,
+    pub reviews: Vec<PrReview>,
+    pub files: Vec<PrFile>,
+    pub checks: Vec<CheckRun>,
+    pub threads: Vec<PrThread>,
+}
+
+// gh's payload, private on purpose: `statusCheckRollup` is gh's key and `checks`
+// is the app's, and `checks`, `mine`, `sections`, `stale` and `threads` do not
+// exist in gh's JSON at all. Two structs is the honest shape.
+#[derive(serde::Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct GhPrView {
+    #[serde(default)]
+    number: u64,
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    body: String,
+    #[serde(default)]
+    author: Author,
+    #[serde(default)]
+    head_ref_name: String,
+    #[serde(default)]
+    base_ref_name: String,
+    #[serde(default)]
+    state: String,
+    #[serde(default)]
+    url: String,
+    #[serde(default)]
+    updated_at: String,
+    #[serde(default)]
+    mergeable: String,
+    #[serde(default)]
+    merge_state_status: String,
+    #[serde(default)]
+    review_requests: Vec<Reviewer>,
+    #[serde(default)]
+    is_draft: bool,
+    #[serde(default)]
+    files: Vec<GhFile>,
+    #[serde(default)]
+    status_check_rollup: Vec<GhCheck>,
+}
+
+#[derive(serde::Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct GhFile {
+    #[serde(default)]
+    path: String,
+    #[serde(default)]
+    additions: usize,
+    #[serde(default)]
+    deletions: usize,
+}
+
+// The rollup mixes two GraphQL types: a CheckRun (name/status/conclusion/
+// detailsUrl) and a StatusContext (context/state/targetUrl). Both spellings are
+// read so a legacy status is not silently dropped from the chip.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GhCheck {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    context: String,
+    #[serde(default)]
+    status: String,
+    #[serde(default)]
+    conclusion: String,
+    #[serde(default)]
+    state: String,
+    #[serde(default)]
+    details_url: String,
+    #[serde(default)]
+    target_url: String,
+}
+
+const PR_DETAIL_FIELDS: &str = "number,title,body,author,headRefName,baseRefName,state,url,\
+updatedAt,mergeable,mergeStateStatus,reviewDecision,reviewRequests,isDraft,files,statusCheckRollup";
+
+// An unknown gh conclusion is never painted green: that is the whole rule.
+pub fn check_state(status: &str, conclusion: &str) -> CheckState {
+    let s = status.to_ascii_uppercase();
+    let c = conclusion.to_ascii_uppercase();
+    if matches!(c.as_str(), "SUCCESS" | "NEUTRAL" | "SKIPPED") {
+        return CheckState::Ok;
+    }
+    const RUNNING: [&str; 5] = ["QUEUED", "IN_PROGRESS", "PENDING", "REQUESTED", "WAITING"];
+    if RUNNING.contains(&s.as_str()) || RUNNING.contains(&c.as_str()) {
+        return CheckState::Running;
+    }
+    CheckState::Failed
+}
+
+// The decision each reviewer is CURRENTLY holding. A reviewer who requested
+// changes and later approved counts once, as approved. A plain comment does not
+// dismiss an earlier approval — GitHub does not treat it as a decision, and
+// neither does the chip.
+pub fn latest_by_author(reviews: &[PrReview]) -> Vec<PrReview> {
+    let mut out: Vec<PrReview> = Vec::new();
+    for r in reviews {
+        if !matches!(
+            r.state.as_str(),
+            "APPROVED" | "CHANGES_REQUESTED" | "DISMISSED"
+        ) {
+            continue;
+        }
+        out.retain(|k| k.author != r.author);
+        out.push(r.clone());
+    }
+    out
+}
+
+// The last `n` lines of the quoted excerpt a thread hangs off.
+//
+// O `diffHunk` do GitHub começa pelo cabeçalho `@@ -3,35 +3,107 @@`, que é sintaxe
+// de máquina e chegava à tela dentro da folha de resposta (visto no #6 do turbo).
+// DESIGN.md §5: a sintaxe da máquina não chega à superfície. O trecho citado é a
+// LINHA comentada e o contexto dela — o cabeçalho não é nem uma nem outro.
+fn last_lines(s: &str, n: usize) -> String {
+    let lines: Vec<&str> = s.lines().filter(|l| !l.starts_with("@@")).collect();
+    let from = lines.len().saturating_sub(n);
+    lines[from..].join("\n")
+}
+
+// A FIXED literal — never interpolated. The variables travel as isolated
+// positional args, which is this module's no-shell policy.
+//
+// GraphQL is the only route that carries `isResolved` (REST
+// pulls/{n}/comments does not) and the only one that carries each review's
+// commit oid, without which "aprovação de versão anterior" could not be told
+// from a current approval. `first: 50` is a deliberate ceiling (KISS): a
+// knowledge review past that size has left the app's premise, and nothing in
+// PrDetail claims completeness.
+const REVIEW_THREADS_QUERY: &str = "query($owner:String!,$repo:String!,$number:Int!){\
+viewer{login}\
+repository(owner:$owner,name:$repo){pullRequest(number:$number){\
+headRefOid \
+reviews(last:50){nodes{state body submittedAt author{login} commit{oid}}} \
+reviewThreads(first:50){nodes{isResolved isOutdated path line \
+comments(first:50){nodes{databaseId author{login} body createdAt diffHunk}}}}\
+}}}";
+
+#[derive(serde::Deserialize, Default)]
+struct GqlResponse {
+    #[serde(default)]
+    data: GqlData,
+}
+
+#[derive(serde::Deserialize, Default)]
+struct GqlData {
+    #[serde(default)]
+    viewer: GqlViewer,
+    #[serde(default)]
+    repository: Option<GqlRepo>,
+}
+
+#[derive(serde::Deserialize, Default)]
+struct GqlViewer {
+    #[serde(default)]
+    login: String,
+}
+
+#[derive(serde::Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct GqlRepo {
+    #[serde(default)]
+    pull_request: Option<GqlPr>,
+}
+
+#[derive(serde::Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct GqlPr {
+    #[serde(default)]
+    head_ref_oid: String,
+    #[serde(default)]
+    reviews: GqlReviewConn,
+    #[serde(default)]
+    review_threads: GqlThreadConn,
+}
+
+#[derive(serde::Deserialize, Default)]
+struct GqlReviewConn {
+    #[serde(default)]
+    nodes: Vec<GqlReview>,
+}
+
+#[derive(serde::Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct GqlReview {
+    #[serde(default)]
+    state: String,
+    #[serde(default)]
+    body: String,
+    #[serde(default)]
+    submitted_at: String,
+    #[serde(default)]
+    author: Option<Author>,
+    #[serde(default)]
+    commit: Option<GqlOid>,
+}
+
+#[derive(serde::Deserialize, Default)]
+struct GqlOid {
+    #[serde(default)]
+    oid: String,
+}
+
+#[derive(serde::Deserialize, Default)]
+struct GqlThreadConn {
+    #[serde(default)]
+    nodes: Vec<GqlThread>,
+}
+
+#[derive(serde::Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct GqlThread {
+    #[serde(default)]
+    is_resolved: bool,
+    #[serde(default)]
+    is_outdated: bool,
+    #[serde(default)]
+    path: String,
+    #[serde(default)]
+    line: Option<u32>,
+    #[serde(default)]
+    comments: GqlCommentConn,
+}
+
+#[derive(serde::Deserialize, Default)]
+struct GqlCommentConn {
+    #[serde(default)]
+    nodes: Vec<GqlComment>,
+}
+
+#[derive(serde::Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct GqlComment {
+    #[serde(default)]
+    database_id: u64,
+    #[serde(default)]
+    author: Option<Author>,
+    #[serde(default)]
+    body: String,
+    #[serde(default)]
+    created_at: String,
+    #[serde(default)]
+    diff_hunk: String,
+}
+
+#[derive(Default)]
+struct Conversation {
+    viewer: String,
+    reviews: Vec<PrReview>,
+    threads: Vec<PrThread>,
+}
+
+// Pure: the GraphQL payload -> the shapes the screen reads. Separated from the
+// call so the mapping can be tested without gh.
+fn conversation_from(resp: GqlResponse) -> Conversation {
+    let viewer = resp.data.viewer.login;
+    let pr = resp
+        .data
+        .repository
+        .and_then(|r| r.pull_request)
+        .unwrap_or_default();
+    let head = pr.head_ref_oid;
+    let reviews = pr
+        .reviews
+        .nodes
+        .into_iter()
+        .map(|r| {
+            let oid = r.commit.map(|c| c.oid).unwrap_or_default();
+            PrReview {
+                author: r.author.map(|a| a.login).unwrap_or_default(),
+                state: r.state,
+                body: r.body,
+                when: r.submitted_at,
+                stale: !oid.is_empty() && !head.is_empty() && oid != head,
+            }
+        })
+        .collect();
+    let threads = pr
+        .review_threads
+        .nodes
+        .into_iter()
+        .map(|t| PrThread {
+            // the id `gh_pr_reply` posts to is the FIRST comment of the thread
+            id: t.comments.nodes.first().map(|c| c.database_id).unwrap_or(0),
+            excerpt: t
+                .comments
+                .nodes
+                .first()
+                .map(|c| last_lines(&c.diff_hunk, 6))
+                .unwrap_or_default(),
+            path: t.path,
+            line: t.line,
+            resolved: t.is_resolved,
+            outdated: t.is_outdated,
+            comments: t
+                .comments
+                .nodes
+                .into_iter()
+                .map(|c| PrComment {
+                    author: c.author.map(|a| a.login).unwrap_or_default(),
+                    body: c.body,
+                    when: c.created_at,
+                })
+                .collect(),
+        })
+        .collect();
+    Conversation {
+        viewer,
+        reviews,
+        threads,
+    }
+}
+
+fn pr_conversation(
+    base: &Path,
+    owner: &str,
+    repo: &str,
+    number: u64,
+) -> Result<Conversation, String> {
+    let query = format!("query={REVIEW_THREADS_QUERY}");
+    let owner = format!("owner={owner}");
+    let repo = format!("repo={repo}");
+    let number = format!("number={number}");
+    let out = gh(
+        base,
+        &[
+            "api", "graphql", "-f", &query, "-f", &owner, "-f", &repo, "-F", &number,
+        ],
+    )?;
+    if !out.status.success() {
+        return Err(gh_failure(&out, "err.pr_read_failed"));
+    }
+    let resp: GqlResponse =
+        serde_json::from_slice(&out.stdout).map_err(|_| "err.pr_read_failed".to_string())?;
+    Ok(conversation_from(resp))
+}
+
+// Pure: gh's PR payload + the conversation -> what the app receives.
+// UMA REGRA, DOIS CAMINHOS. A lista e o detalhe leem o mesmo `statusCheckRollup`
+// do gh, e duas cópias desta tradução divergem — foi assim que a lista ficou sem
+// poder dizer que uma mudança está bloqueada.
+pub fn check_runs(raw: Vec<GhCheck>) -> Vec<CheckRun> {
+    raw.into_iter()
+        .map(|c| CheckRun {
+            state: check_state(
+                &c.status,
+                if c.conclusion.is_empty() {
+                    &c.state
+                } else {
+                    &c.conclusion
+                },
+            ),
+            name: if c.name.is_empty() { c.context } else { c.name },
+            url: if c.details_url.is_empty() {
+                c.target_url
+            } else {
+                c.details_url
+            },
+        })
+        .collect()
+}
+
+fn detail_from(view: GhPrView, conv: Conversation) -> PrDetail {
+    let latest = latest_by_author(&conv.reviews);
+    PrDetail {
+        sections: pr_body_sections(&view.body),
+        mine: !conv.viewer.is_empty() && conv.viewer == view.author.login,
+        approvals: latest.iter().filter(|r| r.state == "APPROVED").count(),
+        changes_requested: latest
+            .iter()
+            .filter(|r| r.state == "CHANGES_REQUESTED")
+            .count(),
+        files: view
+            .files
+            .into_iter()
+            .map(|f| PrFile {
+                path: f.path,
+                additions: f.additions,
+                deletions: f.deletions,
+            })
+            .collect(),
+        checks: check_runs(view.status_check_rollup),
+        reviews: conv.reviews,
+        threads: conv.threads,
+        number: view.number,
+        title: view.title,
+        body: view.body,
+        author: view.author,
+        head_ref_name: view.head_ref_name,
+        base_ref_name: view.base_ref_name,
+        state: view.state,
+        url: view.url,
+        updated_at: view.updated_at,
+        mergeable: view.mergeable,
+        merge_state_status: view.merge_state_status,
+        is_draft: view.is_draft,
+        review_requests: view.review_requests,
+    }
+}
+
+// THREE gh calls, no more. `reviews` is deliberately not asked of `gh pr view`:
+// that field carries no commit oid, so an approval of an earlier version could
+// not be told from a current one.
+pub fn pr_detail(base: &Path, number: u64) -> Result<PrDetail, String> {
+    let (owner, repo) = repo_slug(base)?;
+    let n = number.to_string();
+    let out = gh(base, &["pr", "view", &n, "--json", PR_DETAIL_FIELDS])?;
+    if !out.status.success() {
+        return Err(gh_failure(&out, "err.pr_read_failed"));
+    }
+    let view: GhPrView =
+        serde_json::from_slice(&out.stdout).map_err(|_| "err.pr_read_failed".to_string())?;
+    let conv = pr_conversation(base, &owner, &repo, number)?;
+    let detail = detail_from(view, conv);
+    info!(
+        target: "review",
+        pr = number,
+        files = detail.files.len(),
+        threads = detail.threads.len(),
+        "review read"
+    );
+    Ok(detail)
+}
+
+// The proposed change itself, through the same parser the working tree uses.
+pub fn pr_diff(base: &Path, number: u64) -> Result<Vec<FileDiff>, String> {
+    let n = number.to_string();
+    let out = gh(base, &["pr", "diff", &n])?;
+    if !out.status.success() {
+        return Err(gh_failure(&out, "err.pr_read_failed"));
+    }
+    let files = crate::diff::parse_unified_diff(&String::from_utf8_lossy(&out.stdout));
+    info!(target: "review", pr = number, files = files.len(), "review read");
+    Ok(files)
+}
+
+// ---- deciding on a review ---------------------------------------------------
+
+// Typed, so an unknown value fails at DESERIALIZATION — before any subprocess
+// runs. No string ever reaches gh unvalidated, and no `err.*_invalid_action`
+// code is needed.
+#[derive(serde::Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewAction {
+    Approve,
+    RequestChanges,
+    Comment,
+}
+
+impl ReviewAction {
+    fn flag(&self) -> &'static str {
+        match self {
+            ReviewAction::Approve => "--approve",
+            ReviewAction::RequestChanges => "--request-changes",
+            ReviewAction::Comment => "--comment",
+        }
+    }
+}
+
+pub fn pr_review(base: &Path, number: u64, action: ReviewAction, body: &str) -> Result<(), String> {
+    // The backend refuses on its own instead of leaning on the UI's toast:
+    // asking for changes with nothing written is not a decision anyone can act on.
+    if action != ReviewAction::Approve && body.trim().is_empty() {
+        return Err("err.pr_review_body_required".into());
+    }
+    let n = number.to_string();
+    let mut args: Vec<&str> = vec!["pr", "review", &n, action.flag()];
+    if !body.trim().is_empty() {
+        args.push("--body");
+        args.push(body);
+    }
+    let out = gh(base, &args)?;
+    if !out.status.success() {
+        return Err(gh_failure(&out, "err.pr_review_failed"));
+    }
+    info!(target: "review", pr = number, decision = action.flag(), "decision sent");
+    Ok(())
+}
+
+// Squash, because the copy promises that merging creates THE version in the
+// official knowledge (singular), and --delete-branch because it promises the
+// draft is closed.
+//
+// Guard: --delete-branch makes gh check out the default branch when the user is
+// standing on the head branch, so a dirty tree is refused FIRST with the
+// existing code whose pt-BR text already names the remedy. Otherwise the merge
+// would either fail mid-way or move the tree under the user — the same
+// refuse-before-you-move rule `switch_branch` obeys.
+//
+// Named, so the refusal AND its scope are both testable without gh: refusing a
+// merge the user is not standing in would block a landing for no reason.
+fn merge_would_move_the_working_tree(base: &Path, head_ref: &str) -> bool {
+    current_branch(base).as_deref() == Some(head_ref) && is_dirty(base)
+}
+
+pub fn pr_merge(base: &Path, number: u64, head_ref: &str) -> Result<(), String> {
+    if merge_would_move_the_working_tree(base, head_ref) {
+        return Err("err.working_tree_dirty".into());
+    }
+    let n = number.to_string();
+    let out = gh(base, &["pr", "merge", &n, "--squash", "--delete-branch"])?;
+    if !out.status.success() {
+        return Err(gh_failure(&out, "err.pr_merge_failed"));
+    }
+    info!(target: "review", pr = number, "merged into the official knowledge");
+    Ok(())
+}
+
+// {owner}/{repo} are gh's own REST placeholders, so no slug round trip is needed.
+pub fn pr_reply(base: &Path, number: u64, comment_id: u64, body: &str) -> Result<(), String> {
+    if body.trim().is_empty() {
+        return Err("err.pr_review_body_required".into());
+    }
+    let route = format!("repos/{{owner}}/{{repo}}/pulls/{number}/comments/{comment_id}/replies");
+    let field = format!("body={body}");
+    let out = gh(base, &["api", "--method", "POST", &route, "-f", &field])?;
+    if !out.status.success() {
+        return Err(gh_failure(&out, "err.pr_reply_failed"));
+    }
+    // BR-8: the number of the review is enough to trace the event. Neither the
+    // thread's id nor a single character of what was written is logged.
+    info!(target: "review", pr = number, "reply sent");
+    Ok(())
+}
+
+// ---- the team's review template ---------------------------------------------
+// A review description is written against the team's own template, so its `## `
+// headings ARE its structure. The rule lives here, once, instead of once in Rust
+// and once in the screen's JS.
+
+fn strip_html_comments(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(i) = rest.find("<!--") {
+        out.push_str(&rest[..i]);
+        rest = match rest[i..].find("-->") {
+            Some(j) => &rest[i + j + 3..],
+            None => "",
+        };
+    }
+    out.push_str(rest);
+    out
+}
+
+// The FIRST guidance comment of a block, as one line: the sentence that sits
+// under the heading is what the field's placeholder says. Only the first, because
+// a template can carry a note of its own further down (a team's link to its
+// review checklist), and joining them printed that note inside the placeholder of
+// the field above it. A placeholder with newlines is not a placeholder either, so
+// the whitespace is collapsed here — once — instead of on the screen.
+fn html_comment_text(s: &str) -> String {
+    let mut rest = s;
+    while let Some(i) = rest.find("<!--") {
+        let after = &rest[i + 4..];
+        let (inner, tail) = match after.find("-->") {
+            Some(j) => (&after[..j], &after[j + 3..]),
+            None => (after, ""),
+        };
+        let one = inner.split_whitespace().collect::<Vec<_>>().join(" ");
+        if !one.is_empty() {
+            return one;
+        }
+        rest = tail;
+    }
+    String::new()
+}
+
+// The template as the TEAM wrote it: the block before the first `## ` heading
+// (an H1, a welcome paragraph — the frame the sheet never shows) and, per
+// heading, its label with the lines under it VERBATIM. Both projections below are
+// built from this one walk, so the reader and the writer can never disagree about
+// what a section is — and the writer can put back what it was never shown.
+struct RawSection {
+    label: String,
+    body: String,
+}
+
+fn split_raw_sections(md: &str) -> (String, Vec<RawSection>) {
+    let mut preamble: Vec<String> = Vec::new();
+    let mut out: Vec<RawSection> = Vec::new();
+    let mut buf: Vec<String> = Vec::new();
+    let mut label: Option<String> = None;
+    let mut fenced = false;
+    for line in md.lines() {
+        let t = line.trim_start();
+        if t.starts_with("```") || t.starts_with("~~~") {
+            fenced = !fenced;
+        } else if !fenced {
+            if let Some(h) = t.strip_prefix("## ") {
+                match label.take() {
+                    Some(l) => out.push(RawSection {
+                        label: l,
+                        body: buf.join("\n"),
+                    }),
+                    None => preamble = std::mem::take(&mut buf),
+                }
+                buf = Vec::new();
+                label = Some(h.trim().to_string());
+                continue;
+            }
+        }
+        buf.push(line.to_string());
+    }
+    match label {
+        Some(l) => out.push(RawSection {
+            label: l,
+            body: buf.join("\n"),
+        }),
+        None => preamble = buf,
+    }
+    (preamble.join("\n"), out)
+}
+
+pub fn pr_body_sections(md: &str) -> Vec<PrSection> {
+    let (preamble, raw) = split_raw_sections(md);
+    // No heading at all is not one nameless section: it is a description with no
+    // structure, and the screen renders it whole.
+    if raw.is_empty() {
+        return Vec::new();
+    }
+    let mut out: Vec<PrSection> = Vec::new();
+    let text = strip_html_comments(&preamble).trim().to_string();
+    if !text.is_empty() {
+        out.push(PrSection {
+            label: String::new(),
+            text,
+            hint: html_comment_text(&preamble),
+        });
+    }
+    for s in raw {
+        out.push(PrSection {
+            label: s.label,
+            text: strip_html_comments(&s.body).trim().to_string(),
+            hint: html_comment_text(&s.body),
+        });
+    }
+    out
+}
+
+// What a field in the send-for-review sheet needs: its label AND the sentence
+// that says what to write in it. Built in ONE walk and returned as a pair,
+// because two lists the caller has to keep aligned are two lists that drift.
+pub fn pr_template_fields(md: &str) -> (Vec<String>, Vec<String>) {
+    pr_body_sections(md)
+        .into_iter()
+        .filter(|s| !s.label.is_empty())
+        .map(|s| (s.label, s.hint))
+        .unzip()
+}
+
+// Rewriting the team's template from a list of labels must not delete what the
+// sheet never showed. The sheet shows LABELS, so everything else in the file is
+// content this control was never given a chance to display: the guidance line
+// under each heading (which is what the field's placeholder says), an H1, a
+// welcome paragraph, a link to the team's own checklist. A section the edit kept
+// is therefore written back with its block untouched, and the block before the
+// first heading stays at the top; only a section the person removed goes, and a
+// section they added arrives empty. `previous` is the file as it stands.
+pub fn render_pr_body_template(labels: &[String], previous: &str) -> String {
+    let (preamble, kept) = split_raw_sections(previous);
+    let mut out = String::new();
+    let frame = trim_trailing_blank_lines(&preamble);
+    if !frame.is_empty() {
+        out.push_str(&frame);
+        out.push_str("\n\n");
+    }
+    for l in labels {
+        let label = l.trim();
+        let body = kept
+            .iter()
+            .find(|s| s.label == label)
+            .map(|s| trim_trailing_blank_lines(&s.body))
+            .unwrap_or_default();
+        out.push_str(&format!("## {label}\n"));
+        if !body.is_empty() {
+            out.push_str(&body);
+            out.push('\n');
+        }
+        out.push('\n');
+    }
+    out
+}
+
+fn trim_trailing_blank_lines(s: &str) -> String {
+    s.trim_end_matches(['\n', '\r', ' ', '\t']).to_string()
 }
 
 // ---- write flow: Versionar (local) then Propor (remote + PR) ---------------
@@ -724,9 +1776,19 @@ fn commit_empty_baseline(base: &Path) -> Result<(), String> {
 // draft branches off HEAD, never off the default branch: `checkout -b <new>
 // <default>` moves those edits onto another base, so a version already saved on
 // the current draft disappears from the open document (and, when the same file
-// is touched twice, git refuses the checkout altogether). With a clean tree the
-// draft starts from the locally-resolved default so it stays independent
-// (ADR-0002 §2; the propose path still asks gh for the authoritative default).
+// is touched twice, git refuses the checkout altogether).
+//
+// With a clean tree the draft starts from the locally-resolved default so it
+// stays independent of the draft the user happens to be on (ADR-0002 §2; the
+// propose path still asks gh for the authoritative default) — but ONLY while that
+// changes nothing on disk. ADR-0027: on a project whose knowledge lives on a
+// draft (every project until a review lands, because `Baseline::Empty` commits
+// nothing), the default branch is an empty room, so naming a new draft took every
+// document, `.github/` and the `.gitignore` off the disk. The screen went empty,
+// the sidebar said the knowledge had never been created, and «mudanças de agora»
+// filled with rows nobody wrote. Naming a draft is not a price the user agreed to
+// pay, so a draft that would cost a single byte starts from HEAD — which is what
+// the copy already promises ("um rascunho novo leva a mudança com você").
 pub fn create_branch(base: &Path, slug: &str) -> Result<String, String> {
     git_init_repo(base)?;
     ensure_baseline_commit(base, Baseline::Empty)?;
@@ -734,11 +1796,14 @@ pub fn create_branch(base: &Path, slug: &str) -> Result<String, String> {
     if current_branch(base).as_deref() == Some(branch.as_str()) {
         return Ok(branch);
     }
-    let start = if is_dirty(base) {
-        current_branch(base)
+    // `None` = branch off HEAD, i.e. off the work in front of the user.
+    let start: Option<String> = if is_dirty(base) {
+        None
     } else {
         let default = local_default_branch(base);
-        ref_exists(base, &format!("refs/heads/{default}")).then_some(default)
+        (ref_exists(base, &format!("refs/heads/{default}"))
+            && move_is_invisible_on_disk(base, &default))
+        .then_some(default)
     };
     let mut args: Vec<&str> = vec!["checkout", "-b", &branch];
     if let Some(start) = start.as_deref() {
@@ -771,6 +1836,10 @@ pub fn create_branch(base: &Path, slug: &str) -> Result<String, String> {
     }
 }
 
+// Pushing the draft is what an OPEN review reads: the commit the team sees is
+// the one on the remote branch, so this is also the whole of "update the review"
+// (ADR-0027). A transport failure takes the same code as everywhere else instead
+// of putting git's English into a pt-BR toast.
 pub fn push_branch(base: &Path, branch: &str) -> Result<(), String> {
     let out = crate::proc::command("git")
         .args(["push", "-u", "origin", branch])
@@ -778,10 +1847,13 @@ pub fn push_branch(base: &Path, branch: &str) -> Result<(), String> {
         .output()
         .map_err(|e| e.to_string())?;
     if out.status.success() {
-        Ok(())
-    } else {
-        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+        return Ok(());
     }
+    let err = String::from_utf8_lossy(&out.stderr);
+    if looks_offline(&err) {
+        return Err("err.github_unreachable".into());
+    }
+    Err(err.trim().to_string())
 }
 
 #[derive(serde::Serialize)]
@@ -789,6 +1861,52 @@ pub fn push_branch(base: &Path, branch: &str) -> Result<(), String> {
 pub struct PrRef {
     pub number: u64,
     pub url: String,
+    // The draft already had an open review and this act pushed the new version
+    // INTO it, instead of opening a second one. The screen says a different
+    // sentence for each outcome, so the fact travels with the number.
+    pub updated: bool,
+}
+
+// What "enviar para revisão do time" must do, decided before any process runs.
+// A draft that is already under review cannot get a second one: `gh pr create`
+// answers that with English prose, which is how the only failure path the author
+// had came back untranslated (ADR-0027). Pure, so the decision has a test
+// without gh — and `Create` is the only door to `pr_create`.
+pub enum ProposeAct {
+    Create,
+    UpdateOpenReview { number: u64, url: String },
+}
+
+pub fn propose_act(prs: &[PrInfo], branch: &str) -> ProposeAct {
+    let open = prs.iter().find(|p| {
+        p.head_ref_name == branch
+            && p.state
+                .as_deref()
+                .map(|s| s.eq_ignore_ascii_case("open"))
+                .unwrap_or(true)
+    });
+    match open {
+        Some(p) => ProposeAct::UpdateOpenReview {
+            number: p.number,
+            url: p.url.clone(),
+        },
+        None => ProposeAct::Create,
+    }
+}
+
+// The open reviews of ONE draft. `--head` is gh's own filter, so the answer does
+// not depend on the 50-row window `pr_list` reads.
+pub fn open_reviews_for_branch(base: &Path, branch: &str) -> Result<Vec<PrInfo>, String> {
+    let out = gh(
+        base,
+        &[
+            "pr", "list", "--head", branch, "--state", "open", "--json", PR_FIELDS,
+        ],
+    )?;
+    if !out.status.success() {
+        return Err(gh_failure(&out, "err.pr_read_failed"));
+    }
+    serde_json::from_slice(&out.stdout).map_err(|_| "err.pr_read_failed".to_string())
 }
 
 // Propor step 2: open the PR (the RFC). title/body are positional args (no
@@ -801,7 +1919,11 @@ pub fn pr_create(base: &Path, branch: &str, title: &str, body: &str) -> Result<P
         ],
     )?;
     if !out.status.success() {
-        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+        let err = String::from_utf8_lossy(&out.stderr);
+        if looks_offline(&err) {
+            return Err("err.github_unreachable".into());
+        }
+        return Err(err.trim().to_string());
     }
     let url = String::from_utf8_lossy(&out.stdout).trim().to_string();
     let number = url
@@ -809,7 +1931,11 @@ pub fn pr_create(base: &Path, branch: &str, title: &str, body: &str) -> Result<P
         .next()
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
-    Ok(PrRef { number, url })
+    Ok(PrRef {
+        number,
+        url,
+        updated: false,
+    })
 }
 
 pub fn git_available() -> bool {
@@ -828,7 +1954,15 @@ pub fn git_available() -> bool {
 // reason `pessoal/` does: an acervo that has not been migrated still has
 // `reunioes/` on disk, and a .gitignore written by the new version would stop
 // quarantining it — which is how a raw transcript reaches a versioned tree (BR-8).
-pub const GIT_IGNORED: [&str; 10] = [
+// ADR-0027: the intake's own bookkeeping joins the same local world. Every
+// intake run rewrites `.brain/state.json` and appends to `.brain/activity.log`
+// (the acervo instructions, templates.rs step 4), so versioning them put two
+// rows the person never wrote at the top of «o que você mudou» on every single
+// run. Their inputs (`inbox/`) and outputs (`processed/`) are already
+// quarantined, which leaves nothing for a teammate to read in either file — and
+// the activity log is prose an agent wrote over raw queue items, so pushing it
+// is one more route from a transcript to a shared remote (BR-8).
+pub const GIT_IGNORED: [&str; 12] = [
     ".DS_Store",
     "inbox/",
     "processed/",
@@ -837,6 +1971,8 @@ pub const GIT_IGNORED: [&str; 10] = [
     "reunioes/",
     "/notas/",
     ".brain/prompt-history/",
+    ".brain/state.json",
+    ".brain/activity.log",
     "brainstorming/",
     "pessoal/",
 ];
@@ -861,6 +1997,94 @@ pub fn is_versioning_denied(rel: &str) -> bool {
         || leaf == "reuniao.md"
         || leaf == "audit.jsonl"
         || leaf == "auditoria.jsonl"
+}
+
+// Is this path quarantined by the acervo's own ignore list? The WRITE path can
+// trust `.gitignore` because it rewrites it first (`ensure_gitignore` runs inside
+// `stage_and_commit`); a READ path cannot — a read that writes the tree is not a
+// read. And the file on disk was written by whatever release created the acervo,
+// so every install upgraded to this one still carries the previous list until
+// something else happens to save. That gap is how `.brain/state.json` and
+// `.brain/activity.log` opened «o que você mudou» with two rows the person never
+// wrote (ADR-0027). Pure, so the quarantine is testable without a repository.
+pub fn is_quarantined(rel: &str) -> bool {
+    let r = rel.trim_start_matches("./").replace('\\', "/");
+    GIT_IGNORED.iter().any(|pat| matches_ignore(pat, &r))
+}
+
+// The subset of gitignore syntax `GIT_IGNORED` uses, and no more: a bare name
+// matches at any depth, a trailing `/` matches a directory (never a file with
+// that name), and a pattern that carries a slash is anchored at the acervo root.
+fn matches_ignore(pattern: &str, rel: &str) -> bool {
+    let dir_only = pattern.ends_with('/');
+    let pat = pattern.trim_matches('/');
+    if pat.is_empty() {
+        return false;
+    }
+    if pattern.starts_with('/') || pat.contains('/') {
+        return (rel == pat && !dir_only) || rel.starts_with(&format!("{pat}/"));
+    }
+    let segments: Vec<&str> = rel.split('/').collect();
+    let last = segments.len().saturating_sub(1);
+    segments
+        .iter()
+        .enumerate()
+        .any(|(i, s)| *s == pat && (!dir_only || i < last))
+}
+
+// A line of `git status --porcelain` as the two things every caller wants: the
+// status code and the path the content is at now (a rename comes as `old -> new`).
+struct PendingEntry {
+    code: String,
+    path: String,
+}
+
+fn parse_porcelain_line(line: &str) -> Option<PendingEntry> {
+    if line.len() < 4 {
+        return None;
+    }
+    let code = line[..2].trim().to_string();
+    let rest = &line[3..];
+    // Only a rename/copy line carries `old -> new`; splitting every line on it
+    // would rewrite the path of a document whose own NAME contains that string.
+    let path = if code.starts_with('R') || code.starts_with('C') {
+        rest.rsplit(" -> ").next().unwrap_or(rest)
+    } else {
+        rest
+    };
+    let path = path.trim_matches('"').to_string();
+    if path.is_empty() {
+        return None;
+    }
+    Some(PendingEntry { code, path })
+}
+
+// ONE reading of "what is pending", past the quarantine. Four surfaces ask it —
+// the count on the tab, the cards on «o que você mudou», the sidebar's markers
+// and the refusal that guards a draft switch — and four answers that can disagree
+// are four ways for the screen to lie (DESIGN.md §1). `-uall` because the cards
+// are per file: a collapsed `?? .brain/` would count one row the list never draws.
+fn pending_entries(base: &Path) -> Vec<PendingEntry> {
+    let out = crate::proc::command("git")
+        .args([
+            "-c",
+            "core.quotePath=false",
+            "status",
+            "--porcelain",
+            "-uall",
+        ])
+        .current_dir(base)
+        .output();
+    let Ok(out) = out else { return Vec::new() };
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(parse_porcelain_line)
+        // Only the UNTRACKED half is dropped here. A quarantined path that is
+        // already IN the tree (an acervo versioned before the rule) is real
+        // pending work: the next version is what takes it out of the index, so
+        // hiding it would leave the save button disarmed over work git still owes.
+        .filter(|e| e.code != "??" || !is_quarantined(&e.path))
+        .collect()
 }
 
 // Idempotent: guarantees the ignore entries exist in the acervo's .gitignore
@@ -916,13 +2140,7 @@ pub struct GitState {
 // counts is the same one the save flow asks before deciding there is anything to
 // save, so the label ("tudo salvo ✓") and the refusal can never disagree.
 pub fn pending_changes(base: &Path) -> usize {
-    crate::proc::command("git")
-        .args(["status", "--porcelain"])
-        .current_dir(base)
-        .output()
-        .ok()
-        .map(|o| String::from_utf8_lossy(&o.stdout).lines().count())
-        .unwrap_or(0)
+    pending_entries(base).len()
 }
 
 #[tauri::command]
@@ -969,26 +2187,10 @@ pub fn brain_git_files() -> GitFiles {
     let mut files = HashMap::new();
     if repo && git_available() {
         if let Some(b) = base {
-            if let Ok(o) = crate::proc::command("git")
-                .args(["status", "--porcelain", "-uall"])
-                .current_dir(&b)
-                .output()
-            {
-                for line in String::from_utf8_lossy(&o.stdout).lines() {
-                    if line.len() < 4 {
-                        continue;
-                    }
-                    let code = line[..2].trim().to_string();
-                    let rest = &line[3..];
-                    // renames come as "old -> new"; key by the new path
-                    let path = rest
-                        .rsplit(" -> ")
-                        .next()
-                        .unwrap_or(rest)
-                        .trim_matches('"')
-                        .to_string();
-                    files.insert(path, code);
-                }
+            // Same authority as the count and the cards: a marker on a document
+            // the review screen does not list is a marker that lies.
+            for e in pending_entries(&b) {
+                files.insert(e.path, e.code);
             }
         }
     }
@@ -1010,6 +2212,12 @@ pub struct VersionAttempt {
     pub branch: String,
     pub saved: bool,
     pub warn: Option<String>,
+    // A revisão que ESTA versão atualizou, e se o empurrão chegou. O commit é
+    // local e não pode se perder porque a rede caiu, então os dois fatos são
+    // separados: `review` diz que havia uma revisão aberta neste rascunho,
+    // `pushed` diz se ela já viu a versão nova.
+    pub review: Option<u64>,
+    pub pushed: bool,
 }
 
 // Sync outcomes the user should see as a warning (the flow still proceeds —
@@ -1037,16 +2245,64 @@ pub fn save_version(base: &Path, slug: &str, message: String) -> Result<VersionA
             branch: current_branch(base).unwrap_or_default(),
             saved: false,
             warn: None,
+            review: None,
+            pushed: false,
         });
     }
     let warn = sync_warn(&sync_default_branch(base));
-    let branch = create_branch(base, slug)?;
+    // A VERSÃO CAI ONDE VOCÊ ESTÁ. Isto chamava `create_branch` sempre, e
+    // `create_branch` é `git checkout -b rfc/<slug>`: parado num branch que não
+    // começa com `rfc/` — o caso NORMAL de um repositório de time, como
+    // `feat/acervo-navegavel` — salvar te MOVIA para um rascunho novo, e a revisão
+    // aberta daquele branch nunca via a versão. A tela chegou a dizer as duas coisas
+    // ao mesmo tempo («salvar cria um rascunho» e «salvar atualiza a revisão
+    // aberta»), e a primeira era a verdadeira.
+    //
+    // Só do CONHECIMENTO OFICIAL é que salvar cria um rascunho — é lá que ele
+    // precisa nascer, porque o oficial não recebe commit direto.
+    git_init_repo(base)?;
+    ensure_baseline_commit(base, Baseline::Empty)?;
+    let default = local_default_branch(base);
+    let branch = match current_branch(base) {
+        Some(cur) if cur != default => cur,
+        _ => create_branch(base, slug)?,
+    };
     let result = stage_and_commit(base, message)?;
+    let saved = result == OUTCOME_VERSIONED;
+    // UM PASSO, NÃO DOIS, quando o rascunho já está em revisão. A tela promete
+    // «salvar versão atualiza a revisão aberta» desde a primeira rodada e nada
+    // empurrava: o commit ficava neste computador e o time seguia lendo a versão
+    // anterior. Enviar deixa de ser um passo separado justamente porque não é um —
+    // a revisão já existe, e o que falta é ela ver o que acabou de ser salvo.
+    //
+    // Para um rascunho SEM revisão aberta nada é empurrado: «nada sai do seu
+    // computador sozinho» continua valendo, e enviar continua sendo a decisão de
+    // compartilhar. O empurrão é consequência de uma decisão que já foi tomada.
+    let (review, pushed) = match open_review_to_update(base, &branch, saved) {
+        Some(number) => (Some(number), push_branch(base, &branch).is_ok()),
+        None => (None, false),
+    };
     Ok(VersionAttempt {
         branch,
-        saved: result == OUTCOME_VERSIONED,
+        saved,
         warn,
+        review,
+        pushed,
     })
+}
+
+// Só vale perguntar ao remote quando há versão nova para ele ver, e só quando o
+// ambiente do time existe: sem gh, sem autenticação ou sem remote a resposta é
+// «não há revisão aberta a atualizar», sem gastar processo nenhum.
+fn open_review_to_update(base: &Path, branch: &str, saved: bool) -> Option<u64> {
+    if !saved || !gh_available() || !gh_authed() || git_remote_url(base).is_none() {
+        return None;
+    }
+    let prs = open_reviews_for_branch(base, branch).ok()?;
+    match propose_act(&prs, branch) {
+        ProposeAct::UpdateOpenReview { number, .. } => Some(number),
+        ProposeAct::Create => None,
+    }
 }
 
 // The `-c` overrides a version is committed with. Command-line `-c` has the
@@ -1100,6 +2356,11 @@ pub fn stage_and_commit(base: &Path, message: String) -> Result<String, String> 
             "reunioes",
             "notas",
             ".brain/prompt-history",
+            // ADR-0027: an acervo versioned before the rule carries the intake's
+            // bookkeeping in its tree, and .gitignore does not apply to a tracked
+            // file — the next version is what takes them out (they stay on disk).
+            ".brain/state.json",
+            ".brain/activity.log",
             "brainstorming",
             "pessoal",
         ])
@@ -1621,8 +2882,106 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    // The sibling below pinned `switch_branch`'s refusal; `pr_merge`'s — the more
+    // dangerous of the two, because `gh pr merge --delete-branch` checks the
+    // default branch out under a user standing on the head branch — was prose
+    // only. gh is never reached: the refusal comes first, exactly like
+    // a_decision_with_nothing_written_is_refused_before_gh_runs.
     #[test]
-    fn switch_branch_blocks_on_dirty_working_tree() {
+    fn pr_merge_blocks_on_dirty_working_tree_on_the_head_branch() {
+        if which("git").is_none() {
+            return;
+        }
+        let root = temp_repo("merge-dirty");
+        init_with_commit(&root);
+        create_branch(&root, "frota").unwrap();
+        std::fs::write(root.join("context.md"), "edição pendente").unwrap();
+        assert_eq!(current_branch(&root).as_deref(), Some("rfc/frota"));
+
+        let err = pr_merge(&root, 7, "rfc/frota").unwrap_err();
+        assert_eq!(err, "err.working_tree_dirty");
+        // and the tree the user was standing in is exactly as they left it
+        assert_eq!(current_branch(&root).as_deref(), Some("rfc/frota"));
+        assert_eq!(
+            std::fs::read_to_string(root.join("context.md")).unwrap(),
+            "edição pendente",
+            "the merge moved the tree under the user"
+        );
+
+        // the refusal is scoped: pending edits on a draft the merge does not
+        // check out are nobody's problem, and blocking there would strand a
+        // landing that is ready
+        assert!(merge_would_move_the_working_tree(&root, "rfc/frota"));
+        assert!(!merge_would_move_the_working_tree(&root, "rfc/outro"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // Isto afirmava o contrário: que QUALQUER árvore suja bloqueava a troca. Era uma
+    // pré-checagem mais severa que o git, e virou um beco quando salvar o arquivo
+    // parou de commitar (ADR-0027 round 8) — árvore suja passou a ser o normal e o
+    // seletor vivia com todas as linhas apagadas. Quem decide é o git.
+    // A VERSÃO CAI ONDE VOCÊ ESTÁ. Achado pelo dono no turbo, cujo branch de trabalho
+    // é `feat/acervo-navegavel`: salvar chamava `create_branch` sempre, e isso é
+    // `git checkout -b rfc/<slug>` — a pessoa era MOVIDA para um rascunho novo e a
+    // revisão aberta daquele branch nunca via a versão. A tela chegou a dizer as duas
+    // coisas ao mesmo tempo, e a errada era a que prometia atualizar a revisão.
+    #[test]
+    fn a_version_lands_on_the_draft_you_are_standing_on() {
+        if which("git").is_none() {
+            return;
+        }
+        let root = temp_repo("version-stays");
+        init_with_commit(&root);
+        // um branch de time, fora da grafia `rfc/…`
+        crate::proc::command("git")
+            .args(["checkout", "-b", "feat/acervo-navegavel"])
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        std::fs::write(root.join("context.md"), "mudança do time").unwrap();
+
+        let att = save_version(&root, "descricao-qualquer", "mudança".into()).unwrap();
+        assert!(att.saved);
+        assert_eq!(
+            att.branch, "feat/acervo-navegavel",
+            "a versão caiu no rascunho em que a pessoa estava"
+        );
+        assert_eq!(
+            current_branch(&root).as_deref(),
+            Some("feat/acervo-navegavel"),
+            "e ela não foi movida para lugar nenhum"
+        );
+        assert!(
+            !ref_exists(&root, "refs/heads/rfc/descricao-qualquer"),
+            "nenhum rascunho novo nasceu a partir da descrição"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // E do OFICIAL o rascunho nasce, porque é lá que ele precisa nascer: o
+    // conhecimento oficial não recebe commit direto.
+    #[test]
+    fn from_the_official_knowledge_a_version_still_creates_the_draft() {
+        if which("git").is_none() {
+            return;
+        }
+        let root = temp_repo("version-from-main");
+        init_with_commit(&root);
+        assert_eq!(current_branch(&root).as_deref(), Some("main"));
+        std::fs::write(root.join("context.md"), "mudança direta no oficial").unwrap();
+
+        let att = save_version(&root, "prazo-do-convite", "mudança".into()).unwrap();
+        assert!(att.saved);
+        assert_eq!(att.branch, "rfc/prazo-do-convite");
+        assert_eq!(
+            current_branch(&root).as_deref(),
+            Some("rfc/prazo-do-convite")
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_pending_edit_travels_with_you_instead_of_blocking_the_switch() {
         if which("git").is_none() {
             return;
         }
@@ -1631,9 +2990,44 @@ mod tests {
         create_branch(&root, "mudanca").unwrap();
         std::fs::write(root.join("context.md"), "edição pendente").unwrap();
 
+        // o arquivo é o mesmo nos dois rascunhos: o git carrega a modificação
+        switch_branch(&root, "main").unwrap();
+        assert_eq!(current_branch(&root).as_deref(), Some("main"));
+        assert_eq!(
+            std::fs::read_to_string(root.join("context.md")).unwrap(),
+            "edição pendente",
+            "a mudança não guardada foi com a pessoa — nada se perde"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // E a recusa que SOBRA é a de verdade: o arquivo difere entre os dois rascunhos,
+    // então trocar sobrescreveria a edição. Aí «salve uma versão primeiro» é o
+    // conserto certo — e é a única vez em que ele é.
+    #[test]
+    fn a_switch_that_would_overwrite_the_edit_is_refused_with_the_remedy() {
+        if which("git").is_none() {
+            return;
+        }
+        let root = temp_repo("switch-clobber");
+        init_with_commit(&root);
+        create_branch(&root, "mudanca").unwrap();
+        std::fs::write(root.join("context.md"), "versão do rascunho").unwrap();
+        stage_and_commit(&root, "no rascunho".into()).unwrap();
+        // agora o arquivo difere entre main e o rascunho, E está modificado
+        std::fs::write(root.join("context.md"), "edição pendente").unwrap();
+
         let err = switch_branch(&root, "main").unwrap_err();
-        assert_eq!(err, "err.working_tree_dirty");
-        assert_eq!(current_branch(&root).as_deref(), Some("rfc/mudanca"));
+        assert_eq!(err, "err.switch_would_lose_change");
+        assert_eq!(
+            current_branch(&root).as_deref(),
+            Some("rfc/mudanca"),
+            "recusado, o chão não se move debaixo da pessoa"
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("context.md")).unwrap(),
+            "edição pendente"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -1910,6 +3304,117 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    // ADR-0027 blocker — «＋ novo rascunho…» started the draft from the default
+    // branch whenever the tree was CLEAN, which is exactly when nothing travels
+    // with you. On every project until a review lands the default branch is the
+    // empty baseline, so naming a draft took the whole project off the disk: the
+    // sidebar said the knowledge had never been created, and «mudanças de agora»
+    // filled with the app's own internals because the `.gitignore` left with the
+    // tree. Naming a draft is not a price the user agreed to pay (DESIGN.md §1),
+    // and the copy already promises the opposite ("um rascunho novo leva a mudança
+    // com você").
+    #[test]
+    fn a_new_draft_never_takes_the_project_off_the_screen() {
+        if which("git").is_none() {
+            return;
+        }
+        // (a) the draft-only project: every document lives on the draft
+        let root = temp_repo("newdraft-empties");
+        std::fs::create_dir_all(root.join("contexts/frota")).unwrap();
+        std::fs::create_dir_all(root.join(".github")).unwrap();
+        std::fs::write(root.join("contexts/frota/context.md"), "conhecimento\n").unwrap();
+        std::fs::write(root.join("INDEX.md"), "índice\n").unwrap();
+        std::fs::write(root.join(".github/pull_request_template.md"), "## Resumo\n").unwrap();
+        git_init_repo(&root).unwrap();
+        set_identity(&root, "Teste", "teste@exemplo.com").unwrap();
+        create_branch(&root, "onboarding-atualizado").unwrap();
+        stage_and_commit(&root, "primeira versão".into()).unwrap();
+        assert!(
+            !is_dirty(&root),
+            "fixture: the tree has to be clean — that is when the defect fired"
+        );
+
+        create_branch(&root, "prazo-do-convite-21-dias").unwrap();
+
+        assert_eq!(
+            current_branch(&root).as_deref(),
+            Some("rfc/prazo-do-convite-21-dias")
+        );
+        for rel in [
+            "contexts/frota/context.md",
+            "INDEX.md",
+            ".github/pull_request_template.md",
+            ".gitignore",
+        ] {
+            assert!(
+                root.join(rel).is_file(),
+                "naming a new draft took {rel} off the disk"
+            );
+        }
+        assert_eq!(
+            documents_on(&root, "rfc/prazo-do-convite-21-dias"),
+            2,
+            "the new draft starts empty of the knowledge the project has"
+        );
+        let paths: Vec<String> = working_diff(&root, None)
+            .unwrap()
+            .into_iter()
+            .map(|f| f.path)
+            .collect();
+        assert!(
+            paths.is_empty(),
+            "the new draft turned the whole project into rows the person never wrote: {paths:?}"
+        );
+        assert_eq!(pending_changes(&root), 0);
+        let _ = std::fs::remove_dir_all(&root);
+
+        // (b) the same defect on content: a version already saved on the current
+        // draft must not silently go back to what the official branch says
+        let root = temp_repo("newdraft-reverts");
+        init_with_commit(&root); // main holds context.md = "base"
+        create_branch(&root, "prazo").unwrap();
+        std::fs::write(root.join("context.md"), "prazo de 21 dias\n").unwrap();
+        stage_and_commit(&root, "prazo de 21 dias".into()).unwrap();
+
+        create_branch(&root, "outro-assunto").unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(root.join("context.md")).unwrap(),
+            "prazo de 21 dias\n",
+            "the version saved on the previous draft went back to the official text"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+
+        // (c) and the independence the default start buys is kept wherever it is
+        // free: once the draft's work is in the official branch, the next draft is
+        // rooted THERE, so its review carries only the new commits
+        let root = temp_repo("newdraft-independent");
+        init_with_commit(&root);
+        create_branch(&root, "ja-entrou").unwrap();
+        std::fs::write(root.join("frota.md"), "conhecimento\n").unwrap();
+        stage_and_commit(&root, "frota".into()).unwrap();
+        run_git(&root, &["checkout", "-q", "main"]);
+        run_git(
+            &root,
+            &["merge", "--no-ff", "-q", "-m", "juntou", "rfc/ja-entrou"],
+        );
+        run_git(&root, &["checkout", "-q", "rfc/ja-entrou"]);
+        assert_ne!(
+            rev_sha(&root, "main"),
+            rev_sha(&root, "rfc/ja-entrou"),
+            "fixture: the two candidate start points have to differ"
+        );
+
+        create_branch(&root, "assunto-novo").unwrap();
+
+        assert_eq!(
+            rev_sha(&root, "HEAD"),
+            rev_sha(&root, "main"),
+            "the new draft is not rooted in the official branch, so its review would carry the previous draft's commits"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     // N3 — the app said "versão salva" over a commit that never happened, and
     // the attempt still created (and switched to) an empty draft on the way.
     // Nothing pending is not a version: the flow refuses BEFORE it changes
@@ -1991,5 +3496,893 @@ mod tests {
             "an answer FROM GitHub is an access problem, not a network one"
         );
         assert!(!looks_offline("HTTP 404: Not Found"));
+    }
+
+    // ---- ADR-0027: reading a review inside the app -------------------------
+
+    // BR-8 — the read path obeys the SAME quarantine as the write path. Without
+    // it an untracked `contexts/<ctx>/audio.wav` (which no GIT_IGNORED pattern
+    // covers) would be read off the disk and painted onto the review screen.
+    // This is the read-path twin of
+    // `stage_and_commit_never_versions_audio_transcript_audit_or_pessoal`.
+    #[test]
+    fn the_working_diff_never_shows_what_a_version_would_refuse() {
+        if which("git").is_none() {
+            return; // git is a system dependency; skip when absent
+        }
+        let root = temp_repo("working-diff-quarantine");
+        std::fs::create_dir_all(root.join("contexts/frota/meetings/r1")).unwrap();
+        std::fs::write(root.join("contexts/frota/context.md"), "conhecimento\n").unwrap();
+        git_init_repo(&root).unwrap();
+        set_identity(&root, "Teste", "teste@exemplo.com").unwrap();
+        stage_and_commit(&root, "base".into()).unwrap();
+
+        std::fs::write(
+            root.join("contexts/frota/context.md"),
+            "conhecimento\nprazo de 3 dias\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("contexts/frota/nova.md"), "documento novo\n").unwrap();
+        std::fs::write(root.join("contexts/frota/audio.wav"), b"RIFF\0\0\0\0WAVE").unwrap();
+        std::fs::write(root.join("contexts/frota/meetings/r1/reuniao.md"), "fala\n").unwrap();
+
+        let files = working_diff(&root, None).unwrap();
+        let paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
+        assert!(
+            paths.contains(&"contexts/frota/context.md"),
+            "the edited document is missing from the review screen: {paths:?}"
+        );
+        assert!(
+            paths.contains(&"contexts/frota/nova.md"),
+            "an untracked document has to show as a new document: {paths:?}"
+        );
+        assert!(
+            !paths.iter().any(|p| p.ends_with(".wav")),
+            "BR-8 — meeting audio reached the review screen: {paths:?}"
+        );
+        assert!(
+            !paths.iter().any(|p| p.ends_with("reuniao.md")),
+            "BR-8 — a raw transcript reached the review screen: {paths:?}"
+        );
+        // The EXACT set, not a contains: the filter that decides which porcelain
+        // lines are untracked files could be dropped with the whole suite green,
+        // and what it hides is a card per MODIFIED document — path mangled by the
+        // three-character status prefix, so «não dá para mostrar as linhas deste
+        // arquivo» about a file that does not exist. A `contains` cannot see an
+        // extra row; a set can.
+        let mut sorted = paths.clone();
+        sorted.sort();
+        assert_eq!(
+            sorted,
+            vec!["contexts/frota/context.md", "contexts/frota/nova.md"],
+            "the review screen is not exactly what a version would carry"
+        );
+
+        let nova = files.iter().find(|f| f.path.ends_with("nova.md")).unwrap();
+        assert_eq!(nova.kind, crate::diff::ChangeKind::Added);
+        assert_eq!(nova.additions, 1, "a new document renders as all-add");
+        let ctx = files
+            .iter()
+            .find(|f| f.path.ends_with("context.md"))
+            .unwrap();
+        assert_eq!(ctx.kind, crate::diff::ChangeKind::Modified);
+        assert_eq!(ctx.additions, 1);
+        assert_eq!(ctx.hunks[0].rows.last().unwrap().new_line, Some(2));
+
+        // a read command that mutates the index is not a read command
+        let staged = run_git(&root, &["diff", "--cached", "--name-only"]);
+        assert!(
+            String::from_utf8_lossy(&staged.stdout).trim().is_empty(),
+            "reading the working tree staged something"
+        );
+        // and a path from the screen can never point outside the project
+        assert_eq!(
+            working_diff(&root, Some("../../etc/passwd")).unwrap_err(),
+            "err.outside_acervo"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // The crux, checked against git ITSELF. A hand-written fixture can agree
+    // with a wrong parser; `git diff --numstat` cannot. Real patch text, with
+    // two hunks in one file, a deletion, an accented filename and a binary.
+    #[test]
+    fn the_parser_agrees_with_git_numstat_on_a_real_repository() {
+        if which("git").is_none() {
+            return;
+        }
+        let root = temp_repo("diff-vs-numstat");
+        let ctx = root.join("contexts/frota");
+        std::fs::create_dir_all(&ctx).unwrap();
+        let ten = (1..=10)
+            .map(|i| format!("linha {i}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n";
+        std::fs::write(ctx.join("context.md"), &ten).unwrap();
+        std::fs::write(ctx.join("política.md"), "acentuado\n").unwrap();
+        std::fs::write(ctx.join("velha.md"), "some\n").unwrap();
+        std::fs::write(ctx.join("foto.png"), b"\x89PNG\r\n\x1a\n\0\0\0").unwrap();
+        git_init_repo(&root).unwrap();
+        set_identity(&root, "Teste", "teste@exemplo.com").unwrap();
+        stage_and_commit(&root, "base".into()).unwrap();
+
+        // edits far apart so git emits TWO hunks for one document
+        std::fs::write(
+            ctx.join("context.md"),
+            ten.replace("linha 1\n", "linha um\n")
+                .replace("linha 10", "linha dez"),
+        )
+        .unwrap();
+        std::fs::remove_file(ctx.join("velha.md")).unwrap();
+        std::fs::write(ctx.join("política.md"), "acentuado\ne mais uma\n").unwrap();
+        std::fs::write(ctx.join("foto.png"), b"\x89PNG\r\n\x1a\n\0\0\0\0\0").unwrap();
+
+        let args = ["-c", "core.quotePath=false", "diff", "HEAD"];
+        let patch = run_git(
+            &root,
+            &[&args[..], &["--no-color", "--no-ext-diff", "-U3"][..]].concat(),
+        );
+        let files = crate::diff::parse_unified_diff(&String::from_utf8_lossy(&patch.stdout));
+        let numstat = run_git(&root, &[&args[..], &["--numstat"][..]].concat());
+
+        let mut expected: Vec<(String, String)> = String::from_utf8_lossy(&numstat.stdout)
+            .lines()
+            .filter_map(|l| {
+                let mut it = l.split('\t');
+                let a = it.next()?.to_string();
+                let d = it.next()?.to_string();
+                let p = it.next()?.to_string();
+                Some((p, format!("{a}/{d}")))
+            })
+            .collect();
+        expected.sort();
+        assert!(expected.len() >= 4, "the fixture stopped exercising git");
+
+        let mut got: Vec<(String, String)> = files
+            .iter()
+            .map(|f| {
+                let counts = if f.binary {
+                    "-/-".to_string()
+                } else {
+                    format!("{}/{}", f.additions, f.deletions)
+                };
+                (f.path.clone(), counts)
+            })
+            .collect();
+        got.sort();
+        assert_eq!(got, expected, "the parser disagrees with git's own numstat");
+
+        // and the two-hunk document really came back as two hunks
+        let doc = files
+            .iter()
+            .find(|f| f.path.ends_with("context.md"))
+            .unwrap();
+        assert_eq!(doc.hunks.len(), 2);
+        assert_eq!(doc.hunks[1].rows.last().unwrap().new_line, Some(10));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // A file the screen cannot draw as text says so instead of drawing an empty
+    // diff (F2's failure path).
+    #[test]
+    fn an_untracked_binary_says_so_instead_of_drawing_nothing() {
+        if which("git").is_none() {
+            return;
+        }
+        let root = temp_repo("working-diff-binary");
+        std::fs::create_dir_all(root.join("contexts/frota")).unwrap();
+        std::fs::write(root.join("contexts/frota/context.md"), "base\n").unwrap();
+        git_init_repo(&root).unwrap();
+        set_identity(&root, "Teste", "teste@exemplo.com").unwrap();
+        stage_and_commit(&root, "base".into()).unwrap();
+        std::fs::write(
+            root.join("contexts/frota/foto.png"),
+            b"\x89PNG\r\n\x1a\n\0\0",
+        )
+        .unwrap();
+
+        let files = working_diff(&root, None).unwrap();
+        let foto = files.iter().find(|f| f.path.ends_with("foto.png")).unwrap();
+        assert!(foto.binary);
+        assert!(foto.hunks.is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // The defect: «Mudanças de agora» opened with the machine's own bookkeeping
+    // presented as the person's change. Every intake run rewrites
+    // `.brain/state.json` and appends to `.brain/activity.log` (the acervo
+    // instructions, templates.rs step 4), so those two rows came back on top of
+    // the list on every run and nobody had written a line of either. BR-8: the
+    // activity log is prose an agent wrote over raw queue items — a versioned one
+    // is a route from a transcript to a shared remote.
+    #[test]
+    fn the_intake_bookkeeping_is_never_a_change_the_person_made() {
+        if which("git").is_none() {
+            return; // git is a system dependency; skip when absent
+        }
+        let root = temp_repo("intake-bookkeeping");
+        std::fs::create_dir_all(root.join("contexts/frota")).unwrap();
+        std::fs::create_dir_all(root.join(".brain")).unwrap();
+        std::fs::write(root.join("contexts/frota/context.md"), "conhecimento\n").unwrap();
+        std::fs::write(root.join(".brain/state.json"), "{\"processed\":[]}\n").unwrap();
+        std::fs::write(root.join(".brain/activity.log"), "").unwrap();
+        git_init_repo(&root).unwrap();
+        set_identity(&root, "Teste", "teste@exemplo.com").unwrap();
+
+        // an acervo versioned BEFORE the rule: both files are already tracked
+        run_git(&root, &["add", "-A", "-f"]);
+        run_git(&root, &["commit", "-qm", "base"]);
+        assert!(
+            String::from_utf8_lossy(&run_git(&root, &["ls-files"]).stdout)
+                .contains(".brain/state.json"),
+            "fixture: the pre-rule acervo has to start with the file tracked"
+        );
+
+        // one intake run: the acervo's instructions rewrite both files while the
+        // person edits one document
+        std::fs::write(
+            root.join(".brain/state.json"),
+            "{\"processed\":[\"a.md\"]}\n",
+        )
+        .unwrap();
+        std::fs::write(root.join(".brain/activity.log"), "fila processada\n").unwrap();
+        std::fs::write(
+            root.join("contexts/frota/context.md"),
+            "conhecimento\nprazo de 3 dias\n",
+        )
+        .unwrap();
+
+        stage_and_commit(&root, "prazo atualizado".into()).unwrap();
+        let tracked = String::from_utf8_lossy(&run_git(&root, &["ls-files"]).stdout).into_owned();
+        assert!(
+            !tracked.contains(".brain/state.json"),
+            "the intake's bookkeeping is still in the versioned tree: {tracked}"
+        );
+        assert!(
+            !tracked.contains(".brain/activity.log"),
+            "BR-8 — the agent's activity log is still versioned: {tracked}"
+        );
+        assert!(
+            tracked.contains("contexts/frota/context.md"),
+            "the document the person edited left the version: {tracked}"
+        );
+        assert!(
+            root.join(".brain/state.json").is_file() && root.join(".brain/activity.log").is_file(),
+            "leaving the versioned tree must not take the file off the disk"
+        );
+
+        // and from here on an intake run leaves «o que você mudou» empty
+        std::fs::write(
+            root.join(".brain/state.json"),
+            "{\"processed\":[\"a.md\",\"b.md\"]}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join(".brain/activity.log"),
+            "fila processada\noutra rodada\n",
+        )
+        .unwrap();
+        let paths: Vec<String> = working_diff(&root, None)
+            .unwrap()
+            .into_iter()
+            .map(|f| f.path)
+            .collect();
+        assert!(
+            paths.is_empty(),
+            "the machine's own bookkeeping is on the review screen as the person's change: {paths:?}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // The acervo's ignore list exactly as the release BEFORE this one wrote it.
+    // Every install upgraded to this release has this file on disk, and nothing on
+    // the read path rewrites it.
+    const PREVIOUS_RELEASE_GITIGNORE: &str = ".DS_Store\ninbox/\nprocessed/\nmeetings/\n/notes/\nreunioes/\n/notas/\n.brain/prompt-history/\nbrainstorming/\npessoal/\n";
+
+    // The read path used to trust a file it does not write. `.gitignore` is the
+    // ONLY thing that keeps the intake's bookkeeping off «o que você mudou», and
+    // the five places that rewrite it are all WRITE paths, so on every acervo
+    // created by the previous release the screen opened with two cards nobody had
+    // written, armed «Salvar versão» for them, and then saved a version that
+    // carried neither. Built by hand on purpose: a fixture that calls
+    // `git_init_repo` / `set_identity` / `stage_and_commit` before it reads is
+    // testing the state AFTER a save, not the state every existing install is in
+    // on its first visit to this screen.
+    #[test]
+    fn the_intake_bookkeeping_is_quarantined_on_a_gitignore_from_the_previous_release() {
+        if which("git").is_none() {
+            return; // git is a system dependency; skip when absent
+        }
+        let root = temp_repo("stale-gitignore");
+        std::fs::create_dir_all(root.join("contexts/frota")).unwrap();
+        std::fs::create_dir_all(root.join(".brain")).unwrap();
+        std::fs::write(root.join(".gitignore"), PREVIOUS_RELEASE_GITIGNORE).unwrap();
+        std::fs::write(root.join("contexts/frota/context.md"), "conhecimento\n").unwrap();
+        run_git(&root, &["init", "-q"]);
+        run_git(&root, &["config", "user.name", "Teste"]);
+        run_git(&root, &["config", "user.email", "teste@exemplo.com"]);
+        run_git(&root, &["config", "commit.gpgsign", "false"]);
+        run_git(&root, &["add", "-A"]);
+        run_git(&root, &["commit", "-qm", "base"]);
+
+        // one intake run: the acervo's own instructions (templates.rs step 4)
+        // rewrite both files, and the person has changed nothing
+        std::fs::write(
+            root.join(".brain/state.json"),
+            "{\"processed\":[\"a.md\"]}\n",
+        )
+        .unwrap();
+        std::fs::write(root.join(".brain/activity.log"), "fila processada\n").unwrap();
+
+        let paths: Vec<String> = working_diff(&root, None)
+            .unwrap()
+            .into_iter()
+            .map(|f| f.path)
+            .collect();
+        assert!(
+            paths.is_empty(),
+            "the machine's own bookkeeping is on the review screen as the person's change: {paths:?}"
+        );
+        assert_eq!(
+            pending_changes(&root),
+            0,
+            "the count on the tab disagrees with the list it labels"
+        );
+        assert!(
+            !is_dirty(&root),
+            "a dead end: switching draft is refused over files the screen says are not there"
+        );
+
+        // and none of this hides a change the person DID make
+        std::fs::write(
+            root.join("contexts/frota/context.md"),
+            "conhecimento\nprazo de 3 dias\n",
+        )
+        .unwrap();
+        let paths: Vec<String> = working_diff(&root, None)
+            .unwrap()
+            .into_iter()
+            .map(|f| f.path)
+            .collect();
+        assert_eq!(paths, vec!["contexts/frota/context.md".to_string()]);
+        assert_eq!(pending_changes(&root), 1);
+        assert!(is_dirty(&root));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // The quarantine the read path applies has to be the one git would have
+    // applied, or the screen starts hiding documents instead of housekeeping:
+    // `GIT_IGNORED` is gitignore syntax, and three of its shapes mean three
+    // different things.
+    #[test]
+    fn the_read_path_quarantine_agrees_with_the_gitignore_it_stands_in_for() {
+        // anchored by its slash: only the acervo's own bookkeeping, at the root
+        assert!(is_quarantined(".brain/state.json"));
+        assert!(is_quarantined(".brain/activity.log"));
+        assert!(is_quarantined(".brain/prompt-history/2026-08-01.md"));
+        assert!(
+            !is_quarantined("contexts/frota/.brain/state.json"),
+            "an anchored pattern matched at a depth git would not"
+        );
+        // a bare name matches at any depth, a trailing slash only a directory
+        assert!(is_quarantined("inbox/nota.md"));
+        assert!(is_quarantined("contexts/frota/meetings/r1/reuniao.md"));
+        assert!(is_quarantined("inbox/"));
+        assert!(is_quarantined("contexts/frota/.DS_Store"));
+        assert!(
+            !is_quarantined("contexts/frota/inbox"),
+            "a DOCUMENT named like a quarantined folder left the screen"
+        );
+        // anchored at the root by its leading slash (owner decision, ADR-0009)
+        assert!(is_quarantined("notes/ideia.md"));
+        assert!(
+            !is_quarantined("contexts/frota/notes/nota.md"),
+            "a context's own notes/ folder is versioned knowledge, not the root one"
+        );
+        // and the knowledge itself is never quarantined
+        assert!(!is_quarantined("contexts/frota/context.md"));
+        assert!(!is_quarantined("INDEX.md"));
+        assert!(!is_quarantined(".github/pull_request_template.md"));
+    }
+
+    // The four surfaces that ask "what is pending" share one porcelain reader, so
+    // the way it reads a line is load-bearing: a marker keys by where the content
+    // IS now (a rename's new path), and ONLY a rename carries `old -> new` — a
+    // document whose own name contains that string must keep it, or the card and
+    // the sidebar marker point at a file that does not exist.
+    #[test]
+    fn a_porcelain_line_is_read_as_the_path_the_content_is_at_now() {
+        let renamed =
+            parse_porcelain_line("R  contexts/frota/velha.md -> contexts/frota/nova.md").unwrap();
+        assert_eq!(renamed.code, "R");
+        assert_eq!(renamed.path, "contexts/frota/nova.md");
+
+        let odd_name = parse_porcelain_line("?? contexts/frota/antes -> depois.md").unwrap();
+        assert_eq!(odd_name.code, "??");
+        assert_eq!(odd_name.path, "contexts/frota/antes -> depois.md");
+
+        let edited = parse_porcelain_line(" M contexts/frota/context.md").unwrap();
+        assert_eq!(edited.code, "M");
+        assert_eq!(edited.path, "contexts/frota/context.md");
+
+        assert!(parse_porcelain_line("").is_none());
+        assert!(parse_porcelain_line("?? ").is_none(), "a line with no path");
+    }
+
+    // gh's JSON key is `statusCheckRollup` and the app's key is `checks`; the
+    // mapping is explicit so a key mismatch cannot hide behind a shared struct.
+    #[test]
+    fn pr_detail_deserializes_gh_json() {
+        let json = r###"{"number":12,"title":"prazo do convite","body":"## Resumo\nmuda o prazo\n<!-- dica -->\n\n## Como conferir\nabra o onboarding\n","author":{"login":"ana"},"headRefName":"rfc/prazo-convite","baseRefName":"main","state":"OPEN","url":"https://github.com/x/y/pull/12","updatedAt":"2026-08-10T10:00:00Z","mergeable":"MERGEABLE","mergeStateStatus":"BLOCKED","reviewRequests":[{"login":"bob"}],"isDraft":false,"files":[{"path":"contexts/frota/context.md","additions":4,"deletions":1}],"statusCheckRollup":[{"name":"ci","status":"COMPLETED","conclusion":"SUCCESS","detailsUrl":"https://ci"},{"context":"legado","state":"FAILURE","targetUrl":"https://legado"}]}"###;
+        let view: GhPrView = serde_json::from_str(json).unwrap();
+        let conv = Conversation {
+            viewer: "bob".into(),
+            reviews: vec![
+                PrReview {
+                    author: "bob".into(),
+                    state: "CHANGES_REQUESTED".into(),
+                    ..Default::default()
+                },
+                PrReview {
+                    author: "bob".into(),
+                    state: "APPROVED".into(),
+                    ..Default::default()
+                },
+                PrReview {
+                    author: "ana".into(),
+                    state: "COMMENTED".into(),
+                    ..Default::default()
+                },
+            ],
+            threads: vec![PrThread {
+                id: 99,
+                path: "contexts/frota/context.md".into(),
+                resolved: true,
+                ..Default::default()
+            }],
+        };
+        let d = detail_from(view, conv);
+
+        assert_eq!(d.number, 12);
+        assert_eq!(d.head_ref_name, "rfc/prazo-convite");
+        assert_eq!(d.mergeable, "MERGEABLE");
+        assert_eq!(
+            d.merge_state_status, "BLOCKED",
+            "the only truthful signal for whether the change can land"
+        );
+        // the description arrives already split into the team's sections
+        assert_eq!(d.sections.len(), 2);
+        assert_eq!(d.sections[0].label, "Resumo");
+        assert_eq!(d.sections[0].text, "muda o prazo");
+        assert_eq!(d.sections[1].label, "Como conferir");
+        // gh's statusCheckRollup became the app's `checks`, both spellings read
+        assert_eq!(d.checks.len(), 2);
+        assert_eq!(d.checks[0].name, "ci");
+        assert_eq!(d.checks[0].state, CheckState::Ok);
+        assert_eq!(d.checks[1].name, "legado");
+        assert_eq!(d.checks[1].state, CheckState::Failed);
+        // a reviewer who asked for changes and then approved counts once
+        assert_eq!(d.approvals, 1);
+        assert_eq!(d.changes_requested, 0);
+        assert!(!d.mine, "the change is ana's; the viewer is bob");
+        assert_eq!(d.files[0].additions, 4);
+        assert!(d.threads[0].resolved);
+    }
+
+    #[test]
+    fn pr_detail_tolerates_missing_fields() {
+        // an older gh omits fields; nothing may panic (serde default)
+        let view: GhPrView = serde_json::from_str(r#"{"number":1}"#).unwrap();
+        let d = detail_from(view, Conversation::default());
+        assert_eq!(d.number, 1);
+        assert!(d.title.is_empty());
+        assert!(d.sections.is_empty());
+        assert!(d.checks.is_empty());
+        assert_eq!(d.approvals, 0);
+        assert!(!d.mine, "with no viewer, the app must not claim the change");
+    }
+
+    // The GraphQL payload is the only route that carries a review's commit oid,
+    // and `stale` is the fact that "aprovação de versão anterior" states.
+    #[test]
+    fn a_review_of_an_earlier_version_is_marked_stale() {
+        let json = r#"{"data":{"viewer":{"login":"ana"},"repository":{"pullRequest":{
+            "headRefOid":"HEAD1",
+            "reviews":{"nodes":[
+              {"state":"APPROVED","body":"ok","submittedAt":"2026-08-01T10:00:00Z","author":{"login":"bob"},"commit":{"oid":"OLD0"}},
+              {"state":"CHANGES_REQUESTED","body":"falta","submittedAt":"2026-08-02T10:00:00Z","author":{"login":"cid"},"commit":{"oid":"HEAD1"}}]},
+            "reviewThreads":{"nodes":[
+              {"isResolved":false,"isOutdated":true,"path":"contexts/frota/context.md","line":12,
+               "comments":{"nodes":[
+                 {"databaseId":4242,"author":{"login":"bob"},"body":"e o prazo?","createdAt":"2026-08-01T10:00:00Z","diffHunk":"@@ -1 +1 @@\n-a\n-b\n-c\n-d\n-e\n-f\n-g"}]}}]}}}}}"#;
+        let conv = conversation_from(serde_json::from_str(json).unwrap());
+        assert_eq!(conv.viewer, "ana");
+        assert!(conv.reviews[0].stale, "bob approved an earlier version");
+        assert!(!conv.reviews[1].stale);
+        assert_eq!(
+            conv.threads[0].id, 4242,
+            "the reply lands on the FIRST comment"
+        );
+        assert!(conv.threads[0].outdated);
+        assert_eq!(conv.threads[0].line, Some(12));
+        assert_eq!(
+            conv.threads[0].excerpt.lines().count(),
+            6,
+            "the quoted excerpt is bounded"
+        );
+        assert_eq!(conv.threads[0].comments[0].author, "bob");
+    }
+
+    #[test]
+    fn latest_by_author_keeps_the_decision_each_reviewer_holds() {
+        let r = |a: &str, s: &str| PrReview {
+            author: a.into(),
+            state: s.into(),
+            ..Default::default()
+        };
+        let all = vec![
+            r("bob", "CHANGES_REQUESTED"),
+            r("ana", "APPROVED"),
+            r("bob", "APPROVED"),
+            r("ana", "COMMENTED"),
+        ];
+        let latest = latest_by_author(&all);
+        assert_eq!(latest.len(), 2);
+        assert_eq!(latest.iter().filter(|x| x.state == "APPROVED").count(), 2);
+        assert!(
+            latest.iter().all(|x| x.state != "CHANGES_REQUESTED"),
+            "a reviewer who later approved still counted as blocking"
+        );
+        assert!(
+            latest.iter().all(|x| x.state != "COMMENTED"),
+            "a plain comment is not a decision and must not dismiss an approval"
+        );
+    }
+
+    #[test]
+    fn check_state_never_paints_an_unknown_conclusion_green() {
+        assert_eq!(check_state("COMPLETED", "SUCCESS"), CheckState::Ok);
+        assert_eq!(check_state("COMPLETED", "SKIPPED"), CheckState::Ok);
+        assert_eq!(check_state("IN_PROGRESS", ""), CheckState::Running);
+        assert_eq!(check_state("", "PENDING"), CheckState::Running);
+        assert_eq!(check_state("COMPLETED", "FAILURE"), CheckState::Failed);
+        assert_eq!(check_state("COMPLETED", "TIMED_OUT"), CheckState::Failed);
+        assert_eq!(
+            check_state("SOMETHING_NEW", "SOMETHING_NEW"),
+            CheckState::Failed,
+            "an unknown state is never reported as passing"
+        );
+    }
+
+    // Typing the action means an unknown value fails at DESERIALIZATION, before
+    // any subprocess runs.
+    #[test]
+    fn review_action_is_typed_before_any_process_runs() {
+        let a: ReviewAction = serde_json::from_str(r#""request_changes""#).unwrap();
+        assert_eq!(a.flag(), "--request-changes");
+        assert_eq!(
+            serde_json::from_str::<ReviewAction>(r#""approve""#)
+                .unwrap()
+                .flag(),
+            "--approve"
+        );
+        assert_eq!(
+            serde_json::from_str::<ReviewAction>(r#""comment""#)
+                .unwrap()
+                .flag(),
+            "--comment"
+        );
+        assert!(
+            serde_json::from_str::<ReviewAction>(r#""--delete-branch""#).is_err(),
+            "an arbitrary string could reach gh as a flag"
+        );
+    }
+
+    #[test]
+    fn a_decision_with_nothing_written_is_refused_before_gh_runs() {
+        let root = std::env::temp_dir(); // never reached: the refusal comes first
+        assert_eq!(
+            pr_review(&root, 1, ReviewAction::RequestChanges, "   ").unwrap_err(),
+            "err.pr_review_body_required"
+        );
+        assert_eq!(
+            pr_review(&root, 1, ReviewAction::Comment, "").unwrap_err(),
+            "err.pr_review_body_required"
+        );
+        assert_eq!(
+            pr_reply(&root, 1, 2, "\n\t ").unwrap_err(),
+            "err.pr_review_body_required"
+        );
+    }
+
+    // The template's `## ` headings ARE the description's structure, and the
+    // rule lives once so the screen never re-implements it.
+    #[test]
+    fn pr_body_sections_reads_the_team_template() {
+        let (labels, _) = pr_template_fields(crate::templates::PR_TEMPLATE);
+        assert_eq!(labels.len(), 3);
+        assert_eq!(labels[0], "Resumo");
+        assert_eq!(labels[2], "Como conferir");
+        // a hint the author never replaced is markup, not the author's words
+        let filled = pr_body_sections("## Resumo\n<!-- o que muda -->\nmuda o prazo\n");
+        assert_eq!(filled[0].text, "muda o prazo");
+        // a `##` inside a fenced block is code, not a heading
+        let (fenced, _) = pr_template_fields("## Um\n```\n## nao e secao\n```\n## Dois\n");
+        assert_eq!(fenced, vec!["Um".to_string(), "Dois".to_string()]);
+        // a description with no structure is rendered whole, not as one section
+        assert!(pr_body_sections("so um paragrafo").is_empty());
+        // and what is written back is what the reader will be asked for
+        assert_eq!(
+            render_pr_body_template(&["Resumo".into(), "Como conferir".into()], ""),
+            "## Resumo\n\n## Como conferir\n\n"
+        );
+    }
+
+    // The sheet asked for six sections and explained none of them: the sentence
+    // that says WHAT to write lives in the template's HTML comment, and the
+    // parser threw it away with the rest of the markup. A field whose label is
+    // "Como conferir" and whose placeholder is empty is a blank box.
+    #[test]
+    fn a_template_field_carries_the_sentence_that_says_what_to_write() {
+        let (labels, hints) = pr_template_fields(crate::templates::PR_TEMPLATE);
+        assert_eq!(
+            labels.len(),
+            hints.len(),
+            "the sheet pairs a label with a hint by index"
+        );
+        assert!(!labels.is_empty());
+        for (label, hint) in labels.iter().zip(&hints) {
+            assert!(
+                !hint.is_empty(),
+                "\"{label}\" reaches the screen with no placeholder"
+            );
+        }
+        assert_eq!(hints[0], "o que muda e por quê");
+
+        // a multi-line hint becomes ONE line: a placeholder with newlines in it
+        // is not a placeholder
+        let (_, h) = pr_template_fields("## Riscos\n<!-- o que ainda\n   fica aberto -->\n");
+        assert_eq!(h[0], "o que ainda fica aberto");
+        // the hint is guidance, never the author's text
+        let s = pr_body_sections("## Resumo\n<!-- o que muda -->\nmuda o prazo\n");
+        assert_eq!(s[0].hint, "o que muda");
+        assert_eq!(s[0].text, "muda o prazo");
+        // a section with no comment simply has no hint
+        assert_eq!(pr_body_sections("## Resumo\ntexto\n")[0].hint, "");
+
+        // and rewriting the template from its labels does not blank the guidance:
+        // it is UI copy, so dropping it would empty the placeholder for everyone
+        // on the team.
+        let rewritten = render_pr_body_template(
+            &["Resumo".into(), "Riscos".into()],
+            crate::templates::PR_TEMPLATE,
+        );
+        assert!(
+            rewritten.contains("## Resumo\n<!-- o que muda e por quê -->"),
+            "the section kept its label and lost its hint: {rewritten}"
+        );
+        assert!(
+            rewritten.contains("## Riscos\n\n"),
+            "a brand-new section has no hint to keep: {rewritten}"
+        );
+    }
+
+    // A real team template is not a bare list of headings: it opens with an H1 and
+    // a line to whoever is contributing, and it can end with a note of the team's
+    // own. «salvar o modelo do time» showed the LABELS and wrote the file back from
+    // them alone, so the H1, the paragraph and the trailing note were deleted from
+    // the team's repository — and the note had already been folded into the
+    // placeholder of the field above it, which every teammate then read as
+    // guidance. A control must not destroy what it never showed (DESIGN.md §1).
+    #[test]
+    fn the_team_template_keeps_what_the_sheet_never_showed() {
+        let theirs = "# Descrição da mudança\n\nObrigado por contribuir!\n\n## Resumo\n<!-- o que muda e por quê -->\n\n## Como conferir\n<!-- como um revisor confere -->\n\n<!-- checklist obrigatório do time: /wiki/revisao -->\n";
+        let frame = "# Descrição da mudança\n\nObrigado por contribuir!\n\n";
+        let note = "<!-- checklist obrigatório do time: /wiki/revisao -->";
+
+        let (labels, hints) = pr_template_fields(theirs);
+        assert_eq!(labels, vec!["Resumo", "Como conferir"]);
+        assert_eq!(
+            hints[1], "como um revisor confere",
+            "the team's own note reached the screen as the field's placeholder"
+        );
+
+        // saving the same sections back changes nothing about the file
+        let same = render_pr_body_template(&labels, theirs);
+        assert!(
+            same.starts_with(frame),
+            "the H1 and the line to the contributor were deleted: {same}"
+        );
+        assert!(
+            same.contains(note),
+            "the team's checklist note was deleted: {same}"
+        );
+        assert!(same.contains("## Resumo\n<!-- o que muda e por quê -->"));
+
+        // adding a section adds a section, and takes nothing with it
+        let added = render_pr_body_template(
+            &["Resumo".into(), "Como conferir".into(), "Riscos".into()],
+            theirs,
+        );
+        assert!(
+            added.starts_with(frame),
+            "adding a section ate the frame: {added}"
+        );
+        assert!(
+            added.contains(note),
+            "adding a section ate the note: {added}"
+        );
+        assert!(added.contains("## Riscos\n\n"));
+
+        // and removing one removes exactly that one
+        let removed = render_pr_body_template(&["Resumo".into()], theirs);
+        assert!(!removed.contains("## Como conferir"));
+        assert!(
+            removed.starts_with(frame),
+            "removing a section ate the frame: {removed}"
+        );
+        assert!(removed.contains("## Resumo\n<!-- o que muda e por quê -->"));
+    }
+
+    // The block before the first `## ` heading is not a field: it has no name, so
+    // the sheet would draw a text input with an empty label and an empty
+    // placeholder (WCAG 1.3.1/3.3.2) and compose a body that opens with a heading
+    // with no name. The guard that drops it could be deleted with the whole suite
+    // green, because no test fed the parser a template with a preamble — and a
+    // template with an H1 or a welcome line is the ordinary case.
+    #[test]
+    fn a_template_preamble_is_never_a_field_with_no_name() {
+        let theirs =
+            "# Descrição\n\nObrigado por contribuir!\n\n## Resumo\n<!-- o que muda -->\n\n## Como conferir\n<!-- como confere -->\n";
+        let sections = pr_body_sections(theirs);
+        assert_eq!(
+            sections[0].label, "",
+            "the block before the first heading has to reach the READER as a nameless section"
+        );
+        assert!(sections[0].text.contains("Obrigado por contribuir!"));
+
+        let (labels, hints) = pr_template_fields(theirs);
+        assert_eq!(
+            labels.len(),
+            sections.len() - 1,
+            "the sheet drew a field for a section with no name: {labels:?}"
+        );
+        assert_eq!(labels, vec!["Resumo", "Como conferir"]);
+        assert!(
+            !labels.iter().any(|l| l.trim().is_empty()),
+            "a field with no label and no placeholder reached the sheet: {labels:?}"
+        );
+        assert_eq!(labels.len(), hints.len());
+    }
+
+    // ADR-0027 · the author's only failure path used to end in gh's English: a
+    // draft that already had an open review was sent to `gh pr create` again,
+    // which answers "a pull request for branch … already exists" — raw prose in a
+    // pt-BR toast, and no route to deliver what the reviewer asked for. Sending
+    // an already-reviewed draft UPDATES that review (the push is what it reads).
+    #[test]
+    fn a_draft_already_under_review_is_updated_never_proposed_twice() {
+        let pr = |number, head: &str, state: &str| PrInfo {
+            number,
+            head_ref_name: head.to_string(),
+            url: format!("https://github.com/acme/brain/pull/{number}"),
+            state: Some(state.to_string()),
+            ..Default::default()
+        };
+        let prs = vec![
+            pr(4, "rfc/outra-coisa", "OPEN"),
+            pr(7, "rfc/prazo-do-convite", "OPEN"),
+        ];
+        match propose_act(&prs, "rfc/prazo-do-convite") {
+            ProposeAct::UpdateOpenReview { number, url } => {
+                assert_eq!(number, 7, "the wrong review would be updated");
+                assert!(url.ends_with("/7"), "the toast needs the review's address");
+            }
+            ProposeAct::Create => panic!("a second review would be opened for the same draft"),
+        }
+        // a draft nobody has reviewed yet gets its first review
+        assert!(matches!(
+            propose_act(&prs, "rfc/nova-ideia"),
+            ProposeAct::Create
+        ));
+        // a CLOSED review is not a route: that draft needs a new one
+        assert!(matches!(
+            propose_act(
+                &[pr(2, "rfc/prazo-do-convite", "CLOSED")],
+                "rfc/prazo-do-convite"
+            ),
+            ProposeAct::Create
+        ));
+        // and the screen can tell the two outcomes apart, because it says a
+        // different sentence for each
+        let json = serde_json::to_string(&PrRef {
+            number: 7,
+            url: "u".into(),
+            updated: true,
+        })
+        .unwrap();
+        assert!(json.contains(r#""updated":true"#), "{json}");
+
+        // git words a transport failure its own way; a push that fails offline
+        // must not put git's English into a toast
+        assert!(looks_offline(
+            "fatal: unable to access 'https://github.com/acme/brain/': Could not resolve host: github.com"
+        ));
+        assert!(looks_offline("ssh: Could not resolve hostname github.com"));
+    }
+
+    // BR-8 — the review path handles diffs, descriptions and review comments.
+    // Every log line it writes must carry counts, PR numbers and err codes only.
+    // A comment does not stop the next leak; this does.
+    #[test]
+    fn br8_the_review_logs_carry_counts_never_content() {
+        // Positive control, assembled at runtime so this source stays clean.
+        let leak = String::from("info!") + "(target: \"review\", \"sent {}\", pr_body);";
+        assert!(
+            log_args(&leak).iter().any(|a| names_content(a)),
+            "the lint must catch an obvious leak"
+        );
+        for (name, src) in [
+            ("git.rs", include_str!("git.rs")),
+            ("diff.rs", include_str!("diff.rs")),
+        ] {
+            for args in log_args(src) {
+                assert!(
+                    !names_content(&args),
+                    "{name}: BR-8 — a log line carries knowledge content: {args}"
+                );
+            }
+        }
+    }
+
+    // Argument text of each log-macro invocation (paren-balanced). Deliberately
+    // simple: it scans our own sources, whose logs hold no unbalanced paren.
+    fn log_args(src: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        for mac in ["info!", "warn!", "error!", "debug!", "trace!"] {
+            let mut from = 0;
+            while let Some(rel) = src[from..].find(mac) {
+                let open = from + rel + mac.len();
+                from = open;
+                let rest = &src[open..];
+                let Some(nz) = rest.find(|c: char| !c.is_whitespace()) else {
+                    continue;
+                };
+                if rest.as_bytes()[nz] != b'(' {
+                    continue;
+                }
+                let open = open + nz;
+                let mut depth = 0i32;
+                let mut close = None;
+                for (i, ch) in src.bytes().enumerate().skip(open) {
+                    match ch {
+                        b'(' => depth += 1,
+                        b')' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                close = Some(i);
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                let Some(close) = close else { continue };
+                out.push(src[open + 1..close].to_string());
+                from = close + 1;
+            }
+        }
+        out
+    }
+
+    // Conservative substring guard for the content this surface handles.
+    fn names_content(s: &str) -> bool {
+        // assembled so the list itself is not what the scan finds
+        [
+            "dif", "hunk", "patc", "bod", "excerp", "commen", "conten", "tex",
+        ]
+        .iter()
+        .any(|w| s.contains(w))
     }
 }

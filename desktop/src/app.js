@@ -89,6 +89,10 @@ function rerenderForLang() {
   // outro motivo. Zerar as duas AQUI é o que faz o repintar acontecer.
   // (toolsSig é a mesma doença: os rótulos das habilidades também são traduzidos)
   sideSig = ""; pessoalSig = ""; toolsSig = "";
+  // ADR-0027 · o destino Revisão é innerHTML atrás das MESMAS assinaturas de
+  // cache, pela mesma razão e com a mesma cura: o idioma não faz parte do estado
+  // que as monta, então sem zerá-las metade da tela ficaria no idioma anterior.
+  try { REV.sig = ""; REV.teamSig = ""; } catch (_) {}
   try { brainRefresh(); } catch (_) {}
   try { paintSideToggle(); } catch (_) {}
   try { paintTermSideBtn(); } catch (_) {}
@@ -106,6 +110,11 @@ function rerenderForLang() {
   try { paintRecControl(); } catch (_) {}
   try { paintSetupBanner(); } catch (_) {}
   try { renderGhCard(); } catch (_) {}
+  try { if (REV.openNum) renderReviewDetail(REV.openNum); } catch (_) {}
+  // o destino Revisão é desenhado em innerHTML e tem nós data-i18n-dyn (o chip do
+  // rascunho, a frase de abertura, a nota do preço): as assinaturas são limpas
+  // porque um idioma novo não muda o FATO, e sem isso o repintar seria engolido
+  try { REV.sig = ""; REV.teamSig = ""; renderDestReview(); } catch (_) {}
   try { paintChatMode(); } catch (_) {}
   try { paintAutoContextHint(); } catch (_) {}
   // C4 · o painel do chat é pintado por innerHTML FORA de renderActive: depois
@@ -1431,12 +1440,12 @@ function startMeetingFlow(presetTema) {
 // skills — the answer appears in the terminal. Not meeting-scoped.
 function askAcervo(ctx) {
   const scope = ctx
-    ? `<p class="pmnote mono">${t("a pergunta fica ancorada neste tema")}: <b>${esc(ctx)}</b></p>`
+    ? `<p class="pmnote">${t("a pergunta fica ancorada neste tema")}: <b>${esc(ctx)}</b></p>`
     : "";
   openModal(
     ctx ? t("Perguntar a um tema") : t("Perguntar ao projeto"),
     scope +
-      `<p class="pmnote mono">${t("A resposta vem primeiro do conhecimento do projeto e, se preciso, de fontes externas configuradas nas habilidades.")} ${esc(aiTargetHint())}</p>` +
+      `<p class="pmnote">${t("A resposta vem primeiro do conhecimento do projeto e, se preciso, de fontes externas configuradas nas habilidades.")} ${esc(aiTargetHint())}</p>` +
       `<label class="wfield"><span class="mono">${t("pergunta")}</span>` +
       `<input id="askInput" type="text" placeholder="${t("ex.: qual a política de multas da frota?")}" spellcheck="false"></label>`,
     t("perguntar"),
@@ -1648,7 +1657,7 @@ async function save() {
     `<option value="">${t("soltas (sem ideia)")}</option>`;
   openModal(
     t("Salvar em ideias"),
-    `<p class="pmnote mono">${t("vira uma nota da ideia escolhida — o áudio é apagado depois de transcrito")}</p>` +
+    `<p class="pmnote">${t("vira uma nota da ideia escolhida — o áudio é apagado depois de transcrito")}</p>` +
       `<label class="wfield"><span class="mono">${t("título")}</span>` +
       `<input id="looseTitle" type="text" value="${esc(looseNoteTitle(new Date()))}" spellcheck="false"></label>` +
       `<label class="wfield"><span class="mono">${t("onde guardar")}</span>` +
@@ -1865,6 +1874,16 @@ function showCfgSection(sec) {
     clearTimeout(cfgQuietTimer);
     cfgQuietTimer = setTimeout(() => { cfgScrollQuiet = false; }, 600);
   }
+}
+// R39 · A PORTA QUE UMA FRASE NOMEIA. «conecte o GitHub em Configurações» abria
+// Configurações em «Projeto» — a seção «Versões e GitHub» é a última de sete, e é
+// ela que nomeia cada bloqueio com o seu remédio («autenticar no Terminal»,
+// «corrigir», «conectar»). Uma frase, uma porta, um destino: todas as saídas do
+// fluxo de revisão passam por aqui (DESIGN.md §1 — todo caminho de erro tem saída,
+// e ela chega onde diz que chega).
+async function openCfgGit() {
+  await openCfg();
+  showCfgSection("git");
 }
 // scroll-spy: a seção ativa é a última cujo topo já passou pelo terço superior
 let cfgScrollQuiet = false;
@@ -2331,7 +2350,7 @@ function showWelcome() {
       li("Ações de IA analisam reuniões, respondem sobre o projeto e evoluem notas — pelo painel ✦ IA ou pelo menu ⋯.") +
       li("⌘/Ctrl+K abre a paleta — ela é a lista viva de tudo o que dá para fazer, com os atalhos ao lado.") +
     `</ul>` +
-      `<p class="pmnote mono"><button id="welcomeManual" class="link mono strong">${t("abrir manual")}</button></p>`,
+      `<p class="pmnote"><button id="welcomeManual" class="link mono strong">${t("abrir manual")}</button></p>`,
     t("começar"),
     () => {}
   );
@@ -2517,26 +2536,28 @@ async function brainRefresh() {
     gitAvailable = !!g.available;
     renderPanelTeamNote();
     if (g.available) {
-      // vocabulário do redesign: "versionar" → "salvar versão"
-      // N5 · a contagem é do PROJETO todo (git status do acervo), numa seção que
-      // fala do documento aberto: o rótulo nomeia o que a ação faz de fato.
-      B.gitBtn.textContent = g.repo
-        ? (g.pending ? `${t("Salvar versão do projeto")} (${g.pending})` : t("tudo salvo ✓"))
-        : t("começar a guardar versões");
+      const st = versionBtnState(g, dirtyDocs());
+      B.gitBtn.textContent = st.label;
       B.gitBtn.classList.toggle("warm", g.repo && g.pending > 0);
-      // N3 · "tudo salvo ✓" É o estado: o mesmo controle não pode relatar "nada
-      // a fazer" e ainda abrir a folha que faz (DESIGN.md §1). Sem nada pendente
-      // ele fica desabilitado — e a paleta lê este mesmo gate.
-      B.gitBtn.disabled = !!(g.repo && !g.pending);
+      B.gitBtn.disabled = st.disabled;
+      B.gitBtn.title = st.title;
     }
     // ADR-0002 §2: the current branch is always visible; click to switch/create
     if (B.branchBtn) {
       B.branchBtn.hidden = !(g.available && g.repo && g.branch);
-      if (g.branch) B.branchBtn.textContent = "⎇ " + g.branch;
+      // R40 · o MESMO nome que a Revisão dá ao mesmo rascunho. O ref cru do git ia
+      // para a tela, com um prefixo que o app nunca explicou, no único lugar que
+      // fala do rascunho enquanto a pessoa edita (DESIGN.md §4).
+      if (g.branch) {
+        B.branchBtn.innerHTML = draftChipHtml(g.branch, REV.def);
+        B.branchBtn.setAttribute("aria-label", draftChipLabel(g.branch, REV.def));
+      }
+      paintHeadDraft(g.branch, REV.def);
     }
   }).catch(() => {
     B.gitBtn.hidden = true;
     if (B.branchBtn) B.branchBtn.hidden = true;
+    paintHeadDraft("", "");
     gitAvailable = false;
     renderPanelTeamNote();
   });
@@ -2555,6 +2576,18 @@ async function brainRefresh() {
   if (sig !== sideSig) { sideSig = sig; renderSidebar(st); }
   refreshPessoal();   // ADR-0009: produção (mundo pessoal) — self-gated por assinatura
   refreshTools();     // ADR-0005: ferramentas customizadas — self-gated por assinatura
+  // ADR-0027 R59 · A REVISÃO ENTRA NO RELÓGIO. Este tique já relia
+  // `brain_git_files` (é dele que vem o ponto de mudança não salva na lateral) e
+  // nunca chamava `refreshMyChanges`, então a MESMA janela dizia duas coisas: a
+  // lateral com o ponto aceso, o centro dizendo «tudo salvo» com o botão de salvar
+  // desabilitado, e o seletor de rascunhos recusando toda troca com «salve uma
+  // versão antes de trocar de rascunho». Três superfícies, um fato, duas respostas
+  // — e nenhum controle de «atualizar» em nenhuma delas.
+  //
+  // As duas metades são autogatilhadas: `refreshMyChanges` repinta por assinatura,
+  // e `refreshTeamReviews` responde do cache de 30s, então o tique de 10s custa
+  // uma ida à rede a cada três passadas, não uma por passada.
+  if (reviewOn()) { refreshMyChanges(); refreshTeamReviews(); }
   markSel();
 }
 
@@ -2571,6 +2604,7 @@ function renderHome(st) {
   renderDestHome(st, n);
   renderDestOrganize(st, n);
   renderDestKnowledge(st);
+  renderDestReview();
   // rodapé da lateral: contagens funcionais (não decorativas)
   const skills = $("footSkillsN"), srcs = $("footSourcesN");
   if (skills) skills.textContent = lastToolFiles.length || "";
@@ -3654,7 +3688,7 @@ async function promptSyncTool(fonte, slug) {
   }
   openModal(
     t(cfg.title),
-    `<p class="pmnote mono">${t(cfg.desc)}</p>` + temaField +
+    `<p class="pmnote">${t(cfg.desc)}</p>` + temaField +
       `<label class="wfield"><span class="mono">${t(cfg.field)}</span>` +
       `<input id="syncToolInput" type="text" placeholder="${t(cfg.placeholder)}" spellcheck="false"></label>`,
     t("buscar"),
@@ -3794,7 +3828,7 @@ function openToolMenu(rel, label, anchor, builtin) {
     `<div class="fsep"></div>` +
     copyPathItemsHtml() +
     (builtin
-      ? `<div class="fnote mono">${t("habilidade padrão — não pode ser excluída")}</div>`
+      ? `<div class="fnote">${t("habilidade padrão — não pode ser excluída")}</div>`
       : `<div class="fsep"></div><div class="fitem2 danger" data-del><span class="fn">${t("excluir")}</span></div>`);
   B.bMenu.querySelector("[data-use]").onclick = () => { closeFloat(); promptUseTool(rel); };
   B.bMenu.querySelector("[data-edit]").onclick = () => { closeFloat(); openDoc(rel, { preview: false }); };
@@ -3809,7 +3843,7 @@ function openToolMenu(rel, label, anchor, builtin) {
 function delTool(rel) {
   openModal(
     t("Excluir esta habilidade?"),
-    `<p class="pmnote mono">${esc(rel)}</p>` +
+    `<p class="pmnote">${esc(rel)}</p>` +
       `<p class="pmnote">${t("Não pode ser desfeito.")}</p>`,
     t("excluir"),
     async () => {
@@ -3889,11 +3923,11 @@ async function promptUseTool(rel, alvoRel) {
   const restHint = rest.join("  ");
   openModal(
     `${t("usar")}: ${label}`,
-    (desc ? `<p class="pmnote mono">${esc(desc)}</p>` : "") +
+    (desc ? `<p class="pmnote">${esc(desc)}</p>` : "") +
       (fixed ? `<div class="wfield"><span class="mono">${t("alvo")}</span><span class="lockval mono" title="${esc(fixed)}">${esc(fixed)}</span></div>` : "") +
       (picking ? `<label class="wfield"><span class="mono">${t("alvo")}</span><select id="useToolAlvo">` +
         dests.map((d) => `<option value="${esc(d.value)}">${esc(d.label)}</option>`).join("") + `</select></label>` : "") +
-      (restHint ? `<p class="pmnote mono">${t("argumentos")}: ${esc(restHint)}</p>` : "") +
+      (restHint ? `<p class="pmnote">${t("argumentos")}: ${esc(restHint)}</p>` : "") +
       `<label class="wfield"><span class="mono">${t("escrever")}</span>` +
       `<input id="useToolInput" type="text" placeholder="${esc(restHint || t("opcional"))}" spellcheck="false"></label>`,
     t("rodar"),
@@ -3910,7 +3944,7 @@ async function promptUseTool(rel, alvoRel) {
 function promptToolAI(rel) {
   openModal(
     t("Pedir à IA sobre esta habilidade"),
-    `<p class="pmnote mono">${t("a IA lê a habilidade e aplica o pedido nela mesma — evolui, não apaga.")}</p>` +
+    `<p class="pmnote">${t("a IA lê a habilidade e aplica o pedido nela mesma — evolui, não apaga.")}</p>` +
       `<label class="wfield"><span class="mono">${t("pedido")}</span>` +
       `<input id="toolAiInput" type="text" placeholder="${t("ex.: adicione um passo para validar o input")}" spellcheck="false"></label>`,
     t("enviar"),
@@ -3926,7 +3960,7 @@ function promptToolAI(rel) {
 function promptNewToolAI() {
   openModal(
     t("Nova habilidade (IA)"),
-    `<p class="pmnote mono">${t("descreva o que a habilidade deve fazer — a IA cria a skill; ela aparece na lateral quando terminar.")}</p>` +
+    `<p class="pmnote">${t("descreva o que a habilidade deve fazer — a IA cria a skill; ela aparece na lateral quando terminar.")}</p>` +
       `<label class="wfield"><span class="mono">${t("descrição")}</span>` +
       `<input id="newToolInput" type="text" placeholder="${t("ex.: resume um ticket do Jira em 3 bullets")}" spellcheck="false"></label>`,
     t("criar"),
@@ -3942,7 +3976,7 @@ function promptNewToolAI() {
 function promptImportTool() {
   openModal(
     t("Importar habilidade existente"),
-    `<p class="pmnote mono">${t("cole o conteúdo de uma skill (.md) que você já tem.")}</p>` +
+    `<p class="pmnote">${t("cole o conteúdo de uma skill (.md) que você já tem.")}</p>` +
       `<label class="wfield"><span class="mono">${t("nome")}</span>` +
       `<input id="importToolName" type="text" placeholder="${t("ex.: resumo-jira")}" spellcheck="false"></label>` +
       `<label class="wfield"><span class="mono">${t("conteúdo")}</span>` +
@@ -4087,7 +4121,7 @@ function openHabilidadeMenu(alvoRel, anchor, all, surface) {
   const rows = entries.map((e, i) =>
     `<div class="fitem2" data-entry="${i}" title="${esc(e.title)}"><span class="fn">${esc(e.label)}</span></div>`).join("");
   B.bMenu.innerHTML = `<div class="fhead">${t("executar habilidade")}</div>` +
-    (rows || `<div class="fnote mono">${t("nenhuma habilidade disponível")}</div>`);
+    (rows || `<div class="fnote">${t("nenhuma habilidade disponível")}</div>`);
   B.bMenu.querySelectorAll("[data-entry]").forEach((el2) => (el2.onclick = () => {
     closeFloat(); runHabilidadeEntry(entries[Number(el2.dataset.entry)], alvoRel);
   }));
@@ -4249,9 +4283,9 @@ function openMeetingMenu(rel, id, title, status, anchor, notas) {
     `<div class="fitem2${ready ? "" : " strong"}" data-question><span class="fn">? ${t("perguntar…")}</span></div>` +
     `<div class="fitem2${dis || bloqueio ? " off" : ""}" data-queue><span class="fn">${t("enviar para organizar")} →</span></div>` +
     (interrupted
-      ? `<div class="fnote mono">${t("a reunião foi interrompida — encerre para liberar analisar, enviar para organizar e mover")}</div>`
-      : ready ? "" : `<div class="fnote mono">${t("analisar e enviar para organizar ficam disponíveis quando a reunião terminar — perguntar já funciona agora")}</div>`) +
-    (ready && bloqueio ? `<div class="fnote mono">${bloqueioMsg}</div>` : "") +
+      ? `<div class="fnote">${t("a reunião foi interrompida — encerre para liberar analisar, enviar para organizar e mover")}</div>`
+      : ready ? "" : `<div class="fnote">${t("analisar e enviar para organizar ficam disponíveis quando a reunião terminar — perguntar já funciona agora")}</div>`) +
+    (ready && bloqueio ? `<div class="fnote">${bloqueioMsg}</div>` : "") +
     `<div class="fitem2" data-tools><span class="fn">${ico("skill")} ${t("executar habilidade…")}</span></div>` +
     `<div class="fsep"></div>` +
     `<div class="fitem2" data-ren><span class="fn">✎ ${t("renomear")}</span></div>` +
@@ -4441,7 +4475,7 @@ async function promptMoveFile(rel) {
 function promptNoteAI(target, isFile) {
   openModal(
     isFile ? t("Pedir à IA sobre esta nota") : t("Nota por IA"),
-    `<p class="pmnote mono">${isFile
+    `<p class="pmnote">${isFile
       ? t("a IA lê a nota e aplica o pedido nela mesma — evolui, não apaga.")
       : t("descreva a nota que o Loro deve criar nesta ideia.")}</p>` +
       `<label class="wfield"><span class="mono">${t("pedido")}</span>` +
@@ -4629,7 +4663,7 @@ function delPessoal(rel, kind) {
   // N23 · a folha do app, com o caminho do que sai do disco — não o confirm do SO
   openModal(
     `${t("Apagar")} ${what}?`,
-    `<p class="pmnote mono">${esc(rel)}</p><p class="pmnote">${t("Não pode ser desfeito.")}</p>`,
+    `<p class="pmnote">${esc(rel)}</p><p class="pmnote">${t("Não pode ser desfeito.")}</p>`,
     t("apagar"),
     async () => {
       try {
@@ -4649,6 +4683,17 @@ function isHomeActive() { const t = activeTab(); return !t || t.rel === HOME_REL
 // null when Home/empty (preserves the old `currentDoc === null` semantics),
 // the document rel otherwise.
 function currentRel() { const t = activeTab(); return !t || t.rel === HOME_REL ? null : t.rel; }
+
+// OS DOCUMENTOS ABERTOS QUE AINDA NÃO ESTÃO NO ARQUIVO. O disco não é o editor:
+// uma versão guarda o que já foi salvo, então uma aba suja fica FORA dela — e a
+// Revisão dizia «tudo salvo» com o ● da aba dois centímetros acima (DESIGN.md §1:
+// o estado nunca mente). A linha do tempo do painel já somava as duas verdades
+// (`tab.dirty || gitFiles[rel]`); esta é a metade que faltava ter nome.
+function dirtyDocs() {
+  return (ws.tabs || [])
+    .filter((tb) => tb.rel !== HOME_REL && tb.dirty)
+    .map((tb) => ({ id: tb.id, title: tb.title, rel: tb.rel }));
+}
 
 // ADR-0026 §12 — a que TEMA um documento pertence. A árvore desenha temas em
 // linhas `[data-ctx]`; o documento aberto é um `[data-doc]`. Sem essa ponte,
@@ -4789,7 +4834,7 @@ function closeTabById(id) {
   if (!tab.dirty) return close();
   openModal(
     t("Descartar alterações não salvas?"),
-    `<p class="pmnote mono">${esc(tab.title)}</p>` +
+    `<p class="pmnote">${esc(tab.title)}</p>` +
       `<p class="pmnote">${t("o que foi escrito e não salvo é perdido — não pode ser desfeito.")}</p>`,
     t("descartar"),
     close
@@ -5056,7 +5101,9 @@ function saveActive() {
   const t = activeTab();
   if (!t || t.rel === HOME_REL) return;
   const h = cmById.get(t.id);
-  if (h) saveTab(t.id, h.getValue());
+  // devolve a promessa do DISCO: quem versiona depois de salvar precisa esperar o
+  // arquivo, e não a chamada (F30)
+  if (h) return saveTab(t.id, h.getValue());
 }
 // O rodapé de edição (#bEditFoot) nascia `hidden` e NINGUÉM o mostrava: os dois
 // handlers wired nele eram inalcançáveis por clique e o modo editar ficava sem
@@ -5068,10 +5115,10 @@ function paintEditFoot(tab, editing) {
   foot.hidden = !editing;
   if (!editing) return;
   const save = $("bSaveVersion");
-  // "Salvar versão" é um commit no histórico do projeto. Um rascunho pessoal é
-  // gitignorado: ali não existe versão a salvar, só o arquivo — o rótulo diz
-  // exatamente o que o clique vai fazer.
-  if (save) save.textContent = tab && tab.kind === "context" ? t("Salvar versão") : t("Salvar");
+  // UM rótulo, porque UM ato: o clique grava o arquivo. O commit é do projeto
+  // inteiro e vive na Revisão — chamar isto de «Salvar versão» num documento de
+  // conhecimento prometia um commit que o clique não faz mais.
+  if (save) save.textContent = t("Salvar");
   const note = $("bEditNote");
   if (note) note.textContent = tab && tab.dirty ? t("mudanças não salvas") : t("salvo");
 }
@@ -5720,7 +5767,7 @@ function promptAnnotateExcerpt() {
   if (!container) { toast(t("abra um documento de leitura para grifar um trecho")); return; }
   openModal(
     t("Grifar um trecho"),
-    `<p class="pmnote mono">${t("escreva ou cole o trecho exato do documento — o grifo abre as ações do trecho.")}</p>` +
+    `<p class="pmnote">${t("escreva ou cole o trecho exato do documento — o grifo abre as ações do trecho.")}</p>` +
       `<label class="wfield"><span class="mono">${t("trecho")}</span>` +
       `<input id="annotExcerpt" type="text" spellcheck="false"></label>`,
     t("grifar"),
@@ -5907,7 +5954,7 @@ function askMeetingQuestion(id, dirOverride) {
   if (!dir) { toast(t("abra a reunião para responder")); return; }
   openModal(
     t("Perguntar sobre a reunião"),
-    `<p class="pmnote mono">${t("a pergunta roda no agente do projeto; a resposta fica também nas notas da reunião.")} ${esc(aiTargetHint())}</p>` +
+    `<p class="pmnote">${t("a pergunta roda no agente do projeto; a resposta fica também nas notas da reunião.")} ${esc(aiTargetHint())}</p>` +
       `<label class="wfield"><span class="mono">${t("pergunta")}</span>` +
       `<input id="mtgQuestion" type="text" placeholder="${t("ex.: quais decisões ficaram em aberto?")}" spellcheck="false"></label>`,
     t("perguntar"),
@@ -6034,7 +6081,7 @@ function pickMeeting(temas, presetTema, opts2) {
       : `<label class="wfield"><span class="mono">brainstorming</span>` +
           `<input id="mtgNovoTema" type="text" placeholder="${t("ex.: frota 2026")}" spellcheck="false"></label>`;
     const html =
-      `<p class="pmnote mono">${t("a reunião é gravada 100% na sua máquina — o áudio nunca sai do computador.")}</p>` +
+      `<p class="pmnote">${t("a reunião é gravada 100% na sua máquina — o áudio nunca sai do computador.")}</p>` +
       temaField +
       `<label class="wfield"><span class="mono">${t("título")}</span>` +
         `<input id="mtgTitulo" type="text" placeholder="${t("opcional — ex.: semanal de custos")}" spellcheck="false"></label>`;
@@ -6221,6 +6268,28 @@ function anexosDirFor(rel) {
 // tela) e no manual, que não pode ter versão. A verdade é o histórico do
 // documento — é ele que decide se essa linha existe. Decisão pura:
 // `versions` = quantas versões o brain_timeline devolveu para este documento.
+// O RÓTULO, O ESTADO E O MOTIVO do botão de versão do painel ✦ IA, em um lugar só.
+// «tudo salvo ✓» é uma afirmação sobre o PROJETO, e o editor pode ter texto que
+// ainda não foi ao arquivo: o botão dizia «tudo salvo ✓» a 200px do pé do editor
+// dizendo «mudanças não salvas», sobre o mesmo documento (DESIGN.md §1). Ele
+// continua desabilitado sem nada pendente — salvar versão não guardaria um texto
+// que não está no arquivo, e um controle que não faz nada é pior que nenhum —, mas
+// agora diz o passo que falta em vez de mentir sobre o estado.
+// N5 · a contagem é do PROJETO todo (git status do acervo), numa seção que fala do
+// documento aberto: o rótulo nomeia o que a ação faz de fato.
+function versionBtnState(g, unsavedDocs) {
+  if (!g.repo) return { label: t("começar a guardar versões"), disabled: false, title: "" };
+  if (g.pending) {
+    return { label: `${t("Salvar versão do projeto")} (${g.pending})`, disabled: false, title: "" };
+  }
+  const unsaved = (unsavedDocs || []).length;
+  return {
+    label: unsaved ? t("Salvar versão do projeto") : t("tudo salvo ✓"),
+    disabled: true,
+    title: unsaved ? t("salve o documento primeiro") : "",
+  };
+}
+
 function timelineRows(o) {
   const rows = [];
   if (o.dirty) rows.push({ cls: "now", label: t("mudanças não salvas"), meta: t("agora") });
@@ -6311,7 +6380,7 @@ function renderPanelTeamNote() {
   // rede, o passo é refazer a checagem; sem configuração, é ir a Configurações
   if (f) f.addEventListener("click", async () => {
     if (envDoctor && envDoctor.offline && !envDoctor.versioningEnabled) return void refreshEnv(true);
-    await openCfg(); showCfgSection("git");
+    await openCfgGit();
   });
 }
 
@@ -6611,6 +6680,10 @@ const COMMANDS = [
   { group: "ir para", label: "Início", code: "KeyH", run: () => { openHome(); goDest("home"); } },
   { group: "ir para", label: "Organizar", run: () => { openHome(); goDest("organize"); } },
   { group: "ir para", label: "Conhecimento", run: () => { openHome(); goDest("knowledge"); } },
+  // ADR-0027 · sem `when`: a metade local (o que você mudou) não depende do
+  // GitHub, então o destino existe sempre — o que degrada é a aba do time, e ela
+  // degrada DIZENDO.
+  { group: "ir para", label: "Revisão", run: () => { openHome(); goDest("review", "now"); } },
   { group: "ir para", label: "Índice remissivo", run: () => openDoc(INDEX_REL, { preview: false }) },
   { group: "ir para", label: "Como funciona o Loro", run: () => openManual() },
   { group: "ir para", label: "Configurações", run: () => openCfg() },
@@ -6649,7 +6722,7 @@ const COMMANDS = [
   { group: "fazer", label: "Executar habilidade…", run: () => openHabilidadeMenu(currentRel(), $("aiPanelBtn"), true, "doc") },
   // N5 · a outra metade do fluxo (o que o time mandou revisar) só tinha porta
   // num toast que expira e numa faixa que se dispensa: aqui ela é permanente.
-  { group: "fazer", label: "Ver revisões do time", when: () => !!(envDoctor && envDoctor.versioningEnabled), run: () => openReviewsSheet() },
+  { group: "fazer", label: "Ver revisões do time", when: () => !!(envDoctor && envDoctor.versioningEnabled), run: () => { openHome(); goDest("review", "team"); } },
   { group: "fazer", label: "Perguntar ao projeto", code: "KeyQ", run: () => askAcervo() },
   { group: "fazer", label: "Transformar em conhecimento", run: () => genContextNow() },
   { group: "fazer", label: "Ajustar instruções da IA", code: "KeyI", run: () => openGuideDoc() },
@@ -7220,6 +7293,16 @@ B.createBtn.addEventListener("click", async () => {
 // documento aberto (e, com o mesmo arquivo sujo, o checkout abortava com o texto
 // cru do git). O rascunho se troca no ⎇ (openBranchPicker) — aqui só se descreve
 // o que mudou, e a versão cai no rascunho em que o usuário já está.
+// SALVAR CRIA UM RASCUNHO? Só a partir do conhecimento oficial. Em qualquer outro
+// branch a versão cai onde a pessoa está (save_version), então prometer um rascunho
+// novo ali contradizia, na mesma tela, a frase que diz que salvar atualiza a revisão
+// aberta. `draftSlugFromBranch` responde outra pergunta — se o rascunho é endereçável
+// por slug — e não serve para esta.
+function willCreateDraft(current, def) {
+  const cur = String(current || "");
+  return !cur || cur === (def || "main");
+}
+
 function draftSlugFromBranch(current, def) {
   const cur = String(current || "");
   if (!cur || cur === (def || "main")) return null;
@@ -7228,6 +7311,69 @@ function draftSlugFromBranch(current, def) {
   // que a versão cai nele seria mentira — nesse caso ela nasce num rascunho novo.
   if (!cur.startsWith("rfc/")) return null;
   return cur.slice(4) || null;
+}
+// COMO A TELA CHAMA o lugar onde você está — outra pergunta, e por isso outra
+// função. `draftSlugFromBranch` responde "este rascunho é endereçável por slug?",
+// que é o que `brain_version` precisa saber; usá-la para nomear a tela fazia o
+// chip do compositor dizer "no conhecimento oficial" no branch de uma mudança em
+// revisão, enquanto a faixa logo acima dizia "você está editando o rascunho
+// «feature/x»" e o ✦ IA mostrava "⎇ feature/x". Um fato, uma resposta
+// (DESIGN.md §5).
+function draftNameFromBranch(current, def) {
+  const cur = String(current || "");
+  if (!cur || cur === (def || "main")) return "";
+  return draftSlugFromBranch(cur, def) || cur;
+}
+// COMO A TELA CHAMA O LUGAR, em uma frase inteira. A folha «Rascunhos de
+// trabalho» — a única tela cuja função é ESCOLHER o lugar — era a que chamava os
+// lugares de `main (principal)` e `rfc/onboarding-atualizado-co`, um clique ao
+// lado do chip do compositor, que diz «no conhecimento oficial» e «no rascunho
+// onboarding-atualizado-co» (DESIGN.md §4: os termos internos não são pré-requisito
+// para usar o app; §5: um fato, um nome).
+function placeName(branch, def) {
+  const name = draftNameFromBranch(branch, def);
+  return name ? t("rascunho «%1»", [name]) : t("conhecimento oficial");
+}
+// O MESMO nome, no chip que diz ONDE VOCÊ ESTÁ — nas duas telas que o mostram. O
+// painel ✦ IA imprimia o ref cru do git enquanto a Revisão chamava o mesmo
+// rascunho de «no rascunho onboarding-atualizado-co»: um objeto, dois nomes, e o
+// interno na tela em que a pessoa está editando (DESIGN.md §4 — o prefixo do git é
+// rascunho de trabalho; §5 — um fato, um nome).
+// PROSA E VALOR SÃO DUAS COISAS (DESIGN.md §5): o rótulo de um campo é prosa em
+// --sans, e só o VALOR que ele carrega pode ser mono. A frase inteira («no rascunho
+// X», «no conhecimento oficial») morava dentro do `font: mono` do .pbranch, então a
+// tela que promete não exigir git escrevia a sua própria prosa na letra da máquina.
+// O nome do rascunho continua mono — ele é um endereço.
+// PROSA E VALOR SÃO DUAS COISAS (DESIGN.md §5): o rótulo de um campo é prosa em
+// --sans, e só o VALOR que ele carrega pode ser mono. A frase inteira («no rascunho
+// X», «no conhecimento oficial») morava dentro do `font: mono` do .pbranch, então a
+// tela que promete não exigir git escrevia a sua própria prosa na letra da máquina.
+// O nome do rascunho continua mono — ele é um endereço.
+//
+// Duas saídas para um fato: o TEXTO é o nome acessível e o que os toasts dizem; o
+// HTML é a mesma frase com o endereço separado. Uma função para os dois, senão as
+// duas divergem.
+function draftChipLabel(branch, def) {
+  const name = draftNameFromBranch(branch, def);
+  return `⎇ ${name ? `${t("no rascunho")} ${name}` : t("no conhecimento oficial")}`;
+}
+function draftChipHtml(branch, def) {
+  const name = draftNameFromBranch(branch, def);
+  return `<span class="rvchipglyph" aria-hidden="true">⎇</span>` +
+    (name
+      ? `<span>${esc(t("no rascunho"))}</span><span class="mono">${esc(name)}</span>`
+      : `<span>${esc(t("no conhecimento oficial"))}</span>`);
+}
+// A FORMA COMPACTA, para o cabeçalho. O desenho põe ali só `⎇ <nome> ⌄` — glifo,
+// endereço, caret — e eu tinha reusado a forma com prosa: numa pílula de 190px a
+// frase «no rascunho» quebrava em duas linhas, inchava o controle e desalinhava o
+// cabeçalho. A frase inteira continua no title e no nome acessível, que é onde ela
+// cabe; a linha mostra o endereço, que é o que muda.
+function draftChipCompact(branch, def) {
+  const name = draftNameFromBranch(branch, def);
+  return `<span class="rvchipglyph" aria-hidden="true">⎇</span>` +
+    `<span class="mono">${esc(name || t("oficial"))}</span>` +
+    `<span class="rvchipcaret" aria-hidden="true">⌄</span>`;
 }
 async function currentDraftSlug() {
   try {
@@ -7241,10 +7387,10 @@ async function promptVersionar() {
     t("Salvar versão"),
     // N5 · a seção é por documento, mas a versão é do acervo todo: o preço tem de
     // estar dito na cópia, antes do clique.
-    `<p class="pmnote mono">${t("guarda o projeto inteiro — todos os temas, não só o documento aberto.")}</p>` +
+    `<p class="pmnote">${t("guarda o projeto inteiro — todos os temas, não só o documento aberto.")}</p>` +
       (draft
-        ? `<div class="wfield"><span class="mono">${t("rascunho")}</span><span class="lockval mono">⎇ rfc/${esc(draft)}</span></div>`
-        : `<p class="pmnote mono">${t("esta descrição também nomeia o rascunho de trabalho que vai receber a versão.")}</p>`) +
+        ? `<div class="wfield"><span class="mono">${t("rascunho")}</span><span class="lockval mono">⎇ ${esc(draft)}</span></div>`
+        : `<p class="pmnote">${t("esta descrição também nomeia o rascunho de trabalho que vai receber a versão.")}</p>`) +
       `<label class="wfield"><span class="mono">${t("o que mudou")}</span>` +
       `<input id="versionMsg" type="text" placeholder="${t("ex.: política de frota revisada")}" spellcheck="false"></label>`,
     t("salvar versão"),
@@ -7273,10 +7419,12 @@ B.gitBtn.addEventListener("click", promptVersionar);
 // was missing is the screen saying the price, saying nothing was deleted, and
 // saying the way back (DESIGN.md §1). `leaving` and `docs` come counted from
 // git_branches; a switch that removes nothing has no price to declare.
-function switchPrice(stand, from) {
+function switchPrice(stand, from, def) {
   const leaving = (stand && stand.leaving) || 0;
   if (!leaving) return null;
-  return { leaving, targetEmpty: !(stand && stand.docs), from: from || "" };
+  // `def` viaja com o preço porque a folha nomeia os DOIS lugares, e saber qual
+  // deles é o conhecimento oficial é a pergunta que `def` responde
+  return { leaving, targetEmpty: !(stand && stand.docs), from: from || "", def: def || "main" };
 }
 function holdsLabel(docs) {
   return docs ? `${docs} ${docs > 1 ? t("documentos") : t("documento")}` : t("nada guardado ainda");
@@ -7284,28 +7432,46 @@ function holdsLabel(docs) {
 // The switch already happened: the toast is the only place that can say where
 // the material went. It used to say "⎇ main" and nothing else, while the tabs
 // closed and the sidebar emptied.
-function afterSwitch(branch, price) {
+//
+// `def` travels with the call because the ONLY way to know whether a ref is the
+// official knowledge is to know which ref is the default — the caller just read
+// it from git_branches. Without it this line printed the raw git ref ("⎇
+// rfc/toast-tres", "⎇ main") two centimetres above the chip that calls the same
+// place «no rascunho toast-tres»: one fact, two names (DESIGN.md §4/§5).
+function afterSwitch(branch, price, def) {
   const kept = price
     ? ` · ${price.leaving} ${price.leaving > 1 ? t("documentos ficaram no rascunho anterior") : t("documento ficou no rascunho anterior")}`
     : "";
-  toast("⎇ " + branch + kept, price ? 6000 : undefined);
+  toast("⎇ " + placeName(branch, def || (price && price.def) || REV.def) + kept, price ? 6000 : undefined);
   // the disk changed under the open tabs — reset to Home (acervo-switch pattern)
   setupWorkspace(); sideSig = ""; brainRefresh();
+  // MEASURED IN THE RUNNING APP: the toast said «⎇ conhecimento oficial» while the
+  // chip two centimetres above still said «no rascunho fe5-aviso», until the 10 s
+  // poll came round. Where you are is this destination's own fact: the switch is
+  // the moment it changed (refreshMyChanges re-reads git_branches and repaints the
+  // chip, the empty state and the price of saving; it no-ops off the destination).
+  refreshMyChanges();
 }
-// The price, stated before the click, with the way back named.
+// The price, stated before the click, with the destination and the way back
+// named — both as the screen calls them, never as git does.
 function confirmSwitchBranch(branch, price) {
   openModal(
     t("Trocar de rascunho"),
-    `<p class="pmnote mono">${price.leaving} ${price.leaving > 1 ? t("documentos saem da tela") : t("documento sai da tela")}` +
-      (price.targetEmpty ? ` — ${t("lá ainda não há nenhum documento — a tela vai ficar vazia.")}` : "") +
-      `</p>` +
-      `<p class="pmnote mono">${t("nada é apagado: eles continuam guardados no rascunho atual.")}</p>` +
+    // «7 documentos saem da tela — lá ainda não há nenhum documento — a tela vai
+    // ficar vazia» eram duas orações dizendo a mesma coisa: a segunda basta.
+    `<p class="pmnote">${price.targetEmpty
+      ? esc(t("lá ainda não há nenhum documento — a tela vai ficar vazia."))
+      : `${price.leaving} ${price.leaving > 1 ? t("documentos saem da tela") : t("documento sai da tela")}`}</p>` +
+      `<p class="pmnote">${t("nada é apagado: eles continuam guardados no rascunho atual.")}</p>` +
+      `<div class="wfield"><span class="mono">${t("vai para")}</span>` +
+      `<span class="lockval mono">⎇ ${esc(placeName(branch, price.def))}</span></div>` +
       (price.from
-        ? `<div class="wfield"><span class="mono">${t("volta para")}</span><span class="lockval mono">⎇ ${esc(price.from)}</span></div>`
+        ? `<div class="wfield"><span class="mono">${t("volta para")}</span>` +
+          `<span class="lockval mono">⎇ ${esc(placeName(price.from, price.def))}</span></div>`
         : ""),
     t("trocar mesmo assim"),
     async () => {
-      try { afterSwitch(await invoke("git_switch_branch", { branch }), price); }
+      try { afterSwitch(await invoke("git_switch_branch", { branch }), price, price.def); }
       catch (e) { toast(tErr(String(e)), 5000); }
     }
   );
@@ -7316,33 +7482,52 @@ function confirmSwitchBranch(branch, price) {
 async function openBranchPicker() {
   let info;
   try { info = await invoke("git_branches"); } catch (e) { toast(tErr(String(e))); return; }
+  // Com mudança que ainda não está em nenhuma versão, `switch_branch` RECUSA
+  // (err.working_tree_dirty). A folha oferecia todas as linhas, prometia na
+  // seguinte um preço que não ia acontecer e só no TERCEIRO clique dizia que não
+  // dava — e `dirty` vem do mesmo `git_branches` que desenha as linhas, então ela
+  // já sabia no primeiro (DESIGN.md §1: nenhum controle que não faz nada; o estado
+  // nunca mente).
+  // A ÁRVORE SUJA NÃO É MAIS UMA RECUSA, é um preço. `switch_branch` deixou de
+  // pré-recusar o que o git aceita: no caso comum a modificação viaja com a pessoa.
+  // Então a folha para de nascer com todas as linhas apagadas — o que virou o normal
+  // desde que salvar o arquivo não commita mais — e passa a DIZER o que acontece.
+  const dirty = !!info.dirty;
   // N8 · as linhas eram <div> com onclick: trocar de rascunho era impossível pelo
   // teclado (WCAG 2.1.1) e o leitor de tela as anunciava como texto (4.1.2).
   const rows = (info.branches || []).map((b) => {
-    const cur = b.name === info.current, def = b.name === info.default;
+    const cur = b.name === info.current;
     const holds = holdsLabel(b.docs);
-    const name = `${esc(b.name)}${def ? ` (${t("principal")})` : ""}`;
-    return `<div class="fitem2${cur ? " on" : ""}" role="button" tabindex="0" data-branch="${esc(b.name)}"` +
-      `${cur ? ' aria-current="true"' : ""} aria-label="${esc(b.name)}${def ? ", " + t("principal") : ""} — ${esc(holds)}">` +
-      `<span class="fn mono">${cur ? "● " : ""}${name}</span><span class="fmeta">${esc(holds)}</span></div>`;
+    const name = placeName(b.name, info.default);
+    const off = false;   // quem recusa é o git, e só quando sobrescreveria
+    return `<div class="fitem2 draftrow${cur ? " on" : ""}${off ? " muted fstatic" : ""}" data-branch="${esc(b.name)}"` +
+      (off ? ` data-off="1" aria-disabled="true"` : ` role="button" tabindex="0"`) +
+      `${cur ? ' aria-current="true"' : ""}` +
+      ` aria-label="${esc(name)} — ${esc(holds)}${off ? " — " + t("salve uma versão primeiro") : ""}">` +
+      `<span class="fn">${cur ? "● " : ""}${esc(name)}</span>` +
+      `<span class="fmeta">${esc(off ? t("salve uma versão primeiro") : holds)}</span></div>`;
   }).join("");
   const body = openModal(
-    t("Rascunho de trabalho"),
-    `<div class="fitem2 muted fstatic">${t("uma mudança de conhecimento nasce num rascunho de trabalho — o conhecimento oficial fica protegido")}</div>` +
+    t("Rascunhos de trabalho"),
+    `<div class="fitem2 muted fstatic">${t("cada mudança vive num rascunho. Trocar de rascunho troca o que você vê em «mudanças de agora» — nada se perde.")}</div>` +
+      // CRIAR continua funcionando com a árvore suja (`checkout -b` leva a mudança
+      // com ela), e é isso que a frase promete: a recusa é só da troca
+      (dirty ? `<div class="fitem2 muted fstatic">${t("você tem mudança que ainda não está em nenhuma versão: ela vai com você para o rascunho escolhido. Se lá o documento for diferente, a troca é recusada e a tela diz qual.")}</div>` : "") +
       rows +
       `<div class="fsep"></div><div class="fitem2 add" data-newbranch>＋ ${t("novo rascunho…")}</div>`,
     null,
     null
   );
   body.querySelectorAll("[data-branch]").forEach((el2) => {
+    if (el2.dataset.off) return;   // a folha já disse que esta linha não está disponível
     el2.onclick = async () => {
       closeModal();
       const b = el2.dataset.branch;
       if (b === info.current) return;
       const stand = (info.branches || []).find((x) => x.name === b);
-      const price = switchPrice(stand, info.current);
+      const price = switchPrice(stand, info.current, info.default);
       if (price) return confirmSwitchBranch(b, price);
-      try { afterSwitch(await invoke("git_switch_branch", { branch: b }), null); }
+      try { afterSwitch(await invoke("git_switch_branch", { branch: b }), null, info.default); }
       catch (e) { toast(tErr(String(e)), 5000); }
     };
     wireActivateKeys(el2);
@@ -7351,48 +7536,140 @@ async function openBranchPicker() {
   if (nb) {
     nb.setAttribute("role", "button");
     nb.setAttribute("tabindex", "0");
-    nb.onclick = () => {
-      closeModal();
-      openEditor(t("Novo rascunho — descreva a mudança em uma linha"), "", async (desc) => {
-        const slug = (desc || "").trim();
-        if (!slug) throw t("descreva a mudança");
-        // a brand-new draft starts from the work in front of the user: nothing
-        // leaves the screen, so there is no price to declare
-        afterSwitch(await invoke("git_create_branch", { slug }), null);
-      });
-    };
+    nb.onclick = () => promptNewDraft();
     wireActivateKeys(nb);
   }
 }
-if (B.branchBtn) B.branchBtn.addEventListener("click", openBranchPicker);
 
-B.proposeBtn.addEventListener("click", () => {
-  openEditor(
-    t("Enviar para revisão do time — descreva a mudança"),
-    t("## Resumo da mudança\n\n\n## Conhecimento afetado\n\n\n## Riscos e pendências\n"),
-    async (body) => {
-      // o título vai para a revisão no GitHub: sem primeira linha, o assunto é a
-      // própria mudança de conhecimento — nunca a sigla interna
-      const title = (body || "").split("\n").map((l) => l.replace(/^#+\s*/, "").trim()).find(Boolean)
-        || t("mudança de conhecimento");
-      const pr = await invoke("brain_propose_change", { title, body });
-      // N4 · a url voltava do backend e era jogada fora: quem acabou de propor
-      // não tinha por onde chegar à própria revisão. O número não é um endereço.
-      lastProposalUrl = (pr && pr.url) || "";
-      const msg = pr && pr.number ? `${t("enviado para revisão do time")} · #${pr.number}` : t("enviado para revisão do time");
-      const acts = [];
-      if (lastProposalUrl) acts.push({ label: t("abrir a revisão"), run: () => openProposalUrl(lastProposalUrl) });
-      acts.push({ label: t("ver revisões"), run: () => openReviewsSheet() });
-      toastAction(msg, acts);
-      maybeRefreshNotifications(true);
+// D3 · o nome do rascunho é UM campo. O desenho compunha `<tipo>/<assunto>` a
+// partir de cinco pílulas, mas o backend endereça o rascunho por slug e só
+// resolve o prefixo que já usa — cinco controles a mais para o mesmo resultado.
+// O contador e a prévia são a resposta imediata que um campo com limite deve dar
+// (DESIGN.md §1: toda ação tem retorno).
+const DRAFT_MAX = 24;
+function draftSlugify(raw) {
+  return String(raw || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, DRAFT_MAX)
+    // o corte no 24\u00ba caractere pode cair num "-", e `sanitize_slug` (git.rs) apara
+    // as pontas: sem esta linha o nome que a tela ANUNCIA teria um tra\u00e7o que o
+    // rascunho criado n\u00e3o tem
+    .replace(/-+$/g, "");
+}
+function promptNewDraft() {
+  openModal(
+    t("Novo rascunho"),
+    `<p class="pmnote">${t("o nome diz o assunto — curto e objetivo, até 24 letras, sem espaços.")}</p>` +
+      `<label class="wfield stack"><span>${t("Novo rascunho")}</span>` +
+      `<input id="newDraft" type="text" placeholder="${t("assunto-do-rascunho")}" spellcheck="false"></label>` +
+      // o contador é a metade da máquina da linha, então ele é o que vai em mono
+      `<p class="pmnote"><span class="mono" id="newDraftEcho">${t("%1/24", [0])}</span></p>`,
+    t("criar e trocar para ele"),
+    async () => {
+      const slug = draftSlugify($("newDraft") && $("newDraft").value);
+      if (!slug) { toast(t("dê um nome curto ao rascunho")); return; }
+      // um rascunho novo nasce do trabalho que está na frente do usuário: nada
+      // sai da tela, então não há preço a declarar
+      // afterSwitch já relê onde estamos: repetir aqui era o mesmo pedido duas vezes
+      afterSwitch(await invoke("git_create_branch", { slug }), null, REV.def);
     }
   );
+  const field = $("newDraft"), echo = $("newDraftEcho");
+  if (!field || !echo) return;
+  const paint = () => {
+    const slug = draftSlugify(field.value);
+    echo.textContent = `${t("%1/24", [slug.length])}${slug ? " · ⎇ " + slug : ""}`;
+  };
+  field.addEventListener("input", paint);
+  paint();
+}
+if (B.branchBtn) B.branchBtn.addEventListener("click", openBranchPicker);
+
+// S7 · a folha pergunta o que o MODELO DO TIME pergunta: os rótulos vêm do
+// arquivo que o repositório já traz (brain_pr_template), não de uma lista que
+// este app inventou — e são o texto do time, não msgids. A espera mora no
+// confirmar da folha, que é onde o pendente já é anunciado (WCAG 4.1.2); por isso
+// o ouvinte continua síncrono.
+B.proposeBtn.addEventListener("click", () => {
+  Promise.all([
+    invoke("brain_pr_template").catch(() => null),
+    currentDraftSlug(),
+  ]).then(([tpl, slug]) => {
+    const secs = (tpl && tpl.sections && tpl.sections.length) ? tpl.sections : [];
+    const rel = (tpl && tpl.rel) || "";
+    // A DICA DO MODELO ERA CALCULADA E JOGADA FORA. O backend já devolve, por
+    // seção, a frase que o próprio `<!-- … -->` do modelo do time carrega
+    // (`PrTemplate.hints`), e a folha pedia a descrição que o time inteiro vai ler
+    // como N caixas vazias de uma linha. A frase vira o placeholder — é ela que diz
+    // o que a seção quer — e o campo vira multilinha, porque «o que muda e por quê»
+    // não é um valor de uma linha (o desenho usa textarea rows=2).
+    const hints = (tpl && tpl.hints) || [];
+    const fields = secs.map((s, i) =>
+      `<label class="wfield stack"><span>${esc(s)}</span>` +
+      `<textarea class="prsec" data-sec="${i}" rows="2" spellcheck="false"` +
+      `${hints[i] ? ` placeholder="${esc(hints[i])}"` : ""}></textarea></label>`).join("");
+    openModal(
+      t("Enviar para revisão do time"),
+      `<p class="pmnote">${esc(t("o time recebe a mudança do rascunho «%1» com a descrição abaixo. Nada entra no conhecimento oficial sem aprovação.", [slug || REV.branch || "—"]))}</p>` +
+        `<label class="wfield stack"><span>${t("Título")}</span>` +
+        `<input id="prTitle" type="text" placeholder="${t("uma linha sobre a mudança")}" spellcheck="false"></label>` +
+        fields +
+        // o CAMINHO é a metade da máquina desta linha (DESIGN.md §3: um caminho é
+        // sempre mono), e a frase em volta é prosa
+        (rel ? `<p class="pmnote">${t("modelo do time · %1", [`<span class="mono">${esc(rel)}</span>`])} — ` +
+          `<button class="plink" id="prTplBtn">${t("configurar o modelo")}</button></p>` : ""),
+      t("↗ enviar para o time"),
+      async () => {
+        const title = (($("prTitle") && $("prTitle").value) || "").trim();
+        if (!title) { toast(t("descreva a mudança")); return; }
+        const body = secs.map((s, i) => {
+          const f = document.querySelector(`.prsec[data-sec="${i}"]`);
+          return `## ${s}\n\n${((f && f.value) || "").trim()}\n`;
+        }).join("\n");
+        const pr = await invoke("brain_propose_change", { title, body });
+        // N4 · a url voltava do backend e era jogada fora: quem acabou de propor
+        // não tinha por onde chegar à própria revisão. O número não é um endereço.
+        lastProposalUrl = (pr && pr.url) || "";
+        const msg = pr && pr.number ? `${t("enviado para revisão do time")} · #${pr.number}` : t("enviado para revisão do time");
+        const acts = [];
+        if (lastProposalUrl) acts.push({ label: t("abrir a revisão"), run: () => openProposalUrl(lastProposalUrl) });
+        acts.push({ label: t("ver revisões"), run: () => goDest("review", "team") });
+        toastAction(msg, acts);
+        maybeRefreshNotifications(true);
+      }
+    );
+    const cfg = $("prTplBtn");
+    if (cfg) cfg.onclick = () => openTeamTemplateSheet(secs);
+  });
 });
+
+// "configurar o modelo": uma seção por linha. O arquivo mora dentro da árvore
+// versionada, então a mudança nasce como mudança pendente e passa pela MESMA
+// revisão que qualquer outra — é o que a cópia promete, e é o que acontece.
+function openTeamTemplateSheet(current) {
+  openModal(
+    t("configurar o modelo"),
+    `<p class="pmnote">${t("uma seção por linha — vale para todo o time, e a mudança passa pela mesma revisão que qualquer outra.")}</p>` +
+      `<label class="wfield stack"><span>${t("seções do modelo")}</span>` +
+      `<textarea id="prTplBody" rows="7" spellcheck="false">${esc((current || []).join("\n"))}</textarea></label>`,
+    t("salvar o modelo do time"),
+    async () => {
+      const raw = (($("prTplBody") && $("prTplBody").value) || "").split("\n").map((l) => l.trim()).filter(Boolean);
+      if (!raw.length) { toast(t("o modelo precisa de pelo menos uma seção")); return; }
+      await invoke("brain_set_pr_template", { sections: raw });
+      toast(t("modelo do time atualizado — vale para as próximas revisões"), 5000);
+      brainRefresh();
+      // de volta para onde a pessoa estava: a folha do envio, já com os campos novos
+      B.proposeBtn.click();
+    }
+  );
+}
 
 // N4 · a metade da revisão não tinha superfície: `gh_pr_list` existia no contrato
 // e nenhum caller no frontend, então "2 aguardam sua revisão" era um número sem
-// porta. A folha lista as revisões abertas, ABRE cada uma no navegador (onde a
-// revisão de fato acontece) e ainda entrega o endereço para compartilhar.
+// porta. ADR-0027 · a folha virou DESTINO: a leitura acontece dentro do Loro e o
+// navegador deixou de ser o único lugar onde uma mudança pode ser lida. O
+// endereço continua alcançável (⧉ copiar link) porque colar a revisão no chat do
+// time é uma coisa que uma pessoa faz — e o app é quem tem o endereço.
 let lastProposalUrl = "";
 async function copyProposalUrl(url) {
   toast((await copyToClipboard(url)) ? t("link copiado") : t("não consegui copiar"));
@@ -7406,43 +7683,1312 @@ async function openProposalUrl(url) {
   try { await invoke("brain_open_link", { url }); }
   catch (e) { toast(t("não abri a revisão no navegador")); clog("open_link error: " + e); }
 }
-async function openReviewsSheet() {
-  let prs = null;
-  try { prs = await invoke("gh_pr_list"); }
-  catch (e) { toast(tErr(String(e)), 5000); return; }
-  const list = prs || [];
-  const rows = list.map((p, i) => {
-    // o que o revisor precisa saber é a DECISÃO (aprovada, ajustes pedidos); o
-    // estado do PR é o que sobra quando ainda não houve decisão
-    const st = p.reviewDecision || p.state || "";
-    const num = esc(String(p.number || ""));
-    // o nome acessível de cada ação carrega o número: "abrir"/"copiar link"
-    // repetidos em N linhas não dizem QUAL revisão (WCAG 2.4.6)
-    const acts = p.url
-      ? `<button class="mini act" data-propen="${i}" aria-label="${t("abrir a revisão")} #${num}">${t("abrir")}</button>` +
-        `<button class="mini act" data-prurl="${i}" aria-label="${t("copiar link")} #${num}">⧉ ${t("copiar link")}</button>`
-      : "";
-    return `<div class="fitem2 fstatic"><span class="fn">#${num} ${esc(p.title || "")}` +
-    `${st ? ` <span class="mono muted">${esc(String(st).toLowerCase().replace(/_/g, " "))}</span>` : ""}</span>` +
-    acts + `</div>`;
-  }).join("");
-  const body = openModal(
-    t("Revisões abertas"),
-    list.length
-      ? `<p class="pmnote mono">${t("a revisão acontece no GitHub — “abrir” leva você até ela no navegador.")}</p>${rows}`
-      : `<p class="pmnote mono">${t("nenhuma revisão aberta ainda — envie uma mudança para revisão do time.")}</p>`,
-    null,
-    null
+/* ====================== Revisão · o destino (ADR-0027) ======================
+   Duas metades do mesmo assunto: o que VOCÊ mudou e ainda não salvou, e o que o
+   TIME propôs e espera alguém ler. Toda a decisão de FORMA — o que é um trecho,
+   quem pode aprovar, o que bloqueia, como uma linha de diff se numera — mora em
+   review.js, que é puro e não fala português. Aqui só se escolhe o msgid e se
+   liga o clique. */
+const RV = window.LoroReview;
+const REV = {
+  changes: null,              // FileDiff[] de brain_git_diff (null = ainda não lido)
+  changesErr: "",
+  // "%1 de %2 vistos" é da SESSÃO: um contador que sobrevivesse a uma versão
+  // salva estaria contando arquivos que já não estão na mudança.
+  viewed: new Set(),
+  mode: "unified",            // D5 · numa coluna de 720px o lado a lado dá 330px
+  openDiff: new Set(),        // caminhos com o diff completo aberto
+  openCard: new Set(),        // caminhos com o cartão aberto
+  rowsMore: new Map(),        // caminho → quantas linhas de diff já foram abertas
+  prs: null, prsErr: "", prsStale: false, prsFresh: false,
+  detail: null, detailDiff: null, detailErr: "", openNum: 0,
+  branch: "", def: "main",
+  cameFrom: "",               // F11 · de qual rascunho saímos para editar o de outra pessoa
+  sig: "", teamSig: "",
+};
+
+const reviewOn = () => LoroShell.destination() === "review";
+const reviewTab = () => LoroShell.reviewTab();
+
+// DESIGN.md §5 · o pendente é desfeito pelo DESFECHO, nunca por um relógio: uma
+// chamada ao gh são três processos e duas idas à rede, e um botão que volta
+// sozinho antes da resposta mente sobre o que já terminou.
+async function withPending(btn, run, label) {
+  if (!btn) return run();
+  const was = btn.textContent;
+  btn.disabled = true;
+  btn.classList.add("pending");
+  btn.setAttribute("aria-busy", "true");
+  btn.textContent = label || t("um momento…");
+  try { return await run(); }
+  finally {
+    btn.disabled = false;
+    btn.classList.remove("pending");
+    btn.removeAttribute("aria-busy");
+    btn.textContent = was;
+  }
+}
+
+// Concordância de número. "1 trechos mudaram" e "1 linhas sem mudança" são a
+// interface escrevendo errado sobre o próprio conteúdo, e as duas formas são
+// msgids separados — quem traduz escolhe as duas (o app já faz isso em
+// holdsLabel: "1 documento" / "18 documentos").
+function plural(n, one, many) {
+  return t(Math.abs(Number(n)) === 1 ? one : many, [n]);
+}
+
+// Os códigos cujo remédio é o diagnóstico de Configurações. Um só lugar: a recusa
+// prévia de F5 (revProposeBtn) e o erro que fica dentro da folha (pmError) têm de
+// oferecer a MESMA porta, senão são duas regras para a mesma verdade. Cobre o que
+// teamBlockCode() escolhe entre, mais as duas do projeto.
+const ENV_REMEDY = ["err.gh_not_found", "err.gh_auth_required", "err.git_remote_required",
+  "err.github_unreachable", "err.acervo_not_configured", "err.git_repo_required"];
+
+// O que impede a metade do time de funcionar, como CÓDIGO estável — a mesma
+// verdade que o card de Configurações pinta, sem uma segunda frase para manter.
+function teamBlockCode() {
+  const d = envDoctor;
+  if (!d || d.versioningEnabled) return "";
+  if (d.offline) return "err.github_unreachable";
+  if (d.gh && !d.gh.ok) return "err.gh_not_found";
+  if (d.ghAuth && !d.ghAuth.ok) return "err.gh_auth_required";
+  if (d.remote && !d.remote.ok) return "err.git_remote_required";
+  return "err.gh_not_found";
+}
+
+// R38 · A REGIÃO VIVA FALA PELA METADE QUE ESTÁ NA TELA. As duas metades se pintam
+// na mesma passada (renderDestReview) e as duas falavam na única região viva do
+// app: a última a terminar ganhava, então chegar no destino anunciava «nada aqui
+// ainda» sobre a metade escondida e nada sobre a que estava na frente
+// (WCAG 4.1.2/4.1.3). Um leitor de tela ouve o que um olho vê, ou nada.
+function announceRev(half, msg) {
+  if (!reviewOn() || reviewTab() !== half) return;
+  if (REV.openNum) return;   // a revisão aberta cobre as duas listas
+  announce(msg);
+}
+
+// R43 · O ENDEREÇO do controle que tem o teclado, para que um repintar não o
+// perca. `list.innerHTML = …` destrói o nó focado: no poll de 10s (uma análise
+// escrevendo um documento, um git em curso) o foco caía no <body> e o Tab
+// recomeçava no primeiro cartão — o foco movido por uma mudança que o usuário não
+// fez (WCAG 2.4.3). A marca é o atributo que identifica a linha, nunca o nó.
+const FOCUS_MARKS = ["data-rvseen", "data-rvfull", "data-rvmode", "data-rvmore"];
+function focusMarkIn(root) {
+  const on = document.activeElement;
+  if (!on || !root || !root.contains || !root.contains(on)) return "";
+  for (const a of FOCUS_MARKS) {
+    const v = on.getAttribute && on.getAttribute(a);
+    if (v && !/["\\]/.test(v)) return `[${a}="${v}"]`;
+  }
+  const card = on.closest && on.closest("[data-rvcard]");
+  const p = card && card.getAttribute("data-rvcard");
+  if (on.tagName === "SUMMARY" && p && !/["\\]/.test(p)) return `[data-rvcard="${p}"] > summary`;
+  return "";
+}
+function restoreFocusMark(root, mark) {
+  if (!mark || !root) return;
+  const on = document.activeElement;
+  // um foco que já tem dono não se move: só o que o repintar deixou órfão volta
+  if (on && on !== document.body && root.contains && root.contains(on)) return;
+  const n = root.querySelector(mark);
+  if (n) { try { n.focus(); } catch (_) {} }
+}
+
+/* ---- a frase de abertura, o rascunho e os contadores --------------------- */
+
+// A frase acompanha a ABA: as duas metades prometem coisas diferentes, e uma
+// frase só teria de mentir sobre uma delas.
+function paintReviewIntro() {
+  const p = $("revIntro");
+  if (!p) return;
+  p.textContent = reviewTab() === "team"
+    ? t("Mudanças propostas ao conhecimento oficial. Nada entra sem aprovação — e a sua leitura acontece aqui, sem sair do Loro.")
+    : t("Nada sai do seu computador sozinho: salvar guarda uma versão no seu rascunho de trabalho; enviar para revisão é um passo separado, e o time aprova antes de virar conhecimento oficial.");
+  const off = $("revOffline");
+  if (off) off.hidden = !(envDoctor && envDoctor.offline);
+}
+
+// R44 · O QUE O APP JÁ SABE, ANTES DO CLIQUE. «↗ Enviar para revisão do time»
+// ficava armado e calado numa tela que já sabia que a outra metade não está
+// conectada — o mesmo teamBlockCode() era avaliado NO clique, e a resposta era um
+// toast citando `gh auth login` a quem foi prometido que não precisa saber git. A
+// superfície antiga da mesma ação (a seção TIME do painel) já era mais estrita:
+// ela esconde o botão e diz onde se liga. Aqui o botão fica na tela — é a porta
+// permanente desta metade —, mas desarmado, com o motivo dito acima dele e o
+// remédio como botão (DESIGN.md §1: a interface não sabe nada que não diz).
+// QUEM SOU EU nesta tela, num lugar só: a conta que o diagnóstico do ambiente
+// leu. Duas cópias dessa leitura decidem «meu rascunho» de dois jeitos.
+function reviewMe() {
+  return (envDoctor && envDoctor.account) || "";
+}
+
+// O QUE TOMA O LUGAR DO CONTROLE. Um passo que não existe mais não vira um botão
+// desarmado nem desaparece em silêncio: vira o estado que explica por que ele não
+// está lá, com a porta para a revisão que já existe.
+function paintOpenReviewState(aberta) {
+  const el = $("revOpenState"), go = $("revOpenStateGo");
+  if (!el) return;
+  el.hidden = !aberta;
+  if (go) go.hidden = !aberta;
+  if (!aberta) return;
+  // Sem saber QUEM EU SOU (o diagnóstico do ambiente ainda não leu a conta), o app
+  // não pode afirmar que o rascunho é de outra pessoa: `same("aipi", "")` é falso, e
+  // era isso que fazia a própria mudança da pessoa se apresentar como alheia. Sem a
+  // conta, a frase é a neutra — a que vale nos dois casos.
+  el.textContent = !reviewMe() || aberta.mine
+    ? t("esta mudança já está em revisão (#%1) — salvar versão atualiza a revisão aberta.", [aberta.number])
+    : t("este rascunho é de outra pessoa e já está em revisão (#%1) — salvar versão atualiza a revisão aberta.", [aberta.number]);
+  if (go) {
+    go.textContent = t("ver a revisão #%1", [aberta.number]);
+    go.onclick = () => goDest("review", "team") || openReview(aberta.number);
+  }
+}
+
+// UMA PORTA, NÃO DUAS. O estado «tudo salvo» oferece «abrir Configurações» (R48:
+// um estado vazio orienta o passo que FUNCIONA, e uma porta não é uma frase), e o
+// portão do time oferecia a MESMA porta 300px abaixo, com a mesma frase, na mesma
+// passada de pintura. A de cima fica — ela é a que o estado vazio nomeia —, e a de
+// baixo se cala. A nota continua, porque ela é o motivo do botão desarmado.
+function emptyStateOffersCfg() {
+  const block = teamBlockCode();
+  const vazia = Array.isArray(REV.changes) && REV.changes.length === 0;
+  return vazia && !!draftSlugFromBranch(REV.branch, REV.def) && !!block && block !== "err.github_unreachable";
+}
+
+function paintTeamGate() {
+  const note = $("revTeamNote"), go = $("revTeamGo"), btn = $("revProposeBtn");
+  if (!note) return;
+  const block = teamBlockCode();
+  note.hidden = !block;
+  // sem rede o remédio não é Configurações: é esperar a rede (a nota já diz isso).
+  // E se o estado vazio já está oferecendo a mesma porta, esta se cala.
+  if (go) go.hidden = !block || block === "err.github_unreachable" || emptyStateOffersCfg();
+  // Desabilitado, sem título: um tooltip não dispara num controle desabilitado, e
+  // o texto do código («autentique no GitHub (gh auth login)…») é do diagnóstico de
+  // Configurações — na tela que promete que não é preciso saber git, o motivo é a
+  // frase acima e o remédio é o botão dela.
+  if (btn) btn.disabled = !!block;
+  // ENVIAR DEIXA DE SER UM PASSO quando o rascunho já está em revisão. O controle
+  // dizia «↗ Enviar para revisão do time» e por dentro ATUALIZAVA a revisão aberta
+  // — um rótulo que promete abrir o que ele vai atualizar. Com o bloqueio do time
+  // o botão continua na tela e desarmado (é a porta permanente desta metade, e a
+  // nota acima diz o motivo); aqui ele SAI, porque não há passo nenhum a oferecer:
+  // salvar versão já leva a versão à revisão (DESIGN.md §1 — nunca um controle que
+  // não faz nada).
+  const aberta = block ? null : RV.openReviewFor(REV.prs, REV.branch, { me: reviewMe() });
+  if (btn && !block) btn.hidden = !!aberta;
+  paintOpenReviewState(aberta);
+  if (!block) return;
+  note.textContent = block === "err.github_unreachable"
+    ? t("sem conexão agora — salvar versão funciona local; a revisão do time volta quando a rede voltar.")
+    : t("o time ainda não está conectado — conecte o GitHub em Configurações para enviar e receber revisões.");
+  if (go && !go.hidden) { go.textContent = t("abrir Configurações"); go.onclick = openCfgGit; }
+}
+
+// R36 · A FRASE QUE QUALIFICA «Salvar versão do projeto»: a versão guarda o que já
+// está no ARQUIVO, e o editor pode ter texto que ainda não foi para lá — que
+// ficaria fora da versão, em silêncio. Ela mora na descrição do botão
+// (aria-describedby), como o preço: quem chega nele pelo teclado ouve as duas
+// (WCAG 3.3.2). Com a lista vazia quem carrega essa verdade é o estado vazio, que
+// é onde a pergunta da tela é respondida.
+function paintUnsavedDocs(unsaved, hasFiles) {
+  const note = $("revUnsavedNote"), go = $("revUnsavedGo");
+  if (!note) return;
+  const show = !!(unsaved.length && hasFiles);
+  note.hidden = !show;
+  if (go) go.hidden = !show;
+  if (!show) return;
+  note.textContent = t(
+    "texto não salvo em %1: a versão guarda o que já está no arquivo, então salve o documento primeiro.",
+    [unsaved.map((d) => d.title).join(", ")]
   );
-  body.querySelectorAll("[data-propen]").forEach((b) => (b.onclick = () => {
-    const p = list[Number(b.dataset.propen)];
-    closeModal();
-    if (p) openProposalUrl(p.url);
+  if (!go) return;
+  go.textContent = t("abrir o documento");
+  // repetido por linha, o nome acessível diz QUAL documento (WCAG 2.4.6/2.5.3)
+  go.setAttribute("aria-label", `${t("abrir o documento")} — ${unsaved[0].title}`);
+  go.onclick = () => activateTab(unsaved[0].id);
+}
+
+// O MESMO FATO EM TRÊS LUGARES, UMA FONTE. O chip do cabeçalho, o do compositor da
+// Revisão e o da seção TIME dizem onde a próxima versão cai; `draftChipHtml` desenha
+// e `draftChipLabel` dá o texto que vira nome acessível. Sem branch (ou sem git) o
+// controle não é desenhado — um chip vazio não é um fato.
+function paintHeadDraft(branch, def) {
+  const el = $("headDraft");
+  if (!el) return;
+  const has = !!branch;
+  el.hidden = !has;
+  if (!has) return;
+  el.innerHTML = draftChipCompact(branch, def);
+  el.setAttribute("aria-label", `${t("Rascunhos de trabalho")} — ${draftChipLabel(branch, def)}`);
+  el.title = draftChipLabel(branch, def);
+}
+
+function paintReviewDraft() {
+  const chip = $("revDraft");
+  if (!chip) return;
+  // onde você ESTÁ (o nome real do lugar) e se ele é endereçável por slug são
+  // duas coisas: a primeira nomeia a tela, a segunda decide se salvar CRIA um
+  // rascunho novo
+  const slug = draftSlugFromBranch(REV.branch, REV.def);
+  chip.innerHTML = draftChipHtml(REV.branch, REV.def);
+  chip.setAttribute("aria-label", `${t("Rascunhos de trabalho")} — ${draftChipLabel(REV.branch, REV.def)}`);
+  // A SEGUNDA METADE DO PREÇO. Sem um rascunho endereçável, "Salvar versão"
+  // CRIA um (`brain_version` → `git checkout -b rfc/<slug>`) e a pessoa sai do
+  // lugar em que estava. Isso era feito em silêncio, com o nome tirado da frase
+  // que ela acabou de escrever — 49 letras que ninguém escolheu, na tela cuja
+  // folha vizinha ensina "até 24 letras". O nome é dito antes do clique, e é o
+  // MESMO que saveVersionFromReview manda (draftSlugify).
+  const note = $("revSaveNote");
+  if (!note) return;
+  // A pergunta é «salvar vai CRIAR um rascunho?», e a resposta é «só a partir do
+  // oficial». Ela era `!!slug` — se o rascunho é endereçável por `rfc/<slug>` —, o
+  // que num branch de time (`feat/…`) dava falso e fazia a tela prometer um rascunho
+  // novo ao lado da frase que diz que salvar atualiza a revisão aberta.
+  const cria = willCreateDraft(REV.branch, REV.def);
+  note.hidden = !cria;
+  if (!cria) return;
+  const willBe = draftSlugify(($("revMsg") && $("revMsg").value) || "");
+  note.textContent = willBe
+    ? t("salvar cria o rascunho «%1» e guarda a versão nele — o conhecimento oficial só recebe mudanças por revisão.", [willBe])
+    : t("salvar cria um rascunho de trabalho com o nome da sua descrição — o conhecimento oficial só recebe mudanças por revisão.");
+}
+
+/* ---- 1g.1 · o que VOCÊ mudou -------------------------------------------- */
+
+// O estado do documento é a palavra do backend (diff.rs::ChangeKind) traduzida
+// UMA vez: o ponto da lateral e este distintivo dizem a mesma coisa da mesma
+// mudança, então não podem ter dois nomes (DESIGN.md §5).
+function changeBadge(status) {
+  if (status === "added") return { cls: "ok", label: t("novo") };
+  if (status === "removed") return { cls: "warn", label: t("removido") };
+  if (status === "renamed") return { cls: "warn2", label: t("renomeado") };
+  return { cls: "warn2", label: t("modificado") };
+}
+
+// Quantas linhas o resumo mostra antes de dizer quantas ficaram de fora, e
+// quantas linhas de diff um cartão desenha de uma vez. Um documento novo é UM
+// trecho com o arquivo inteiro dentro: sem teto, um cartão vira o arquivo.
+const BIT_LINES = 12;
+const DIFF_ROWS_MAX = 400;
+
+function diffRowsHtml(file) {
+  const all = RV.diffRows(file, { mode: REV.mode });
+  const path = String((file && file.path) || "");
+  const cap = REV.rowsMore.get(path) || DIFF_ROWS_MAX;
+  const rows = all.slice(0, cap);
+  const cut = all.length - rows.length;
+  const num = (n) => (n === null || n === undefined ? "" : String(n));
+  return rows.map((r) => {
+    if (r.kind === "gap") {
+      // Não é um controle: o backend manda três linhas de contexto e mais nada,
+      // então um "abrir" aqui abriria coisa nenhuma (DESIGN.md §1). Mas ela era
+      // BYTE A BYTE o vizinho que É um controle — mesma classe, mesmo ⋯ na frente,
+      // 20 linhas acima do corte de 400 que carrega um botão de verdade. Duas
+      // coisas diferentes com a mesma aparência: o ⋯ sai (ele promete «tem mais,
+      // clique») e a faixa fica explicitamente quieta.
+      return `<div class="rvgap quiet">${esc(plural(r.lines, "%1 linha sem mudança", "%1 linhas sem mudança"))}</div>`;
+    }
+    if (r.kind === "uni") {
+      const tone = r.tone === "none" ? "" : ` ${r.tone}`;
+      return `<div class="rvrow uni${tone}"><span class="rvnum">${num(r.oldNum)}</span>` +
+        `<span class="rvnum">${num(r.newNum)}</span><span class="rvsign">${r.sign}</span>` +
+        `<span class="rvtxt">${esc(r.text)}</span></div>`;
+    }
+    // D8 · lado a lado. A folha tinge a LINHA, e numa linha emparelhada as duas
+    // metades têm tons opostos — tingi-la diria uma coisa só sobre duas. Aqui o
+    // que carrega a mudança é a POSIÇÃO (esquerda = como era, direita = como
+    // fica), o sinal dentro da célula e o hachurado onde não havia linha; cor
+    // nunca é a única pista (WCAG 1.4.1).
+    const side = (s) => {
+      const empty = s.tone === "empty";
+      const sign = s.tone === "add" ? "+" : s.tone === "del" ? "−" : "";
+      return `<span class="rvnum${empty ? " rvhatch" : ""}">${num(s.num)}</span>` +
+        `<span class="rvtxt${empty ? " rvhatch" : ""}">` +
+        (sign ? `<span class="rvsign">${sign}</span> ` : "") + esc(s.text) + `</span>`;
+    };
+    return `<div class="rvrow split">${side(r.left)}${side(r.right)}</div>`;
+  }).join("") +
+    // O corte é DITO, e tem como continuar. Dizer "… e mais 812 linhas" e parar
+    // ali era um beco sem saída no destino que existe para ver as linhas exatas
+    // (DESIGN.md §1). Diferente do INTERVALO entre dois pedaços: as linhas do
+    // corte já estão na memória, então continuar a leitura é um clique — nada é
+    // pedido ao backend, e o teto continua existindo para o cartão não virar o
+    // arquivo (DESIGN.md §7).
+    (cut > 0
+      ? `<div class="rvgap">⋯ ${esc(plural(cut, "… e mais %1 linha", "… e mais %1 linhas"))}` +
+        `<button class="plink" data-rvmore="${esc(path)}">${t("mostrar mais linhas")}</button></div>`
+      : "");
+}
+
+// "como era / como fica" em texto. Fica fora de changeCardHtml porque o cartão
+// abre por <details>, e um cartão que abre vazio e só se preenche na próxima
+// passada do poll é a tela sem resposta ao clique (DESIGN.md §1): quem abre o
+// cartão insere o resumo na hora, com esta mesma função.
+function plainBitsHtml(file) {
+  return RV.plainBits(file).map((b) => {
+    const label = b.whole
+      ? (b.kind === "after" ? t("documento novo") : t("documento removido"))
+      : (b.kind === "after" ? t("como fica") : t("como era"));
+    // o resumo é resumo: a leitura completa é o diff, que tem controle próprio
+    // (DESIGN.md §7 — nada cresce sem limite dentro do cartão)
+    const lines = String(b.text).split("\n");
+    const shown = lines.slice(0, BIT_LINES).join("\n");
+    const rest = lines.length - BIT_LINES;
+    return `<div class="rvbit ${b.kind === "after" ? "after" : "before"}">` +
+      `<span class="rvlabel">${label}</span>${esc(shown)}` +
+      (rest > 0 ? `\n${esc(plural(rest, "… e mais %1 linha", "… e mais %1 linhas"))}` : "") + `</div>`;
+  }).join("");
+}
+
+// Abrir/fechar um cartão: o estado é guardado (o próximo repintar respeita) E o
+// resumo entra na árvore agora.
+//
+// `files` é A LISTA QUE DESENHOU os cartões, e é parâmetro de propósito. Antes o
+// caminho era resolvido contra as duas listas globais em ordem fixa (a árvore de
+// trabalho primeiro, a revisão aberta depois); as duas são chaveadas pelo mesmo
+// caminho do acervo, então um revisor com edição local no documento que a
+// proposta também muda abria o cartão da proposta e lia o SEU texto como "como
+// fica", com o diff verdadeiro logo abaixo (DESIGN.md §1: o estado nunca mente).
+function wireCardToggle(root, files) {
+  root.querySelectorAll("[data-rvcard]").forEach((d) => (d.ontoggle = () => {
+    const p = d.dataset.rvcard;
+    if (d.open) REV.openCard.add(p); else REV.openCard.delete(p);
+    REV.sig = "";
+    const box = d.querySelector(".rvbits");
+    const file = RV.fileAt(files, p);
+    if (d.open && box && file && !box.querySelector(".rvbit")) {
+      box.insertAdjacentHTML("afterbegin", plainBitsHtml(file));
+    }
   }));
-  body.querySelectorAll("[data-prurl]").forEach((b) => (b.onclick = () => {
-    const p = list[Number(b.dataset.prurl)];
-    if (p && p.url) copyProposalUrl(p.url);
+}
+
+// O CONTROLE que carregou o desfecho deixa de existir no repintar: os três
+// controles do cartão («marcar como visto», «ver a mudança completa» e o seletor de
+// diff) refazem a lista inteira, então o foco caía no <body> e o Tab recomeçava no
+// resumo do cartão — para quem usa teclado ou leitor de tela os três não davam
+// retorno nenhum (WCAG 2.4.3 + 4.1.3). O mesmo padrão do leaveOverlay: guarda quem
+// era, repinta, devolve. `said` é uma função porque a frase depende do estado DEPOIS
+// do repintar.
+function repaintFocused(attr, val, repaint, said) {
+  repaint();
+  for (const n of document.querySelectorAll(`[${attr}]`)) {
+    if (n.getAttribute(attr) !== val) continue;
+    try { n.focus(); } catch (_) {}
+    break;
+  }
+  if (said) announce(said());
+}
+
+// Continuar a leitura de um diff cortado. Mesma ligação nas duas listas que
+// desenham cartões, uma função só: o teto sobe UM passo por clique, e é o mesmo
+// passo que o desenho usa.
+function wireDiffMore(root, repaint) {
+  root.querySelectorAll("[data-rvmore]").forEach((b) => (b.onclick = () => {
+    const p = b.dataset.rvmore;
+    REV.rowsMore.set(p, (REV.rowsMore.get(p) || DIFF_ROWS_MAX) + DIFF_ROWS_MAX);
+    REV.sig = "";
+    repaint();
   }));
+}
+
+// `scope` é a LISTA a que este cartão pertence («now» = árvore de trabalho,
+// «pr:<n>» = uma revisão aberta). As duas falam os mesmos caminhos, e a marca de
+// «visto» é do conteúdo lido naquela lista (review.js::changeId).
+function changeCardHtml(file, scope) {
+  const c = RV.classifyFile(file);
+  const badge = changeBadge(c.status);
+  const open = REV.openCard.has(c.path);
+  const diffOpen = REV.openDiff.has(c.path);
+  const seen = REV.viewed.has(RV.changeId(file, scope));
+  // um documento novo (ou removido) não tem "trechos": ele é o trecho, e o
+  // contador só repetiria o que o distintivo já disse
+  const runs = c.changedRuns && (c.status === "modified" || c.status === "renamed")
+    ? ` · ${plural(c.changedRuns, "%1 trecho mudou", "%1 trechos mudaram")}`
+    : "";
+  const counts = c.binary
+    ? t("não dá para mostrar as linhas deste arquivo")
+    : `+${c.additions} −${c.deletions}${runs}`;
+  // O texto entra na árvore só quando o cartão ABRE. Um <details> fechado guarda
+  // o conteúdo no DOM de qualquer forma, e um documento novo é UM trecho com o
+  // arquivo inteiro dentro: num projeto que ainda não salvou nada, isso são 25
+  // arquivos completos em HTML antes de a pessoa clicar em nada.
+  const bits = open ? plainBitsHtml(file) : "";
+  // aria-pressed é ESCRITO aqui, não espelhado: paintAriaState observa mutações de
+  // classe de nós que já existem, e estes nascem de innerHTML — escapavam do
+  // espelho por construção, e a seleção ficava só na cor (WCAG 1.4.1/4.1.2).
+  // Os três controles do cartão se repetem UMA VEZ POR DOCUMENTO mudado, e o
+  // rótulo visível deles é o mesmo em todos: sem o documento no nome acessível, um
+  // leitor de tela ouve «marcar como visto» N vezes sem nada que as ligue a um
+  // documento (WCAG 2.4.6). O que identifica é o CAMINHO, não o nome do arquivo:
+  // todo conhecimento se chama `context.md`, então dois cartões teriam o mesmo nome
+  // acessível (é o que o resumo visível resolve mostrando o nome E a pasta). O
+  // rótulo visível continua sendo o começo do nome acessível (2.5.3) — a mesma
+  // regra de «responder — <endereço>» e «ver a verificação ↗ — <nome>».
+  const seg = diffOpen
+    ? `<div class="segrow" role="group" aria-label="${esc(t("como mostrar a mudança"))} — ${esc(c.path)}">` +
+      `<button class="segbtn${REV.mode === "unified" ? " on" : ""}" data-rvmode="unified"` +
+      ` aria-pressed="${REV.mode === "unified"}">${t("unificado")}</button>` +
+      `<button class="segbtn${REV.mode === "split" ? " on" : ""}" data-rvmode="split"` +
+      ` aria-pressed="${REV.mode === "split"}">${t("lado a lado")}</button></div>`
+    : "";
+  const verLabel = diffOpen ? t("esconder a mudança completa") : t("ver a mudança completa");
+  const vistoLabel = seen ? t("✓ visto") : t("marcar como visto");
+  const acts = `<div class="revacts">` +
+    (c.binary ? "" : `<button class="plink" data-rvfull="${esc(c.path)}" aria-expanded="${diffOpen}"` +
+      ` aria-label="${esc(verLabel)} — ${esc(c.path)}">${verLabel}</button>`) +
+    seg +
+    `<button class="mini act" data-rvseen="${esc(c.path)}" aria-pressed="${seen}"` +
+    ` aria-label="${esc(vistoLabel)} — ${esc(c.path)}">${vistoLabel}</button></div>`;
+  return `<details class="revcard"${open ? " open" : ""} data-rvcard="${esc(c.path)}">` +
+    `<summary class="revsum"><span class="badge ${badge.cls}">${badge.label}</span>` +
+    `<span class="rvname">${esc(c.name)}</span><span class="rvpath">${esc(c.dir)}</span>` +
+    `<span class="rvmeta">${esc(counts)}</span></summary>` +
+    `<div class="rvbits">${bits}${acts}</div>` +
+    (diffOpen ? `<div class="rvdiff">${diffRowsHtml(file)}</div>` : "") +
+    `</details>`;
+}
+
+// A faixa de F11: você está com o rascunho de OUTRA pessoa na frente, e a tela
+// diz de quem é a mudança e como voltar.
+function paintEditBanner() {
+  const bar = $("revEditBanner"), msg = $("revEditMsg");
+  if (!bar) return;
+  // `p.mine` NÃO existe no PrInfo que o gh devolve, então `!p.mine` era sempre
+  // verdadeiro e o seu PRÓPRIO rascunho recebia a frase escrita para o de outra
+  // pessoa («você está editando o rascunho…»). Quem é o autor se decide pela mesma
+  // regra do resto da tela, uma vez, em review.js.
+  const pr = RV.openReviewFor(REV.prs, REV.branch, { me: reviewMe() });
+  // sem a conta lida, «você está editando o rascunho de outra pessoa» é um palpite
+  const alheio = !!pr && !pr.mine && !!reviewMe();
+  bar.hidden = !alheio;
+  if (!alheio || !msg) return;
+  msg.textContent = t(
+    "você está editando o rascunho «%1» — mudança #%2 em revisão. O que você vê é a mudança inteira contra o conhecimento oficial; salvar versão atualiza a revisão aberta.",
+    [draftNameFromBranch(REV.branch, REV.def) || REV.branch, pr.number]
+  );
+}
+
+function renderMyChanges() {
+  const list = $("revChanges"), empty = $("revEmpty");
+  if (!list || !empty) return;
+  paintEditBanner();
+  const files = REV.changes || [];
+  // R36 · o DISCO não é o editor: uma aba com texto que ainda não foi salvo fica
+  // FORA da versão, e esta tela dizia «tudo salvo» com o ● da aba dois centímetros
+  // acima. A mesma soma que a linha do tempo do painel já fazia.
+  const unsaved = dirtyDocs();
+  // R48 · o passo seguinte que o estado vazio nomeia depende do que a outra
+  // metade sabe: sem isto a frase só trocaria quando a árvore de trabalho mudasse
+  // por outro motivo, e o diagnóstico do ambiente chega DEPOIS da primeira pintura
+  const sig = JSON.stringify([REV.changesErr, REV.mode, REV.branch, teamBlockCode(),
+    files.map((f) => [f.path, f.kind, f.additions, f.deletions, f.binary]),
+    unsaved.map((d) => d.rel),
+    [...REV.openCard], [...REV.openDiff], [...REV.viewed], [...REV.rowsMore]]);
+  if (sig === REV.sig) return;   // o poll de 10s não pode fechar um cartão aberto
+  REV.sig = sig;
+  // R43 · quem tem o teclado agora, para o repintar não o perder (WCAG 2.4.3)
+  const mark = focusMarkIn(list);
+  paintUnsavedDocs(unsaved, files.length);
+
+  const title = $("revEmptyTitle"), note = $("revEmptyMsg"), go = $("revEmptyGo");
+  const slug = draftSlugFromBranch(REV.branch, REV.def);
+  paintLoading("revNowLoading", false);
+  const showEmpty = (b, hint, action) => {
+    list.innerHTML = "";
+    empty.hidden = false;
+    title.textContent = b;
+    note.textContent = hint;
+    go.hidden = !action;
+    // uma porta que age sobre UM documento diz qual, no nome acessível — e o nome
+    // do documento anterior não fica atrás de um botão escondido (DESIGN.md §9)
+    if (action && action.name) go.setAttribute("aria-label", `${action.label} — ${action.name}`);
+    else go.removeAttribute("aria-label");
+    if (action) { go.textContent = action.label; go.onclick = action.run; }
+    // WCAG 4.1.3 · o estado desta metade troca sozinho (o poll relê a árvore) e
+    // «tentar de novo» pode repintar o MESMO erro: sem a região viva do app,
+    // apertar a única porta da tela não produzia pixel novo nem anúncio. E fala
+    // só a metade que está na tela (announceRev): as duas se pintam na mesma passada.
+    announceRev("now", hint ? `${b} — ${hint}` : b);
+  };
+
+  if (REV.changesErr === "err.git_repo_required") {
+    showEmpty(t("sem versões ainda"),
+      t("este projeto ainda não guarda versões — salve a primeira para que o time possa revisar."), null);
+  } else if (REV.changesErr) {
+    // a porta é o handler, não o rótulo: e ela carrega o pendente, senão apertar
+    // não tem estado nenhum enquanto o git responde
+    showEmpty(t("não consegui ler as mudanças agora"), tErr(REV.changesErr),
+      { label: t("tentar de novo"), run: () => withPending(go, () => refreshMyChanges()) });
+  } else if (REV.changes === null) {
+    // era um estado vazio com o título «um momento…»: um <b> parado, sem dizer que
+    // a tela está trabalhando nem anunciar isso a quem não a vê
+    list.innerHTML = "";
+    empty.hidden = true;
+    paintLoading("revNowLoading", true, t("lendo o que você mudou…"));
+    return;
+  } else if (!files.length && unsaved.length) {
+    // A tela responde «o que você mudou» — e há mudança, só não no arquivo. Dizer
+    // «tudo salvo» aqui era mentir e orientar o passo errado (enviar para revisão o
+    // que ainda não existe); o passo seguinte é a aba do documento.
+    showEmpty(t("mudanças não salvas"),
+      t("texto não salvo em %1 — a mudança aparece aqui depois de salvar.",
+        [unsaved.map((d) => d.title).join(", ")]),
+      { label: t("abrir o documento"), run: () => activateTab(unsaved[0].id), name: unsaved[0].title });
+  } else if (!files.length) {
+    // O PASSO SEGUINTE TEM DE EXISTIR. «Envie para revisão quando quiser que o
+    // time leia» era a única porta nomeada por este estado, e duas frases abaixo
+    // — no MESMO cartão, na mesma passada de pintura — a tela dizia «o time ainda
+    // não está conectado» com o botão de enviar desabilitado. O mesmo
+    // teamBlockCode() que paintTeamGate lê responde antes do clique
+    // (DESIGN.md §1: todo estado vazio orienta o passo seguinte, e a interface
+    // não sabe nada que não diz).
+    const block = teamBlockCode();
+    const remedy = !!slug && !!block && block !== "err.github_unreachable";
+    showEmpty(t("tudo salvo"),
+      !slug ? t("nada mudou desde a última versão salva.")
+        : !block ? t("a versão está guardada no rascunho «%1». Envie para revisão quando quiser que o time leia.", [slug])
+          : block === "err.github_unreachable"
+            ? t("a versão está guardada no rascunho «%1». Sem conexão agora — envie para revisão quando a rede voltar.", [slug])
+            : t("a versão está guardada no rascunho «%1». Para o time ler, conecte o GitHub em Configurações.", [slug]),
+      remedy ? { label: t("abrir Configurações"), run: openCfgGit } : null);
+  } else {
+    empty.hidden = true;
+    const { seen, total } = RV.viewedCount(files, REV.viewed, "now");
+    // o contador é a metade da máquina desta linha, então vai num <span> mono
+    // próprio: pedir hint e mono no MESMO elemento pinta --sans com o espaçamento do
+    // mono (as duas regras têm a mesma especificidade e .hint vem depois, com o
+    // atalho `font:`) — a metade errada da regra sobrevivia (DESIGN.md §3)
+    list.innerHTML = `<p class="hint"><span class="mono">${esc(t("%1 de %2 vistos", [seen, total]))}</span></p>` +
+      files.map((f) => changeCardHtml(f, "now")).join("");
+    wireCardToggle(list, files);
+    wireDiffMore(list, renderMyChanges);
+    const vistos = () => {
+      const c = RV.viewedCount(REV.changes || [], REV.viewed, "now");
+      return t("%1 de %2 vistos", [c.seen, c.total]);
+    };
+    // WCAG 4.1.2 · chegar ao destino com mudança na tela também é um estado: sem
+    // isto a metade cheia era a única que não falava, e o silêncio dela era o que
+    // deixava a região viva com a frase da metade escondida.
+    announceRev("now", plural(files.length, "%1 documento mudado", "%1 documentos mudados"));
+    list.querySelectorAll("[data-rvfull]").forEach((b) => (b.onclick = () => {
+      const p = b.dataset.rvfull;
+      // ver a mudança completa mantém o cartão ABERTO: um diff desenhado dentro
+      // de um cartão fechado é um controle cujo efeito não se vê
+      if (REV.openDiff.has(p)) REV.openDiff.delete(p); else { REV.openDiff.add(p); REV.openCard.add(p); }
+      repaintFocused("data-rvfull", p, renderMyChanges);
+    }));
+    list.querySelectorAll("[data-rvmode]").forEach((b) => (b.onclick = () => {
+      REV.mode = b.dataset.rvmode;
+      repaintFocused("data-rvmode", b.dataset.rvmode, renderMyChanges);
+      if (REV.openNum) renderReviewDetail(REV.openNum);
+    }));
+    list.querySelectorAll("[data-rvseen]").forEach((b) => (b.onclick = () => {
+      const p = b.dataset.rvseen;
+      // a marca é da MUDANÇA, não do caminho: senão ela sobrevive à versão salva e
+      // um diff que ninguém abriu chega marcado como lido
+      const id = RV.changeId(RV.fileAt(files, p), "now");
+      if (REV.viewed.has(id)) REV.viewed.delete(id); else REV.viewed.add(id);
+      repaintFocused("data-rvseen", p, renderMyChanges, vistos);
+    }));
+    restoreFocusMark(list, mark);
+  }
+  // O contador da aba é o número de documentos mudados — a verdade DESTA
+  // metade, com UM pintor (o da outra metade é refreshNotifications, que lê
+  // brain_notifications). Sem isto o distintivo do HTML seria cromo morto: um
+  // "0" que ninguém escreve (DESIGN.md §9).
+  const nowBadge = $("revNowBadge");
+  if (nowBadge) { nowBadge.textContent = files.length; nowBadge.hidden = !files.length; }
+  // "Salvar versão" sem nada mudado é um controle que não faz nada: o estado
+  // vazio logo acima já diz por quê (o mesmo par do queueGenCtx).
+  const save = $("revSaveBtn");
+  if (save) {
+    const none = !REV.changesErr && Array.isArray(REV.changes) && !files.length;
+    save.disabled = none;
+    save.title = none ? t("tudo salvo") : "";
+  }
+}
+
+async function refreshMyChanges() {
+  if (!reviewOn()) return;
+  try {
+    const info = await invoke("git_branches");
+    REV.branch = (info && info.current) || ""; REV.def = (info && info.default) || "main";
+  } catch (_) { /* sem repositório: brain_git_diff diz o mesmo, com código */ }
+  try {
+    REV.changes = await invoke("brain_git_diff", { rel: null });
+    REV.changesErr = "";
+  } catch (e) {
+    REV.changes = []; REV.changesErr = String(e);
+  }
+  REV.sig = "";
+  paintReviewDraft();
+  renderMyChanges();
+}
+
+// D4 · o campo está ao lado do que ele descreve, então o botão grava direto. O
+// preço ("guarda o projeto inteiro") está escrito acima dele, antes do clique.
+// Não substitui promptVersionar(): aquele é a rota POR DOCUMENTO, onde as
+// mudanças não estão na tela.
+async function saveVersionFromReview() {
+  const field = $("revMsg");
+  const message = ((field && field.value) || "").trim();
+  if (!message) { toast(t("descreva a mudança em uma linha antes de salvar")); if (field) field.focus(); return; }
+  const draft = await currentDraftSlug();
+  // O nome do rascunho que nasce daqui é o que a tela DISSE antes do clique
+  // (paintReviewDraft), pela mesma regra de 24 letras da folha «Novo rascunho».
+  // A descrição crua ia como slug: o backend a corta em 50 caracteres e faz
+  // `checkout -b rfc/<frase>`, então uma frase de uma linha virava um rascunho
+  // que ninguém nomeou — e o usuário saía do lugar em que estava, em silêncio.
+  const slug = draft || draftSlugify(message);
+  let r;
+  try {
+    r = await invoke("brain_version", { slug, message });
+  } catch (e) {
+    // R10 · um código estável se traduz; o inglês cru do git não é mensagem que
+    // o produto escreveu. Sem esta captura a promessa rejeitada morria no
+    // console e a tela não dizia nada (DESIGN.md §1).
+    const code = String(e);
+    toast(code.startsWith("err.") ? tErr(code) : t("não consegui salvar a versão agora"), 6000);
+    clog("brain_version error: " + (code.startsWith("err.") ? code : "opaque"));
+    return;
+  }
+  // N3 · o resultado voltava e era descartado: com a árvore limpa o backend não
+  // salvava nada e a tela anunciava "versão salva" mesmo assim.
+  if (!r || !r.saved) { toast(t("nada mudou desde a última versão — nenhuma versão foi criada")); return; }
+  if (field) field.value = "";
+  const landed = draftNameFromBranch(r.branch, REV.def) || slug;
+  // TRÊS DESFECHOS, TRÊS FRASES. Salvar num rascunho em revisão empurra a versão,
+  // e o commit é local: se o empurrão não chegou, dizer «revisão atualizada» seria
+  // mentira, e dizer só «versão salva» esconderia que o time não a viu.
+  toast(
+    r.review && r.pushed
+      ? t("versão salva no rascunho «%1» — a revisão #%2 foi atualizada.", [landed, r.review])
+      : r.review
+        ? t("versão salva neste computador — a revisão #%1 recebe a atualização quando a rede voltar.", [r.review])
+        : t("a versão está guardada no rascunho «%1». Envie para revisão quando quiser que o time leia.", [landed]),
+    6000
+  );
+  if (r.warn) toast(tErr(r.warn), 5000);
+  brainRefresh();
+  refreshMyChanges();
+}
+
+/* ---- 1g.2 · o que o TIME propôs ----------------------------------------- */
+
+const prWhen = (iso) => (iso ? new Date(iso).toLocaleDateString(uiLocale(), { day: "2-digit", month: "short" }) : "");
+
+// STATES only (review.js::prChips): os contadores viram a linha de prosa da
+// linha, porque quatro objetos numa linha são dois a mais do que ela precisa.
+function chipHtml(chip) {
+  const label = chipLabel(chip);
+  const cls = chip.tone === "ok" ? "ok" : chip.tone === "danger" ? "warn" : "warn2";
+  return label ? `<span class="badge ${cls}">${esc(label)}</span>` : "";
+}
+// O RÓTULO SOZINHO. A linha da lista precisa do texto para o nome acessível (o
+// chip é pixel; quem ouve a linha tem de ouvir o estado — WCAG 4.1.2), e o
+// detalhe precisa do HTML. Uma tabela, duas saídas.
+function chipLabel(chip) {
+  return {
+    checks: chip.values.state === "ok" ? t("✓ verificações ok")
+      : chip.values.state === "fail" ? t("✗ verificações falharam") : t("verificações em curso"),
+    changes: t("mudanças pedidas"),
+    conflict: t("conflita com o oficial"),
+    ready: t("pronta para entrar"),
+    approvedByMe: t("você aprovou ✓"),
+    merged: t("entrou no oficial ✓"),
+    stale: t("aprovação de versão anterior"),
+    approved: t("aprovada"),
+  }[chip.key] || "";
+}
+
+function teamRowHtml(p, forMe) {
+  const num = esc(String(p.number || ""));
+  const who = (p.author && p.author.login) || "";
+  const draft = draftNameFromBranch(p.headRefName, REV.def);
+  const line = forMe ? t("%1 pediu a sua revisão", [who])
+    : p.mine ? t("sua mudança") : t("proposta de %1", [who]);
+  // A LINHA DIZ SE ESTÁ BLOQUEADA. Ela rolava o seu próprio chip a partir do
+  // reviewDecision e mais nada, então uma mudança com verificação falhando ou em
+  // conflito com o oficial aparecia igual a uma pronta — e é essa a pergunta que
+  // «Revisões do time» existe para responder de relance. A regra é a de review.js,
+  // e os rótulos são os do MESMO chipHtml do detalhe.
+  const chipsList = RV.listChips(p);
+  const chips = chipsList.map(chipHtml).join("");
+  const estado = chipsList.map((c) => chipLabel(c)).filter(Boolean).join(" · ");
+  const meta = `${line} · ${t("rascunho «%1» → conhecimento oficial", [draft])}` +
+    (p.updatedAt ? " · " + prWhen(p.updatedAt) : "");
+  // O nome acessível carrega o número, o assunto, o ESTADO e a linha de meta: um
+  // aria-label na linha inteira SUBSTITUÍA o conteúdo dela, e a única coisa que
+  // esta superfície existe para dizer — de quem é a vez — ficava só em pixels
+  // (WCAG 4.1.2/2.4.6). E quem abre é um <button> de verdade: o ⧉ copiar link
+  // morava DENTRO de um div[role=button], e o ARIA dá filhos apresentacionais a um
+  // role=button — a exposição do botão de dentro fica indefinida. Dois irmãos.
+  return `<div class="revcard revrow">` +
+    `<button class="rvopen" data-prdetail="${num}"` +
+    ` aria-label="${t("abrir a revisão")} #${num} — ${esc(p.title || "")}` +
+    `${estado ? " · " + esc(estado) : ""} · ${esc(meta)}">` +
+    `<span class="rvtitle">#${num} ${esc(p.title || "")}</span></button>${chips}` +
+    `<button class="mini act" data-prurl="${num}" aria-label="${t("copiar link")} #${num}">⧉ ${t("copiar link")}</button>` +
+    `<span class="rvsub">${esc(meta)}</span></div>`;
+}
+
+// A IDADE DO QUE ESTÁ NA TELA, dita. Uma lista que veio do cache é verdadeira
+// sobre o passado e pode ser falsa sobre agora, então ela não pode passar por
+// leitura de agora (DESIGN.md §1 — o estado nunca mente). Sem rede é outro fato e
+// outra frase: aquela lista não vai ser revalidada até a rede voltar.
+function paintReviewAge(total) {
+  const el = $("revAge");
+  if (!el) return;
+  const mostrar = !!total && !REV.prsFresh && !teamBlockCode();
+  el.hidden = !mostrar;
+  if (!mostrar) return;
+  el.textContent = REV.prsStale
+    ? t("sem conexão agora — esta lista é a última leitura feita. Ela atualiza sozinha quando a rede voltar.")
+    : t("esta é a leitura anterior — buscando as revisões de agora…");
+}
+
+// «AINDA NÃO CARREGUEI» É UM TERCEIRO FATO. `REV.prs || []` colapsava «nunca
+// carregou» (null) com «carregou e não há nenhuma» ([]), então na primeira entrada a
+// tela dizia «nada aqui ainda — nenhuma revisão aberta ainda» por ~1,7s enquanto
+// ainda buscava: o estado mentia, e o passo que ela orientava era enviar uma
+// mudança que talvez já estivesse lá.
+//
+// O indicador é o do chat («pensando…»): três pontos, rótulo em mono, embrulho de
+// prefers-reduced-motion, e o texto vai para o nó role=status — quem não vê a tela
+// ouve que ela está trabalhando (WCAG 4.1.3), do mesmo jeito.
+//
+// Loader e rótulo de idade são MUTUAMENTE EXCLUSIVOS por construção: o loader diz
+// «não tenho nada», o rótulo diz «tenho, mas não é de agora».
+function paintLoading(id, on, label) {
+  const el = $(id);
+  if (!el) return !!on;
+  el.hidden = !on;
+  el.innerHTML = on
+    ? `<span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>` +
+      `<span class="lbl">${esc(label || t("um momento…"))}</span>`
+    : "";
+  return !!on;
+}
+
+function renderTeamReviews() {
+  const forMeBox = $("revForMe"), mineBox = $("revMine"), empty = $("revTeamEmpty");
+  if (!forMeBox || !mineBox || !empty) return;
+  const me = (envDoctor && envDoctor.account) || "";
+  const { forMe, mine } = RV.groupReviews(REV.prs || [], { me });
+  const sig = JSON.stringify([REV.prsErr, REV.prsStale, REV.prsFresh, me,
+    (REV.prs || []).map((p) => [p.number, p.title, p.reviewDecision, p.updatedAt])]);
+  if (sig === REV.teamSig) return;
+  REV.teamSig = sig;
+
+  const list = $("revList");
+  const total = forMe.length + mine.length;
+  // nunca carregou E não há bloqueio a declarar: está buscando
+  const carregando = REV.prs === null && !REV.prsErr && !teamBlockCode();
+  paintLoading("revTeamLoading", carregando, t("buscando as revisões do time…"));
+  paintReviewAge(total);
+  const title = $("revTeamEmptyTitle"), note = $("revTeamEmptyMsg"), go = $("revTeamEmptyGo");
+  const block = teamBlockCode();
+  forMeBox.innerHTML = forMe.map((p) => teamRowHtml(p, true)).join("");
+  mineBox.innerHTML = mine.map((p) => teamRowHtml(p, false)).join("");
+  for (const s of (list ? list.querySelectorAll(".revgroup") : [])) {
+    s.hidden = !total || !(s.contains(forMeBox) ? forMe.length : mine.length);
+  }
+  empty.hidden = !!total || carregando;
+  if (!total && !carregando) {
+    if (block === "err.github_unreachable") {
+      title.textContent = t("sem conexão");
+      note.textContent = t("sem conexão agora — esta lista é a última leitura feita. Ela atualiza sozinha quando a rede voltar.");
+      go.hidden = true;
+    } else if (block) {
+      title.textContent = t("nada aqui ainda");
+      note.textContent = t("o time ainda não está conectado — conecte o GitHub em Configurações para enviar e receber revisões.");
+      go.hidden = false;
+      go.textContent = t("abrir Configurações");
+      go.onclick = openCfgGit;
+    } else if (REV.prsErr) {
+      // ARCHITECTURE §4 · o inglês cru do gh NÃO é uma mensagem que o produto
+      // escreveu. `gh_pr_list` é anterior ao contrato de códigos estáveis e
+      // devolve o stderr do gh: sem este ramo, a tela mostrava "To get started
+      // with GitHub CLI, please run: gh auth login" em inglês, no meio de uma
+      // tela em português. Um código estável se traduz; prosa de subprocesso,
+      // não — e aí o remédio é o diagnóstico, que é uma tela deste app.
+      const code = REV.prsErr.startsWith("err.");
+      title.textContent = t("não consegui ler as revisões agora");
+      // Descartar o inglês cru do gh é certo; não escrever NADA no lugar é a
+      // interface sabendo algo que não diz — o app sabe que a leitura falhou e
+      // sabe onde está o diagnóstico, então essa é a frase (DESIGN.md §1).
+      note.textContent = code ? tErr(REV.prsErr)
+        : t("o Loro não conseguiu falar com o GitHub agora — o diagnóstico em Configurações diz o que falta.");
+      go.hidden = false;
+      go.textContent = code ? t("tentar de novo") : t("ver o que falta em Configurações");
+      go.onclick = code ? () => withPending(go, () => refreshTeamReviews()) : openCfgGit;
+    } else {
+      title.textContent = t("nada aqui ainda");
+      note.textContent = t("nenhuma revisão aberta ainda — envie uma mudança para revisão do time.");
+      go.hidden = true;
+    }
+    // WCAG 4.1.3 · este texto troca sem a pessoa mexer em nada (a leitura do gh
+    // volta quando a rede volta, e «tentar de novo» repinta o mesmo erro): sem a
+    // região viva do app ele existe só em pixels. E fala só quando é ELE que está
+    // na tela: as duas metades se pintam na mesma passada (R38).
+    announceRev("team", `${title.textContent} — ${note.textContent}`);
+  }
+  const wire = (box) => {
+    box.querySelectorAll("[data-prdetail]").forEach((row) => {
+      // um <button> de verdade: Enter/Espaço e o papel vêm do elemento, e o ⧉
+      // copiar link é irmão dele — nada de controle dentro de controle
+      row.onclick = () => openReview(Number(row.dataset.prdetail));
+    });
+    box.querySelectorAll("[data-prurl]").forEach((b) => (b.onclick = () => {
+      const p = (REV.prs || []).find((x) => String(x.number) === b.dataset.prurl);
+      if (p && p.url) copyProposalUrl(p.url);
+    }));
+  };
+  wire(forMeBox); wire(mineBox);
+}
+
+// CACHE-THEN-REVALIDATE. Ler o remote custa ~1,7s, e o destino esperava essa ida
+// à rede ANTES de desenhar qualquer coisa: entrar em «Revisões do time» era uma
+// tela vazia por um segundo e meio. Agora a lista que já se conhece vai para a
+// tela na hora, a revalidação acontece atrás, e a tela repinta se o remote
+// discordar. O que a idade da leitura NÃO pode fazer é ficar escondida — quem lê
+// precisa saber que está vendo a leitura anterior (DESIGN.md §1), e é o backend
+// que diz a idade junto com os dados.
+async function refreshTeamReviews() {
+  // gastar um processo do gh e uma ida à rede por um destino que ninguém está
+  // olhando é desperdício puro — a mesma regra do brain_knowledge_graph.
+  if (!reviewOn()) return;
+  if (teamBlockCode()) { REV.teamSig = ""; renderTeamReviews(); return; }
+  // o que já se sabe, imediatamente: sem isto a primeira pintura espera a rede
+  if (REV.prs && REV.prs.length) { REV.prsFresh = false; REV.teamSig = ""; renderTeamReviews(); }
+  try {
+    const read = await invoke("gh_pr_list");
+    REV.prs = read.prs;
+    // ageMs === 0 é a leitura que ACABOU de sair da rede; qualquer coisa acima
+    // disso veio do cache e a tela tem de dizer isso
+    REV.prsFresh = !read.ageMs;
+    REV.prsErr = ""; REV.prsStale = false;
+  } catch (e) {
+    // a última leitura continua na tela, dita como o que é
+    REV.prsErr = String(e); REV.prsStale = !!(REV.prs && REV.prs.length); REV.prsFresh = false;
+  }
+  REV.teamSig = "";
+  renderTeamReviews();
+  renderMyChanges();   // a faixa de F11 depende de saber os rascunhos em revisão
+}
+
+/* ---- 1g.3 · uma revisão aberta, lida dentro do Loro --------------------- */
+
+// A vista trocou: o teclado vai com ela. Sem isto o foco caía no <body>, e como
+// #revOpen vem DEPOIS de #revList no DOM, a lista à qual a pessoa acabou de voltar
+// ficava atrás do ponto de partida do Tab — só Shift+Tab ou o mouse chegavam nela
+// (WCAG 2.4.3). O padrão é o do enterOverlay/leaveOverlay, aplicado a uma troca de
+// vista dentro do destino.
+function backToReviewList() {
+  const era = REV.openNum;
+  REV.openNum = 0; REV.detail = null; REV.detailDiff = null; REV.detailErr = "";
+  const list = $("revList"), open = $("revOpen");
+  if (list) list.hidden = false;
+  if (open) open.hidden = true;
+  REV.teamSig = "";
+  renderTeamReviews();
+  // o foco volta para A LINHA que foi aberta (ela acabou de ser redesenhada)
+  const row = era && list && list.querySelector(`[data-prdetail="${era}"]`);
+  if (row) { try { row.focus(); } catch (_) {} }
+  else { const tab = document.querySelector('#revTabs [data-revtab="team"]'); if (tab) tab.focus(); }
+}
+
+function openReview(number) {
+  REV.openNum = number;
+  REV.detail = null; REV.detailDiff = null; REV.detailErr = "";
+  const list = $("revList"), open = $("revOpen");
+  if (list) list.hidden = true;
+  if (open) open.hidden = false;
+  renderReviewDetail(number);
+  loadReviewDetail(number);
+  // o primeiro controle da revisão aberta é o que a fecha: o foco entra por ele, e
+  // o leitor de tela ouve que a vista trocou em vez de ficar sem nada focado
+  const back = $("revBack");
+  if (back) { try { back.focus(); } catch (_) {} }
+  announce(t("revisão #%1 aberta", [number]));
+}
+
+async function loadReviewDetail(number) {
+  if (!reviewOn()) return;
+  // As duas leituras são INDEPENDENTES e eram seriais: `gh pr view` (~1,7s) e só
+  // então `gh pr diff` (~2,0s), 3,7s antes de a revisão aparecer. Nada no diff
+  // decide o que pedir na descrição, então elas saem juntas e a espera passa a ser
+  // a da mais lenta. allSettled porque o texto da revisão vale sem o diff — quem
+  // falha é o diff, e a tela ainda tem o que ler.
+  const [det, dif] = await Promise.allSettled([
+    invoke("gh_pr_detail", { number }),
+    invoke("gh_pr_diff", { number }),
+  ]);
+  if (det.status === "fulfilled") {
+    REV.detail = det.value; REV.detailErr = "";
+  } else {
+    REV.detail = null; REV.detailErr = String(det.reason);
+  }
+  REV.detailDiff = dif.status === "fulfilled" ? dif.value : [];
+  if (REV.openNum === number) renderReviewDetail(number);
+}
+
+function decisionHtml(pr, st) {
+  const need = st.approvals.need || 1;
+  const draft = draftNameFromBranch(pr.headRefName, REV.def);
+  const waiting = (pr.reviewRequests || []).map((r) => r.login || r.slug || r.name).filter(Boolean).join(", ");
+  const author = (pr.author && pr.author.login) || "";
+  if (st.merged) {
+    return `<p class="pmnote">${esc(t("✓ entrou no conhecimento oficial — o rascunho «%1» foi encerrado.", [draft]))}</p>`;
+  }
+  if (st.canMerge) {
+    return `<h3 class="rvhead">${t("Sua revisão")}</h3>` +
+      `<p class="hint">${esc(t("%1 de %1 aprovações · verificações ok. Juntar cria a versão no conhecimento oficial e encerra o rascunho «%2».", [st.approvals.have, draft]))}</p>` +
+      `<div class="revacts"><button class="btn solid" data-prmerge>${t("Juntar ao conhecimento oficial")}</button></div>`;
+  }
+  if (st.canDecide) {
+    const failing = st.checks === "fail"
+      ? `<p class="hint">${t("as verificações ainda falham — mesmo aprovada, a mudança só entra quando elas passarem.")}</p>` : "";
+    // POR QUE A REVISÃO VOLTOU. Uma decisão minha pode vencer (o autor salvou
+    // outra versão) ou ser pedida de novo: o bloco oferecia o ESTADO antigo
+    // («você aprovou») sem controle nenhum, numa linha que a própria lista tinha
+    // filado em «Aguardam a sua revisão» — e a frase que o acompanhava prometia
+    // uma entrada que o GitHub não vai contar (DESIGN.md §1: o estado nunca
+    // mente; F8 tem de fechar).
+    const back = (st.stale && st.decided === "approved"
+      ? `<p class="pmnote">${t("a sua aprovação era de uma versão anterior: uma nova versão foi salva depois dela, e ela não conta mais.")}</p>`
+      : st.stale && st.decided === "changes_requested"
+        ? `<p class="pmnote">${t("o seu pedido de mudanças era de uma versão anterior: uma nova versão foi salva depois dele.")}</p>`
+        : "") +
+      (st.askedAgain && st.decided
+        ? `<p class="pmnote">${esc(t("%1 pediu a sua revisão de novo.", [author || t("alguém do time")]))}</p>` : "");
+    return `<h3 class="rvhead">${t("Sua revisão")}</h3>` + back +
+      `<label class="wfield stack"><span>${t("um comentário para o time (opcional)")}</span>` +
+      `<input id="revDecisionMsg" type="text" /></label>` +
+      `<p class="hint">${esc(t("aprovar conta como uma das %1 aprovações que a mudança precisa para entrar no conhecimento oficial.", [need]))}</p>` +
+      failing +
+      `<div class="revacts"><button class="btn solid" data-praction="approve">${t("✓ Aprovar")}</button>` +
+      `<button class="btn" data-praction="request_changes">${t("pedir mudanças")}</button>` +
+      `<button class="btn" data-praction="comment">${t("só comentar")}</button></div>`;
+  }
+  if (st.decided === "approved") {
+    return `<p class="pmnote"><b>${t("você aprovou")}</b></p>` +
+      `<p class="hint">${t("a mudança entra no conhecimento oficial quando todas as aprovações chegarem.")}</p>`;
+  }
+  if (st.blocked === "conflict") {
+    return `<p class="hint">${t("o conhecimento oficial andou desde que você enviou — esta mudança conflita com ele. Resolva as diferenças no terminal ou no GitHub; nada se perde.")}</p>`;
+  }
+  if (st.blocked === "changes") {
+    const who = (pr.reviews || []).filter((r) => r.state === "CHANGES_REQUESTED").map((r) => r.author)[0] || "";
+    // QUEM ESTÁ LENDO. O bloco era byte a byte o mesmo para os dois papéis: o
+    // revisor lia o próprio login em terceira pessoa («ana pediu mudanças») e
+    // recebia o remédio do AUTOR — salvar uma nova versão num rascunho que não é
+    // dele. O app sabe as duas coisas (st.decided diz que o pedido é meu, st.mine
+    // diz que o rascunho é meu).
+    return `<p class="pmnote"><b>${st.decided === "changes_requested"
+      ? esc(t("você pediu mudanças"))
+      : esc(t("%1 pediu mudanças", [who]))}</b></p>` +
+      `<p class="hint">${st.mine
+        ? t("responda na conversa, salve uma nova versão no rascunho e peça nova revisão — a mudança não entra no oficial enquanto o pedido estiver aberto.")
+        : esc(t("a mudança não entra no oficial enquanto o pedido estiver aberto — %1 responde na conversa e salva uma nova versão, e você é avisado aqui quando pedirem a sua revisão de novo.",
+          [author || t("alguém do time")]))}</p>`;
+  }
+  if (st.mine) {
+    return `<p class="hint">${esc(t("esta mudança é sua — falta a aprovação de %1. Você será avisado aqui quando alguém revisar.", [waiting || t("alguém do time")]))}</p>`;
+  }
+  return `<p class="hint">${t("nova revisão pedida")}</p>`;
+}
+
+// ONDE a conversa acontece — o endereço que a distingue das outras da mesma
+// revisão. Uma função porque a linha, o nome do botão e a folha da resposta dizem a
+// mesma coisa, e três cópias divergem.
+function threadWhere(th) {
+  return th && th.path ? `${th.path}${th.line ? ":" + th.line : ""}` : "";
+}
+
+// O QUE O AUTOR ESCREVEU, como ele escreveu. A descrição de uma revisão e cada
+// comentário da conversa são markdown — é o que o modelo do time pede e o que o
+// GitHub guarda: títulos, listas, tabelas, ênfase, bloco de código. As duas
+// superfícies escapavam o texto e o despejavam cru, então `**assim**`, `> assim`
+// e uma tabela chegavam à tela como sintaxe da máquina, na metade da tela cuja
+// única função é ser LIDA (DESIGN.md §5 — a sintaxe da máquina não chega à
+// superfície; ADR-0018 — a análise é a saída do produto). O mesmo mdRender do
+// leitor de documentos, com as mesmas opções, para que uma ligação e um
+// localizador sejam marcados aqui como são lá.
+function reviewProse(src) {
+  return mdRender(String(src === null || src === undefined ? "" : src), docOpts());
+}
+function reviewProseHtml(pr) {
+  return (pr.sections || []).length
+    ? pr.sections.map((s) => `<div class="rvbits"><span class="rvlabel">${esc(s.label)}</span>` +
+      `<div class="rvbit rvprose">${reviewProse(s.text)}</div></div>`).join("")
+    : `<div class="rvbits"><div class="rvbit rvprose">` +
+      (pr.body ? reviewProse(pr.body) : esc(t("sem descrição"))) + `</div></div>`;
+}
+
+// O GitHub guarda uma sugestão de mudança como uma cerca ```suggestion dentro do
+// comentário. A ADR afirmava «a sugestão é renderizada só-leitura» e isso nunca
+// existiu: a cerca chegava como bloco de código sem nome, indistinguível de
+// qualquer outro. Aplicar a sugestão continua fora (não há primitivo do gh, e
+// adivinhar um patch sobre conhecimento é destrutivo — ADR-0027 item 3), mas ela ao
+// menos se apresenta pelo que é, com a saída dita.
+function suggestionHtml(body) {
+  const m = /```suggestion\r?\n([\s\S]*?)```/.exec(String(body || ""));
+  if (!m) return "";
+  return `<div class="rvsug"><span class="rvlabel">${esc(t("sugestão de mudança"))}</span>` +
+    `<pre>${esc(m[1].replace(/\s+$/, ""))}</pre>` +
+    `<p class="hint">${esc(t("aplicar uma sugestão acontece no GitHub — o Loro não reescreve o seu conhecimento por adivinhação."))}</p></div>`;
+}
+
+function threadHtml(th) {
+  const comments = (th.comments || []).map((c) =>
+    `<div class="rvbit"><span class="rvlabel">${esc(c.author || "")} · ${esc(prWhen(c.when))}</span>` +
+    `<div class="rvprose">${reviewProse(String(c.body || "").replace(/```suggestion\r?\n[\s\S]*?```/, ""))}</div>` +
+    suggestionHtml(c.body) + `</div>`
+  ).join("");
+  const where = threadWhere(th);
+  return `<div class="revcard"><div class="revrow">` +
+    `<span class="rvtitle">${esc(where)}</span>` +
+    (th.resolved ? `<span class="badge ok">${t("resolvida ✓")}</span>` : "") +
+    (th.outdated ? `<span class="badge warn2">${t("aprovação de versão anterior")}</span>` : "") +
+    `</div>` +
+    (th.excerpt ? `<div class="rvdiff">${th.excerpt.split("\n").map((l) =>
+      `<div class="rvrow uni"><span class="rvnum"></span><span class="rvnum"></span>` +
+      `<span class="rvsign"></span><span class="rvtxt">${esc(l)}</span></div>`).join("")}</div>` : "") +
+    `<div class="rvbits">${comments}` +
+    // «responder» repetido em N conversas não diz A QUAL (WCAG 2.4.6): o nome
+    // acessível carrega o endereço da conversa, e o rótulo visível é o começo dele
+    `<div class="revacts"><button class="plink" data-prreply="${th.id}"` +
+    ` aria-label="${t("responder")} — ${esc(where || t("a conversa da revisão"))}">${t("responder")}</button>` +
+    `</div></div></div>`;
+}
+
+// O que está bloqueando, COM NOME. A lista de verificações chegava inteira do
+// backend (git.rs::CheckRun tem nome e endereço) e a tela a dobrava numa palavra
+// só: o revisor era avisado de que a mudança não entra e não tinha como saber por
+// qual verificação, nem onde vê-la — a interface sabendo algo que não diz
+// (DESIGN.md §1). A saída de cada linha é a MESMA porta do app (openProposalUrl).
+function checksHtml(pr) {
+  const bad = RV.failingChecks((pr || {}).checks);
+  if (!bad.length) return "";
+  // O título já diz o estado do grupo: repetir um distintivo em cada linha são N
+  // objetos que não dizem nada de novo (DESIGN.md §7).
+  return `<h3 class="rvhead">${t("Verificações que falharam")}</h3>` +
+    bad.map((c, i) => {
+      const name = c.name || t("verificação sem nome");
+      return `<div class="revcard"><div class="revrow">` +
+        `<span class="rvtitle">${esc(name)}</span>` +
+        // "ver a verificação" repetido em N linhas não diz QUAL (WCAG 2.4.6), e o
+        // rótulo visível é o começo do nome acessível (2.5.3)
+        (c.url ? `<button class="mini act" data-prcheck="${i}"` +
+          ` aria-label="${esc(t("ver a verificação ↗"))} — ${esc(name)}">${t("ver a verificação ↗")}</button>` : "") +
+        `</div></div>`;
+    }).join("");
+}
+
+function renderReviewDetail(number) {
+  const head = $("revPrHead"), body = $("revPrBody"), files = $("revPrFiles"),
+    dec = $("revPrDecision"), threads = $("revPrThreads"), checks = $("revPrChecks");
+  if (!head) return;
+  const pr = REV.detail;
+  if (!pr) {
+    if (checks) checks.innerHTML = "";
+    // ABRIR UMA REVISÃO SÃO ~2s DE REDE, e a espera era a palavra «um momento…»
+    // colada no número, sem dizer que a tela está trabalhando e sem anunciar isso a
+    // quem não a vê. Mesmo indicador das duas listas e do chat.
+    head.innerHTML = REV.detailErr
+      ? `<span class="rvtitle">#${esc(String(number))}</span>` +
+        `<span class="badge warn">${esc(tErr(REV.detailErr))}</span>`
+      : `<span class="rvtitle">#${esc(String(number))}</span>` +
+        `<p class="rvloading" role="status" aria-live="polite">` +
+        `<span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>` +
+        `<span class="lbl">${esc(t("lendo a revisão…"))}</span></p>`;
+    body.innerHTML = ""; files.innerHTML = ""; threads.innerHTML = "";
+    // Uma revisão que não abre ainda tem saída: o endereço existe na lista.
+    const known = (REV.prs || []).find((p) => p.number === number);
+    dec.innerHTML = REV.detailErr && known && known.url
+      ? `<div class="revacts"><button class="btn" data-propen="${esc(known.url)}">${t("abrir no GitHub ↗")}</button></div>`
+      : "";
+    dec.querySelectorAll("[data-propen]").forEach((b) => (b.onclick = () => openProposalUrl(b.dataset.propen)));
+    return;
+  }
+  const me = (envDoctor && envDoctor.account) || "";
+  const st = RV.reviewState(pr, { me });
+  const chips = RV.prChips(pr, { me }).map(chipHtml).join("");
+  const draft = draftNameFromBranch(pr.headRefName, REV.def);
+  // R42 · a revisão aberta é o ITEM da tela: sem cabeçalho próprio, o h1 continuava
+  // «Revisão», as seções dela eram h2 e a navegação por cabeçalhos lia três seções
+  // de um item que nada nomeava (WCAG 1.3.1/2.4.6).
+  head.innerHTML = `<h2 class="rvtitle">#${esc(String(pr.number))} ${esc(pr.title || "")}</h2>${chips}` +
+    `<span class="rvsub">${esc(t("rascunho «%1» → conhecimento oficial", [draft]))} · ` +
+    `${esc(t("%1 de %2 aprovações", [st.approvals.have, st.approvals.need]))}` +
+    `${st.comments ? " · " + esc(plural(st.comments, "%1 comentário", "%1 comentários")) : ""}</span>` +
+    `<div class="revacts">` +
+    `<button class="mini act" data-prurl2 aria-label="${t("copiar link")} #${esc(String(pr.number))}">⧉ ${t("copiar link")}</button>` +
+    `<button class="mini act" data-propen>${t("abrir no GitHub ↗")}</button>` +
+    (pr.headRefName && pr.headRefName !== REV.branch
+      ? `<button class="mini act" data-predit>${t("⎇ abrir para editar")}</button>` : "") +
+    `</div>`;
+  body.innerHTML = reviewProseHtml(pr);
+  if (checks) {
+    checks.innerHTML = checksHtml(pr);
+    const bad = RV.failingChecks(pr.checks);
+    checks.querySelectorAll("[data-prcheck]").forEach((b) =>
+      (b.onclick = () => openProposalUrl((bad[Number(b.dataset.prcheck)] || {}).url)));
+  }
+  const fl = REV.detailDiff || [];
+  files.innerHTML = `<h3 class="rvhead">${t("O que muda")}</h3>` +
+    (fl.length ? fl.map((f) => changeCardHtml(f, `pr:${number}`)).join("")
+      : `<p class="hint">${(pr.files || []).map((f) => esc(f.path)).join(", ") || t("um momento…")}</p>`);
+  wireCardToggle(files, fl);
+  wireDiffMore(files, () => renderReviewDetail(number));
+  const repinta = () => renderReviewDetail(number);
+  const vistosPr = () => {
+    const c = RV.viewedCount(REV.detailDiff || [], REV.viewed, `pr:${number}`);
+    return t("%1 de %2 vistos", [c.seen, c.total]);
+  };
+  files.querySelectorAll("[data-rvfull]").forEach((b) => (b.onclick = () => {
+    const p = b.dataset.rvfull;
+    if (REV.openDiff.has(p)) REV.openDiff.delete(p); else { REV.openDiff.add(p); REV.openCard.add(p); }
+    repaintFocused("data-rvfull", p, repinta);
+  }));
+  files.querySelectorAll("[data-rvmode]").forEach((b) => (b.onclick = () => {
+    REV.mode = b.dataset.rvmode; REV.sig = "";
+    repaintFocused("data-rvmode", b.dataset.rvmode, repinta);
+    renderMyChanges();
+  }));
+  files.querySelectorAll("[data-rvseen]").forEach((b) => (b.onclick = () => {
+    const p = b.dataset.rvseen;
+    // a marca é da mudança DESTA revisão: a árvore de trabalho fala os mesmos
+    // caminhos, e uma marca compartilhada atravessaria de uma lista para a outra
+    const id = RV.changeId(RV.fileAt(REV.detailDiff || [], p), `pr:${number}`);
+    if (REV.viewed.has(id)) REV.viewed.delete(id); else REV.viewed.add(id);
+    repaintFocused("data-rvseen", p, repinta, vistosPr);
+  }));
+  dec.innerHTML = decisionHtml(pr, st);
+  threads.innerHTML = (pr.threads || []).length
+    ? `<h3 class="rvhead">${t("Conversa")}</h3>` + pr.threads.map(threadHtml).join("")
+    : "";
+  wireReviewDetail(pr, st);
+}
+
+function wireReviewDetail(pr, st) {
+  const head = $("revPrHead"), dec = $("revPrDecision"), threads = $("revPrThreads");
+  head.querySelectorAll("[data-prurl2]").forEach((b) => (b.onclick = () => copyProposalUrl(pr.url)));
+  head.querySelectorAll("[data-propen]").forEach((b) => (b.onclick = () => openProposalUrl(pr.url)));
+  head.querySelectorAll("[data-predit]").forEach((b) => (b.onclick = () => openForEditing(pr)));
+  dec.querySelectorAll("[data-praction]").forEach((b) => (b.onclick = () => sendReviewDecision(b, pr, b.dataset.praction)));
+  dec.querySelectorAll("[data-prmerge]").forEach((b) => (b.onclick = () => mergeReview(b, pr, st)));
+  threads.querySelectorAll("[data-prreply]").forEach((b) =>
+    (b.onclick = () => promptReply(pr, threadOf(pr, Number(b.dataset.prreply)))));
+}
+
+async function sendReviewDecision(btn, pr, action) {
+  const field = $("revDecisionMsg");
+  const body = ((field && field.value) || "").trim();
+  if (action === "request_changes" && !body) { toast(t("escreva o que precisa mudar antes de pedir mudanças")); if (field) field.focus(); return; }
+  if (action === "comment" && !body) { toast(t("escreva o comentário primeiro")); if (field) field.focus(); return; }
+  await withPending(btn, async () => {
+    try {
+      await invoke("gh_pr_review", { number: pr.number, action, body });
+    } catch (e) {
+      toast(tErr(String(e)), 5000);
+      return;
+    }
+    const who = (pr.author && pr.author.login) || "";
+    toast(action === "approve" ? t("revisão registrada — %1 será avisado", [who])
+      : action === "request_changes" ? t("pedido de mudanças enviado") : t("comentário enviado"));
+    await loadReviewDetail(pr.number);
+    maybeRefreshNotifications(true);
+  });
+}
+
+async function mergeReview(btn, pr, st) {
+  await withPending(btn, async () => {
+    try {
+      await invoke("gh_pr_merge", { number: pr.number, headRef: pr.headRefName || "" });
+    } catch (e) { toast(tErr(String(e)), 6000); return; }
+    toast(t("mudança entrou no conhecimento oficial ✓"), 6000);
+    // gh troca de rascunho para apagar o antigo: o que está na tela mudou
+    await loadReviewDetail(pr.number);
+    brainRefresh();
+    refreshMyChanges();
+    refreshTeamReviews();
+    maybeRefreshNotifications(true);
+  });
+}
+
+// A folha da resposta DIZ a qual conversa ela responde: o título era «sua
+// resposta», o campo era «sua resposta» e nada na tela — nem na árvore de
+// acessibilidade — dizia de qual das conversas se tratava, então dava para postar
+// na errada (WCAG 2.4.6; DESIGN.md §1: o estado nunca mente). O trecho citado é a
+// mesma marca que a conversa mostra na lista.
+function threadOf(pr, id) {
+  return (((pr && pr.threads) || []).find((x) => Number(x.id) === id)) || { id };
+}
+function promptReply(pr, th) {
+  const where = threadWhere(th);
+  const autor = ((th.comments || [])[0] || {}).author || "";
+  openModal(
+    where ? t("responder a %1", [where]) : t("sua resposta"),
+    (autor ? `<p class="pmnote">${esc(t("%1 escreveu nesta conversa", [autor]))}</p>` : "") +
+      (th.excerpt ? `<div class="rvbit before">${esc(String(th.excerpt).split("\n").slice(0, 3).join("\n"))}</div>` : "") +
+      `<label class="wfield stack"><span>${t("sua resposta")}</span>` +
+      `<input id="revReplyMsg" type="text" /></label>`,
+    t("enviar"),
+    async () => {
+      const body = (($("revReplyMsg") && $("revReplyMsg").value) || "").trim();
+      if (!body) { toast(t("escreva a resposta primeiro")); return; }
+      // o erro SOBE: a folha fica aberta com o texto digitado e o motivo dentro
+      // dela, em vez de fechar e virar um toast que expira (R17)
+      await invoke("gh_pr_reply", { number: pr.number, commentId: th.id, body });
+      toast(t("resposta enviada"));
+      loadReviewDetail(pr.number);
+    }
+  );
+}
+
+// F11 · abrir o rascunho de outra pessoa passa pelo MESMO preço de qualquer
+// troca de rascunho — e guarda de onde viemos, para "voltar ao meu rascunho"
+// não ser um botão que adivinha.
+async function openForEditing(pr) {
+  let info;
+  try { info = await invoke("git_branches"); } catch (e) { toast(tErr(String(e))); return; }
+  const target = pr.headRefName;
+  const stand = (info.branches || []).find((b) => b.name === target);
+  if (!stand) { toast(t("este rascunho ainda não está neste computador — abra no GitHub")); return; }
+  REV.cameFrom = info.current || "";
+  const price = switchPrice(stand, info.current, info.default);
+  const land = () => { goDest("review", "now"); refreshMyChanges(); };
+  if (price) { confirmSwitchBranch(target, price); land(); return; }
+  try { afterSwitch(await invoke("git_switch_branch", { branch: target }), null, info.default); land(); }
+  catch (e) { toast(tErr(String(e)), 5000); }
+}
+
+async function backToMyDraft() {
+  if (!REV.cameFrom) return openBranchPicker();
+  try { afterSwitch(await invoke("git_switch_branch", { branch: REV.cameFrom }), null, REV.def); REV.cameFrom = ""; refreshMyChanges(); }
+  catch (e) { toast(tErr(String(e)), 5000); }
+}
+
+/* ---- o destino inteiro --------------------------------------------------- */
+
+function renderDestReview() {
+  paintReviewIntro();
+  paintTeamGate();
+  paintReviewDraft();
+  renderMyChanges();
+  renderTeamReviews();
+}
+
+function refreshReview() {
+  if (!reviewOn()) return;
+  paintReviewIntro();
+  paintTeamGate();
+  refreshMyChanges();
+  refreshTeamReviews();
+  maybeRefreshNotifications(true);
 }
 
 // ============================ produção: modal genérico (ADR-0009) ============================
@@ -7451,7 +8997,27 @@ async function openReviewsSheet() {
 const PM = {
   wrap: $("pmWrap"), title: $("pmTitle"), body: $("pmBody"),
   confirm: $("pmConfirm"), cancel: $("pmCancel"), close: $("pmClose"),
+  err: $("pmErr"), errMsg: $("pmErrMsg"), errGo: $("pmErrGo"),
 };
+// R17 · o motivo de um confirmar que falhou, DENTRO da folha. Achado no app
+// rodando: enviar para revisão sem o gh autenticado fechava a folha, apagava os
+// sete campos digitados e o único aviso do erro expirava com o toast — a tela
+// voltava a ser exatamente o que era antes da tentativa. Quando o app SABE o
+// remédio (é o ambiente do time que falta), ele é um botão — o mesmo da recusa
+// prévia de F5, não uma segunda regra.
+function pmError(code) {
+  if (!PM.err) return;
+  const c = String(code || "");
+  PM.err.hidden = !c;
+  if (PM.errGo) PM.errGo.hidden = true;
+  if (!c) return;
+  // tErr traduz um código estável e devolve o próprio texto quando não é um: um
+  // msgid lançado pelo handler já é mensagem escrita pelo produto
+  const msg = tErr(c);
+  PM.errMsg.textContent = msg;
+  if (PM.errGo && ENV_REMEDY.includes(c)) PM.errGo.hidden = false;
+  announce(msg);
+}
 let pmOnConfirm = null;
 let pmOnDismiss = null;
 // Which sheet is on screen. A confirm handler may open the NEXT sheet while the
@@ -7466,6 +9032,12 @@ let pmGen = 0;
 // único, e não em cada caminho de saída.
 function openModal(title, bodyHtml, confirmLabel, onConfirm, onDismiss) {
   pmGen++;
+  // R41 · UMA FOLHA QUE SUBSTITUI OUTRA («＋ novo rascunho…» dentro da folha dos
+  // rascunhos, «configurar o modelo» dentro da do envio) troca o título e o corpo
+  // com a camada já na pilha: enterOverlay volta na hora e o innerHTML abaixo
+  // destrói justamente o nó que tinha o foco, então o teclado ficava no <body> e
+  // nada dizia que o diálogo mudou de nome (WCAG 2.4.3/4.1.2).
+  const trocada = !PM.wrap.hidden;
   PM.title.textContent = title;
   PM.body.innerHTML = bodyHtml;
   PM.confirm.textContent = confirmLabel || t("confirmar");
@@ -7475,15 +9047,23 @@ function openModal(title, bodyHtml, confirmLabel, onConfirm, onDismiss) {
   PM.confirm.removeAttribute("aria-busy");
   pmOnConfirm = onConfirm || null;
   pmOnDismiss = onDismiss || null;
+  pmError("");   // uma folha nova não herda o erro da anterior
   PM.wrap.hidden = false;
   // o foco entra na folha: o primeiro campo do corpo, ou o confirmar
-  enterOverlay(PM.wrap, () => PM.body.querySelector("input, select, textarea, button")
-    || (PM.confirm.hidden ? PM.close : PM.confirm), closeModal);
+  const first = () => PM.body.querySelector("input, select, textarea, button")
+    || (PM.confirm.hidden ? PM.close : PM.confirm);
+  enterOverlay(PM.wrap, first, closeModal);
+  if (trocada) {
+    const n = first();
+    if (n) { try { n.focus(); } catch (_) {} }
+    announce(title);   // o diálogo é OUTRO: quem não vê a tela ouve o nome novo
+  }
   return PM.body;
 }
 function closeModal() {
   const dismissed = pmOnDismiss;
   PM.wrap.hidden = true;
+  pmError("");   // o motivo morre com a folha que o mostrou
   pmOnConfirm = null;
   pmOnDismiss = null;
   leaveOverlay(PM.wrap);
@@ -7491,10 +9071,14 @@ function closeModal() {
 }
 PM.close.addEventListener("click", closeModal);
 PM.cancel.addEventListener("click", closeModal);
+// a folha NÃO fecha: arrumar o que falta em Configurações e voltar encontra os
+// campos como estavam, e o confirmar continua armado
+if (PM.errGo) PM.errGo.addEventListener("click", () => openCfgGit());
 PM.wrap.addEventListener("click", (e) => { if (e.target === PM.wrap) closeModal(); });
 PM.confirm.addEventListener("click", async () => {
   if (!pmOnConfirm) return closeModal();
   // confirmar NÃO é desistir: o onConfirm é que vai responder a quem espera
+  const dismissed = pmOnDismiss;
   pmOnDismiss = null;
   // N8 · the sheet used to vanish BEFORE the await: "salvar versão" runs a
   // `git fetch` that can take ~10s, and the screen said nothing at all in the
@@ -7509,14 +9093,31 @@ PM.confirm.addEventListener("click", async () => {
   PM.confirm.disabled = true;
   PM.confirm.setAttribute("aria-busy", "true");
   PM.confirm.textContent = t("um momento…");
+  let failed = "";
   try { await fn(); }
-  catch (e) { toast(tErr(String(e))); clog("modal confirm error: " + e); }
+  catch (e) {
+    // Um STRING lançado é mensagem escrita pelo produto — o idioma do app: o
+    // `invoke` rejeita com o código err.* do backend, e um handler recusa lançando
+    // o próprio msgid. Um Error é maquinaria, e ninguém lê stack numa folha.
+    failed = typeof e === "string" && e ? e : t("não deu para concluir agora");
+    // BR-8 · um erro opaco pode carregar caminho ou conteúdo: só o código vai ao log
+    clog("modal confirm error: " + (failed.startsWith("err.") ? failed : "opaque"));
+  }
   finally {
     if (gen === pmGen) {
       PM.confirm.disabled = false;
       PM.confirm.removeAttribute("aria-busy");
       PM.confirm.textContent = label;
-      closeModal();
+      // R17 · uma folha que FALHOU fica na tela. Fechá-la apagava os campos que a
+      // pessoa acabou de escrever e o motivo saía junto, com o toast: a tela
+      // voltava a ser a de antes da tentativa, sem registro dela (DESIGN.md §1 —
+      // todo caminho de falha deixa uma saída). Ela volta armada, e quem espera a
+      // folha continua sendo avisado por qualquer uma das cinco saídas.
+      if (failed) {
+        pmOnConfirm = fn;
+        pmOnDismiss = dismissed;
+        pmError(failed);
+      } else closeModal();
     }
   }
 });
@@ -7602,11 +9203,11 @@ async function startPromotion(sourceRel) {
     : t("sem anexos — apenas o texto será mesclado no conhecimento");
   const opts = ctxs.map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join("");
   const html =
-    `<p class="pmnote mono">${t("não destrutivo — o original permanece no seu espaço pessoal (rascunho). Áudio nunca é copiado; vira referência em texto.")}</p>` +
+    `<p class="pmnote">${t("não destrutivo — o original permanece no seu espaço pessoal (rascunho). Áudio nunca é copiado; vira referência em texto.")}</p>` +
     `<label class="pmfield"><span class="mono">${t("de")}</span><span class="mono pmsrc">${esc(sourceRel)}</span></label>` +
     `<label class="pmfield"><span class="mono">${t("destino")}</span><select id="pmDest" class="mini-select">${opts}</select></label>` +
-    `<div class="pmphead mono">${t("o que será juntado ao conhecimento do tema:")}</div>` +
-    `<div class="pmpreview mono">${preview}</div>`;
+    `<div class="pmphead">${t("o que será juntado ao conhecimento do tema:")}</div>` +
+    `<div class="pmpreview">${preview}</div>`;
   openModal(t("Juntar a um conhecimento"), html, t("juntar"), async () => {
     const destContext = $("pmDest").value;
     const r = await invoke("brain_promote", { sourceRel, destContext, mode: "merge" });
@@ -7619,10 +9220,10 @@ async function startPromotion(sourceRel) {
 // after a promotion, offer to version+propose right away (existing ADR-0004 flow)
 function offerPropose(r, destContext) {
   const files = (r && r.stagedFiles) || [];
-  const entry = r && r.changelogEntry ? `<div class="pmphead mono">CHANGELOG: ${esc(String(r.changelogEntry))}</div>` : "";
+  const entry = r && r.changelogEntry ? `<div class="pmphead">CHANGELOG: ${esc(String(r.changelogEntry))}</div>` : "";
   const html =
-    `<p class="pmnote mono">${t("juntado ao conhecimento")} <b>${esc(destContext)}</b> — ${t("nenhuma versão foi salva ainda — nada foi destruído.")}</p>` +
-    `<div class="pmpreview mono">${files.length ? files.map((f) => "• " + esc(f)).join("<br>") : t("context.md atualizado")}</div>${entry}`;
+    `<p class="pmnote">${t("juntado ao conhecimento")} <b>${esc(destContext)}</b> — ${t("nenhuma versão foi salva ainda — nada foi destruído.")}</p>` +
+    `<div class="pmpreview">${files.length ? files.map((f) => "• " + esc(f)).join("<br>") : t("context.md atualizado")}</div>${entry}`;
   openModal(t("Mudança pronta"), html, t("salvar versão agora"), async () => { B.gitBtn.click(); });
 }
 
@@ -7636,8 +9237,8 @@ function migrationBodyHtml(rep) {
     .flatMap((k) => (Array.isArray(rep && rep[k]) ? rep[k] : []))
     .map((m) => (typeof m === "string" ? m : `${m.from || "?"} → ${m.to || "?"}`));
   const preview = lines.length ? lines.map((l) => "• " + esc(l)).join("<br>") : t("nada a migrar");
-  return `<p class="pmnote mono">${t("simulação — nada é movido ainda · notas/ permanece versionado · incubadora/ vira tema pessoal")}</p>` +
-    `<div class="pmpreview mono">${preview}</div>`;
+  return `<p class="pmnote">${t("simulação — nada é movido ainda · notas/ permanece versionado · incubadora/ vira tema pessoal")}</p>` +
+    `<div class="pmpreview">${preview}</div>`;
 }
 async function runMigration() {
   let rep;
@@ -7696,6 +9297,15 @@ function checkSay(c) {
 }
 function renderGhCard() {
   const d = envDoctor;
+  // o diagnóstico do ambiente é a fonte do portão da Revisão: quando ele chega (ou
+  // muda), a tela que promete a revisão do time é repintada com ele
+  paintTeamGate();
+  // R48 · o estado vazio de «mudanças de agora» é a SEGUNDA superfície do mesmo
+  // fato: o passo seguinte que ele nomeia só existe se a outra metade estiver
+  // conectada. Medido no app rodando: o diagnóstico chega DEPOIS da primeira
+  // pintura, e sem esta linha o cartão ficava com «Envie para revisão quando quiser
+  // que o time leia» duas frases acima de «o time ainda não está conectado».
+  renderMyChanges();
   B.proposeBtn.hidden = !(d && d.versioningEnabled);
   // N5 · a porta permanente para a outra metade do fluxo (as revisões abertas)
   const rev = $("pReviewsBtn");
@@ -7748,7 +9358,7 @@ function renderGhCard() {
 function promptConnectRemote() {
   openModal(
     t("conectar um repositório do time"),
-    `<p class="pmnote mono">${t("o conhecimento salvo em versões passa a ter uma cópia no GitHub, privada, na sua conta. reuniões, notas e itens para organizar continuam só neste computador.")}</p>`,
+    `<p class="pmnote">${t("o conhecimento salvo em versões passa a ter uma cópia no GitHub, privada, na sua conta. reuniões, notas e itens para organizar continuam só neste computador.")}</p>`,
     t("conectar no Terminal"),
     () => {
       closeCfg();
@@ -7764,7 +9374,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 async function fixIdentity() {
   openModal(
     t("Identidade do git"),
-    `<p class="pmnote mono">${t("é o nome que assina cada versão salva — o time vê isso no histórico.")}</p>` +
+    `<p class="pmnote">${t("é o nome que assina cada versão salva — o time vê isso no histórico.")}</p>` +
       `<label class="wfield"><span class="mono">${t("nome")}</span>` +
       `<input id="gitIdName" type="text" placeholder="${t("ex.: Ana Souza")}" spellcheck="false"></label>` +
       `<label class="wfield"><span class="mono">${t("e-mail")}</span>` +
@@ -7809,10 +9419,22 @@ let notifCheckedAt = 0;
 async function refreshNotifications() {
   const bar = $("ghNotifBar");
   const hide = () => { if (bar) bar.hidden = true; };
-  if (!envDoctor || !envDoctor.versioningEnabled) return hide();
+  // ADR-0027 · UM pintor para o contador da Revisão. renderHome pinta o contador
+  // da fila num laço que passa a um elemento de distância deste; dois pintores
+  // para um número é como um contador sobrevive à verdade que o gerou.
+  const badge = (n) => {
+    for (const id of ["destReviewBadge", "revTeamBadge"]) {
+      const b = $(id);
+      if (b) { b.textContent = n; b.hidden = !n; }
+    }
+  };
+  if (!envDoctor || !envDoctor.versioningEnabled) { badge(0); return hide(); }
   let n;
-  try { n = await invoke("brain_notifications"); } catch (_) { return hide(); }
-  if (!n.connected) return hide();
+  try { n = await invoke("brain_notifications"); } catch (_) { badge(0); return hide(); }
+  if (!n.connected) { badge(0); return hide(); }
+  // ANTES da dispensa: dispensar a faixa não pode zerar um contador que continua
+  // verdadeiro (o × vale para AQUELE aviso, não para o fato).
+  badge(n.reviewRequestedToMe.length);
   const parts = [];
   if (n.reviewRequestedToMe.length) parts.push(`⌛ ${n.reviewRequestedToMe.length} ${t("aguardam sua revisão")}`);
   if (n.awaitingApproval.length) parts.push(`${n.awaitingApproval.length} ${t("aguardando aprovação")}`);
@@ -7848,7 +9470,7 @@ function showTimeline(rel) {
     }).join("");
     openModal(
       `${t("Histórico")} — ${rel}`,
-      rows || `<p class="pmnote mono">${t("(sem versões anteriores ainda)")}</p>`,
+      rows || `<p class="pmnote">${t("(sem versões anteriores ainda)")}</p>`,
       null,
       null
     );
@@ -8610,20 +10232,58 @@ B.wsBody.addEventListener("scroll", () => { if (nearBottom(B.wsBody)) hidePill()
 // painel direito, gravação e configurações). A lógica de estado mora no
 // shell.js; aqui só o que precisa conhecer o acervo/IPC.
 
-// ---- destinos: Início · Organizar · Conhecimento ----------------------------
-function goDest(name) {
+// ---- destinos: Início · Organizar · Conhecimento · Revisão ------------------
+function goDest(name, tab) {
   LoroShell.setDestination(name);
   // um destino é sempre a Home do workspace — abas são só documentos abertos
   if (!isHomeActive()) openHome(); else showHome();
   // ADR-0026 · o mapa das ligações é lido só onde é olhado: entrar no destino
   // pinta na hora, em vez de esperar a próxima passada do poll (10s).
   if (name === "knowledge") paintKnowledgeGaps();
+  // ADR-0027 · a mesma regra para a Revisão: entrar não pode esperar os 120s do
+  // tique de avisos, e a aba pedida é parte do endereço (⌘K e a faixa chegam
+  // direto na metade do time).
+  if (name === "review") {
+    LoroShell.setReviewTab(tab || LoroShell.reviewTab());
+    refreshReview();
+  }
 }
 document.querySelectorAll("#destNav .dest").forEach((b) =>
   b.addEventListener("click", () => goDest(b.dataset.dest)));
 // ADR-0026 · o índice remissivo abre como as outras leituras: uma aba no mesmo
 // cartão de 700px. Permanente (preview: false) — é destino, não espiada.
 if ($("knowIdxBtn")) $("knowIdxBtn").addEventListener("click", () => openDoc(INDEX_REL, { preview: false }));
+
+// ---- ADR-0027 · os controles do destino Revisão ----------------------------
+// A tira de abas é cromo e mora no shell.js; aqui só o que precisa de IPC.
+document.querySelectorAll("#revTabs .segbtn").forEach((b) => b.addEventListener("click", () => {
+  paintReviewIntro();
+  paintTeamGate();
+  // a metade que APARECE tem de se repintar (e se anunciar) mesmo que o conteúdo
+  // dela não tenha mudado desde a última leitura: quem trocou de aba não ouviria
+  // nada da metade que acabou de entrar na tela (R38).
+  REV.sig = ""; REV.teamSig = "";
+  if (b.dataset.revtab === "team") refreshTeamReviews(); else refreshMyChanges();
+}));
+if ($("revSaveBtn")) $("revSaveBtn").addEventListener("click", (e) => withPending(e.currentTarget, saveVersionFromReview));
+// O nome do rascunho que a descrição vai criar é dito enquanto se escreve — a
+// mesma resposta imediata que a folha «Novo rascunho» dá ao seu campo.
+if ($("revMsg")) $("revMsg").addEventListener("input", paintReviewDraft);
+if ($("revProposeBtn")) $("revProposeBtn").addEventListener("click", () => {
+  // F5 · a recusa vem ANTES de escrever a descrição inteira, e traz o remédio
+  const block = teamBlockCode();
+  if (block) return toastAction(tErr(block), [{ label: t("abrir Configurações"), run: openCfgGit }], 8000);
+  B.proposeBtn.click();
+});
+// UM CONTROLE, UM DESFECHO. O chip e «trocar de rascunho» abriam a MESMA folha,
+// lado a lado, e o nome acessível do chip já reivindica a porta («Rascunhos de
+// trabalho — ⎇ no rascunho X»). Dois controles e dois pontos de tabulação para o
+// mesmo lugar: o link saiu.
+for (const id of ["revDraft", "headDraft"]) {
+  if ($(id)) $(id).addEventListener("click", openBranchPicker);
+}
+if ($("revBackToMine")) $("revBackToMine").addEventListener("click", backToMyDraft);
+if ($("revBack")) $("revBack").addEventListener("click", backToReviewList);
 
 // ---- cabeçalho: Gravar · ✦ IA ----------------------------------------------
 // o botão ● do cabeçalho é o MESMO el.toggle de sempre (ligado mais acima)
@@ -8796,11 +10456,12 @@ $("ghNotifClose").addEventListener("click", () => {
   notifDismissedSig = B.ghNotif ? B.ghNotif.textContent : "";
   $("ghNotifBar").hidden = true;
 });
-$("ghNotifOpen").addEventListener("click", () => openReviewsSheet());
+$("ghNotifOpen").addEventListener("click", () => goDest("review", "team"));
 {
-  // N5 · a porta que não expira nem se dispensa
+  // N5 · a porta que não expira nem se dispensa — ADR-0027 · e agora ela leva a
+  // um DESTINO, que não se dispensa nem quando o aviso some
   const rev = $("pReviewsBtn");
-  if (rev) rev.addEventListener("click", () => openReviewsSheet());
+  if (rev) rev.addEventListener("click", () => goDest("review", "team"));
 }
 
 // ---- 1d/1e · documento ------------------------------------------------------
@@ -8808,14 +10469,24 @@ $("ghNotifOpen").addEventListener("click", () => openReviewsSheet());
 $("bApproveBtn").addEventListener("click", () => { $("bApprove").hidden = true; $("bProposal").hidden = true; B.gitBtn.click(); });
 $("bApproveEdit").addEventListener("click", () => setActiveMode("edit"));
 $("bApproveAsk").addEventListener("click", () => { const r = currentRel(); if (r) promptNoteAI(r, true); });
-// O buffer PRIMEIRO: B.gitBtn versiona o que está em DISCO, então commitar antes
-// de gravar deixaria a edição de fora do commit. Num rascunho pessoal
-// (gitignorado) não há versão a salvar — o rótulo do botão diz isso e o clique
-// para no arquivo.
-$("bSaveVersion").addEventListener("click", () => {
-  const tab = activeTab();
-  saveActive();
-  if (tab && tab.kind === "context") B.gitBtn.click();
+// O buffer PRIMEIRO: a versão guarda o que está em DISCO, então commitar antes de
+// gravar deixaria a edição de fora do commit — e o `await` é o que faz essa ordem
+// existir no tempo, não só no texto. Num rascunho pessoal (gitignorado) não há
+// versão a salvar — o rótulo do botão diz isso e o clique para no arquivo.
+//
+// F30 · e a versão é aberta por QUEM a abre. Isto era `B.gitBtn.click()`, e aquele
+// botão está desabilitado exatamente no caso deste fluxo (árvore limpa, buffer
+// sujo: ele é o estado «tudo salvo ✓»): um clique programático num controle
+// desabilitado não dispara, então salvar aqui gravava o arquivo e não chegava a
+// versão nenhuma — o fluxo morria em silêncio, com um toast dizendo «salvo».
+// GRAVAR O ARQUIVO E VERSIONAR O PROJETO SÃO DOIS ATOS. Este era o ÚNICO primário
+// do modo de edição e, num documento de conhecimento, ele gravava o arquivo e
+// abria a folha de versão — não havia como só salvar o texto. Um commit é do
+// projeto inteiro, não do documento em foco, e agora ele tem casa própria: o
+// destino Revisão, que está no relógio e mostra a mudança assim que o arquivo é
+// gravado. Aqui sobra o que o botão sempre disse que fazia.
+$("bSaveVersion").addEventListener("click", async () => {
+  await saveActive();
 });
 $("bDiscardEdit").addEventListener("click", async () => {
   const tab = activeTab();
@@ -9517,4 +11188,3 @@ invoke("selftest_enabled").then((on) => {
     }, 7000);
   });
 }).catch((e) => clog("selftest_enabled error: " + e));
-
