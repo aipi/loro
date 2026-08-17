@@ -34,10 +34,13 @@
           <button class="dest" data-dest="review"><span data-i18n>Revisão</span><span id="destReviewBadge" class="destbadge" hidden>0</span></button>
         </nav>
 
-        <!-- estado de gravação em outras telas: pill que volta para a aba -->
-        <span id="headRec" class="headrec mono" hidden></span>
-
         <div class="headright">
+          <!-- estado de gravação em outras telas: pill que volta para a aba. Mora
+               DENTRO do bloco da direita porque o cabeçalho é um grid de três
+               trilhas (esquerda · pílula · direita): como quarto irmão solto ele
+               não teria trilha, e a largura dele tem de contar no bloco cuja parte
+               decide se a pílula fica no eixo. É onde ele já aparecia. -->
+          <span id="headRec" class="headrec mono" hidden></span>
           <span id="appVersion" class="localtag mono" title="tudo roda 100% no seu computador" data-i18n-attrs="title">—</span>
           <!-- R64 · O RASCUNHO NO CABEÇALHO, como o desenho previu. Ele vivia só na
                seção TIME do painel ✦ IA, então em que rascunho você está — o fato que
