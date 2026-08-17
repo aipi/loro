@@ -2623,7 +2623,10 @@ body.resizing #mainRow * { pointer-events: none; }
    parecia pedir um caminho digitado. O campo continua sendo o dono do valor
    (teclado, colar, verificação automatizada); o botão é o caminho curto.
    Só o LAYOUT mora aqui: o botão é o `.btn.sm` do vocabulário (DESIGN.md §Buttons),
-   cujo padding vertical de 7px é o mesmo do campo — nenhum tamanho é reinventado. */
+   cujo padding vertical de 7px é o mesmo do campo — nenhum tamanho é reinventado.
+   É um <div>, não um <span>: `.wfield > span { flex: none; width: 78px }` é a regra
+   do RÓTULO, e ela pegava o contêiner — o campo colapsava para 78px com o botão
+   transbordando ao lado (medido). */
 .wizcard .wfield .dirpick { display: flex; gap: 8px; align-items: center; min-width: 0; }
 .wizcard .wfield .dirpick input { flex: 1 1 auto; min-width: 0; }
 .wizcard .wfield .dirpick > .btn { flex: none; }
