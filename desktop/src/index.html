@@ -113,14 +113,22 @@
                  existia atrás do diálogo do sistema — sem teclado, sem colar um
                  caminho que você já sabe, e sem nenhuma verificação automatizável.
                  O picker fica ao lado, como conveniência. -->
-            <label class="wfield"><span class="mono" data-i18n>onde guardar</span>
-              <input id="brainDirInput" type="text" spellcheck="false" autocapitalize="off"
-                autocorrect="off" aria-describedby="brainDirNote" />
-            </label>
+            <!-- O picker mora NA LINHA do campo, não no fim da frase de ajuda: ali
+                 embaixo ele era um link cinza no rabo de uma prosa e não se lia como
+                 controle — "onde guardar" parecia só um caminho para digitar. O campo
+                 de texto continua sendo o dono do valor (teclado, colar um caminho
+                 conhecido, e uma verificação automatizada que o diálogo do sistema
+                 nunca permitiria — a razão pela qual isto deixou de ser botão-só). -->
+            <div class="wfield"><label class="mono" for="brainDirInput" data-i18n>onde guardar</label>
+              <span class="dirpick">
+                <input id="brainDirInput" type="text" spellcheck="false" autocapitalize="off"
+                  autocorrect="off" aria-describedby="brainDirNote" />
+                <button id="brainDirBtn" class="btn sm" type="button" data-i18n>escolher pasta…</button>
+              </span>
+            </div>
             <!-- o ⓘ é exceção deliberada à ADR-0020 (dono, 2026-08-11): abre
                  por CLIQUE um detalhe que não cabe no hint, nunca por hover -->
-            <p class="hint tplhint"><span data-i18n>o projeto é esta pasta: arquivos de texto (Markdown) na sua máquina — nada vai para a nuvem. digite o caminho ou escolha a pasta:</span>
-              <button id="brainDirBtn" class="link mono" type="button" data-i18n>escolher pasta…</button>
+            <p class="hint tplhint"><span data-i18n>o projeto é esta pasta: arquivos de texto (Markdown) na sua máquina — nada vai para a nuvem.</span>
               <button id="wizDirInfo" class="infoi" type="button" aria-expanded="false" aria-controls="wizDirInfoBody" title="o que fica nesta pasta" data-i18n-attrs="title">ⓘ</button></p>
             <!-- o que o caminho digitado vai fazer, dito ANTES de criar: a pasta
                  pode não existir ainda (o backend a cria) e uma pasta que já é

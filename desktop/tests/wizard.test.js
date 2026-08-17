@@ -147,16 +147,28 @@ function loadValidator() {
 }
 
 test("onde guardar é um campo de texto, com o picker ao lado", () => {
-  // o rótulo e o campo formam a mesma linha de formulário
-  const field = /<label class="wfield">\s*<span[^>]*>onde guardar<\/span>\s*<input id="brainDirInput"([^>]*)>/.exec(HTML);
-  assert.ok(field, "o campo da pasta deve ser um <input> dentro do .wfield de 'onde guardar'");
-  assert.match(field[1], /type="text"/, "um caminho é digitado/colado como texto");
-  assert.match(field[1], /aria-describedby="brainDirNote"/,
+  // o rótulo e o campo formam a mesma linha de formulário. É um <div> com um
+  // <label for>, não um <label> envolvente: envolvendo, o clique no BOTÃO seria
+  // redespachado para o primeiro controle rotulável — o mesmo motivo já registrado
+  // nas cores do projeto, logo abaixo no formulário.
+  const linha = /<div class="wfield"><label class="mono" for="brainDirInput"[^>]*>onde guardar<\/label>([\s\S]{0,600}?)<\/div>/.exec(HTML);
+  assert.ok(linha, "o campo da pasta deve ser um <input> dentro do .wfield de 'onde guardar'");
+  const campo = /<input id="brainDirInput"([^>]*)>/.exec(linha[1]);
+  assert.ok(campo, "o campo continua na linha do rótulo");
+  assert.match(campo[1], /type="text"/, "um caminho é digitado/colado como texto");
+  assert.match(campo[1], /aria-describedby="brainDirNote"/,
     "o campo aponta para a frase que explica o que vai acontecer com o caminho");
-  // o diálogo do sistema continua existindo — como conveniência, não como o
-  // único caminho
-  assert.match(HTML, /id="brainDirBtn"[^>]*>escolher pasta…</,
-    "o picker continua na tela, ao lado do campo");
+  // O picker é um CONTROLE na linha do campo. Ele vivia no rabo da frase de ajuda,
+  // como link cinza em mono: lia-se como prosa, e a tela parecia pedir um caminho
+  // digitado (relato do dono). Este teste dizia "ao lado do campo" e só conferia
+  // que o botão existia em ALGUM lugar do HTML — a afirmação não podia falhar.
+  assert.match(linha[1], /id="brainDirBtn"[^>]*>escolher pasta…</,
+    "o picker fica NA LINHA do campo, não no fim de um parágrafo de ajuda");
+  assert.match(linha[1], /class="btn sm"/,
+    "e com o vocabulário de botão do DESIGN.md (.btn secundário, .sm), não uma classe inventada nem um link em prosa");
+  const ajuda = /<p class="hint tplhint">([\s\S]{0,400}?)<\/p>/.exec(HTML.slice(HTML.indexOf('id="brainDirInput"')));
+  assert.ok(ajuda && !/brainDirBtn/.test(ajuda[1]),
+    "e a frase de ajuda não guarda mais um segundo picker");
   assert.match(APP, /B\.dirBtn\.addEventListener\("click"[\s\S]{0,220}pick_folder/,
     "o botão continua abrindo o diálogo de pastas");
   assert.match(APP, /if \(d\) \{ wizDirDirty = true; setWizDir\(d\); \}/,
