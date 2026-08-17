@@ -29,6 +29,10 @@ use templates::*;
 mod presets;
 use presets::*;
 mod chat;
+// Pure unified-diff parsing (ADR-0027). NOT glob-imported: the types cross into
+// this file in two signatures only, and a glob would pull Row/Hunk into a
+// 6000-line namespace for nothing.
+mod diff;
 mod git;
 mod intake;
 use git::*;
@@ -2225,16 +2229,220 @@ fn env_set_identity(name: String, email: String) -> Result<(), String> {
     set_identity(&PathBuf::from(&cfg.brain_dir), &name, &email)
 }
 
+// Quanto de idade a tela aceita antes de ir à rede de novo. Um clique no destino
+// e o tique de avisos pedem a mesma lista; com isto o segundo é de graça, e a
+// idade volta com a resposta para a tela poder dizer o que está mostrando.
+const PR_LIST_MAX_AGE: Duration = Duration::from_secs(30);
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PrListRead {
+    prs: Vec<PrInfo>,
+    age_ms: u64,
+}
+
+// ADR-0022 §28, do lado do git: um `#[tauri::command] fn` SEM async roda na main
+// thread, e `gh pr list` são ~1,7s de rede. Clicar em «Revisão» disparava quatro
+// comandos assim e travava a janela por ~5s. Todo comando que abre subprocesso
+// tem de sair da main thread — é a mesma regra que a transcrição já aprendeu
+// três vezes.
 #[tauri::command]
-fn gh_pr_list() -> Result<Vec<PrInfo>, String> {
-    let cfg = read_brain_config().ok_or("err.acervo_not_configured")?;
-    pr_list(&PathBuf::from(&cfg.brain_dir))
+async fn gh_pr_list() -> Result<PrListRead, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let cfg = read_brain_config().ok_or("err.acervo_not_configured")?;
+        let read = pr_list_cached(&PathBuf::from(&cfg.brain_dir), PR_LIST_MAX_AGE)?;
+        Ok(PrListRead {
+            prs: read.prs,
+            age_ms: read.age_ms as u64,
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-fn gh_pr_status(number: u64) -> Result<PrInfo, String> {
+async fn gh_pr_status(number: u64) -> Result<PrInfo, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = read_brain_config().ok_or("err.acervo_not_configured")?;
+        pr_status(&PathBuf::from(&cfg.brain_dir), number)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+// ---- the review destination (ADR-0027) --------------------------------------
+// Wiring only: every rule these commands obey lives in git.rs (what shells out)
+// or diff.rs (what is pure). BR-9 in one sentence: the app asks gh whether the
+// AMBIENT credential works and never reads, stores or logs a token.
+//
+// Each of the six that shells out is `async` — the fifth appearance of the
+// ADR-0022 §28 bug class would be a gh round trip on the main thread.
+
+fn require_gh() -> Result<(), String> {
+    if !gh_available() {
+        return Err("err.gh_not_found".into());
+    }
+    if !gh_authed() {
+        return Err("err.gh_auth_required".into());
+    }
+    Ok(())
+}
+
+// The working tree against HEAD. `rel` scopes it to one document; None = the
+// whole project.
+#[tauri::command]
+async fn brain_git_diff(rel: Option<String>) -> Result<Vec<diff::FileDiff>, String> {
+    let base = acervo_repo_base()?;
+    working_diff(&base, rel.as_deref())
+}
+
+#[tauri::command]
+async fn gh_pr_detail(number: u64) -> Result<PrDetail, String> {
+    let base = acervo_repo_base()?;
+    require_gh()?;
+    pr_detail(&base, number)
+}
+
+#[tauri::command]
+async fn gh_pr_diff(number: u64) -> Result<Vec<diff::FileDiff>, String> {
+    let base = acervo_repo_base()?;
+    require_gh()?;
+    pr_diff(&base, number)
+}
+
+#[tauri::command]
+async fn gh_pr_review(number: u64, action: ReviewAction, body: String) -> Result<(), String> {
+    let base = acervo_repo_base()?;
+    require_gh()?;
+    // a decisão de quem está olhando é o primeiro dado que a lista tem de mostrar
+    let r = pr_review(&base, number, action, &body);
+    if r.is_ok() {
+        pr_cache_invalidate();
+    }
+    r
+}
+
+#[tauri::command]
+async fn gh_pr_merge(number: u64, head_ref: String) -> Result<(), String> {
+    let base = acervo_repo_base()?;
+    require_gh()?;
+    let r = pr_merge(&base, number, &head_ref);
+    if r.is_ok() {
+        pr_cache_invalidate();
+    }
+    r
+}
+
+#[tauri::command]
+async fn gh_pr_reply(number: u64, comment_id: u64, body: String) -> Result<(), String> {
+    let base = acervo_repo_base()?;
+    require_gh()?;
+    let r = pr_reply(&base, number, comment_id, &body);
+    if r.is_ok() {
+        pr_cache_invalidate();
+    }
+    r
+}
+
+// The team's review template. `rel` travels with the sections because this app
+// writes the LOWERCASE path (setup and the migration both do) while four other
+// spellings are accepted — a hardcoded path in the sheet's label would be a lie
+// in four of them.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PrTemplate {
+    rel: String,
+    sections: Vec<String>,
+    // One per section, same order: the template's own `<!-- … -->` sentence, which
+    // is what the field's placeholder says. Without it the sheet asked for prose
+    // and explained nothing (ADR-0027).
+    hints: Vec<String>,
+}
+
+const PR_TEMPLATE_PATHS: [&str; 5] = [
+    ".github/pull_request_template.md",
+    ".github/PULL_REQUEST_TEMPLATE.md",
+    "pull_request_template.md",
+    "PULL_REQUEST_TEMPLATE.md",
+    "docs/pull_request_template.md",
+];
+
+fn pr_template_rel(base: &Path) -> Option<String> {
+    PR_TEMPLATE_PATHS
+        .iter()
+        .find(|p| base.join(p).is_file())
+        .map(|p| (*p).to_string())
+}
+
+// The template the sheet SHOWS and the path a save writes to. ONE authority for
+// both commands: the placeholders the sheet printed come from here, so a save that
+// read a different source would blank the very guidance it had just shown — which
+// is what happened on first use, where there is no file and the writer saw an
+// empty `previous` (ADR-0027).
+fn pr_template_source(base: &Path) -> (String, String) {
+    match pr_template_rel(base) {
+        Some(rel) => match std::fs::read_to_string(base.join(&rel)) {
+            Ok(md) => (md, rel),
+            Err(_) => (pr_template(&ui_lang()).to_string(), rel),
+        },
+        // No file yet: the sheet still asks for the sections this app scaffolds,
+        // and names the path a save would create.
+        None => (
+            pr_template(&ui_lang()).to_string(),
+            PR_TEMPLATE_PATHS[0].to_string(),
+        ),
+    }
+}
+
+#[tauri::command]
+fn brain_pr_template() -> Result<PrTemplate, String> {
     let cfg = read_brain_config().ok_or("err.acervo_not_configured")?;
-    pr_status(&PathBuf::from(&cfg.brain_dir), number)
+    let (md, rel) = pr_template_source(&PathBuf::from(&cfg.brain_dir));
+    let (sections, hints) = pr_template_fields(&md);
+    Ok(PrTemplate {
+        rel,
+        sections,
+        hints,
+    })
+}
+
+// Writes into the VERSIONED tree on purpose: `.github/` is part of the project,
+// so the change lands as a pending change and goes through the same review as
+// any other. It does not commit and it does not push.
+//
+// Takes the project's folder instead of reading the config, so the decisions it
+// makes about the team's file are testable without a configured machine (the
+// command above is wiring).
+fn write_pr_template(base: &Path, sections: Vec<String>) -> Result<String, String> {
+    let labels: Vec<String> = sections
+        .into_iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if labels.is_empty() {
+        return Err("err.pr_template_empty".into());
+    }
+    // A section the edit kept keeps its whole block, guidance line included: that
+    // sentence is the field's placeholder on the sheet, so rewriting the file from
+    // labels alone would blank the guidance for the whole team. `previous` is the
+    // template the sheet was SHOWING — on first use that is the one this app
+    // ships, not an empty file, or the team's first save would strip every
+    // sentence the sheet had just printed.
+    let (previous, rel) = pr_template_source(base);
+    let path = base.join(&rel);
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|_| "err.pr_template_write_failed".to_string())?;
+    }
+    std::fs::write(&path, render_pr_body_template(&labels, &previous))
+        .map_err(|_| "err.pr_template_write_failed".to_string())?;
+    info!(target: "review", sections = labels.len(), "team template saved");
+    Ok(rel)
+}
+
+#[tauri::command]
+fn brain_set_pr_template(sections: Vec<String>) -> Result<String, String> {
+    let cfg = read_brain_config().ok_or("err.acervo_not_configured")?;
+    write_pr_template(&PathBuf::from(&cfg.brain_dir), sections)
 }
 
 // Abstracted history for the timeline UI: a simple list of versions. `rel` scopes
@@ -2276,7 +2484,13 @@ fn empty_notifications(connected: bool) -> Notifications {
 // Collaboration inbox derived from open PRs (the RFCs). Without a connected
 // GitHub account everything stays local and this reports `connected: false`.
 #[tauri::command]
-fn brain_notifications() -> Notifications {
+async fn brain_notifications() -> Notifications {
+    tauri::async_runtime::spawn_blocking(brain_notifications_blocking)
+        .await
+        .unwrap_or_else(|_| empty_notifications(false))
+}
+
+fn brain_notifications_blocking() -> Notifications {
     let Some(cfg) = read_brain_config() else {
         return empty_notifications(false);
     };
@@ -2285,8 +2499,10 @@ fn brain_notifications() -> Notifications {
         return empty_notifications(false);
     }
     let me = gh_account();
-    let prs = match pr_list(&base) {
-        Ok(p) => p,
+    // a MESMA leitura que o destino usa: sem isto o mesmo clique pedia
+    // `gh pr list` duas vezes, ~1,7s cada
+    let prs = match pr_list_cached(&base, PR_LIST_MAX_AGE) {
+        Ok(r) => r.prs,
         Err(_) => return empty_notifications(true),
     };
     let decision = |p: &PrInfo| p.review_decision.clone().unwrap_or_default();
@@ -2333,21 +2549,39 @@ struct VersionOutcome {
     branch: String,
     saved: bool,
     warn: Option<String>,
+    review: Option<u64>,
+    pushed: bool,
 }
 
-// "Versionar": sync the default branch (best effort), create rfc/<slug> off it
-// and commit the working changes there. Local git only on the write path.
+// "Versionar": sync the default branch (best effort), create rfc/<slug> off it and
+// commit the working changes there. It is no longer local-only: when the draft
+// already carries an open review, the commit is followed by the push that review
+// reads, because "salvar versão atualiza a revisão aberta" is a promise the screen
+// has been making since the first round (ADR-0027 round 6). A draft with no open
+// review pushes nothing — "nada sai do seu computador sozinho" still holds there.
+// Async because of that push: a sync command would freeze the window for its
+// duration (ADR-0022 §28, the git side).
 #[tauri::command]
-fn brain_version(slug: String, message: String) -> Result<VersionOutcome, String> {
-    let cfg = read_brain_config().ok_or("err.acervo_not_configured")?;
-    let base = PathBuf::from(&cfg.brain_dir);
-    let slug = sanitize_slug(&slug)?;
-    let attempt = save_version(&base, &slug, message)?;
-    Ok(VersionOutcome {
-        branch: attempt.branch,
-        saved: attempt.saved,
-        warn: attempt.warn,
+async fn brain_version(slug: String, message: String) -> Result<VersionOutcome, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = read_brain_config().ok_or("err.acervo_not_configured")?;
+        let base = PathBuf::from(&cfg.brain_dir);
+        let slug = sanitize_slug(&slug)?;
+        let attempt = save_version(&base, &slug, message)?;
+        // a revisão aberta acabou de receber uma versão: a lista tem de saber
+        if attempt.pushed {
+            pr_cache_invalidate();
+        }
+        Ok(VersionOutcome {
+            branch: attempt.branch,
+            saved: attempt.saved,
+            warn: attempt.warn,
+            review: attempt.review,
+            pushed: attempt.pushed,
+        })
     })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 // ---- branch-first IPC (ADR-0002 §2): list / switch / create ----------------
@@ -2385,7 +2619,15 @@ fn acervo_repo_base() -> Result<PathBuf, String> {
 }
 
 #[tauri::command]
-fn git_branches() -> Result<BranchesInfo, String> {
+async fn git_branches() -> Result<BranchesInfo, String> {
+    tauri::async_runtime::spawn_blocking(git_branches_blocking)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+// `ls-tree` por branch, duas vezes (o que ela guarda e o que sai da tela): num
+// projeto com seis rascunhos são treze processos. Locais e rápidos, mas treze.
+fn git_branches_blocking() -> Result<BranchesInfo, String> {
     let base = acervo_repo_base()?;
     let current = current_branch(&base);
     let branches = list_branches(&base)?
@@ -2427,16 +2669,15 @@ fn git_create_branch(slug: String) -> Result<String, String> {
 
 // "Propor mudança": push the current rfc/ branch and open the PR (the RFC).
 // Opt-in gate: requires gh + auth + a remote. Never runs from the default branch.
+//
+// `async` for the same reason every other command on this path is (ADR-0022 §28):
+// it is four subprocesses and three network round trips, and synchronous they all
+// wait on the main thread with the window frozen.
 #[tauri::command]
-fn brain_propose_change(title: String, body: String) -> Result<PrRef, String> {
+async fn brain_propose_change(title: String, body: String) -> Result<PrRef, String> {
     let cfg = read_brain_config().ok_or("err.acervo_not_configured")?;
     let base = PathBuf::from(&cfg.brain_dir);
-    if !gh_available() {
-        return Err("err.gh_not_found".into());
-    }
-    if !gh_authed() {
-        return Err("err.gh_auth_required".into());
-    }
+    require_gh()?;
     if git_remote_url(&base).is_none() {
         return Err("err.git_remote_required".into());
     }
@@ -2444,7 +2685,22 @@ fn brain_propose_change(title: String, body: String) -> Result<PrRef, String> {
     if branch == default_branch(&base) {
         return Err("err.on_main_branch".into());
     }
+    // ADR-0027 · a draft ALREADY under review is updated, not proposed twice: the
+    // push is what the open review reads, and asking gh for a second review on the
+    // same draft answers with English prose in a pt-BR toast. This is also the
+    // author's route after "mudanças pedidas" — edit, save a version, send again.
+    let act = propose_act(&open_reviews_for_branch(&base, &branch)?, &branch);
     push_branch(&base, &branch)?;
+    if let ProposeAct::UpdateOpenReview { number, url } = act {
+        // BR-8: the number of the review, never a line of what it carries
+        info!(target: "review", pr = number, "open review updated with a new version");
+        pr_cache_invalidate();
+        return Ok(PrRef {
+            number,
+            url,
+            updated: true,
+        });
+    }
     let title = if title.trim().is_empty() {
         format!("RFC: {branch}")
     } else {
@@ -2455,7 +2711,11 @@ fn brain_propose_change(title: String, body: String) -> Result<PrRef, String> {
     } else {
         body
     };
-    pr_create(&base, &branch, &title, &body)
+    let r = pr_create(&base, &branch, &title, &body);
+    if r.is_ok() {
+        pr_cache_invalidate();
+    }
+    r
 }
 
 // ---- migration to the single-context.md model (non-destructive, idempotent) -
@@ -2570,6 +2830,22 @@ fn migrate_acervo(base: &Path, apply: bool, lang: &str) -> Result<MigrationRepor
             .push(".github/pull_request_template.md".into());
         if apply {
             std::fs::write(&pr_tmpl, pr_template(lang)).map_err(|e| e.to_string())?;
+        }
+    } else if let Ok(txt) = std::fs::read_to_string(&pr_tmpl) {
+        // ADR-0027: these headings are the FIELD LABELS of the send-for-review
+        // sheet, and the ones this app shipped asked a person to fill in "Contexto
+        // afetado" and "Hotspots" — words DESIGN.md §4 retired. A file still
+        // byte-identical to what Loro wrote may be refreshed; one the team touched
+        // is the team's. Reported first, like every other move here, and it lands
+        // as a pending change reviewed like any other.
+        let stale = is_shipped_pr_template(&txt) && txt.trim() != pr_template(lang).trim();
+        if stale {
+            report
+                .scaffolding
+                .push(".github/pull_request_template.md".into());
+            if apply {
+                std::fs::write(&pr_tmpl, pr_template(lang)).map_err(|e| e.to_string())?;
+            }
         }
     }
 
@@ -4458,15 +4734,23 @@ pub fn run() {
             brain_import_paths,
             brain_git_state,
             brain_git_files,
+            brain_git_diff,
             brain_git_commit,
             env_doctor,
             env_set_identity,
             gh_pr_list,
             gh_pr_status,
+            gh_pr_detail,
+            gh_pr_diff,
+            gh_pr_review,
+            gh_pr_merge,
+            gh_pr_reply,
             brain_timeline,
             brain_notifications,
             brain_version,
             brain_propose_change,
+            brain_pr_template,
+            brain_set_pr_template,
             git_branches,
             git_switch_branch,
             git_create_branch,
@@ -5450,6 +5734,99 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    // ADR-0027: the refresh of the review template is the one place the migration
+    // WRITES over a file that already exists, and the promise the caller has to
+    // keep — "a file still byte-identical to what Loro wrote may be refreshed; one
+    // the team touched is the team's" — was a comment. `is_shipped_pr_template` was
+    // tested on its own while its only consumer was not, so dropping it from the
+    // condition rewrote every template a team wrote itself with the suite green.
+    #[test]
+    fn migration_never_rewrites_the_review_template_the_team_wrote() {
+        let root = std::env::temp_dir().join(format!("loro-prtmpl-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let rel = ".github/pull_request_template.md";
+        std::fs::create_dir_all(root.join(".github")).unwrap();
+        let theirs = "## Nosso resumo\n<!-- o que muda -->\n\n## Quem aprova\n";
+        std::fs::write(root.join(rel), theirs).unwrap();
+
+        // it is not even reported as something the migration would touch
+        let r = migrate_acervo(&root, false, "pt").unwrap();
+        assert!(
+            !r.scaffolding.iter().any(|s| s.contains("pull_request")),
+            "the migration offered to rewrite a template the team wrote: {:?}",
+            r.scaffolding
+        );
+        migrate_acervo(&root, true, "pt").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(root.join(rel)).unwrap(),
+            theirs,
+            "the migration overwrote a template the team wrote in their own repository"
+        );
+
+        // and the capability the guard exists to allow still works: a file still
+        // byte-identical to what Loro shipped IS refreshed, so a project already on
+        // disk stops asking for the retired words
+        let shipped = SHIPPED_LEGACY_PR_TEMPLATES[0].replace("{DIR}", "contexts");
+        std::fs::write(root.join(rel), &shipped).unwrap();
+        let r = migrate_acervo(&root, true, "pt").unwrap();
+        assert!(
+            r.scaffolding.iter().any(|s| s.contains("pull_request")),
+            "the stale template Loro wrote was not even reported: {:?}",
+            r.scaffolding
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join(rel)).unwrap().trim(),
+            pr_template("pt").trim(),
+            "a template Loro wrote was left asking for the retired words"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ADR-0027 — «configurar o modelo» opened pre-filled with the sections the
+    // send-for-review sheet was showing, and the sheet's placeholders are the
+    // template's own `<!-- … -->` sentences. On a project with no template of its
+    // own there is no FILE, so the writer read an empty `previous` and wrote bare
+    // headings: the team's first save silently stripped every sentence the sheet
+    // had just printed, and every teammate after them got a blank box with a title.
+    // Language-agnostic on purpose: the guarantee is "what was shown is what is
+    // kept", not one particular sentence.
+    #[test]
+    fn the_first_team_template_save_keeps_the_sentences_the_sheet_showed() {
+        let root = std::env::temp_dir().join(format!("loro-prsrc-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        assert!(
+            pr_template_rel(&root).is_none(),
+            "fixture: the project must have no template of its own"
+        );
+
+        // what the sheet showed
+        let (shown, rel) = pr_template_source(&root);
+        let (labels, hints) = pr_template_fields(&shown);
+        assert!(
+            !labels.is_empty() && !hints.iter().any(|h| h.is_empty()),
+            "fixture: the shipped template explains every section"
+        );
+
+        // the team keeps those sections and adds one, then saves
+        let mut kept = labels.clone();
+        kept.push("Riscos".into());
+        assert_eq!(write_pr_template(&root, kept.clone()).unwrap(), rel);
+
+        let on_disk = std::fs::read_to_string(root.join(&rel)).unwrap();
+        for (label, hint) in labels.iter().zip(&hints) {
+            assert!(
+                on_disk.contains(&format!("## {label}\n<!-- {hint} -->")),
+                "«{label}» went to the team's repository as a blank box with a title: {on_disk}"
+            );
+        }
+        assert!(on_disk.contains("## Riscos\n\n"), "{on_disk}");
+        // and the file the team now has is exactly the sections they chose, in order
+        let (after, _) = pr_template_fields(&on_disk);
+        assert_eq!(after, kept);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn migration_folds_legacy_incubadora_into_brainstorming_non_destructively() {
         // ADR-0013: legacy top-level incubadora/ folds into brainstorming/;
@@ -6320,5 +6697,205 @@ mod tests {
         assert_eq!(wav_duration_ms_from_bytes(&hdr(0, 16_000)), Some(500));
         // not a WAV
         assert_eq!(wav_duration_ms_from_bytes(b"not a wav at all"), None);
+    }
+
+    // ADR-0022 §28, fifth appearance of the same bug class: heavy work inside a
+    // SYNCHRONOUS `#[tauri::command]`, which runs on the main thread and freezes
+    // the window. Every command below shells out to git or gh — `gh_pr_detail`
+    // alone is THREE subprocesses plus two network round trips. A comment does
+    // not stop the sixth; this test does. The needle is assembled, because
+    // spelled out it would match this very file and pass on its own.
+    #[test]
+    fn the_review_commands_never_run_on_the_main_thread() {
+        let src = include_str!("lib.rs");
+        for cmd in [
+            "brain_git_diff",
+            "gh_pr_detail",
+            "gh_pr_diff",
+            "gh_pr_review",
+            "gh_pr_merge",
+            "gh_pr_reply",
+            // sending a draft reads the draft's open reviews, pushes and may call
+            // `gh pr create`: the longest wait of them all
+            "brain_propose_change",
+        ] {
+            assert!(
+                src.contains(&format!("{} fn {cmd}", "async")),
+                "{cmd} has to be async: it spawns git/gh and waits on the network. \
+                 Synchronous, that wait happens on the main thread and the window freezes."
+            );
+        }
+    }
+
+    // A command that is defined and not registered fails only at runtime, as an
+    // invoke rejection — nothing else in the suite catches it.
+    #[test]
+    fn the_review_commands_are_reachable_from_the_screen() {
+        let src = include_str!("lib.rs");
+        for cmd in [
+            "brain_git_diff",
+            "gh_pr_detail",
+            "gh_pr_diff",
+            "gh_pr_review",
+            "gh_pr_merge",
+            "gh_pr_reply",
+            "brain_pr_template",
+            "brain_set_pr_template",
+        ] {
+            assert!(
+                src.contains(&format!("            {cmd},\n")),
+                "{cmd} is defined but never registered in generate_handler"
+            );
+        }
+    }
+
+    // ADR-0027 · the author whose review came back with "mudanças pedidas" had no
+    // route in the app to deliver them: the ONLY code path that pushes was bundled
+    // with `gh pr create`, so sending the corrected version asked GitHub for a
+    // SECOND review of the same draft and came back as gh's English prose inside a
+    // pt-BR toast. Sending a draft that is already under review has to UPDATE it,
+    // which is the push — and `pr_create` may only be reached when there is no
+    // open review. This wiring is the single place that decides it.
+    #[test]
+    fn sending_a_draft_already_under_review_updates_it_instead_of_asking_for_a_second() {
+        let src = include_str!("lib.rs");
+        let from = src
+            .find("fn brain_propose_change")
+            .expect("the send-for-review command");
+        let rest = &src[from..];
+        let body = &rest[..rest.find("\n}\n").expect("the command's body")];
+
+        let ask = body.find("open_reviews_for_branch").expect(
+            "the draft's open reviews are never read: a second review gets asked for and gh answers in English",
+        );
+        let push = body
+            .find("push_branch")
+            .expect("nothing pushes the new version, so the open review never sees it");
+        let create = body
+            .find("pr_create")
+            .expect("a draft with no review still has to get its first one");
+        assert!(
+            ask < push && push < create,
+            "the decision is taken before anything leaves the machine, and creating is last"
+        );
+        assert!(
+            body.contains("ProposeAct::UpdateOpenReview"),
+            "the update outcome is never returned, so the screen cannot say which happened"
+        );
+        // assembled, or the needle would match this very test and count itself
+        let call = String::from("pr_create") + "(&base";
+        assert_eq!(
+            src.matches(&call).count(),
+            1,
+            "a second caller of pr_create would bypass the decision entirely"
+        );
+    }
+
+    // BR-9 — the whole credential story is asking gh whether the AMBIENT
+    // credential works. Nothing in the review path reads, stores or logs a token.
+    #[test]
+    fn br9_the_review_path_never_holds_a_credential() {
+        for (name, src) in [
+            ("lib.rs", include_str!("lib.rs")),
+            ("git.rs", include_str!("git.rs")),
+        ] {
+            let lower = src.to_lowercase();
+            // assembled, or the needles would match this very test
+            let secret = "token";
+            for needle in [
+                format!("gh_{secret}"),
+                format!("github_{secret}"),
+                format!("auth_{secret}"),
+                format!("--with-{secret}"),
+            ] {
+                assert!(
+                    !lower.contains(&needle),
+                    "{name}: BR-9 — the app must never handle a credential ({needle})"
+                );
+            }
+        }
+    }
+
+    // O CONTRATO DO CACHE, DERIVADO em vez de listado. `pr_list_cached` mantém um
+    // Mutex bloqueante DURANTE a busca (é isso que faz o single-flight), então
+    // chamá-lo de um `async fn` que não delega prende uma thread do executor com a
+    // trava na mão. A guarda anterior listava quatro nomes à mão: um comando novo
+    // que chamasse o cache passaria. Este descobre o conjunto.
+    #[test]
+    fn every_command_that_reads_the_pr_cache_hands_the_work_to_the_blocking_pool() {
+        let src = include_str!("lib.rs");
+        // corpo de cada função, indexado por nome
+        let mut bodies: Vec<(String, String)> = Vec::new();
+        for (i, _) in src
+            .match_indices("\nfn ")
+            .chain(src.match_indices("\nasync fn "))
+        {
+            let head = &src[i + 1..];
+            let Some(paren) = head.find('(') else {
+                continue;
+            };
+            let name = head[..paren]
+                .trim_start_matches("async ")
+                .trim_start_matches("fn ")
+                .trim();
+            if name.is_empty() || name.contains(' ') {
+                continue;
+            }
+            let Some(end) = head.find("\n}") else {
+                continue;
+            };
+            bodies.push((name.to_string(), head[..end].to_string()));
+        }
+        assert!(
+            bodies.len() > 40,
+            "o varredor cegou: só {} funções",
+            bodies.len()
+        );
+
+        let body_of = |n: &str| {
+            bodies
+                .iter()
+                .find(|(name, _)| name == n)
+                .map(|(_, b)| b.clone())
+                .unwrap_or_default()
+        };
+        // uma função "alcança" o cache se ela o chama, ou se chama um ajudante que o chama
+        let reaches = |b: &str| -> bool {
+            if b.contains("pr_list_cached") {
+                return true;
+            }
+            bodies.iter().any(|(n, hb)| {
+                n.ends_with("_blocking") && b.contains(n.as_str()) && hb.contains("pr_list_cached")
+            })
+        };
+
+        let mut checked = 0;
+        for (name, body) in &bodies {
+            // só os comandos: é o que o Tauri agenda no runtime
+            let decl = format!("fn {name}(");
+            let Some(at) = src.find(&decl) else { continue };
+            let before = &src[at.saturating_sub(80)..at];
+            if !before.contains("#[tauri::command]") {
+                continue;
+            }
+            if !reaches(body) {
+                continue;
+            }
+            checked += 1;
+            assert!(
+                before.contains("async fn") || src[at.saturating_sub(10)..at].contains("async "),
+                "{name} lê o cache e é síncrono: isso é a main thread"
+            );
+            assert!(
+                body.contains("spawn_blocking"),
+                "{name} lê o cache de dentro do executor, com a trava na mão — \
+                 o trabalho bloqueante vai para o pool"
+            );
+        }
+        assert!(
+            checked >= 2,
+            "o varredor não achou nenhum leitor do cache ({checked}) — ele cegou, \
+             e uma asserção que não pode reprovar é a doença que ela existe para pegar"
+        );
     }
 }

@@ -18,14 +18,16 @@ histórico de versões.
 Toda tela tem a mesma anatomia:
 
 ```
-CABEÇALHO 54px — [projeto ⌄] [Início · Organizar · Conhecimento] ··· [Gravar] [✦ IA]
+CABEÇALHO 54px — [projeto ⌄] [Início · Organizar · Conhecimento · Revisão] ··· [Gravar] [✦ IA]
 BARRA LATERAL │ ABAS (só quando há documento aberto) │ PAINEL 330px
 250px ou 60px │ CONTEÚDO                             │ Documento · Chat · Terminal
 ```
 
-- **Os três destinos** ficam no cabeçalho: **Início** (o que você quer guardar
+- **Os quatro destinos** ficam no cabeçalho: **Início** (o que você quer guardar
   hoje), **Organizar** (o que foi capturado e ainda não virou conhecimento — o
-  número âmbar é a contagem) e **Conhecimento** (os temas oficiais do time).
+  número âmbar é a contagem), **Conhecimento** (os temas oficiais do time) e
+  **Revisão** (o que você mudou e ainda não salvou, e o que o time propôs e
+  espera alguém ler — o número âmbar é quantas revisões pedem você).
 - **Gravar** é o botão vermelho do cabeçalho; enquanto grava, ele vira **Parar**
   e a gravação continua se você trocar de aba — um selo `gravando · mm:ss`
   aparece no cabeçalho e leva de volta.
@@ -441,6 +443,175 @@ por enviar para revisão do time normalmente).
   endereço o código continua aparecendo no texto, só não é clicável — o Loro não
   adivinha onde os códigos de outra ferramenta vivem.
 
+## Revisão
+
+O destino **Revisão** é a outra metade do produto: nada entra no conhecimento
+oficial sem alguém ler. Ele tem duas metades, e a frase no topo muda com a que
+você escolher.
+
+### Mudanças de agora
+
+- É o que **você** mudou e ainda não salvou numa versão. Funciona **sem
+  internet, sem GitHub e sem conta** — é o histórico do seu computador.
+- Um cartão por documento, com **novo · modificado · removido**, o nome, o
+  caminho e quanto mudou (`+6 −2 · 2 trechos mudaram`).
+- **Clique no cartão** e a mudança aparece na sua língua: **como era** (fundo
+  avermelhado) e **como fica** (fundo esverdeado). Um documento novo aparece como
+  **documento novo**, com o começo dele. Resumo é resumo: se for longo, o app
+  diz quantas linhas ficaram de fora.
+- **ver a mudança completa** abre as linhas exatas, dentro do mesmo cartão, com
+  os números de linha. **unificado** (o padrão) lê como o documento, com as
+  linhas `−` e `+`; **lado a lado** põe o antes à esquerda e o depois à direita.
+  Onde não havia linha, o espaço é hachurado. Um intervalo entre dois pedaços é
+  anunciado (`⋯ 12 linhas sem mudança`) — é aviso, não botão: essas linhas não
+  mudaram.
+- Numa mudança muito longa o cartão desenha 400 linhas de cada vez, diz quantas
+  faltam (`⋯ … e mais 500 linhas`) e oferece **mostrar mais linhas** ali mesmo —
+  a leitura continua dentro da tela, e o aviso desaparece quando acaba.
+- **marcar como visto** é para você: o contador `3 de 8 vistos` no topo ajuda a
+  não perder um documento numa mudança grande. A marca é **daquela mudança**: se o
+  documento mudar outra vez (ou se você salvar a versão e mexer nele de novo), o
+  cartão volta a aparecer como não visto — ele é outro texto para ler.
+- Um arquivo que não é texto (uma imagem, um áudio) diz **não dá para mostrar as
+  linhas deste arquivo** em vez de desenhar um diff vazio.
+- Se o projeto ainda não guarda versões, a tela diz isso e o que fazer. Se nada
+  mudou, ela diz **tudo salvo** e em qual rascunho está a última versão — e o passo
+  seguinte que ela oferece é sempre um que funciona: com o time conectado, **envie
+  para revisão**; sem o GitHub conectado, **conecte o GitHub em Configurações** (com
+  a porta ali mesmo); sem rede, ela diz que o envio volta **quando a rede voltar**.
+- **Uma versão guarda o que já está no arquivo.** Se um documento aberto tem texto
+  que você ainda não salvou (a aba mostra ●), a tela diz **texto não salvo em
+  ‹documento›** e oferece **abrir o documento** — salve lá, e a mudança aparece
+  aqui. Com a lista vazia essa é a resposta da tela, no lugar de «tudo salvo».
+
+### Salvar a versão daqui
+
+- O campo **Descreva a mudança em uma linha** fica ao lado das mudanças que ele
+  descreve, então o botão **grava direto** — sem folha no meio. A frase acima
+  dele avisa o preço antes do clique: guarda o **projeto inteiro**, todos os
+  temas, não só o documento aberto.
+- **⎇ no rascunho ‹nome›** diz onde você está; **trocar de rascunho** abre a
+  lista. Ela chama os lugares como a tela chama: **conhecimento oficial** e
+  **rascunho «nome»** — e a folha da troca diz **para onde** você vai e **por onde**
+  volta, com o preço (quantos documentos saem da tela, e que nada é apagado).
+  Criar um rascunho novo é um campo só, com o contador `0/24` e a prévia do
+  nome enquanto você digita.
+- Depois da troca, o aviso chama o lugar **pelo mesmo nome** («⎇ rascunho «prazo-do-
+  convite»», «⎇ conhecimento oficial») e repete o preço que foi pago («7 documentos
+  ficaram no rascunho anterior»). O nome interno do git não aparece em lugar
+  nenhum — e o chip, o estado vazio e o aviso trocam **juntos**.
+- Enquanto houver mudança que **ainda não está em nenhuma versão**, trocar de
+  rascunho não é possível — o Loro guardaria uma mudança pela metade. As linhas
+  aparecem apagadas dizendo **salve uma versão primeiro**, e **＋ novo rascunho…**
+  continua funcionando: um rascunho novo **leva a mudança com você**.
+- Se você estiver **no conhecimento oficial** (ou num ramo que não é um rascunho
+  do Loro), salvar **cria um rascunho de trabalho** — nada é escrito direto no
+  oficial. A tela diz isso antes do clique e mostra o nome que a sua descrição vai
+  dar a ele (`salvar cria o rascunho «prazo-do-convite»…`), pela mesma regra de 24
+  letras da folha **Novo rascunho**.
+- Sem descrição, o app pede a descrição e não grava nada. Sem nada mudado, o
+  botão fica desligado (o estado vazio logo acima explica por quê).
+- Se o **time ainda não está conectado** (ou a rede caiu), a tela diz isso **antes
+  do clique**, logo acima dos botões, e **↗ Enviar para revisão do time** fica
+  desligado: salvar versão continua funcionando (é local), e **abrir Configurações**
+  leva direto à seção **Versões e GitHub**, onde cada coisa que falta é nomeada com
+  o seu remédio.
+- **↗ Enviar para revisão do time** abre a folha do envio. Os campos são as
+  **seções do modelo do time** — o arquivo que o repositório já traz, não uma
+  lista que o Loro inventou. **configurar o modelo** deixa você mudar as seções
+  (uma por linha): a mudança vale para o time todo e passa pela **mesma revisão**
+  que qualquer outra.
+- Se um envio **falhar** (o GitHub fora do ar, o time não conectado), a folha
+  **não fecha**: o motivo aparece dentro dela, o que você escreveu continua lá e o
+  botão continua armado. Quando o que falta é uma configuração, a própria folha
+  oferece **abrir Configurações** — arrume o que falta, volte, e clique de novo.
+
+### Revisões do time
+
+- Duas listas: **Aguardam a sua revisão** e **Suas mudanças · e as que você já
+  revisou**. Cada linha traz o número, o assunto, o estado (**mudanças pedidas**,
+  **aprovada**), de quem é, de qual rascunho vem e quando mudou. **O título abre a
+  revisão** — pelo mouse ou pelo teclado, e quem usa leitor de tela ouve o estado
+  junto com o assunto. **⧉ copiar link**, ao lado, pega o endereço para colar no
+  chat do time.
+- **A versão cai no rascunho em que você está.** Salvar uma versão não te move de
+  lugar: ela é gravada no rascunho de trabalho em que você já está. Só quando você
+  está no **conhecimento oficial** é que salvar cria um rascunho — e o nome dele é
+  dito antes do clique, porque o oficial não recebe mudança direta.
+- **Trocar de rascunho leva a sua mudança não salva com você.** Se o documento for
+  diferente no rascunho de destino, a troca é recusada e a tela diz qual documento —
+  aí salvar uma versão primeiro resolve.
+- **O rascunho fica no cabeçalho.** O chip `⎇` ao lado de Gravar diz em que rascunho
+  de trabalho você está — é onde a próxima versão vai cair — e abre a folha para
+  trocar ou criar um. Numa janela estreita ele fica só com o glifo, e o nome continua
+  no título e na folha.
+- **Salvar o documento grava o arquivo, e só isso.** No modo de edição, **Salvar**
+  escreve o texto no disco. A versão do projeto é outro ato, com outra porta: a
+  Revisão (ou a seção TIME do painel ✦ IA) — um commit guarda o projeto inteiro, não
+  o documento em foco.
+- **A tela se mantém viva.** Com a Revisão aberta, o app relê as suas mudanças e as
+  revisões do time no mesmo relógio de 10 segundos do resto da tela — não existe
+  botão de «atualizar» porque não é preciso, e a lista nunca fica dizendo «tudo
+  salvo» enquanto a lateral mostra o ponto de mudança não salva.
+- **Enviar é um passo só na primeira vez.** Enquanto o rascunho não tem revisão
+  aberta, **↗ Enviar para revisão do time** é a decisão de compartilhar e nada sai
+  do seu computador antes dela. Depois que a revisão existe, esse botão **sai da
+  tela** — não há passo nenhum a oferecer: **Salvar versão do projeto** já grava a
+  versão e a leva à revisão aberta, e a tela diz qual é (#N), com a porta para ela.
+  Se a rede estiver fora, a versão fica salva aqui e a revisão recebe a atualização
+  quando a rede voltar — a tela diz isso também, em vez de dizer que atualizou.
+- **A lista abre na hora.** Ler o time custa uma ida à rede, então a Revisão mostra
+  a lista que já conhece imediatamente e busca a de agora atrás. Enquanto o que está
+  na tela for a leitura anterior, a tela diz isso — e sem rede ela diz que aquela é a
+  última leitura feita, que volta a atualizar quando a rede voltar.
+- **A leitura acontece aqui.** Abrir uma revisão mostra a descrição nas seções
+  do modelo — **lida como markdown**, do mesmo jeito que um documento do projeto:
+  títulos, listas, tabelas, ênfase e bloco de código aparecem formatados, e não
+  como os sinais que o autor digitou. O mesmo vale para cada comentário da
+  conversa. **O que muda** (os documentos, cada um com o mesmo cartão e o mesmo
+  diff de "mudanças de agora") e **Conversa** (cada linha comentada, com o trecho
+  citado, quem escreveu e quando; **responder** manda a resposta de dentro do
+  app). Cada **responder** diz de qual conversa é (`responder — contexts/…:13`), e
+  a folha da resposta repete o endereço, quem escreveu e o trecho — a resposta não
+  tem como ir para a conversa errada.
+- **Sua revisão** oferece **✓ Aprovar**, **pedir mudanças** ou **só comentar** —
+  e diz quanto a sua aprovação vale. Pedir mudanças ou comentar sem escrever
+  nada é recusado, com o motivo.
+- **Uma revisão pode voltar para você.** Se o autor salvar uma nova versão depois da
+  sua aprovação (o chip diz **aprovação de versão anterior**), ou se pedirem a sua
+  revisão de novo, a decisão é **oferecida outra vez** — e a tela diz por quê: «a sua
+  aprovação era de uma versão anterior…», «%1 pediu a sua revisão de novo.». Uma
+  decisão que ainda vale continua sendo só o **estado**, sem botão de novo.
+- Depois de **pedir mudanças**, quem lê é você: a tela diz **você pediu mudanças** e
+  que a mudança não entra no oficial enquanto o pedido estiver aberto — o próximo
+  passo é do autor, e você é avisado aqui quando pedirem a sua revisão de novo. Para
+  o **autor** da mudança, a mesma tela diz quem pediu e o que ele tem de fazer
+  (responder, salvar uma nova versão no rascunho, pedir nova revisão).
+- Quando a mudança é **sua** e já tem as aprovações e as verificações em ordem,
+  aparece **Juntar ao conhecimento oficial** — e a cópia diz, antes do clique, o
+  que juntar faz e qual rascunho ele encerra. Nunca aparecem as duas coisas ao
+  mesmo tempo: quem pode aprovar não pode juntar, e uma revisão já decidida
+  mostra o **estado** em vez de oferecer o botão de novo.
+- Quando há **conflito** com o oficial, ou uma verificação falhando, o botão de
+  juntar **não é oferecido**: a tela diz o que houve e onde resolver. Nada se
+  perde.
+- **Verificações que falharam** lista cada uma **pelo nome** (a que o time deu no
+  CI), com **ver a verificação ↗** para abrir o registro dela. Saber que "as
+  verificações" falharam sem saber qual delas era obrigava a sair do app.
+- **⎇ abrir para editar** troca para o rascunho da outra pessoa, pelo mesmo aviso
+  de preço de qualquer troca. Em **mudanças de agora** uma faixa âmbar passa a
+  dizer de quem é o rascunho e qual revisão ele atualiza, com **voltar ao meu
+  rascunho**.
+- **abrir no GitHub ↗** continua ali para o que o app não faz: aplicar uma
+  sugestão de código e marcar uma conversa como resolvida acontecem lá.
+- Sem GitHub conectado, esta metade diz o que falta e leva a **Configurações**.
+  Sem internet, ela diz que a lista é a **última leitura feita** e que volta
+  sozinha quando a rede voltar — e **salvar versão continua funcionando**.
+
+**Como chegar:** o destino **Revisão** no cabeçalho, o ⌘K (**Revisão** e **Ver
+revisões do time**), a seção **TIME** do painel ✦ IA e o aviso no topo de
+**Conhecimento**. Nenhuma dessas portas expira.
+
 ## Salvar versão e enviar para revisão do time
 
 - **⎇** mostra o **rascunho de trabalho** atual; clique para trocar de rascunho
@@ -455,14 +626,13 @@ por enviar para revisão do time normalmente).
   desligado: não existe versão vazia. Se você pedir uma assim mesmo (pelo ⌘K,
   por exemplo), o app responde **nada mudou desde a última versão** — e nenhum
   rascunho é criado.
-- **↗ Enviar para revisão do time** publica o rascunho e abre a revisão no
-  GitHub. Os donos do tema revisam; quando aprovam, a mudança vira o
-  conhecimento oficial. Depois de enviar, o aviso oferece **abrir a revisão**
-  (vai direto para ela no navegador) e **ver revisões** — a lista das revisões
-  abertas, cada uma com **abrir** e **copiar link**.
-- **Ver revisões do time** está sempre à mão: na seção **TIME** do painel ✦ IA e
-  no ⌘K, além do aviso no topo de **Conhecimento**. Você nunca depende de pegar
-  um aviso passando.
+- **↗ Enviar para revisão do time** publica o rascunho e abre a revisão. Os
+  donos do tema revisam; quando aprovam, a mudança vira o conhecimento oficial.
+  Depois de enviar, o aviso oferece **abrir a revisão** e **ver revisões**, que
+  leva ao destino **Revisão** — onde a leitura acontece, sem sair do Loro.
+- **Ver revisões do time** está sempre à mão: o destino **Revisão** no cabeçalho,
+  a seção **TIME** do painel ✦ IA, o ⌘K e o aviso no topo de **Conhecimento**.
+  Você nunca depende de pegar um aviso passando, e um destino não se dispensa.
 - Sem GitHub configurado, salvar versão continua funcionando **local** e a
   seção **TIME** aponta onde se liga (**Configurações → Versões e GitHub**). Na
   linha **repositório remoto** de **Configurações → Versões e GitHub**, o botão
@@ -478,6 +648,10 @@ por enviar para revisão do time normalmente).
   verdade (`ana@exemplo.com`), senão a assinatura não chega a ninguém.
 - Trocar de rascunho com mudanças ainda não salvas em uma versão é bloqueado —
   salve a versão antes.
+- Esta seção é a rota **por documento**, no painel ✦ IA: aqui as mudanças não
+  estão na tela, então salvar passa por uma folha que diz o preço. Em
+  **Revisão → mudanças de agora** as mudanças estão na sua frente e o botão grava
+  direto, com o mesmo preço escrito acima dele.
 - No **⎇**, cada linha diz **quanto aquele rascunho guarda** ("18 documentos",
   ou "nada guardado ainda"). Trocar para um rascunho que não tem os seus
   documentos **tira esses documentos da tela** — nada é apagado, eles continuam
