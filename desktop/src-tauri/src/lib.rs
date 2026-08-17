@@ -6815,4 +6815,87 @@ mod tests {
             }
         }
     }
+
+    // O CONTRATO DO CACHE, DERIVADO em vez de listado. `pr_list_cached` mantém um
+    // Mutex bloqueante DURANTE a busca (é isso que faz o single-flight), então
+    // chamá-lo de um `async fn` que não delega prende uma thread do executor com a
+    // trava na mão. A guarda anterior listava quatro nomes à mão: um comando novo
+    // que chamasse o cache passaria. Este descobre o conjunto.
+    #[test]
+    fn every_command_that_reads_the_pr_cache_hands_the_work_to_the_blocking_pool() {
+        let src = include_str!("lib.rs");
+        // corpo de cada função, indexado por nome
+        let mut bodies: Vec<(String, String)> = Vec::new();
+        for (i, _) in src
+            .match_indices("\nfn ")
+            .chain(src.match_indices("\nasync fn "))
+        {
+            let head = &src[i + 1..];
+            let Some(paren) = head.find('(') else {
+                continue;
+            };
+            let name = head[..paren]
+                .trim_start_matches("async ")
+                .trim_start_matches("fn ")
+                .trim();
+            if name.is_empty() || name.contains(' ') {
+                continue;
+            }
+            let Some(end) = head.find("\n}") else {
+                continue;
+            };
+            bodies.push((name.to_string(), head[..end].to_string()));
+        }
+        assert!(
+            bodies.len() > 40,
+            "o varredor cegou: só {} funções",
+            bodies.len()
+        );
+
+        let body_of = |n: &str| {
+            bodies
+                .iter()
+                .find(|(name, _)| name == n)
+                .map(|(_, b)| b.clone())
+                .unwrap_or_default()
+        };
+        // uma função "alcança" o cache se ela o chama, ou se chama um ajudante que o chama
+        let reaches = |b: &str| -> bool {
+            if b.contains("pr_list_cached") {
+                return true;
+            }
+            bodies.iter().any(|(n, hb)| {
+                n.ends_with("_blocking") && b.contains(n.as_str()) && hb.contains("pr_list_cached")
+            })
+        };
+
+        let mut checked = 0;
+        for (name, body) in &bodies {
+            // só os comandos: é o que o Tauri agenda no runtime
+            let decl = format!("fn {name}(");
+            let Some(at) = src.find(&decl) else { continue };
+            let before = &src[at.saturating_sub(80)..at];
+            if !before.contains("#[tauri::command]") {
+                continue;
+            }
+            if !reaches(body) {
+                continue;
+            }
+            checked += 1;
+            assert!(
+                before.contains("async fn") || src[at.saturating_sub(10)..at].contains("async "),
+                "{name} lê o cache e é síncrono: isso é a main thread"
+            );
+            assert!(
+                body.contains("spawn_blocking"),
+                "{name} lê o cache de dentro do executor, com a trava na mão — \
+                 o trabalho bloqueante vai para o pool"
+            );
+        }
+        assert!(
+            checked >= 2,
+            "o varredor não achou nenhum leitor do cache ({checked}) — ele cegou, \
+             e uma asserção que não pode reprovar é a doença que ela existe para pegar"
+        );
+    }
 }

@@ -1325,7 +1325,7 @@ affirmative branch, so it is the one that requires every state to be known.
 
 Pinned by R67 (six cases in JS, two in Rust); **10 mutations, 10 killed**.
 
-### Recorded, not fixed
+### The two that were recorded, and then closed
 
 - **`working_diff` filters `is_versioning_denied` and `pending_entries` does not**, so
   in a legacy acervo where meeting artifacts live under `contexts/<x>/` a *tracked*
@@ -1339,4 +1339,61 @@ Pinned by R67 (six cases in JS, two in Rust); **10 mutations, 10 killed**.
   not freeze — but the guard only greps for `async fn`, so a regression to blocking a
   runtime worker would pass, and `pr_list_cached`'s "only from `spawn_blocking`"
   contract is enforced by convention. None of them calls it today.
+
+## Round 11 — closing the two the review left open
+
+Both were recorded as "someone else's change" in round 10 and the owner asked
+whether they were worth doing now. They were, for different reasons.
+
+### The phantom pending change, and why it never terminated
+
+The reviewer described the symptom; reading it turned up **two** faults nested in
+each other, and a comment in the code asserting something untrue.
+
+`pending_entries` carried this justification for counting a tracked quarantined
+path: *"the next version is what takes it out of the index, so hiding it would
+leave the save button disarmed over work git still owes."* That premise was false.
+`unstage_versioning_denied` ran `git reset -- <rel>`, which **unstages** and leaves
+the path tracked — so the next version found it modified again, forever. Meanwhile
+`working_diff` filters it, so it never had a card. The result was a permanent dead
+end: the save button armed next to «tudo salvo» on the same screen, saving never
+clearing it, and `pr_merge` refusing with `err.working_tree_dirty` for good.
+
+**Decided**, both halves:
+
+1. `unstage_versioning_denied` uses `git rm --cached --ignore-unmatch` — the same
+   mechanism `stage_and_commit` already applies to everything that must never be
+   versioned (`inbox`, `brainstorming`, `.brain/state.json`): out of the index, still
+   on disk. Now **one** version resolves it instead of restarting the loop, and the
+   raw transcript leaves the repository, which is the point of the rule (BR-8).
+2. `pending_entries` stops counting an **untracked** denied path. Those two families
+   — the quarantined folders (`GIT_IGNORED`) and the material
+   `is_versioning_denied` refuses *inside* `contexts/` — are not pending work,
+   because no version will ever carry them. The second one could not be covered by
+   an ignore pattern, because the folder around it is versioned; that is exactly why
+   it was invisible to the first filter.
+
+Still **tracked**, it is pending work for exactly one version — the one that
+untracks it. After that it lands in case 2. The loop terminates.
+
+Pinned by `quarantined_material_inside_contexts_resolves_in_one_version`, which
+builds a real legacy acervo (a raw `reuniao.md` committed beside its `context.md`),
+and **each half of the fix was mutated separately** — reverting either one turns it
+red. The test also asserts the file is never deleted from disk and the real context
+stays versioned.
+
+### The cache contract, derived instead of listed
+
+`pr_list_cached` holds a blocking `Mutex` **across** the fetch — that is what makes
+the single-flight work — so calling it from an `async fn` that does not delegate
+pins an executor thread with the lock in hand. Nothing violates it today, and the
+guard that was supposed to protect it listed four command names by hand: a new
+command reading the cache would have passed.
+
+**Decided:** the guard **derives** the set. It parses every function in `lib.rs`,
+resolves which `#[tauri::command]`s reach `pr_list_cached` (directly or through a
+`_blocking` helper), and requires `async` + `spawn_blocking` on each. It also
+refuses to pass when it finds fewer than two readers, because a scanner that goes
+blind is the same disease as an assertion that cannot fail. Proved by adding a
+`gh_pr_peek` command that reads the cache inline: red, naming the command.
 

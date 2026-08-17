@@ -2116,11 +2116,19 @@ fn pending_entries(base: &Path) -> Vec<PendingEntry> {
     String::from_utf8_lossy(&out.stdout)
         .lines()
         .filter_map(parse_porcelain_line)
-        // Only the UNTRACKED half is dropped here. A quarantined path that is
-        // already IN the tree (an acervo versioned before the rule) is real
-        // pending work: the next version is what takes it out of the index, so
-        // hiding it would leave the save button disarmed over work git still owes.
-        .filter(|e| e.code != "??" || !is_quarantined(&e.path))
+        // A UNTRACKED path that no version will ever carry is not pending work.
+        // Two families of those: the quarantined folders (GIT_IGNORED), and the
+        // material `is_versioning_denied` refuses INSIDE contexts/ — a raw
+        // transcript or audio, which no ignore pattern can cover because the folder
+        // around it is versioned. Counting the second one was a permanent phantom:
+        // `working_diff` filters it, so it had no card; `pending_changes` counted
+        // it, so the save button stayed armed and «tudo salvo» was on screen at the
+        // same time; and `pr_merge` refused with err.working_tree_dirty forever.
+        //
+        // Still TRACKED, it IS pending work for exactly one version — the one that
+        // takes it out of the index (`unstage_versioning_denied`, which untracks
+        // rather than unstages). After that it lands in the case above.
+        .filter(|e| e.code != "??" || !(is_quarantined(&e.path) || is_versioning_denied(&e.path)))
         .collect()
 }
 
@@ -2457,8 +2465,13 @@ fn unstage_versioning_denied(base: &Path) {
     };
     for rel in String::from_utf8_lossy(&out.stdout).lines() {
         if is_versioning_denied(rel) {
+            // `reset` DESESTAGIA e o caminho continua rastreado, então a versão
+            // seguinte o encontrava modificado de novo — para sempre. `rm --cached`
+            // é o mesmo mecanismo que `stage_and_commit` já usa para o que nunca
+            // pode ser versionado: sai do índice, fica no disco. Assim uma versão
+            // resolve, em vez de recomeçar.
             let _ = crate::proc::command("git")
-                .args(["reset", "-q", "--", rel])
+                .args(["rm", "--cached", "--ignore-unmatch", "-q", "--", rel])
                 .current_dir(base)
                 .output();
         }
@@ -2968,6 +2981,75 @@ mod tests {
     // recebia o payload cru do gh, `pr.checks` era undefined, e um PR com CI
     // vermelha aparecia igual a um limpo. O teste do JS passava porque alimentava a
     // forma já normalizada — ele afirmava a regra, não o contrato.
+    // Achado na revisão do PR #71 e registrado como aberto na rodada 10: num acervo
+    // versionado antes da regra, um artefato de reunião RASTREADO dentro de
+    // `contexts/` era fantasma permanente. `working_diff` o filtra (não há cartão),
+    // `pending_changes` o contava (o botão de salvar ficava armado ao lado de «tudo
+    // salvo»), `unstage_versioning_denied` o desestagiava a cada save mantendo-o
+    // rastreado, e `pr_merge` recusava com err.working_tree_dirty para sempre.
+    #[test]
+    fn quarantined_material_inside_contexts_resolves_in_one_version() {
+        if which("git").is_none() {
+            return;
+        }
+        let root = temp_repo("denied-phantom");
+        init_with_commit(&root);
+        // um acervo antigo: a transcrição crua foi versionada junto com o contexto
+        std::fs::create_dir_all(root.join("contexts/frota")).unwrap();
+        std::fs::write(root.join("contexts/frota/context.md"), "conhecimento\n").unwrap();
+        std::fs::write(root.join("contexts/frota/reuniao.md"), "transcrição crua\n").unwrap();
+        crate::proc::command("git")
+            .args(["add", "-A"])
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        crate::proc::command("git")
+            .args(identity_args(Some("t"), Some("t@t.t")))
+            .args(["commit", "-m", "legado"])
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        assert!(is_versioning_denied("contexts/frota/reuniao.md"));
+
+        // a pessoa edita a transcrição (ou o app a reescreve)
+        std::fs::write(
+            root.join("contexts/frota/reuniao.md"),
+            "outra transcrição\n",
+        )
+        .unwrap();
+        assert!(
+            pending_changes(&root) > 0,
+            "rastreado e modificado É trabalho pendente"
+        );
+
+        // UMA versão resolve: sai do índice e continua no disco
+        stage_and_commit(&root, "limpa o legado".into()).unwrap();
+        assert!(
+            root.join("contexts/frota/reuniao.md").exists(),
+            "o arquivo da pessoa nunca é apagado"
+        );
+        let tracked = tracked_documents(&root, "HEAD");
+        assert!(
+            !tracked.iter().any(|p| p.ends_with("reuniao.md")),
+            "a transcrição crua saiu do repositório (BR-8): {tracked:?}"
+        );
+
+        // e NÃO volta a contar: nenhuma versão futura vai levá-la
+        assert_eq!(
+            pending_changes(&root),
+            0,
+            "o fantasma voltou: o botão de salvar fica armado ao lado de «tudo salvo», \
+             e pr_merge recusa para sempre"
+        );
+        assert!(
+            !is_dirty(&root),
+            "e a troca de rascunho volta a ser possível"
+        );
+        // o contexto de verdade continua versionado
+        assert!(tracked.iter().any(|p| p.ends_with("frota/context.md")));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn the_list_hands_the_screen_the_check_shape_the_screen_reads() {
         let raw = r#"[{"number":6,"title":"t","statusCheckRollup":[
