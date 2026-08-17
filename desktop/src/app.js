@@ -7454,7 +7454,10 @@ function afterSwitch(branch, price, def) {
 }
 // The price, stated before the click, with the destination and the way back
 // named — both as the screen calls them, never as git does.
-function confirmSwitchBranch(branch, price) {
+// `after` só roda quando a troca ACONTECE: quem chama daqui pode ter uma vista a
+// arrumar, e arrumá-la antes da resposta deixava a tela num estado que o cancelar
+// não desfazia.
+function confirmSwitchBranch(branch, price, after) {
   openModal(
     t("Trocar de rascunho"),
     // «7 documentos saem da tela — lá ainda não há nenhum documento — a tela vai
@@ -7471,8 +7474,10 @@ function confirmSwitchBranch(branch, price) {
         : ""),
     t("trocar mesmo assim"),
     async () => {
-      try { afterSwitch(await invoke("git_switch_branch", { branch }), price, price.def); }
-      catch (e) { toast(tErr(String(e)), 5000); }
+      try {
+        afterSwitch(await invoke("git_switch_branch", { branch }), price, price.def);
+        if (after) after();
+      } catch (e) { toast(tErr(String(e)), 5000); }
     }
   );
 }
@@ -7876,7 +7881,11 @@ function paintTeamGate() {
   // salvar versão já leva a versão à revisão (DESIGN.md §1 — nunca um controle que
   // não faz nada).
   const aberta = block ? null : RV.openReviewFor(REV.prs, REV.branch, { me: reviewMe() });
-  if (btn && !block) btn.hidden = !!aberta;
+  // SEMPRE atribuído: era só no ramo sem bloqueio, então «rascunho já em revisão»
+  // escondia o botão e uma queda de rede depois deixava a porta permanente desta
+  // metade invisível para sempre — com a nota que a descreve (aria-describedby) na
+  // tela, falando de um controle que não está lá.
+  if (btn) btn.hidden = !!aberta;
   paintOpenReviewState(aberta);
   if (!block) return;
   note.textContent = block === "err.github_unreachable"
@@ -8644,7 +8653,12 @@ function decisionHtml(pr, st) {
   }
   if (st.canMerge) {
     return `<h3 class="rvhead">${t("Sua revisão")}</h3>` +
-      `<p class="hint">${esc(t("%1 de %1 aprovações · verificações ok. Juntar cria a versão no conhecimento oficial e encerra o rascunho «%2».", [st.approvals.have, draft]))}</p>` +
+      // `t()` troca %1 GLOBALMENTE, então isto imprimia have/have — «1 de 1» ao lado
+      // de um cabeçalho dizendo «1 de 2». E `canMerge` aceita `checks === null`
+      // (nenhum CI configurado), caso em que «verificações ok» afirma um check que
+      // nunca rodou. Duas frases: a conta, e o estado dos checks só quando há.
+      `<p class="hint">${esc(t("%1 de %2 aprovações. Juntar cria a versão no conhecimento oficial e encerra o rascunho «%3».", [st.approvals.have, st.approvals.need, draft]))}` +
+      (st.checks === "ok" ? " " + esc(t("As verificações passaram.")) : "") + `</p>` +
       `<div class="revacts"><button class="btn solid" data-prmerge>${t("Juntar ao conhecimento oficial")}</button></div>`;
   }
   if (st.canDecide) {
@@ -8751,7 +8765,7 @@ function threadHtml(th) {
   return `<div class="revcard"><div class="revrow">` +
     `<span class="rvtitle">${esc(where)}</span>` +
     (th.resolved ? `<span class="badge ok">${t("resolvida ✓")}</span>` : "") +
-    (th.outdated ? `<span class="badge warn2">${t("aprovação de versão anterior")}</span>` : "") +
+    (th.outdated ? `<span class="badge warn2">${t("comentário de uma versão anterior")}</span>` : "") +
     `</div>` +
     (th.excerpt ? `<div class="rvdiff">${th.excerpt.split("\n").map((l) =>
       `<div class="rvrow uni"><span class="rvnum"></span><span class="rvnum"></span>` +
@@ -8961,7 +8975,11 @@ async function openForEditing(pr) {
   REV.cameFrom = info.current || "";
   const price = switchPrice(stand, info.current, info.default);
   const land = () => { goDest("review", "now"); refreshMyChanges(); };
-  if (price) { confirmSwitchBranch(target, price); land(); return; }
+  // `confirmSwitchBranch` só ABRE a folha: chamar land() aqui trocava a vista e
+  // escondia a revisão antes da resposta, então cancelar deixava a pessoa nas
+  // mudanças do rascunho anterior, com a revisão fechada e `REV.cameFrom` já
+  // sobrescrito. A aterrissagem é consequência da confirmação.
+  if (price) { confirmSwitchBranch(target, price, land); return; }
   try { afterSwitch(await invoke("git_switch_branch", { branch: target }), null, info.default); land(); }
   catch (e) { toast(tErr(String(e)), 5000); }
 }

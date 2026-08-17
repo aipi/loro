@@ -216,12 +216,17 @@
   // ok | fail | pending | null — three states with one meaning each, so an
   // unknown gh conclusion can never be painted green (check_state does the
   // narrowing in Rust; this only folds the runs into one word).
+  // «ok» é AFIRMATIVO, e por isso é o único ramo que exige que todo estado seja
+  // conhecido. O `return "ok"` final pintava verde qualquer lista em que nada casasse
+  // «failed» ou «running» — inclusive um estado cru do gh («FAILURE») vazando pelo
+  // contrato. O lado Rust já tinha essa regra (`check_state`: um estado desconhecido
+  // nunca é reportado como passando); este lado não.
   function checksState(checks) {
     const list = checks || [];
     if (!list.length) return null;
-    if (list.some((c) => c.state === "failed")) return "fail";
-    if (list.some((c) => c.state === "running")) return "pending";
-    return "ok";
+    if (list.some((c) => str(c && c.state) === "failed")) return "fail";
+    if (list.some((c) => str(c && c.state) === "running")) return "pending";
+    return list.every((c) => str(c && c.state) === "ok") ? "ok" : "pending";
   }
 
   // WHICH check failed, and where it lives. `checksState` folds the whole list

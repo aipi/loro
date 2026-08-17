@@ -1661,8 +1661,9 @@
       "your change request was for an earlier version: a new version was saved after it.",
     "%1 pediu a sua revisão de novo.": "%1 asked for your review again.",
     "Juntar ao conhecimento oficial": "Merge into the official knowledge",
-    "%1 de %1 aprovações · verificações ok. Juntar cria a versão no conhecimento oficial e encerra o rascunho «%2».":
-      "%1 of %1 approvals · checks passed. Merging creates the version in the official knowledge and closes the draft “%2”.",
+  "%1 de %2 aprovações. Juntar cria a versão no conhecimento oficial e encerra o rascunho «%3».":
+    "%1 of %2 approvals. Merging creates the version in the official knowledge and closes the draft “%3”.",
+  "As verificações passaram.": "The checks passed.",
     "esta mudança é sua — falta a aprovação de %1. Você será avisado aqui quando alguém revisar.":
       "this change is yours — %1 still has to approve. You will be told here when someone reviews it.",
     "alguém do time": "someone on the team",
@@ -1691,6 +1692,7 @@
   "este rascunho é de outra pessoa e já está em revisão (#%1) — salvar versão atualiza a revisão aberta.":
     "this draft belongs to someone else and is already under review (#%1) — saving a version updates the open review.",
   "ver a revisão #%1": "see review #%1",
+  "comentário de uma versão anterior": "comment from an earlier version",
   "sugestão de mudança": "suggested change",
   "buscando as revisões do time…": "fetching the team's reviews…",
   "lendo o que você mudou…": "reading what you changed…",

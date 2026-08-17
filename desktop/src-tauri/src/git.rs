@@ -426,8 +426,15 @@ pub fn switch_branch(base: &Path, branch: &str) -> Result<(), String> {
     if !ref_exists(base, &format!("refs/heads/{branch}")) {
         return Err("err.branch_not_found".into());
     }
+    // O único caminho para `err.switch_would_lose_change` é casar o texto do git, e
+    // um git localizado (o do Homebrew traz catálogos gettext) responderia em
+    // pt-BR — a recusa cairia no ramo genérico e a prosa crua do git chegaria ao
+    // toast, que é exatamente o que este mapeamento existe para evitar. `LC_ALL=C`
+    // fixa a língua da SAÍDA que nós lemos; nada do que a pessoa vê vem daqui.
     let out = crate::proc::command("git")
         .args(["checkout", branch])
+        .env("LC_ALL", "C")
+        .env("LANGUAGE", "C")
         .current_dir(base)
         .output()
         .map_err(|e| e.to_string())?;
@@ -624,8 +631,16 @@ pub struct PrInfo {
     // a linha do time não podia dizer de quem é a vez sem eles.
     #[serde(default)]
     pub mergeable: String,
-    #[serde(default)]
+    // O gh manda `statusCheckRollup` com os valores dele (SUCCESS/FAILURE/…); a
+    // tela lê `checks` com os valores do produto (ok/failed/running). Os dois
+    // existem porque são coisas diferentes: um é o que chega, o outro é o que a
+    // regra do app entende. `pr_list` traduz um no outro — sem isso a linha do
+    // time lia `pr.checks` como undefined e uma mudança com CI vermelha aparecia
+    // igual a uma limpa, que é exatamente o que ela existe para não fazer.
+    #[serde(default, skip_serializing)]
     pub status_check_rollup: Vec<GhCheck>,
+    #[serde(default, skip_deserializing)]
+    pub checks: Vec<CheckRun>,
 }
 
 // A LISTA TEM DE PODER DIZER DE QUEM É A VEZ. Sem `statusCheckRollup` e
@@ -636,12 +651,24 @@ pub struct PrInfo {
 const PR_FIELDS: &str = "number,title,headRefName,author,reviewDecision,reviewRequests,\
 updatedAt,url,state,mergeable,statusCheckRollup";
 
+// O gh manda `statusCheckRollup` com os valores dele; a tela lê `checks` com os do
+// produto. A tradução mora AQUI, num nome, e os dois caminhos que trazem PrInfo do
+// remote passam por ela — era o esquecimento dela em `pr_list` que fazia a linha do
+// time nunca mostrar chip.
+pub fn with_normalized_checks(mut prs: Vec<PrInfo>) -> Vec<PrInfo> {
+    for p in &mut prs {
+        p.checks = check_runs(std::mem::take(&mut p.status_check_rollup));
+    }
+    prs
+}
+
 pub fn pr_list(base: &Path) -> Result<Vec<PrInfo>, String> {
     let out = gh(base, &["pr", "list", "--json", PR_FIELDS, "--limit", "50"])?;
     if !out.status.success() {
         return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
     }
-    serde_json::from_slice(&out.stdout).map_err(|e| e.to_string())
+    let prs: Vec<PrInfo> = serde_json::from_slice(&out.stdout).map_err(|e| e.to_string())?;
+    Ok(with_normalized_checks(prs))
 }
 
 // UMA LEITURA DO REMOTE, UMA FONTE DA VERDADE. `gh pr list` custa ~1,7s de rede,
@@ -715,7 +742,8 @@ pub fn pr_status(base: &Path, number: u64) -> Result<PrInfo, String> {
     if !out.status.success() {
         return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
     }
-    serde_json::from_slice(&out.stdout).map_err(|e| e.to_string())
+    let p: PrInfo = serde_json::from_slice(&out.stdout).map_err(|e| e.to_string())?;
+    Ok(with_normalized_checks(vec![p]).remove(0))
 }
 
 // ---- reading a review INSIDE the app (ADR-0027) -----------------------------
@@ -972,6 +1000,8 @@ pub struct PrDetail {
     pub files: Vec<PrFile>,
     pub checks: Vec<CheckRun>,
     pub threads: Vec<PrThread>,
+    #[serde(default)]
+    pub review_decision: Option<String>,
 }
 
 // gh's payload, private on purpose: `statusCheckRollup` is gh's key and `checks`
@@ -1010,6 +1040,12 @@ struct GhPrView {
     files: Vec<GhFile>,
     #[serde(default)]
     status_check_rollup: Vec<GhCheck>,
+    // Pedido em PR_DETAIL_FIELDS desde o começo e nunca lido: sem ele o guarda de
+    // `reviewState` («se o remote diz que falta revisão, o denominador é ≥ 1») via
+    // undefined e a tela seguia dizendo «0 de 0 aprovações» num PR que o GitHub
+    // bloqueia — o defeito que aquele fix existia para consertar.
+    #[serde(default)]
+    review_decision: Option<String>,
 }
 
 #[derive(serde::Deserialize, Default)]
@@ -1355,6 +1391,7 @@ fn detail_from(view: GhPrView, conv: Conversation) -> PrDetail {
             })
             .collect(),
         checks: check_runs(view.status_check_rollup),
+        review_decision: view.review_decision,
         reviews: conv.reviews,
         threads: conv.threads,
         number: view.number,
@@ -2925,6 +2962,77 @@ mod tests {
     // `git checkout -b rfc/<slug>` — a pessoa era MOVIDA para um rascunho novo e a
     // revisão aberta daquele branch nunca via a versão. A tela chegou a dizer as duas
     // coisas ao mesmo tempo, e a errada era a que prometia atualizar a revisão.
+    // Achado na revisão do PR #71: `PR_FIELDS` ganhou `statusCheckRollup` para a
+    // linha do time poder dizer que uma mudança está bloqueada, e a tradução para a
+    // forma que a tela entende (`check_runs`) só era chamada no DETALHE. A lista
+    // recebia o payload cru do gh, `pr.checks` era undefined, e um PR com CI
+    // vermelha aparecia igual a um limpo. O teste do JS passava porque alimentava a
+    // forma já normalizada — ele afirmava a regra, não o contrato.
+    #[test]
+    fn the_list_hands_the_screen_the_check_shape_the_screen_reads() {
+        let raw = r#"[{"number":6,"title":"t","statusCheckRollup":[
+            {"name":"VTEC","status":"COMPLETED","conclusion":"FAILURE","detailsUrl":"u"}]}]"#;
+        let prs = with_normalized_checks(serde_json::from_slice(raw.as_bytes()).unwrap());
+        let json = serde_json::to_string(&prs[0]).unwrap();
+        assert!(
+            json.contains(r#""checks":["#),
+            "a chave que a tela lê: {json}"
+        );
+        assert!(
+            json.contains(r#""state":"failed""#),
+            "e o valor do PRODUTO, não o FAILURE do gh: {json}"
+        );
+        assert!(
+            !json.contains("statusCheckRollup"),
+            "a forma crua do gh não vai para a tela: {json}"
+        );
+        assert_eq!(prs[0].checks[0].name, "VTEC");
+        // e um PR sem CI nenhum entrega lista vazia, nunca ausência de campo
+        let none = with_normalized_checks(serde_json::from_slice(br#"[{"number":7}]"#).unwrap());
+        assert!(serde_json::to_string(&none[0])
+            .unwrap()
+            .contains(r#""checks":[]"#));
+
+        // E A FIAÇÃO. A primeira versão deste teste refazia a tradução ELE MESMO, então
+        // arrancá-la de `pr_list` não o fazia reprovar — a mesma armadilha que a
+        // revisão do PR #71 apontou no teste da R62. Os dois caminhos que trazem
+        // PrInfo do remote têm de passar pela função.
+        let src = include_str!("git.rs");
+        for f in ["pub fn pr_list(", "pub fn pr_status("] {
+            let at = src.find(f).expect(f);
+            let body = &src[at..at + src[at..].find("\n}").unwrap()];
+            assert!(
+                body.contains("with_normalized_checks"),
+                "{f} entrega o payload cru do gh para a tela"
+            );
+        }
+    }
+
+    // Mesma família: `PR_DETAIL_FIELDS` pedia `reviewDecision` desde o começo e
+    // NENHUMA struct o carregava, então o guarda do «0 de 0 aprovações» via
+    // undefined e a tela seguia dizendo que a conta fechou num PR que o GitHub
+    // bloqueia.
+    #[test]
+    fn the_open_review_carries_the_decision_the_remote_gave() {
+        assert!(
+            PR_DETAIL_FIELDS.contains("reviewDecision"),
+            "o campo é pedido ao gh"
+        );
+        let view: GhPrView =
+            serde_json::from_slice(br#"{"number":6,"reviewDecision":"REVIEW_REQUIRED"}"#).unwrap();
+        let d = detail_from(view, Conversation::default());
+        assert_eq!(
+            d.review_decision.as_deref(),
+            Some("REVIEW_REQUIRED"),
+            "sem isto o «0 de 0 aprovações» segue mentindo"
+        );
+        let json = serde_json::to_string(&d).unwrap();
+        assert!(
+            json.contains(r#""reviewDecision":"REVIEW_REQUIRED""#),
+            "{json}"
+        );
+    }
+
     #[test]
     fn a_version_lands_on_the_draft_you_are_standing_on() {
         if which("git").is_none() {

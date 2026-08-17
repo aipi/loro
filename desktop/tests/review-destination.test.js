@@ -3182,3 +3182,87 @@ test("R65 — abrir uma revisão mostra o loader, não a palavra «um momento» 
   assert.match(carregando, /REV\.detailErr\s*\n?\s*\?/, "com erro a tela mostra o erro, não os pontinhos");
   assert.ok(EN["lendo a revisão…"]);
 });
+
+// ------------------------------------------------------------------- R67
+// Achados na revisão de código do PR #71. Nenhum deles quebrou a suíte quando foi
+// corrigido — o que quer dizer que nenhuma asserção os cobria. Estas cobrem.
+test("R67 — a folha de juntar não inventa aprovação nem check", () => {
+  // `t()` troca %1 GLOBALMENTE, e a frase era «%1 de %1» com [have, draft]: ela
+  // imprimia have/have ao lado de um cabeçalho dizendo «1 de 2». E `canMerge`
+  // aceita `checks === null` (nenhum CI configurado), caso em que «verificações ok»
+  // afirmava um check que nunca rodou.
+  const dec = fnBody("decisionHtml");
+  assert.ok(!/%1 de %1 aprovações/.test(dec),
+    "%1 de %1 sempre imprime o mesmo número dos dois lados");
+  assert.match(dec, /%1 de %2 aprovações\. Juntar cria a versão/);
+  assert.match(dec, /\[st\.approvals\.have, st\.approvals\.need, draft\]/,
+    "o denominador é o que o resto da tela usa");
+  assert.match(dec, /st\.checks === "ok" \?/,
+    "a frase dos checks só sai quando eles existem E passaram");
+  assert.ok(EN["%1 de %2 aprovações. Juntar cria a versão no conhecimento oficial e encerra o rascunho «%3»."]);
+  assert.ok(EN["As verificações passaram."]);
+});
+
+test("R67 — cancelar a troca de rascunho não deixa a vista trocada", () => {
+  // `confirmSwitchBranch` só ABRE a folha, e `land()` rodava logo depois: cancelar
+  // deixava a pessoa nas mudanças do rascunho anterior, com a revisão fechada e
+  // `REV.cameFrom` já sobrescrito.
+  const abrir = fnBody("openForEditing");
+  assert.match(abrir, /confirmSwitchBranch\(target, price, land\)/,
+    "a aterrissagem é consequência da confirmação, não do clique que abre a folha");
+  assert.ok(!/confirmSwitchBranch\(target, price\); land\(\)/.test(abrir));
+  // e o confirmador só a chama quando a troca ACONTECE
+  const conf = fnSource("confirmSwitchBranch");
+  assert.match(conf, /function confirmSwitchBranch\(branch, price, after\)/);
+  const corpo = conf.slice(conf.indexOf("async () =>"));
+  assert.ok(corpo.indexOf("git_switch_branch") < corpo.indexOf("if (after) after()"),
+    "primeiro a troca, depois a vista — e nada se a troca falhar");
+  assert.match(corpo, /catch \(e\) \{ toast\(tErr/, "e a falha continua sendo dita");
+});
+
+test("R67 — a porta permanente do time não fica invisível para sempre", () => {
+  const gate = fnBody("paintTeamGate");
+  assert.match(gate, /if \(btn\) btn\.hidden = !!aberta;/,
+    "era `if (btn && !block)`: escondido por «já em revisão», uma queda de rede depois "
+    + "nunca reatribuía, e a nota que descreve o botão (aria-describedby) ficava na tela "
+    + "falando de um controle ausente");
+  assert.ok(!/if \(btn && !block\) btn\.hidden/.test(gate));
+});
+
+test("R67 — uma conversa desatualizada não é uma aprovação", () => {
+  const th = fnBody("threadHtml");
+  assert.match(th, /th\.outdated \? `<span class="badge warn2">\$\{t\("comentário de uma versão anterior"\)\}/,
+    "o msgid da aprovação rotulava uma CONVERSA presa a linhas antigas");
+  assert.ok(!/th\.outdated \?[^:]*aprovação de versão anterior/.test(th));
+  assert.ok(EN["comentário de uma versão anterior"]);
+  // e o msgid da aprovação continua vivo onde ele é verdade
+  assert.match(APP, /stale: t\("aprovação de versão anterior"\)/);
+});
+
+test("R67 — a recusa do git é lida em língua fixa, não na do sistema", () => {
+  const sw = GIT.slice(GIT.indexOf("pub fn switch_branch"), GIT.indexOf("\n}", GIT.indexOf("pub fn switch_branch")));
+  assert.match(sw, /\.env\("LC_ALL", "C"\)/,
+    "o único caminho para err.switch_would_lose_change é casar o texto do git: "
+    + "com um git localizado a recusa cairia no ramo genérico e a prosa crua chegaria ao toast");
+  assert.match(sw, /\.env\("LANGUAGE", "C"\)/);
+  assert.ok(sw.indexOf('.env("LC_ALL"') < sw.indexOf(".output()"),
+    "fixado ANTES de rodar");
+});
+
+test("R67 — a linha do time lê a forma que o backend REALMENTE manda", () => {
+  // O teste da R62 alimentava `{checks:[{state:"fail"}]}` — a forma normalizada — e
+  // por isso passava com o backend mandando `statusCheckRollup` cru. Aqui a entrada
+  // é a que sai do Rust: chave `checks`, estados do produto.
+  const doBackend = { number: 6, checks: [{ name: "VTEC", state: "failed", url: "u" }], mergeable: "MERGEABLE" };
+  assert.deepEqual(RV.listChips(doBackend).map((c) => c.key), ["checks"]);
+  assert.equal(RV.listChips(doBackend)[0].values.state, "fail");
+  // e os estados que o gh usa NÃO são os do produto: se um deles vazar, não é «ok»
+  const cru = { number: 6, checks: [{ state: "FAILURE" }] };
+  assert.notEqual(RV.listChips(cru)[0] && RV.listChips(cru)[0].values.state, "ok",
+    "um estado desconhecido nunca é pintado como passando");
+  assert.deepEqual(RV.listChips({ number: 7, checks: [] }).map((c) => c.key), [],
+    "sem CI nenhum a linha não inventa chip");
+  // o contrato do Rust está pinado do outro lado
+  assert.match(GIT, /fn the_list_hands_the_screen_the_check_shape_the_screen_reads/);
+  assert.match(GIT, /fn the_open_review_carries_the_decision_the_remote_gave/);
+});

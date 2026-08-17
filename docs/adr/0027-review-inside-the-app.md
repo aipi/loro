@@ -1256,3 +1256,87 @@ Pinned by R65, R66, the migrated R19/R58/R64, and two new Rust tests
 source-level suite and obvious in one screenshot. Three rounds of CSS and copy went
 out verified only by tests, and the tests were green the whole time.
 
+## Round 10 — the code review of PR #71
+
+Nine findings, all real. Three were fixes from earlier rounds that **never fired**,
+and none of the eight corrections broke a single existing assertion — which is the
+finding behind the findings: my tests asserted the rules and not the contracts.
+
+### The one that was security-shaped
+
+`esc()` escaped `& < >` and not quotes, and this surface interpolates
+**third-party text into HTML attributes**: a PR title (any fork author), a file
+path, a check name, a conversation address. One quote closes the attribute, and the
+app's CSP allows inline styles, so a title like `Prazo" style="position:fixed;inset:0`
+lands a `style` on the row and can blanket the window (inline JS is blocked, so this
+is attribute/CSS injection, not script execution). With no malice at all, a path
+containing `"` — legal on macOS and Linux — truncated `data-rvfull`, `RV.fileAt`
+returned null, and «ver a mudança completa» became a control that does nothing.
+`focusMarkIn` already guarded `/["\\]/`; the awareness was missing everywhere else.
+**Decided:** `esc()` escapes all five. One change, every emission site, impossible to
+miss the next one.
+
+### Two fixes from earlier rounds that were dead on arrival
+
+- **The check chip on the team row (round 7).** `PR_FIELDS` gained
+  `statusCheckRollup` so the row could say a change is blocked, and `check_runs`
+  existed to translate it — but it was only called from `detail_from`. `pr_list`
+  handed JS the raw gh payload, so `pr.checks` was `undefined` and a PR with red CI
+  rendered identically to a clean one. **Decided:** `with_normalized_checks`, a named
+  function both `pr_list` and `pr_status` route through, and `PrInfo` carries
+  `checks` (product values) while `statusCheckRollup` stops being serialized at all.
+- **«0 de 0 aprovações» (round 7).** `PR_DETAIL_FIELDS` asked gh for
+  `reviewDecision` from the first day and **no struct carried it**, so the guard that
+  raises the denominator saw `undefined` and the screen kept saying the count was
+  settled on a PR GitHub blocks. **Decided:** the field exists on `GhPrView` and
+  `PrDetail`.
+
+Both of my tests passed because they fed the already-normalized shape. The check
+test now exercises `with_normalized_checks` **and asserts the wiring** — its first
+version re-did the translation itself, so tearing it out of `pr_list` did not make it
+fail. That mutation is the one that mattered.
+
+### And one the new guard found on its own
+
+Writing the check-shape test surfaced something nobody reported: `checksState`
+returned `"ok"` for any list where nothing matched `"failed"`/`"running"`, so an
+unknown state — including a raw gh `"FAILURE"` leaking through a contract gap —
+painted **green**. The Rust side already had this rule (`check_state`: an unknown
+state is never reported as passing); the JS side did not. **Decided:** `"ok"` is the
+affirmative branch, so it is the one that requires every state to be known.
+
+### Five smaller ones
+
+- `%1 de %1 aprovações · verificações ok` — `t()` replaces `%1` globally, so it
+  always printed have/have next to a header saying «1 de 2»; and `canMerge` accepts
+  `checks === null` (no CI at all), where «verificações ok» asserts a check that
+  never ran. Now `%1 de %2`, and the check sentence only when there are checks.
+- `openForEditing` called `land()` regardless of the confirmation sheet, so
+  cancelling left the view switched and the review closed. `confirmSwitchBranch`
+  takes an `after` callback that runs only when the switch happens.
+- `paintTeamGate` assigned `btn.hidden` only in the unblocked branch, so a draft
+  under review followed by a network drop left the permanent door invisible forever,
+  with its `aria-describedby` note on screen describing a control that is not there.
+- An outdated **conversation** was badged with the approval msgid. It has its own now.
+- `switch_branch`'s refusal mapping matched English git output only, and
+  `proc::command` pins no locale — on a localized git the refusal fell through and
+  raw git prose reached a pt-BR toast, which is what the mapping exists to prevent.
+  `LC_ALL=C`/`LANGUAGE=C` are pinned on the call whose output we parse.
+
+Pinned by R67 (six cases in JS, two in Rust); **10 mutations, 10 killed**.
+
+### Recorded, not fixed
+
+- **`working_diff` filters `is_versioning_denied` and `pending_entries` does not**, so
+  in a legacy acervo where meeting artifacts live under `contexts/<x>/` a *tracked*
+  denied path counts in `pending_changes`/`is_dirty`, never appears as a card, and
+  `unstage_versioning_denied` resets it on every save — a permanent phantom pending
+  change, and the same dead end this ADR fixed for `.brain/state.json`. It predates
+  this work and touches `pending_changes` semantics broadly, so it belongs to its own
+  change.
+- **The six review commands are `async fn` that block directly** rather than using
+  `spawn_blocking`. Tauri v2 spawns them onto the async runtime, so the window does
+  not freeze — but the guard only greps for `async fn`, so a regression to blocking a
+  runtime worker would pass, and `pr_list_cached`'s "only from `spawn_blocking`"
+  contract is enforced by convention. None of them calls it today.
+
