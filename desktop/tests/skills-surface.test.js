@@ -203,7 +203,7 @@ test("N15 — a contagem é a do menu que o controle abre", () => {
   const body = fnBody("renderDocRail");
   assert.ok(!/lastToolFiles\.length/.test(body),
     "o rótulo contava arquivos e o menu listava entradas: os dois números nunca batem");
-  assert.match(body, /allHabilidadeEntries\("doc"\)\.length|entries\.length/);
+  assert.match(body, /allHabilidadeEntries\(habilidadeSurface\(tab\.rel\)\)\.length|entries\.length/);
 });
 
 test("N15 — importar uma habilidade repinta os contadores na hora", () => {
@@ -397,4 +397,42 @@ test("N16 — os destinos são as casas que o projeto tem, no vocabulário da te
   // sem nenhuma casa, a folha não abre pedindo um caminho impossível: ela diz o passo
   assert.match(fnBody("promptUseTool"), /crie uma ideia ou um tema antes de rodar esta habilidade/);
   pair("crie uma ideia ou um tema antes de rodar esta habilidade");
+});
+
+// ---------------------------------------------------------------- superfície
+// Numa reunião as habilidades DA REUNIÃO lideram — "perguntar sobre a reunião"
+// primeiro (ADR-0005, decisão do dono, escrita no comentário de TOOL_ORDER). O
+// mapa `meeting` existia para isso e NENHUM chamador o alcançava: todos passavam
+// o literal "doc" na mão. A ordem da reunião era código morto, e ao vivo — que é
+// quando analisar ainda nem está disponível — a habilidade mais útil ficava atrás
+// de sete outras. Uma ordem que ninguém pede é uma afirmação que não pode falhar.
+test("a superfície de uma reunião é DERIVADA do documento, não escrita na mão", () => {
+  const surface = new Function(
+    "LM",
+    "return (" + fnSource("habilidadeSurface") + ");"
+  )(require("../src/meeting.js"));
+
+  const viva = "brainstorming/engenharia/meetings/2026-08-13-1437-reuniao/reuniao.md";
+  const pronta = "brainstorming/engenharia/meetings/2026-08-13-1437-reuniao/meeting.md";
+  assert.equal(surface(viva), "meeting", "a aba ao vivo É a superfície da reunião");
+  assert.equal(surface(pronta), "meeting");
+  assert.equal(surface("contexts/onboarding/context.md"), "doc");
+  assert.equal(surface("brainstorming/engenharia/notes/pensamentos.md"), "doc");
+  assert.equal(surface(""), "doc");
+  assert.equal(surface(null), "doc", "sem documento aberto não se inventa uma reunião");
+
+  // a ordem da reunião existe e lidera com perguntar (a decisão registrada)
+  const mapa = APP.slice(APP.indexOf("const TOOL_ORDER = {"));
+  const ordem = /meeting: \[([\s\S]*?)\]/.exec(mapa.replace(/^\s*\/\/.*$/gm, ""));
+  assert.ok(ordem, "TOOL_ORDER.meeting continua no lugar");
+  const nomes = ordem[1].match(/"([^"]+)"/g).map((x) => x.slice(1, -1));
+  assert.equal(nomes[0], "loro-question.md", "perguntar sobre a reunião lidera");
+  assert.equal(nomes[1], "loro-analyse.md");
+
+  // e NINGUÉM volta a escrever a superfície na mão: era isso que a matava
+  const chamadas = APP.match(/(?:allHabilidadeEntries|pickableHabilidadeEntries|openHabilidadeMenu)\([^)]*\)/g) || [];
+  assert.ok(chamadas.length >= 6, "as chamadas continuam existindo");
+  const naMao = chamadas.filter((c) => /"doc"|"meeting"/.test(c));
+  assert.deepStrictEqual(naMao, [],
+    "uma superfície literal ignora a reunião aberta:\n  " + naMao.join("\n  "));
 });

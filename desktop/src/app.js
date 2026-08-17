@@ -4092,6 +4092,15 @@ const TOOL_ORDER = {
     "loro-context.md", "loro-tool.md",
   ],
 };
+// ADR-0005 · Numa reunião as habilidades DA REUNIÃO lideram — "perguntar sobre a
+// reunião" primeiro. O mapa TOOL_ORDER.meeting existia para isso e nenhum chamador
+// o alcançava: todos passavam o literal "doc", então a ordem da reunião era código
+// morto e, AO VIVO — que é justamente quando analisar ainda não está disponível —,
+// a habilidade mais útil ficava atrás de sete outras. A superfície agora é DERIVADA
+// do documento que a ação mira, num lugar só.
+function habilidadeSurface(rel) {
+  return LM.meetingDir(rel) ? "meeting" : "doc";
+}
 function habilidadeRank(name, surface) {
   const order = TOOL_ORDER[surface] || TOOL_ORDER.doc;
   const i = order.indexOf(name);
@@ -4326,7 +4335,7 @@ function openMeetingMenu(rel, id, title, status, anchor, notas) {
     B.bMenu.querySelector("[data-mtgclose]").onclick = () => { closeFloat(); finishInterruptedMeeting(id, rel); };
   }
   B.bMenu.querySelector("[data-question]").onclick = () => { closeFloat(); askMeetingQuestion(id, rel); };
-  B.bMenu.querySelector("[data-tools]").onclick = () => openHabilidadeMenu(rel, anchor);
+  B.bMenu.querySelector("[data-tools]").onclick = () => openHabilidadeMenu(rel, anchor, false, habilidadeSurface(rel));
   B.bMenu.querySelector("[data-ren]").onclick = () => { closeFloat(); promptRenameMeeting(id, title); };
   B.bMenu.querySelector("[data-del]").onclick = () => { closeFloat(); delPessoal(rel, "reuniao"); };
   placeMenu(anchor);
@@ -6238,7 +6247,7 @@ function renderDocRail(tab, isGuide) {
       `<button class="pact" data-pact="ai">✦ ${t("Pedir mudança à IA")}</button>` +
       (anexos ? `<button class="pact" data-pact="attach">${t("Anexar arquivo")}</button>` : "");
   } else {
-    const top = skillable ? allHabilidadeEntries("doc").slice(0, 3) : [];
+    const top = skillable ? allHabilidadeEntries(habilidadeSurface(tab.rel)).slice(0, 3) : [];
     acts.innerHTML = top.map((e, i) =>
         `<button class="pact" data-skill="${i}" title="${esc(e.title || "")}">${esc(e.label)}</button>`).join("") +
       (aiable ? `<button class="pact" data-pact="ai">✦ ${t("Pedir mudança à IA")}</button>` : "");
@@ -6255,8 +6264,8 @@ function renderDocRail(tab, isGuide) {
     // N15 · o rótulo contava ARQUIVOS e o menu lista ENTRADAS (loro-sync abre em
     // 4 fontes, a aposentada loro-digest sai): 12 no rótulo, 14 no menu. Uma
     // contagem só pode vir da lista que o controle abre.
-    all.textContent = `${t("todas as habilidades de IA")} (${allHabilidadeEntries("doc").length}) ▸`;
-    all.onclick = (e) => { e.stopPropagation(); openHabilidadeMenu(tab.rel, all, true, "doc"); };
+    all.textContent = `${t("todas as habilidades de IA")} (${allHabilidadeEntries(habilidadeSurface(tab.rel)).length}) ▸`;
+    all.onclick = (e) => { e.stopPropagation(); openHabilidadeMenu(tab.rel, all, true, habilidadeSurface(tab.rel)); };
   }
   renderPanelTimeline(tab);
   renderPanelTeam(tab, isGuide);
@@ -6735,7 +6744,7 @@ const COMMANDS = [
   { group: "documento", label: "Fechar aba", combo: IS_MAC ? "⌘W" : "Ctrl+W", when: hasDoc, run: () => closeActiveTab() },
   { group: "documento", label: "Reabrir aba", combo: IS_MAC ? "⇧⌘T" : "Ctrl+Shift+T", when: hasClosedTab, run: () => reopenClosedTab() },
 
-  { group: "fazer", label: "Executar habilidade…", run: () => openHabilidadeMenu(currentRel(), $("aiPanelBtn"), true, "doc") },
+  { group: "fazer", label: "Executar habilidade…", run: () => openHabilidadeMenu(currentRel(), $("aiPanelBtn"), true, habilidadeSurface(currentRel())) },
   // N5 · a outra metade do fluxo (o que o time mandou revisar) só tinha porta
   // num toast que expira e numa faixa que se dispensa: aqui ela é permanente.
   { group: "fazer", label: "Ver revisões do time", when: () => !!(envDoctor && envDoctor.versioningEnabled), run: () => { openHome(); goDest("review", "team"); } },
@@ -10482,7 +10491,7 @@ document.querySelectorAll("#sideMini .minibtn").forEach((b) => b.addEventListene
   if (what === "expand") return toggleSidebar(false);
   if (what === "settings") return openCfg();
   if (what === "rec") return setLivePanel(true);
-  if (what === "skills") return openHabilidadeMenu(currentRel(), b, true, "doc");
+  if (what === "skills") return openHabilidadeMenu(currentRel(), b, true, habilidadeSurface(currentRel()));
   toggleSidebar(false);
   goDest(what === "ideas" ? "home" : what);
 }));
@@ -10798,13 +10807,13 @@ let chatArmed = null;
 function renderChatChips() {
   const chips = $("chatChips");
   if (!chips) return;
-  const todas = allHabilidadeEntries("doc");
+  const todas = allHabilidadeEntries(habilidadeSurface(currentRel()));
   const top = todas.slice(0, 3);
   chips.innerHTML = top.map((e, i) => `<button class="chip" data-chip="${i}">${esc(e.label)}</button>`).join("") +
     `<button class="chip" data-chipall>${t("todas")} (${todas.length}) ▸</button>`;
   chips.querySelectorAll("[data-chip]").forEach((b) => (b.onclick = () => armChat(top[Number(b.dataset.chip)])));
   const all = chips.querySelector("[data-chipall]");
-  if (all) all.onclick = (e) => { e.stopPropagation(); openHabilidadeMenu(currentRel(), all, true, "doc"); };
+  if (all) all.onclick = (e) => { e.stopPropagation(); openHabilidadeMenu(currentRel(), all, true, habilidadeSurface(currentRel())); };
 }
 function armChat(entry) {
   chatArmed = entry || null;
@@ -11332,8 +11341,3 @@ invoke("selftest_enabled").then((on) => {
     }, 7000);
   });
 }).catch((e) => clog("selftest_enabled error: " + e));
-
-
-
-
-
