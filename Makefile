@@ -32,11 +32,11 @@ test-js: ## Run the JS frontend tests (node --test)
 	cd desktop && node --test tests/*.test.js
 
 # Deliberately NOT part of `test`: it needs a real browser, and `test` is
-# portable. ADR-0030 — the header had three hand-measured breakpoints, each one
+# portable. The header had three hand-measured breakpoints, each one
 # measured once and each one outliving its measurement; this renders the shipped
 # markup and sheet across widths so the claim can be re-checked instead of
 # trusted. Skips with exit 0 when no Chrome/Chromium is installed.
-test-layout: ## Measure the header across viewport widths (needs Chrome; ADR-0030)
+test-layout: ## Measure the header across viewport widths (needs Chrome)
 	node tools/measure-header.js --verbose
 
 lint: ## Lint: clippy (deny warnings) + rustfmt --check + node --check on the JS sources

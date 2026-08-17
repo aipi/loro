@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Loro — mede o CABEÇALHO numa varredura de larguras de viewport (ADR-0030).
+// Loro — mede o CABEÇALHO numa varredura de larguras de viewport.
 //
 // Por que isto existe: o cabeçalho já teve três larguras de corte escritas à mão
 // (1080 → 1140 → 1015), cada uma medida uma vez, num idioma, com um conteúdo — e
