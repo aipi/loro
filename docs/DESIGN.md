@@ -10,7 +10,8 @@ the two disagree, the code is right and this file is stale — fix it.
 > Sources: ADR-0020 (anatomy, vocabulary, theme), ADR-0021 (chat, resizable
 > panes), ADR-0022 (seven usability rounds + the review sweep), ADR-0024 (intake
 > triage), ADR-0026 (the marks of a jump, and the three reading surfaces of a
-> lateral link). This file consolidates their *visual* consequences; the
+> lateral link), ADR-0029 (the fifth sidebar section, the fourth panel tab, the
+> second header pill, and a state that is a fact rather than a promise). This file consolidates their *visual* consequences; the
 > reasoning stays in the ADRs.
 
 ## 1. Principles
@@ -58,7 +59,7 @@ One layout, in every screen:
 ```
 HEADER 54px — [logo + projeto ⌄] [nav pill · centralizado] ······ [Gravar] [✦ IA]
 SIDEBAR 250/60px │ TABS (only when a document is open) │ PANEL 330px
-                 │ CONTENT                             │ Documento·Chat·Terminal
+                 │ CONTENT                             │ Documento·Chat·⟳ Loops·Terminal
                  │ RECORDING FOOTER (while recording)  │
 ```
 
@@ -92,6 +93,26 @@ Inviolable rules — encoded in `shell.js` and the `.bshell` grid, not just here
    178px against a 184px footer row, so **⚙ Configurações truncates and the collapse
    control beside it keeps its 36px** — rule 9 again, one pane down.
 
+11. **One axis.** Every destination column centres on the same axis as the document
+   card (`margin-inline: auto` on `.viewhead`, `.orglist`, `.knowgrid`, `.revlist`,
+   `.revcard` and friends). Owner decision, 2026-08-18: the screen had no pattern —
+   Início and an open document centred while Organizar, Conhecimento and Revisão hugged
+   the left, leaving half of a wide window empty beside them. The WIDTHS still differ on
+   purpose (700px for the card because it is reading, 720px for a list because it is a
+   list); what is unified is the axis, and it is the axis the eye reads as a pattern.
+   Measured, not asserted: `tools/smoke-ui.js` walks the three destinations and fails
+   when a column's left and right gaps differ by more than 24px.
+12. The sidebar's sections are **five** (ADR-0029): IDEIAS · PARA ORGANIZAR ·
+   CONHECIMENTO ─ LOOPS · HABILIDADES DE IA, and the hairline (`.secsep`) before
+   LOOPS is the whole separation — a loop can belong to the project, so it does not
+   live inside an idea, and it is **not** a sixth destination in the nav pill. The
+   panel's strip gained a fourth tab (⟳ Loops); it already scrolls inside its own
+   container (§7), which is why the 300px floor is only a floor. The header gained
+   a **second** pill (the teal loops mark), also `flex: none`, so the worst case the
+   header is measured against is now *recording AND a cycle running*, in both
+   languages — `tools/measure-header.js` carries those two cases, and 6×16
+   measurements show no overlap and no sideways scroll down to the 860px floor.
+
 ### Fixed measurements
 
 | Element | Value | Token |
@@ -100,7 +121,7 @@ Inviolable rules — encoded in `shell.js` and the `.bshell` grid, not just here
 | Sidebar | 250px / 60px collapsed (drag floor 180px, ceiling 45vw) | `--side-w-default` |
 | Right panel | 330px (drag floor 300px, ceiling 60vw) | `--panel-w` |
 | Document card | max-width **700px**, centred — view **and** edit | — |
-| Destination list column (`.orglist`, `.revlist`, `.viewhead`) | max-width **720px**, left-aligned | — |
+| Destination list column (`.orglist`, `.revlist`, `.viewhead`) | max-width **720px**, centred (`margin-inline: auto`) | — |
 | Terminal dock | 34vh default, floor 120px, ceiling 75vh | — |
 
 The panel's floor used to be justified as "the width where its three tabs still
@@ -213,6 +234,29 @@ every one of the six project accents) over the 14% tint. The tint alone measured
 **Semantics, not decoration:** teal = AI and knowledge · amber = pending, needs
 you, other people's audio · red = recording and irreversible.
 
+### Layers
+
+One ladder, and it is an **order** rather than five numbers living in five rules:
+
+| Layer | `z-index` |
+|---|---|
+| content, the tree, the panel | — |
+| notice bar / toast | `30` |
+| **Configurações** (`.cfgpage`) | `45` |
+| **a sheet** (`.sheet-wrap`) | `50` |
+| a floating menu (`.floatmenu`) | `60` |
+| the command palette (`.cmdk`) | `80` |
+| a tooltip (`.tipbox`) | `95` |
+
+Two of those relations are load-bearing and were paid for. **A sheet sits above
+Configurações** because Configurações is what opened it: at `40` against the page's `45`,
+«instalar plugin…» opened a sheet BEHIND the settings page — `hidden` was false, its height
+was fine, and `elementFromPoint` at the centre of the sheet returned `.cfgcard`. Its buttons
+were unreachable and the gesture read as «I click and nothing happens» (measured in the DOM,
+2026-08-18). **A menu sits above a sheet**, because a menu opened from inside a sheet has to
+cover it. The order is pinned by `tokens.test.js`, and the *paint order* — being open is not
+being visible — is measured on the real DOM in `tools/smoke-ui.js`.
+
 ### Type
 
 Two families: `--sans` (`-apple-system, Inter, system-ui`) for content and UI,
@@ -228,6 +272,15 @@ that mixes prose and a machine value is written as prose with a `<span class="mo
 around the value. Guarded structurally: for every class combination in the markup
 that asks for `mono`, the winning single-class rule has to be the mono one
 (`tokens.test.js`).
+
+**A field is the same trap with a different shape.** `.loopfield input` (class +
+type) beats `.mono` (one class) and its `font:` shorthand resets the family, so the
+loop's `class="mono"` value fields — the minutes, the time, the date — painted in
+`--sans` while the unit beside them (`min`, `às`) painted in `--mono`: three
+typographies in the rhythm row, and the machine's value set as prose. A field whose
+markup asks for mono names the family itself (`.loopfield input.mono`). Fixed-width
+digits are also the right answer for a number field: the value does not shift as it
+is typed.
 
 The scale in actual use, most frequent first:
 
@@ -372,6 +425,10 @@ for **using** the app.
 | branch `rfc/…` | **rascunho de trabalho** |
 | branch padrão (main) | **conhecimento oficial** |
 | remote (origin) | **repositório do time** |
+| plugin (pacote de extensão) | **plugin** |
+| loop (trabalho recorrente da IA) | **loop** |
+| ciclo de um loop | **ciclo** |
+| freios de um loop | **freios** (nunca "limites" ou "metas") |
 
 Those two names are **one function**, not a habit: `placeName(branch, def)` returns
 «conhecimento oficial» or «rascunho «<slug>»», and it names the rows of the drafts
@@ -612,6 +669,24 @@ would contradict a written rule. Each half carries the same `.destbadge` the nav
 pill does, fed by the same painter, so the nav count and the tab count can never
 disagree.
 
+**A loop is a screen, and its state is a fact — never a promise** (ADR-0029).
+The loop's document opens in the same 700px `.doccard` as everything else, with
+the same `visualizar`/`editar` switch: view shows the rhythm, the timeline, the
+effective instruction and the cycles; edit shows the definition's fields (the
+definition is structured, so edit is a form, not CM6). Three rules hold it:
+
+| Rule | Why |
+|---|---|
+| Seven states, three marks: **teal** = the AI is or will be working · **amber** = it needs you (`impedido`, `falhando`) · `--ink3`/outline = it does nothing (`desligado`, `expirou`) | No new token, and **red stays recording-and-irreversible**: a cycle running is not a recording. The mark does not blink either — blinking is the tray parrot's, and it means capture |
+| A loop that **cannot** run never shows a next run | «ligado» and «capaz de rodar» are different facts. The screen says `impedido` and names the reason instead of promising a time it will not keep |
+| A quiet cycle is `muted`, not amber, and consecutive quiet cycles are ONE row with a count | A cycle with nothing to say is a legitimate outcome. Painting it as a failure would train the person to ignore the amber that matters — and a row per silence is the activity feed §8 removed |
+
+**Two pills in the header, one of them teal.** The recording pill (`.headrec`) got
+a twin (`.headrec.teal`): work happening unattended has to be visible from any
+screen, which is the same problem recording solved. Same box, same `flex: none`,
+same click-to-go-there contract — the red one returns to the recording, the teal
+one opens the ⟳ Loops tab. An idle tick never touches either (`loopChromeWasOn`).
+
 **Menus** clamp to the viewport and flip above their anchor rather than being
 clipped. A **picker** is a fixed 196px column of names; a **destructive
 confirmation** borrows the same box but carries a sentence and a path, so it is
@@ -675,6 +750,13 @@ Kept from ADR-0020 §5, plus what the later rounds removed:
 - **The brainstorming digest** (revokes ADR-0011) — its dedicated UI, not the skill.
 - **Typed meeting markers.** One "momento".
 - **The terminal's ×.** Visibility belongs to the ✦ IA panel and its tab.
+- **A store front for plugins** (ADR-0029) — no browsable grid with artwork,
+  ratings or "destaques". A pacote arrives from a folder (later a repository), and
+  browsing a catálogo is a **list of names with a description**, in the 196px
+  picker vocabulary the app already uses. No ⓘ explaining what a plugin is either.
+- **An activity feed for loops.** A loop's history lives on the loop's own screen,
+  consecutive quiet cycles collapse into one row, and Home stays as ADR-0020 §4
+  left it: one question, no statistics.
 - **A rich-text WYSIWYG editor.** Declined deliberately: git-diff churn, ADR-0007
   anchors, front matter. The markdown bar is markdown-aware, not WYSIWYG.
 

@@ -84,6 +84,34 @@ test("C2 — ADR-0022 §19: pausada não é 'gravando' no selo da reunião", () 
   assert.match(fnBody("resumeMeeting"), /renderTabs\(\)/);
 });
 
+// ---------------------------------------------------------------- o padrão da captura
+// BR-1/BR-8 — NADA CAPTURA DUAS TRILHAS SEM VOCÊ PEDIR. Uma reunião grava a sua voz E o
+// áudio da máquina (ADR-0012 modelo A, juntadas pelo ADR-0025); a gravação comum grava UMA
+// coisa. Qual é o padrão é uma afirmação de privacidade, e nenhum teste a guardava — um
+// `source: "meeting"` trocado sem decisão abriria o microfone e o áudio do sistema no
+// primeiro clique em Gravar. Pedido do dono (2026-08-18): confirmar e blindar o que já era.
+test("o padrão de captura é UMA trilha: «reunião» só acontece por escolha", () => {
+  const m = APP.match(/const DEFAULTS = \{[\s\S]*?\n\};/);
+  assert.ok(m, "app.js deve definir DEFAULTS");
+  // eslint-disable-next-line no-new-func
+  const d = new Function("return (" + m[0].replace("const DEFAULTS = ", "") .replace(/;$/, "") + ")")();
+
+  assert.equal(d.source, "mic", "o padrão grava só o microfone");
+  assert.notEqual(d.source, "meeting", "duas trilhas nunca são o padrão");
+  assert.notEqual(d.source, "system");
+  // o cancelamento de eco continua DESLIGADO por medida (ADR-0022 §24): ligá-lo entrega o
+  // microfone ao processamento do macOS e achata a voz de quem usa fone
+  assert.equal(d.micEchoCancel, false);
+
+  // e o padrão CHEGA ao controle: o seletor nasce do ajuste, não de um valor no HTML
+  assert.match(fnBody("paintSourceSelectors"), /el\.source\.value = settings\.source/);
+  // uma reunião é sempre um ato: as três entradas dela são escolhas, e a de fonte só
+  // dispara quando a pessoa selecionou «reunião»
+  assert.match(APP, /if \(settings\.source === "meeting"\) return startMeetingSession\(\)/);
+  assert.match(fnBody("startMeetingSession"), /pickMeeting\(/,
+    "ela ainda pergunta em qual ideia antes de gravar");
+});
+
 // ---------------------------------------------------------------- C26
 test("C26 — BR-8: o selo de captura não afirma microfone com a reunião pausada", () => {
   const kind = loadPure("meterKind");

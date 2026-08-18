@@ -91,7 +91,7 @@
     if (btn) btn.classList.toggle("on", !!on);
     return !!on;
   }
-  const PANES = { doc: "panelDoc", chat: "panelChat", term: "panelTerm" };
+  const PANES = { doc: "panelDoc", chat: "panelChat", loops: "panelLoops", term: "panelTerm" };
   function setPanelTab(tab) {
     if (!PANES[tab]) tab = "doc";
     document.querySelectorAll("#panelTabs .ptab").forEach((b) =>

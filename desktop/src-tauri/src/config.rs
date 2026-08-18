@@ -326,25 +326,50 @@ pub fn write_loro_config(cfg: &LoroConfig) -> Result<(), String> {
 // skill read just THIS acervo's autoContext setting from inside its own
 // working directory, without exposing the global config to the terminal
 // agent. Written at brain_setup and whenever the Settings toggle changes.
-#[derive(serde::Serialize, Deserialize, Default)]
+#[derive(serde::Serialize, Deserialize, Default, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct AcervoSettings {
     #[serde(default)]
     pub auto_context: bool,
+    // ADR-0029 §4.11 — os freios com que um loop NOVO nasce e quantos ciclos
+    // podem rodar ao mesmo tempo. É política do projeto, e viaja com ele.
+    // Ausente até alguém mexer: um settings.json escrito por um Loro anterior
+    // continua byte a byte o mesmo.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loops: Option<crate::loops::LoopPolicy>,
 }
 
-pub fn write_acervo_settings(base: &Path, auto_context: bool) -> Result<(), String> {
+pub fn acervo_settings_path(base: &Path) -> PathBuf {
+    base.join(".loro").join("settings.json")
+}
+
+pub fn read_acervo_settings(base: &Path) -> AcervoSettings {
+    std::fs::read_to_string(acervo_settings_path(base))
+        .ok()
+        .and_then(|t| serde_json::from_str::<AcervoSettings>(&t).ok())
+        .unwrap_or_default()
+}
+
+pub fn write_acervo_settings_full(base: &Path, settings: &AcervoSettings) -> Result<(), String> {
     let dir = base.join(".loro");
     // N20 — this marker is written inside the project folder during setup, so its
     // failures are the folder's failures: a code the UI translates, never a raw
     // std::io message in English (ADR-0001 §10).
     std::fs::create_dir_all(&dir).map_err(|e| crate::paths::folder_write_error(&e))?;
-    let settings = AcervoSettings { auto_context };
     std::fs::write(
         dir.join("settings.json"),
-        serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?,
+        serde_json::to_string_pretty(settings).map_err(|e| e.to_string())?,
     )
     .map_err(|e| crate::paths::folder_write_error(&e))
+}
+
+// ADR-0029 — o toggle do autoContext escrevia um struct NOVO: com uma segunda
+// chave no arquivo (a política de loops), salvar a primeira apagaria a segunda em
+// silêncio. Quem muda um campo lê o resto primeiro.
+pub fn write_acervo_settings(base: &Path, auto_context: bool) -> Result<(), String> {
+    let mut settings = read_acervo_settings(base);
+    settings.auto_context = auto_context;
+    write_acervo_settings_full(base, &settings)
 }
 
 pub fn active_acervo(cfg: &LoroConfig) -> Option<&Acervo> {

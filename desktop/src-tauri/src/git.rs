@@ -1999,8 +1999,22 @@ pub fn git_available() -> bool {
 // quarantined, which leaves nothing for a teammate to read in either file — and
 // the activity log is prose an agent wrote over raw queue items, so pushing it
 // is one more route from a transcript to a shared remote (BR-8).
-pub const GIT_IGNORED: [&str; 12] = [
+// ADR-0029 — o mesmo raciocínio vale para o registro de execução de um loop:
+// `.loro/loops/<slug>.json` é reescrito a cada ciclo, é contabilidade da máquina
+// (quando rodou, quanto durou, que arquivos saíram, um código err.*) e não diz
+// nada a um colega. A DEFINIÇÃO do loop (`loops/<slug>.md`) é o oposto: é
+// política do projeto, escrita por uma pessoa, e continua versionada — é ela que
+// aparece em Revisão. `.loro/settings.json` idem (ADR-0005).
+// ADR-0029 — a PASTA de saída de um loop (`loops/<slug>/`) é material que a IA
+// escreveu num ritmo: fica local e entra no conhecimento pela porta de sempre (a
+// fila, ou uma proposta em Revisão). A DEFINIÇÃO ao lado dela (`loops/<slug>.md`)
+// é o oposto — política escrita por uma pessoa — e continua versionada. Sem esta
+// linha cada ciclo deixava a árvore suja e todo o material produzido era
+// commitável, o contrário do que §4.7 decidiu.
+pub const GIT_IGNORED: [&str; 14] = [
     ".DS_Store",
+    ".loro/loops/",
+    "loops/*/",
     "inbox/",
     "processed/",
     "meetings/",
@@ -2057,6 +2071,22 @@ fn matches_ignore(pattern: &str, rel: &str) -> bool {
     let pat = pattern.trim_matches('/');
     if pat.is_empty() {
         return false;
+    }
+    // Um segmento `*` casa EXATAMENTE um segmento do caminho — o suficiente para
+    // `loops/*/`, e o mínimo que o git também entende do mesmo jeito. A alternativa
+    // (uma regra escrita à mão no lado da leitura) deixaria o `.gitignore` e o
+    // `is_quarantined` respondendo diferente para o mesmo caminho, que é o defeito
+    // que a ADR-0027 pagou para descobrir.
+    if pat.contains('*') {
+        let pseg: Vec<&str> = pat.split('/').collect();
+        let rseg: Vec<&str> = rel.split('/').collect();
+        if rseg.len() < pseg.len() || (dir_only && rseg.len() == pseg.len()) {
+            return false;
+        }
+        return pseg
+            .iter()
+            .zip(rseg.iter())
+            .all(|(p, r)| *p == "*" || p == r);
     }
     if pattern.starts_with('/') || pat.contains('/') {
         return (rel == pat && !dir_only) || rel.starts_with(&format!("{pat}/"));
@@ -2484,6 +2514,31 @@ mod tests {
     // ADR-0026 §14 — renaming the folders must not un-quarantine anything. Both
     // spellings are ignored: the new one for a migrated acervo, the old one for a
     // clone that has not migrated yet. A transcript in a versioned tree is BR-8.
+    // ADR-0029 — a saída de um loop é local; a definição ao lado dela é versionada.
+    // Uma regra só, lida pelos DOIS lados (o .gitignore que escrevemos e o
+    // is_quarantined que lê), porque duas responderiam diferente para o mesmo path.
+    #[test]
+    fn a_loop_output_folder_is_local_and_its_definition_is_versioned() {
+        assert!(is_quarantined("loops/o-que-falta/decidir.md"));
+        assert!(is_quarantined("loops/o-que-falta/sub/x.csv"));
+        assert!(
+            !is_quarantined("loops/o-que-falta.md"),
+            "a definição é política do projeto"
+        );
+        assert!(!is_quarantined("loops"), "a pasta em si não é o material");
+        assert!(
+            GIT_IGNORED.contains(&"loops/*/"),
+            "e a mesma regra é escrita no .gitignore"
+        );
+        // e o registro de execução continua fora, sem levar o dos plugins com ele
+        assert!(is_quarantined(".loro/loops/x.json"));
+        assert!(
+            !is_quarantined(".loro/plugins.json"),
+            "o registro de plugins é versionado"
+        );
+        assert!(!is_quarantined(".loro/settings.json"));
+    }
+
     #[test]
     fn both_spellings_of_the_ephemeral_folders_stay_quarantined() {
         for entry in ["meetings/", "/notes/", "reunioes/", "/notas/"] {

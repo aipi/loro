@@ -14,6 +14,23 @@ let hostOs = "macos";
 const R = window.LoroRefs || {};
 // ADR-0010 — pure meeting-path helpers (id parsing, marker strip, base join).
 const LM = window.LoroMeeting || {};
+const LP = window.LoroLoops || {};   // ADR-0029: ritmo, estado e histórico de um loop
+// ADR-0029 — o ESTADO dos loops é declarado aqui, no topo, junto do módulo que o
+// interpreta. Declarado no fim do arquivo (onde vivem os pintores) ele ficava na
+// zona morta do `const`: `brainRefresh()` roda no boot, chama `refreshLoops`, e a
+// primeira leitura de `loopsStatus` derrubava o carregamento inteiro do app —
+// exatamente a classe de erro que o `[boot-error]` do index.html existe para
+// contar, e que nenhum teste de FONTE consegue ver.
+const LOOP_NEW_REL = "loro://loop-novo";   // sentinela: um loop que ainda não existe
+const LOOP_TICK_MS = 30000;
+let loopsStatus = { loops: [], running: [], queued: [], cycles: [], agentBusy: false, paralelo: 1 };
+let loopsSig = "";
+let loopSteps = [];        // passos do stream (loop-tool / loop-tool-result)
+let loopWatch = "";        // qual ciclo a aba ⟳ Loops está mostrando
+let loopPolicy = { maxArquivos: 3, maxCiclosDia: 8, expiraDias: 30, paralelo: 1 };
+let pluginList = [];       // pacotes instalados (para a origem na linha e Configurações)
+let loopTicking = false;
+
 
 // log de diagnóstico (vai para loro-client.log via backend) + console
 const winLabel = getWin ? (getWin().label || "?") : "?";
@@ -105,6 +122,9 @@ function rerenderForLang() {
   // usuário clicar em outra aba. renderActive é serializado por geração, então
   // a chamada re-entrante é segura.
   try { renderActive(); } catch (_) {}
+  // ADR-0029 · a árvore dos loops, a marca do cabeçalho e a aba ⟳ Loops são
+  // innerHTML atrás de uma assinatura, pela mesma razão e com a mesma cura.
+  try { loopsSig = ""; loopChromeWasOn = true; renderLoops(); paintLoopChrome(); renderLoopPanel(); } catch (_) {}
   // os nós data-i18n-dyn: quem escreve em tempo de execução também traduz
   try { updatePrivacy(); } catch (_) {}
   try { paintRecControl(); } catch (_) {}
@@ -1826,6 +1846,7 @@ async function openCfg() {
   cfgWrap.hidden = false;
   enterOverlay(cfgWrap, cfgClose, closeCfg);
   cfgEnvSeen = false; // os checks de rede rodam de novo nesta visita, quando a seção aparecer
+  cfgPluginsSeen = false; cfgLoopsSeen = false;
   document.querySelectorAll(".cfgsec").forEach((s) => (s.hidden = false));
   $("cfgPop").scrollTop = 0;
   markCfgNav("proj");
@@ -1856,13 +1877,25 @@ async function openCfg() {
     if (tb) tb.value = ticketBase();
   } catch (_) {}
   refreshModelManager();
+  // ADR-0029: leitura de arquivo local — a tela abre já com a verdade nos campos
+  cfgPluginsSeen = true; cfgLoopsSeen = true;
+  refreshPlugins();
+  loadLoopPolicy();
 }
 // Configurações são UMA página com rolagem (pedido do dono, 2026-08-11): tudo
 // visível, e a nav navega — clicar rola até a seção; rolar realça a seção na nav.
 let cfgEnvSeen = false; // os checks de ambiente vão à rede (gh auth): uma vez por visita
+let cfgPluginsSeen = false, cfgLoopsSeen = false; // ADR-0029: idem, por visita
 function markCfgNav(sec) {
   document.querySelectorAll("#cfgNav .cfgnavbtn").forEach((b) => b.classList.toggle("on", b.dataset.sec === sec));
   if (sec === "git" && !cfgEnvSeen) { cfgEnvSeen = true; refreshEnv(true); }
+  // ADR-0029 — as duas seções novas leem ARQUIVO LOCAL, não a rede: elas carregam
+  // ao ABRIR (em openCfg), não ao serem realçadas. O contrato tardio existe para o
+  // check de ambiente, que vai à rede — usá-lo aqui deixava os três campos de freio
+  // VAZIOS na tela enquanto ninguém tivesse rolado até eles, e um campo de limite
+  // vazio afirma «sem limite».
+  if (sec === "plugins" && !cfgPluginsSeen) { cfgPluginsSeen = true; refreshPlugins(); }
+  if (sec === "loops" && !cfgLoopsSeen) { cfgLoopsSeen = true; loadLoopPolicy(); }
 }
 function showCfgSection(sec) {
   document.querySelectorAll(".cfgsec").forEach((s) => (s.hidden = false));
@@ -1914,6 +1947,8 @@ function drawProjColors(cur) {
     } catch (e) { toast(tErr(String(e))); }
   });
 }
+// ADR-0029 — a recusa de um plugin manda para a seção que resolve.
+async function openCfgPlugins() { await openCfg(); showCfgSection("plugins"); }
 function closeCfg() { cfgWrap.hidden = true; leaveOverlay(cfgWrap); }
 cfgClose.addEventListener("click", closeCfg);
 
@@ -2605,6 +2640,8 @@ async function brainRefresh() {
   // uma ida à rede a cada três passadas, não uma por passada.
   if (reviewOn()) { refreshMyChanges(); refreshTeamReviews(); }
   markSel();
+  // ADR-0029 — a mesma passada traz os loops: uma leitura, uma autoridade.
+  refreshLoops(false);
 }
 
 // ---- os três destinos: Início · Organizar · Conhecimento --------------------
@@ -2800,6 +2837,7 @@ const ICONS = {
   // (section title, rail cards), matching Claude's own skills icon (owner
   // request); file rows use their own icons below so the title never looks
   // like just another row.
+  loop: "M12 6v3l4-4-4-4v3c-4.42 0-8 3.58-8 8 0 1.57.46 3.03 1.24 4.26L6.7 14.8c-.45-.83-.7-1.79-.7-2.8 0-3.31 2.69-6 6-6zm6.76 1.74L17.3 9.2c.44.84.7 1.79.7 2.8 0 3.31-2.69 6-6 6v-3l-4 4 4 4v-3c4.42 0 8-3.58 8-8 0-1.57-.46-3.03-1.24-4.26z",
   skill: "M18 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 4h5v8l-2.5-1.5L6 12V4z",
   // built-in habilidade file — a puzzle piece (ships with the app).
   builtinskill: "M20.5 11H19V7c0-1.1-.9-2-2-2h-4V3.5C13 2.12 11.88 1 10.5 1S8 2.12 8 3.5V5H4c-1.1 0-1.99.9-1.99 2v3.8H3.5c1.49 0 2.7 1.21 2.7 2.7s-1.21 2.7-2.7 2.7H2V20c0 1.1.9 2 2 2h3.8v-1.5c0-1.49 1.21-2.7 2.7-2.7 1.49 0 2.7 1.21 2.7 2.7V22H17c1.1 0 2-.9 2-2v-4h1.5c1.38 0 2.5-1.12 2.5-2.5S21.88 11 20.5 11z",
@@ -2896,7 +2934,11 @@ function renderCtxNode(node) {
   const dot = ctxDirty(node.path) ? `<span class="gdot" title="${t("mudanças ainda não salvas em uma versão")}">●</span>` : "";
   const pills = (node.isCtx && nctx && nctx.seeded === false
     ? `<span class="pill soft" title="${t("pasta nova — clique para estruturar")}">${t("novo")}</span>` : "") + dot;
-  const attr = node.isCtx ? `data-ctx="${esc(node.path)}"` : `data-fold="${esc(node.path)}"`;
+  // um TEMA do conhecimento arquiva nos anexos dele — a mesma porta que o «＋ do
+  // computador» dele já abre. Uma subpasta que não é tema não recebe: ali não há
+  // `attachments`, e prometer o destino errado é pior que não oferecer (DESIGN.md §1).
+  const attr = (node.isCtx ? `data-ctx="${esc(node.path)}"` : `data-fold="${esc(node.path)}"`)
+    + (node.isCtx ? ` data-dropdir="contexts/${esc(node.path)}/attachments"` : "");
   const kids = [...node.children.values()].sort((x, y) => x.seg.localeCompare(y.seg)).map(renderCtxNode).join("");
   // fill target only, NOT a tree level: the context's own files (contexto/
   // histórico/attachments) are siblings of its subcontexts — a .bchild here would
@@ -3031,6 +3073,7 @@ const TREE_OPEN_KEY = {
   toggle: (v) => v,
   pestoggle: (v) => v,
   tema: (v) => "pes:tema:" + v,
+  looptoggle: (v) => "loop:" + v,
 };
 function expandTreeRow(row) {
   const mark = Object.keys(TREE_OPEN_KEY).find((k) => row.dataset[k] !== undefined);
@@ -3299,7 +3342,7 @@ function renderPessoal(allTemas, avulso) {
 function renderTemaNode(t) {
   const key = "pes:tema:" + t.slug, open = bOpen.has(key);
   const holder = `<div class="bchild" data-temachild="${esc(t.slug)}" ${open ? "" : "hidden"}></div>`;
-  return `<div class="bitem ctx${open ? " open" : ""}" data-tema="${esc(t.slug)}" title="${esc(t.nome || t.slug)}">` +
+  return `<div class="bitem ctx${open ? " open" : ""}" data-tema="${esc(t.slug)}" data-dropdir="brainstorming/${esc(t.slug)}/attachments" title="${esc(t.nome || t.slug)}">` +
     `${ico("idea", "ac")}<span class="bn">${esc(t.nome || t.slug)}</span>` +
     `${rowMenuHtml(`data-bsmenu="${esc(t.slug)}"`, t.nome || t.slug, window.LoroI18n.t("ações da ideia"))}</div>${holder}`;
 }
@@ -3401,7 +3444,11 @@ function folderGroupHtml(key, label, count, rowsHtml, emptyMsg, actionsHtml, rel
   const open = bOpen.has(key);
   const pill = count ? `<span class="pill">${count}</span>` : "";
   const actions = actionsHtml ? `<div class="bsadd">${actionsHtml}</div>` : "";
-  return `<div class="bitem ctx${open ? " open" : ""}" data-pestoggle="${key}">${ico("folder", "ac")}<span class="bn">${label}</span>${pill}${rel ? pathMenuBtnHtml(rel, label) : ""}</div>` +
+  // UMA PASTA DE VERDADE É UM DESTINO DE SOLTO (ADR-0028, extensão de 2026-08-18): o
+  // `rel` que esta linha já recebia para o menu de caminho é exatamente o que o solto
+  // precisa, então todo grupo de pasta da árvore ganha o destino de uma vez — e um grupo
+  // SEM pasta real (não passa `rel`) não finge receber.
+  return `<div class="bitem ctx${open ? " open" : ""}" data-pestoggle="${key}"${rel ? ` data-dropdir="${esc(rel)}"` : ""}>${ico("folder", "ac")}<span class="bn">${label}</span>${pill}${rel ? pathMenuBtnHtml(rel, label) : ""}</div>` +
     `<div class="bchild" ${open ? "" : "hidden"}>${actions}${rowsHtml || `<div class="bempty sub">${emptyMsg}</div>`}</div>`;
 }
 // Busca e injeta investigações/respostas de UMA reunião no seu container
@@ -3792,7 +3839,11 @@ function toolRow(f) {
   // "padrão" pill stays as the textual reinforcement.
   return `<div class="bitem file" data-doc="${esc(f.path)}" title="${esc(f.desc || f.path)}">` +
     `${ico(f.builtin ? "builtinskill" : "customskill")}<span class="bn">${esc(label)}</span>` +
-    (f.builtin ? `<span class="pill" title="${t("habilidade padrão")}">${t("padrão")}</span>` : "") +
+    (f.builtin
+      ? `<span class="pill" title="${t("habilidade padrão")}">${t("padrão")}</span>`
+      // ADR-0029 §5.1.1 — "de onde veio isto" é a pergunta que importa quando uma
+      // habilidade se comporta mal, e a resposta é o NOME do pacote, em mono.
+      : (() => { const pg = pluginOfRel(f.path); return pg ? `<span class="pill mono" title="${esc(t("veio do plugin %1", [pg.name || pg.id]))}">${esc(pg.name || pg.id)}</span>` : ""; })()) +
     // N16 · o nome era fixo e prometia "excluir" nas 11 padrão, cujo menu não a
     // tem: o leitor de tela anunciava uma ação destrutiva que o menu recusa.
     rowMenuHtml(`data-toolmenu="${esc(f.path)}" data-toollabel="${esc(label)}" data-toolbuiltin="${f.builtin ? "1" : ""}"`,
@@ -4016,9 +4067,12 @@ function openAddToolMenu(anchor) {
   B.acervoMenu.hidden = true;
   B.bMenu.innerHTML =
     `<div class="fitem2 strong" data-ai><span class="fn">✦ ${t("nova habilidade (IA)")}</span></div>` +
-    `<div class="fitem2" data-import><span class="fn">⇩ ${t("importar skill existente")}</span></div>`;
+    `<div class="fitem2" data-import><span class="fn">⇩ ${t("importar skill existente")}</span></div>` +
+    `<div class="fsep"></div>` +
+    `<div class="fitem2" data-plug><span class="fn">${t("instalar plugin…")}</span></div>`;
   B.bMenu.querySelector("[data-ai]").onclick = () => { closeFloat(); promptNewToolAI(); };
   B.bMenu.querySelector("[data-import]").onclick = () => { closeFloat(); promptImportTool(); };
+  B.bMenu.querySelector("[data-plug]").onclick = () => { closeFloat(); openInstallPlugin(); };
   placeMenu(anchor);
 }
 { const ab = $("addToolBtn"); if (ab) ab.addEventListener("click", (e) => { e.stopPropagation(); openAddToolMenu(ab); }); }
@@ -4751,7 +4805,10 @@ function markSel() {
 // ADR-0026 · a aba do índice é uma TELA, não um arquivo: o título de uma aba é o
 // basename do rel, e o sentinela `loro://indice` daria "indice" na faixa — uma
 // palavra sem acento, que se lê como erro de digitação e não como nome.
-const tabTitle = (tab) => (tab.rel === INDEX_REL ? t("índice remissivo") : tab.title);
+const tabTitle = (tab) => (tab.rel === INDEX_REL ? t("índice remissivo")
+  : tab.rel === LOOP_NEW_REL ? t("novo loop")
+  : LP.slugOfRel(tab.rel) ? `${t("loop")} · ${LP.slugOfRel(tab.rel)}`
+  : tab.title);
 
 function renderTabs() {
   const active = ws.activeId;
@@ -4946,6 +5003,10 @@ function docBadge(p, isGuide) {
   // ADR-0026 · não é documento nenhum: é o que o conhecimento diz de si, montado
   // na hora. O selo padrão ("documento do projeto") prometeria um arquivo.
   if (p === INDEX_REL) return [t("calculado agora — não é um arquivo do projeto"), "ro"];
+  // ADR-0029 — a definição de um loop É um documento do projeto (versionada, vai
+  // para a revisão); o que muda é que ela também MANDA em algo que roda.
+  if (p === LOOP_NEW_REL) return [t("novo — ainda desligado"), "warn2"];
+  if (LP.slugOfRel(p)) return [t("definição do loop — versionada"), "ok"];
   if (p.startsWith("inbox/")) return [t("pendente — será processado pelo loop"), "ok"];
   if (p.endsWith("guia.md")) return [t("formato antigo — migre para context.md"), "warn2"];
   if (p.endsWith("CHANGELOG.md")) return [t("histórico (append-only)"), "ro"];
@@ -6161,7 +6222,8 @@ async function renderActive() {
   B.crumb.textContent = isGuide ? t("instruções do loop")
     : tab.rel === MANUAL_REL ? t("manual de uso")
     : tab.rel === INDEX_REL ? t("índice remissivo")
-    : tab.rel === SCRATCH_REL ? t("nota nova — ainda não salva") : tab.rel;
+    : tab.rel === SCRATCH_REL ? t("nota nova — ainda não salva")
+    : tab.rel === LOOP_NEW_REL ? t("loops/novo loop") : tab.rel;
   // permanent world badge (versionado / rascunho), else document-specific badge
   const world = LoroWorld.crumbBadge(tab.kind, settings.uiLang);
   const [label, cls] = world && !isGuide ? [world.label, world.cls] : docBadge(tab.rel, isGuide);
@@ -6176,6 +6238,34 @@ async function renderActive() {
   // transcript + artefatos rail + análise/consent; no free-form CM6 editing.
   // ADR-0026: o índice remissivo é uma TELA, no mesmo cartão de 700px do resto
   // da leitura — sem modos (não há o que editar) e sem ações de arquivo.
+  // ADR-0029 — um loop é uma TELA no mesmo cartão de 700px: visualizar mostra o
+  // ritmo, os ciclos e o ajuste; editar mostra os campos da definição (não CM6,
+  // porque a definição é estruturada). A moldura não muda com o modo.
+  if (tab.rel === LOOP_NEW_REL) {
+    B.modes.hidden = true;
+    $("bPromoted").hidden = true;
+    $("bDocActs").hidden = true;
+    clearPanelDoc();
+    await renderLoopForm(tab, stale);
+    if (stale()) return;
+    B.wsBody.scrollTop = 0;
+    markSel();
+    return;
+  }
+  if (LP.slugOfRel(tab.rel)) {
+    B.modes.hidden = false;
+    $("bPromoted").hidden = true;
+    $("bDocActs").hidden = true;
+    B.viewBtn.classList.toggle("on", tab.mode !== "edit");
+    B.editBtn2.classList.toggle("on", tab.mode === "edit");
+    clearPanelDoc();
+    if (tab.mode === "edit") await renderLoopForm(tab, stale);
+    else await renderLoopSurface(tab, stale);
+    if (stale()) return;
+    B.wsBody.scrollTop = 0;
+    markSel();
+    return;
+  }
   if (tab.rel === INDEX_REL) {
     B.modes.hidden = true;
     $("bPromoted").hidden = true;
@@ -7820,7 +7910,11 @@ function announceRev(half, msg) {
 // escrevendo um documento, um git em curso) o foco caía no <body> e o Tab
 // recomeçava no primeiro cartão — o foco movido por uma mudança que o usuário não
 // fez (WCAG 2.4.3). A marca é o atributo que identifica a linha, nunca o nó.
-const FOCUS_MARKS = ["data-rvseen", "data-rvfull", "data-rvmode", "data-rvmore"];
+// ADR-0029 — o formulário do loop repinta a cada clique no ritmo/escopo, então
+// ele entra na mesma lista: um controle que repinta a própria lista recupera o
+// foco (DESIGN.md §5), senão o Tab recomeça do começo da tela.
+const FOCUS_MARKS = ["data-rvseen", "data-rvfull", "data-rvmode", "data-rvmore",
+  "data-seg", "data-dow", "data-f"];
 function focusMarkIn(root) {
   const on = document.activeElement;
   if (!on || !root || !root.contains || !root.contains(on)) return "";
@@ -10217,6 +10311,13 @@ function dropDestination(hit) {
   if (!hit || !hit.closest) return "fila";
   if (hit.closest("#panelChat")) return "chat";
   if (hit.closest("#termPanel")) return "terminal";
+  // UMA PASTA DA ÁRVORE É UM DESTINO (extensão de 2026-08-18, decisão do dono): soltar
+  // nela é ARQUIVAR, e arquivar move — o original sai, como em qualquer gerenciador de
+  // arquivos no mesmo disco. A fila continua copiando: ali o gesto é «entregue isto à IA»,
+  // e o original continua seu. O lugar decide o significado, que é o que este roteador faz.
+  const pasta = hit.closest("[data-dropdir]");
+  const rel = pasta && pasta.dataset && pasta.dataset.dropdir;
+  if (rel) return "pasta:" + rel;
   return "fila";
 }
 function dropDestinationAt(pos) {
@@ -10276,6 +10377,10 @@ function paintDropTarget(dest) {
     const n = document.getElementById(id);
     if (n) n.classList.toggle("droptarget", dest === k);
   }
+  // a pasta que vai receber acende SOZINHA: o realce da fila prometia o destino errado
+  const rel = String(dest || "").startsWith("pasta:") ? String(dest).slice(6) : "";
+  document.querySelectorAll("[data-dropdir]").forEach((n) =>
+    n.classList.toggle("droprow", !!rel && n.dataset.dropdir === rel));
 }
 // um ou mais arquivos soltos na janela (na aba acervo) entram na fila do acervo ativo
 // C6 · `_prompt.md` é o arquivo de INSTRUÇÕES do loop (GUIDE_REL), não um item:
@@ -10293,6 +10398,15 @@ function splitQueueGuideDrop(paths) {
     guides: paths.filter(isQueueGuidePath).length,
   };
 }
+// De onde o arquivo saiu, como a pessoa reconhece: a pasta de origem, não o caminho inteiro.
+// Um move não tem desfazer, então dizer de onde saiu é o mínimo.
+function dropOriginLabel(paths) {
+  const first = String((paths && paths[0]) || "").replace(/\\/g, "/");
+  const dir = first.split("/").slice(0, -1).join("/");
+  const home = (dir.match(/^\/Users\/[^/]+(\/.*)?$/) || [])[1];
+  return home ? "~" + home : (dir || "?");
+}
+
 // O roteador é uma função NOMEADA, não o corpo do listener: é ela que os testes
 // executam de verdade (um destino a mais que só o listener conhecesse voltaria a
 // ser conferido por leitura de fonte). Devolve o destino escolhido.
@@ -10304,6 +10418,19 @@ async function handleSystemDrop(payload) {
   if (!dropped.length) return dest;
   if (dest === "chat") { insertIntoChatInput(dropPathsText(dropped, "chat", hostOs)); return dest; }
   if (dest === "terminal") { dropIntoTerminal(dropPathsText(dropped, "terminal", hostOs)); return dest; }
+  if (String(dest).startsWith("pasta:")) {
+    const destRel = String(dest).slice(6);
+    try {
+      const novos = (await invoke("brain_drop_into", { paths: dropped, destRel })) || [];
+      if (novos.length) {
+        // o toast diz o que ACONTECEU: quantos, para onde, e que o original saiu
+        toast(t("%1 → %2 · o original saiu de %3",
+          [String(novos.length), destRel, dropOriginLabel(dropped)]), 6000);
+        sideSig = ""; brainRefresh();
+      }
+    } catch (err) { toast(tErr(String(err)), 6000); clog("drop_into error: " + err); }
+    return dest;
+  }
   if (!brainTab) return dest;
   const { ok: paths, guides } = splitQueueGuideDrop(dropped);
   try {
@@ -10492,6 +10619,12 @@ document.querySelectorAll("#sideMini .minibtn").forEach((b) => b.addEventListene
   if (what === "settings") return openCfg();
   if (what === "rec") return setLivePanel(true);
   if (what === "skills") return openHabilidadeMenu(currentRel(), b, true, habilidadeSurface(currentRel()));
+  if (what === "loops") {
+    toggleSidebar(false);
+    const body = document.querySelector('[data-sectbody="loops"]');
+    if (body) body.scrollIntoView({ block: "nearest" });
+    return;
+  }
   toggleSidebar(false);
   goDest(what === "ideas" ? "home" : what);
 }));
@@ -10933,6 +11066,10 @@ function chatStepResult(res) {
   if (res.isError || res.permission) step.open = true;
 }
 
+// Os modelos que o Chat e um loop oferecem. Uma lista só: um modelo que aparece
+// na conversa e não no loop (ou o contrário) é a mesma escolha com duas respostas.
+const AGENT_MODELS = ["sonnet", "opus", "haiku", "fable"];
+
 // Esforço na língua da interface ⇄ nível do CLI. O usuário escolhe "alto",
 // o agente recebe "high".
 const EFFORT_LEVELS = [
@@ -10941,6 +11078,11 @@ const EFFORT_LEVELS = [
   { label: "máx", cli: "max" },
 ];
 const effortCli = (label) => (EFFORT_LEVELS.find((e) => e.label === label) || { cli: "high" }).cli;
+// e a volta: o documento do loop guarda o nível do CLI, a tela mostra a palavra
+const effortLabel = (cli) => {
+  const hit = EFFORT_LEVELS.find((e) => e.cli === cli);
+  return hit ? t(hit.label) : String(cli || "");
+};
 
 async function sendChat() {
   if (chatBusy) return chatStop();
@@ -11219,7 +11361,7 @@ $("chatModel").addEventListener("click", (e) => {
   // modelo e esforço num controle só (revisão do time, decisão 3)
   B.acervoMenu.hidden = true;
   B.bMenu.innerHTML = `<div class="fhead">${t("modelo")}</div>` +
-    ["sonnet", "opus", "haiku", "fable"].map((m) => `<div class="fitem2${m === chatPrefs.model ? " on" : ""}" data-model="${m}"><span class="fn">${m}</span></div>`).join("") +
+    AGENT_MODELS.map((m) => `<div class="fitem2${m === chatPrefs.model ? " on" : ""}" data-model="${m}"><span class="fn">${m}</span></div>`).join("") +
     `<div class="fsep"></div><div class="fhead">${t("esforço")}</div>` +
     EFFORT_LEVELS.map((x) => `<div class="fitem2${x.label === chatPrefs.effort ? " on" : ""}" data-effort="${x.label}"><span class="fn">${t(x.label)}</span></div>`).join("");
   B.bMenu.querySelectorAll("[data-model]").forEach((b) => (b.onclick = () => { closeFloat(); chatPrefs.model = b.dataset.model; persistChatPrefs(); }));
@@ -11326,6 +11468,1362 @@ checkSetup();
 clog("init ok · TAURI=[" + Object.keys(TAURI).join(",") + "] · gUM=" + !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia));
 
 // auto-teste headless (só com LORO_SELFTEST=1): exercita start -> espera -> stop
+
+// ============================ loops (ADR-0029) ============================
+// Trabalho que a IA repete num ritmo. O RELÓGIO É O APP ABERTO (§4.6a): é este
+// setInterval que pergunta ao backend quem está na hora, e é por isso que o
+// backend não precisa de fuso — ele recebe a hora civil daqui (LP.nowFields).
+//
+// Uma autoridade só (§3.9): `loop_status` responde, `loopsStatus` guarda a
+// resposta, e a linha da árvore, a marca do cabeçalho, a aba ⟳ Loops e a tela do
+// loop leem essa mesma resposta. Duas leituras seriam duas verdades.
+
+function loopNow() { return LP.nowFields(new Date()); }
+function loopViewOf(slug) { return (loopsStatus.loops || []).find((l) => l.slug === slug) || null; }
+
+// O estado em uma palavra, na língua da tela. O código vem do backend (a
+// autoridade); aqui ele só ganha nome.
+const LOOP_STATE_LABEL = {
+  off: () => t("desligado"),
+  armed: () => t("ligado"),
+  running: () => t("rodando"),
+  queued: () => t("esperando você terminar"),
+  blocked: () => t("impedido"),
+  failing: () => t("falhando"),
+  expired: () => t("expirou"),
+};
+function loopStateLabel(state) {
+  const f = LOOP_STATE_LABEL[state];
+  return f ? f() : state;
+}
+
+// O ritmo em prosa. LP.parseRhythm é a única leitura do formato nos dois lados.
+function loopRhythmLabel(ritmo) {
+  const r = LP.parseRhythm(ritmo);
+  if (!r) return t("sem ritmo");
+  if (r.kind === "min") return t("a cada %1 min", [String(r.minutes)]);
+  const at = `${String(r.hh).padStart(2, "0")}:${String(r.mi).padStart(2, "0")}`;
+  if (r.kind === "dia") return t("todo dia às %1", [at]);
+  return t("%1 às %2", [t(LOOP_DOW_LONG[r.dow]), at]);
+}
+const LOOP_DOW_LONG = ["domingo", "segunda", "terça", "quarta", "quinta", "sexta", "sábado"];
+// A inicial do dia vem DO NOME TRADUZIDO, nunca de uma segunda lista: os círculos
+// do ritmo liam «D S T Q Q S S» com a interface em inglês, porque a lista curta era
+// pt-BR fixa e só o `title` passava pelo t(). Uma fonte, e ela não pode divergir.
+const loopDowShort = (i) => t(LOOP_DOW_LONG[i]).charAt(0).toUpperCase();
+
+// Uma data/hora curta, em mono — o mesmo idioma de máquina do resto do app.
+function loopWhen(ms) {
+  if (!ms) return "—";
+  const d = new Date(ms);
+  const p2 = (n) => String(n).padStart(2, "0");
+  return `${p2(d.getDate())}/${p2(d.getMonth() + 1)} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
+}
+function loopDayLabel(date) {
+  if (!date) return "—";
+  const [, m, d] = String(date).split("-");
+  return d && m ? `${d}/${m}` : date;
+}
+function loopElapsed(ms) {
+  const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m${String(s % 60).padStart(2, "0")}s`;
+}
+
+// A razão de um impedimento, com a porta quando existe uma (§3.9).
+function loopBlockedNote(code) {
+  const raw = String(code || "");
+  return tErr(raw);
+}
+
+// ---- a linha na árvore (primeira distância) ----
+function loopRow(v) {
+  const tone = LP.stateTone(v.state);
+  const dotCls = tone === "teal" ? "teal" : tone === "teal-soft" ? "soft" : tone === "amber" ? "amber" : "muted";
+  const stateCls = tone === "amber" ? "amber" : tone === "muted" ? "muted" : "teal";
+  const fact = v.state === "running"
+    ? loopStateLabel("running")
+    : v.state === "queued"
+      ? `${t("esperando a vez")} · ${(loopsStatus.queued || []).indexOf(v.slug) + 1}º`
+      : loopStateLabel(v.state);
+  // A LINHA ABRE. A seção era uma lista chapada, e o destino PADRÃO de um loop é
+  // `loops/<slug>/` — que não aparece em ideias (brainstorming/) nem em conhecimento
+  // (contexts/). O material de um loop era, portanto, invisível na árvore inteira,
+  // contra o §8.5 («o artefato é um documento comum»). A seta é a mesma da reunião,
+  // e o clique na linha continua abrindo o loop: expandir e abrir são ações diferentes.
+  // A SETA OCUPA O LUGAR DO ÍCONE, e isso é medido: a linha tem 225px e o nome ficava com
+  // 59px precisando de 69 (a seta custa 22px). O ícone do loop é o MESMO em toda linha
+  // desta seção — ele diz «isto é um loop», que a seção já disse —, enquanto a seta diz o
+  // que só ela pode dizer: há algo aqui dentro. O tom continua no ponto à direita.
+  const open = bOpen.has("loop:" + v.slug);
+  return `<div class="bitem" data-loop="${esc(v.slug)}" data-dropdir="loops/${esc(v.slug)}" title="${esc(v.titulo || v.slug)} — ${esc(loopRhythmLabel(v.ritmo))}">` +
+    `<button class="rowtoggle loopcaret${open ? " open" : ""}" data-looptoggle="${esc(v.slug)}" title="${esc(t("mostrar/ocultar o que este loop produziu"))}">▸</button>` +
+    `<span class="bn">${esc(v.titulo || v.slug)}</span>` +
+    `<span class="lstate ${stateCls}">${esc(fact)}</span>` +
+    (v.state === "off" ? "" : `<span class="ldot ${dotCls}"></span>`) +
+    rowMenuHtml(`data-loopmenu="${esc(v.slug)}"`, v.titulo || v.slug, t("ações do loop")) +
+    `</div><div class="bchild" data-loopchild="${esc(v.slug)}"${open ? "" : " hidden"}></div>`;
+}
+
+// O que ESTE loop produziu: a pasta de destino DELE, seja a sua própria, os anexos de uma
+// ideia ou o conhecimento — e neste último a lista não faz sentido (o ciclo PROPÕE numa
+// árvore que outras mãos escrevem), então a linha aponta para onde a decisão mora.
+async function loadLoopChildren(slug) {
+  const holder = [...($("navLoops") || document).querySelectorAll("[data-loopchild]")]
+    .find((h) => h.dataset.loopchild === slug);
+  if (!holder) return;
+  const v = loopViewOf(slug);
+  if (!v) { holder.innerHTML = ""; return; }
+  if (v.destino === "conhecimento") {
+    holder.innerHTML = `<div class="bempty">${t("propõe no conhecimento — a mudança aparece em Revisão")}</div>`;
+    return;
+  }
+  let files = [];
+  try { files = ((await invoke("brain_list_dir", { rel: v.dest })) || []).filter((f) => !f.dir); }
+  catch (_) {}
+  // §8.5 — O ARTEFATO É UM DOCUMENTO COMUM: ele recebe o MESMO ⋯ de qualquer arquivo da
+  // árvore (pedir à IA · renomear · mover para… · copiar caminho · apagar), não um menu
+  // novo com um subconjunto. O backend reconhece `loops/<slug>/` como mundo
+  // não-versionado para essas ações — a DEFINIÇÃO do loop fica de fora (loop_delete).
+  holder.innerHTML = files.length
+    ? files.map((f) => `<div class="bitem file bsub" data-doc="${esc(f.path)}" title="${esc(f.path)}">` +
+      `${ico("file")}<span class="bn">${esc(f.name)}</span>` +
+      rowMenuHtml(`data-artmenu="${esc(f.path)}" data-artlabel="${esc(f.name)}"`, f.name,
+        t("ações (renomear, mover, copiar caminho, apagar)")) +
+      `</div>`).join("")
+    : `<div class="bempty">${t("nada produzido ainda — o que sair aparece aqui")}</div>`;
+  holder.querySelectorAll("[data-artmenu]").forEach((el2) => (el2.onclick = (e) => {
+    e.stopPropagation();
+    openArtefatoMenu(el2.dataset.artmenu, el2.dataset.artlabel, el2);
+  }));
+}
+
+// A LISTAGEM DOS LOOPS ABERTOS ENTRA NA ASSINATURA. Sem isto um arquivo novo não mudava
+// nada que a tela observasse (a assinatura era estado + ritmo + última execução), e a
+// árvore só mostrava o material depois de um clique — «não aparece em auto reload».
+// Mesma regra que `pessoalSig` já seguia para uma ideia expandida.
+async function loopKidsSig() {
+  const parts = [];
+  for (const v of loopsStatus.loops || []) {
+    if (!bOpen.has("loop:" + v.slug) || v.destino === "conhecimento") continue;
+    try {
+      const files = ((await invoke("brain_list_dir", { rel: v.dest })) || []).filter((f) => !f.dir);
+      parts.push([v.slug, files.map((f) => f.name)]);
+    } catch (_) { parts.push([v.slug, "?"]); }
+  }
+  return JSON.stringify(parts);
+}
+
+function renderLoops() {
+  const nav = $("navLoops");
+  if (!nav) return;
+  // (o corpo de cada loop aberto é preenchido no fim desta função)
+  const list = loopsStatus.loops || [];
+  nav.innerHTML = list.length
+    ? list.map(loopRow).join("")
+    : `<div class="bempty">${t("nenhum loop ainda — um loop é trabalho que a IA repete num ritmo (um resumo toda segunda, por exemplo). O que ele produz passa pela sua revisão. Crie um no ＋.")}</div>`;
+  nav.querySelectorAll("[data-loop]").forEach((el2) => {
+    el2.onclick = (e) => { if (e.target.closest("[data-loopmenu]")) return; openLoop(el2.dataset.loop); };
+  });
+  nav.querySelectorAll("[data-loopmenu]").forEach((el2) => (el2.onclick = (e) => {
+    e.stopPropagation();
+    openLoopMenu(el2, el2.dataset.loopmenu);
+  }));
+  // a seta expande sem abrir o loop: são duas ações
+  nav.querySelectorAll("[data-looptoggle]").forEach((el2) => (el2.onclick = (e) => {
+    e.stopPropagation();
+    const slug = el2.dataset.looptoggle, key = "loop:" + slug;
+    if (bOpen.has(key)) bOpen.delete(key); else bOpen.add(key);
+    renderLoops();
+  }));
+  nav.querySelectorAll("[data-doc]").forEach((el2) => (el2.onclick = (e) => {
+    if (e.target.closest("[data-artmenu]")) return;   // o ⋯ é dele, não da linha
+    e.stopPropagation();
+    openDoc(el2.dataset.doc, { preview: true });
+  }));
+  nav.querySelectorAll("[data-artmenu]").forEach((el2) => (el2.onclick = (e) => {
+    e.stopPropagation();
+    openArtefatoMenu(el2.dataset.artmenu, el2.dataset.artlabel, el2);
+  }));
+  // o corpo de cada loop aberto: o que ele produziu, lido do destino dele
+  for (const v of list) if (bOpen.has("loop:" + v.slug)) loadLoopChildren(v.slug);
+  wireTreeKeyboard(nav.parentElement || nav);
+  markSel();
+}
+
+// ---- a marca no cabeçalho (segunda distância) ----
+// Teal, sem piscar, e clicar abre a aba ⟳ Loops — o mesmo contrato do pill de
+// gravação, que volta para a gravação. Parado é o estado normal: um tique sem
+// ciclo nenhum não toca no DOM.
+let loopChromeWasOn = false;
+function paintLoopChrome() {
+  const counts = LP.headerCounts(loopsStatus);
+  const pill = $("headLoops");
+  const badge = $("ptabLoopsN");
+  const mini = $("miniLoopsBadge");
+  const on = !!counts;
+  if (!on && !loopChromeWasOn) return;
+  loopChromeWasOn = on;
+  if (pill) {
+    pill.hidden = !on;
+    if (on) {
+      // A marca é CURTA de propósito. Com «loops · N rodando · N esperando» o bloco
+      // direito do cabeçalho pedia 532px onde tinha 484 (medido) e transbordava para
+      // a ESQUERDA — `justify-content: flex-end` faz o excesso sair pelo início —,
+      // passando por baixo do nav, que é absoluto e centrado. O cabeçalho tem duas
+      // marcas agora, e nenhuma pode cobrir a outra (DESIGN.md §2 regra 8): o que a
+      // marca precisa dizer é «algo está rodando AGORA»; a fila é a contagem da aba
+      // ⟳ Loops, que fica ao lado.
+      pill.textContent = counts.running
+        ? `⟳ ${counts.running} ${t("rodando")}`
+        : `⟳ ${counts.queued} ${t("esperando")}`;
+      pill.title = counts.queued
+        ? `${t("loops")} · ${counts.running} ${t("rodando")} · ${counts.queued} ${t("esperando a vez")}`
+        : `${t("loops")} · ${counts.running} ${t("rodando")}`;
+    }
+  }
+  const n = on ? counts.running + counts.queued : 0;
+  for (const el2 of [badge, mini]) {
+    if (el2) { el2.textContent = String(n); el2.hidden = !n; }
+  }
+}
+
+// ---- a aba ⟳ Loops do painel (terceira distância, ao vivo) ----
+// §4.18 — OS PEDIDOS. Um ciclo pediu uma ferramenta que não tinha; a pergunta espera
+// aqui, e a resposta vale para os próximos ciclos de TODOS os loops («uma vez dado, o
+// usuário concedeu»). Não é um prompt: ninguém está olhando um ciclo, então ele termina
+// e a pergunta fica — permitir não roda nada, o próximo ciclo é que já vai com ela.
+function renderLoopRequests() {
+  const wrap = $("pLoopReqs");
+  const sep = $("pLoopReqSep");
+  const list = $("pLoopReqList");
+  if (!wrap || !list) return;
+  const reqs = loopsStatus.requests || [];
+  wrap.hidden = !reqs.length;
+  if (sep) sep.hidden = !reqs.length;
+  if (!reqs.length) { list.innerHTML = ""; return; }
+  list.innerHTML = reqs.map((r) => {
+    const quem = (r.loops || []).join(", ");
+    return `<div class="preq" data-req="${esc(r.tool)}">` +
+      `<div class="preqhead"><span class="preqtool mono">${esc(r.tool)}</span>` +
+      `<span class="preqwhen">${esc(r.atMs ? loopWhen(r.atMs) : "")}</span></div>` +
+      `<div class="preqwho">${esc(t("%1 parou aqui", [quem]))}</div>` +
+      `<div class="preqacts"><button class="btn sm solid" type="button" data-reqok="${esc(r.tool)}">${esc(t("permitir"))}</button>` +
+      `<button class="btn sm" type="button" data-reqno="${esc(r.tool)}">${esc(t("não"))}</button></div></div>`;
+  }).join("") +
+    `<p class="pnote">${esc(t("permitir vale para os próximos ciclos de todos os loops deste projeto — não para o Chat. «não» fecha a porta e o pedido não volta."))}</p>`;
+  list.querySelectorAll("[data-reqok]").forEach((b) => (b.onclick = () =>
+    withPending(b, () => decideLoopTool(b.dataset.reqok, "permitir"))));
+  list.querySelectorAll("[data-reqno]").forEach((b) => (b.onclick = () =>
+    withPending(b, () => decideLoopTool(b.dataset.reqno, "recusar"))));
+}
+
+async function decideLoopTool(tool, decision) {
+  try {
+    const policy = await invoke("loop_permit", { tool, decision });
+    if (policy) loopPolicy = clampPolicy(policy);
+    toast(decision === "permitir"
+      ? t("«%1» liberado para os ciclos deste projeto — vale do próximo em diante", [tool])
+      : t("«%1» recusado — os ciclos não vão tentar de novo", [tool]));
+    await refreshLoops(true);
+    renderActive();
+  } catch (e) { toast(tErr(String(e)), 5000); }
+}
+
+function renderLoopPanel() {
+  const list = $("pLoopsList");
+  const head = $("pLoopsHead");
+  if (!list) return;
+  renderLoopRequests();
+  const running = loopsStatus.running || [];
+  const queued = loopsStatus.queued || [];
+  if (head) {
+    head.textContent = running.length || queued.length
+      ? `${running.length} ${t("rodando")} · ${queued.length} ${t("esperando")}`
+      : t("CICLOS");
+  }
+  if (!running.length && !queued.length) {
+    list.innerHTML = `<p class="pnote">${t("nenhum ciclo agora — a lateral mostra o próximo de cada loop.")}</p>`;
+    renderLoopSteps();
+    return;
+  }
+  // o que se está vendo só é trocado quando ele deixou de existir: o guard antigo
+  // resetava para o primeiro em execução e o clique numa linha em espera não fazia
+  // nada (o estado prometia uma escolha que a tela desfazia)
+  if (!running.includes(loopWatch) && !queued.includes(loopWatch)) {
+    loopWatch = running[0] || queued[0] || "";
+  }
+  const cycle = (slug) => (loopsStatus.cycles || []).find((c) => c.slug === slug);
+  const row = (slug, isRunning, pos) => {
+    const v = loopViewOf(slug);
+    const c = cycle(slug);
+    const meta = isRunning
+      ? `${t("rodando")} · ${c ? loopElapsed(c.startedMs) : ""}`
+      : `${t("esperando a vez")} · ${pos}º`;
+    const on = slug === loopWatch;
+    return `<button type="button" class="plooprow${on ? " on" : ""}" data-watch="${esc(slug)}"` +
+      `${on ? ' aria-current="true"' : ""}>` +
+      `<span class="ldot ${isRunning ? "teal" : "soft"}"></span>` +
+      `<span class="pln">${esc((v && v.titulo) || slug)}</span>` +
+      `<span class="plmeta">${esc(meta)}</span></button>`;
+  };
+  list.innerHTML =
+    running.map((s) => row(s, true, 0)).join("") +
+    queued.map((s, i) => row(s, false, i + 1)).join("");
+  list.querySelectorAll("[data-watch]").forEach((b) => (b.onclick = () => {
+    loopWatch = b.dataset.watch;
+    renderLoopPanel();
+  }));
+  renderLoopSteps();
+}
+
+// Os passos vêm do MESMO stream do chat (loop-tool/loop-tool-result), cada um
+// dizendo de qual loop é — sem isso um ciclo paralelo pintaria na lista do outro.
+function renderLoopSteps() {
+  const host = $("pLoopSteps");
+  const head = $("pLoopStepsHead");
+  const stop = $("pLoopStop");
+  if (!host) return;
+  const mine = LP.stepsFor(loopSteps, loopWatch);
+  const v = loopViewOf(loopWatch);
+  const isRunning = (loopsStatus.running || []).includes(loopWatch);
+  // o rótulo da seção nomeia o BIN (mono, caixa alta): o nome que a pessoa
+  // escreveu é prosa e vai numa linha própria, sem ser reescrito pela folha (§3)
+  if (head) head.textContent = t("PASSO A PASSO");
+  if (stop) stop.hidden = !isRunning;
+  const naming = loopWatch
+    ? `<p class="pnote">${esc((v && v.titulo) || loopWatch)}${isRunning ? " · " + esc(t("rodando")) : ""}</p>`
+    : "";
+  if (!mine.length) {
+    host.innerHTML = loopWatch && isRunning
+      ? naming + `<div class="chatthinking"><span class="dots"><i></i><i></i><i></i></span><span class="lbl">${esc(t("começando…"))}</span></div>`
+      : `<p class="pnote">${t("selecione um ciclo para ver o passo a passo.")}</p>`;
+    return;
+  }
+  host.innerHTML = naming + mine.map((s) => {
+    const mark = s.done ? (s.failed ? "!" : "✓") : t("rodando");
+    // uma recusa de permissão não é «um erro»: é uma pergunta, e ela tem a mesma
+    // resposta de um clique que o pedido no alto do painel (§4.18)
+    const perm = s.permission && LP.grantableTool(s.name)
+      ? `<div class="stepperm"><span>${esc(t("faltou permissão para usar %1", [s.name]))}</span>` +
+        `<button class="btn sm solid" type="button" data-stepperm="${esc(s.name)}">${esc(t("permitir"))}</button></div>`
+      : s.permission
+        ? `<div class="stepperm"><span>${esc(t("faltou permissão para usar %1 — isto não se libera para um loop.", [s.name]))}</span></div>`
+        : "";
+    return `<details class="chatstep${s.failed ? " failed" : ""}${s.permission ? " permission" : ""}"${s.failed ? " open" : ""}>` +
+      `<summary><span class="dot"></span><span class="nm">${esc(s.name || "?")}</span><span class="st">${esc(mark)}</span></summary>` +
+      perm +
+      (s.input ? `<div class="io"><div class="lbl">${esc(t("pedido"))}</div><pre class="in">${esc(s.input)}</pre></div>` : "") +
+      (s.done && s.text ? `<div class="io"><div class="lbl">${esc(t("resposta"))}</div><pre class="out">${esc(s.text)}</pre></div>` : "") +
+      // A RESPOSTA. Sem ela, «!» é um mistério — e o motivo real (uma pasta lida como
+      // arquivo, um caminho que não existe) ficava invisível.
+
+      `</details>`;
+  }).join("");
+  host.querySelectorAll("[data-stepperm]").forEach((b) => (b.onclick = () =>
+    withPending(b, () => decideLoopTool(b.dataset.stepperm, "permitir"))));
+  host.scrollTop = host.scrollHeight;
+}
+
+// ---- a autoridade: uma leitura, todas as superfícies ----
+async function refreshLoops(force) {
+  if (!brainTab) return;
+  let st;
+  try { st = await invoke("loop_status", { now: loopNow() }); }
+  catch (e) { clog("loop_status error: " + e); return; }
+  loopsStatus = st || loopsStatus;
+  loopPolicy = clampPolicy({ ...loopPolicy, paralelo: loopsStatus.paralelo });
+  const sig = JSON.stringify((loopsStatus.loops || []).map((l) => [l.slug, l.state, l.ligado, l.ritmo, l.runtime && l.runtime.lastRunMs, l.blocked]))
+    + "|" + (loopsStatus.queued || []).join(",")
+    + "|" + await loopKidsSig();
+  if (force || sig !== loopsSig) {
+    loopsSig = sig;
+    renderLoops();
+    const tab = activeTab();
+    // A tela do loop é innerHTML: repintá-la enquanto a pessoa digita o ajuste
+    // apagava o que ela escreveu. Quem está com o cursor lá dentro manda — o
+    // repintar espera a próxima passada.
+    const typing = document.activeElement && B.doc.contains(document.activeElement);
+    if (tab && LP.slugOfRel(tab.rel) && !typing) renderActive();
+  }
+  paintLoopChrome();
+  renderLoopPanel();
+}
+
+// O tique: pergunta quem está na hora e manda rodar. O backend recusa de novo
+// tudo o que já recusou (ocupado, impedido, freio), então uma decisão velha não
+// escapa por aqui.
+async function loopTick() {
+  if (!brainTab || loopTicking) return;
+  if (typeof document !== "undefined" && document.hidden) return;
+  loopTicking = true;
+  try {
+    const now = loopNow();
+    const r = await invoke("loop_tick", { now });
+    for (const slug of (r && r.started) || []) {
+      try { await invoke("loop_run_now", { slug, now }); }
+      catch (e) { clog("loop_run_now refused: " + e); }
+    }
+    if ((r && ((r.started || []).length || (r.queued || []).length || (r.skipped || []).length))) await refreshLoops(true);
+  } catch (e) { clog("loop_tick error: " + e); }
+  finally { loopTicking = false; }
+}
+
+// ---- abrir, criar, editar ----
+function openLoop(slug) { return openDoc(LP.relOf(slug), { preview: false }); }
+
+async function openNewLoop() {
+  loopForm = await newLoopForm();
+  return openDoc(LOOP_NEW_REL, { preview: false });
+}
+
+function openLoopMenu(anchor, slug) {
+  const v = loopViewOf(slug);
+  if (!v) return;
+  B.acervoMenu.hidden = true;
+  B.bMenu.innerHTML =
+    `<div class="fhead">${esc(v.titulo || slug)}</div>` +
+    `<div class="fitem2" data-a="open"><span class="fn">${t("abrir")}</span></div>` +
+    `<div class="fitem2${v.state === "running" ? " off" : ""}" data-a="run"><span class="fn">▶ ${t("rodar agora")}</span></div>` +
+    `<div class="fitem2" data-a="arm"><span class="fn">${v.ligado ? t("desligar") : t("ligar")}</span></div>` +
+    `<div class="fsep"></div>` +
+    `<div class="fitem2 ditem" data-a="del"><span class="fn">${t("apagar…")}</span></div>`;
+  const on = (k, fn) => { const n = B.bMenu.querySelector(`[data-a="${k}"]`); if (n) n.onclick = fn; };
+  on("open", () => { closeFloat(); openLoop(slug); });
+  on("run", () => { closeFloat(); runLoopNow(slug); });
+  on("arm", () => { closeFloat(); armLoop(slug, !v.ligado); });
+  on("del", () => openConfirmDeleteLoop(anchor, v));
+  placeMenu(anchor);
+}
+
+function openConfirmDeleteLoop(anchor, v) {
+  B.acervoMenu.hidden = true;
+  B.bMenu.innerHTML =
+    `<div class="fhead">${t("apagar loop")}</div>` +
+    `<div class="fitem2 muted fstatic">${t("apagar “%1”? o que ele já produziu FICA — só o loop sai.", [esc(v.titulo || v.slug)])}</div>` +
+    `<div class="confirm-actions">` +
+    `<button class="btn-danger" data-yes>${t("apagar")}</button>` +
+    `<button class="link mono muted" data-no>${t("cancelar")}</button></div>`;
+  B.bMenu.querySelector("[data-yes]").onclick = async () => {
+    closeFloat();
+    try {
+      await invoke("loop_delete", { slug: v.slug });
+      closeTabsUnder(LP.relOf(v.slug), true);
+      toast(t("loop apagado — o que ele produziu ficou"));
+      await refreshLoops(true);
+    } catch (e) { toast(tErr(String(e))); }
+  };
+  B.bMenu.querySelector("[data-no]").onclick = closeFloat;
+  placeMenu(anchor);
+}
+
+async function armLoop(slug, on) {
+  try {
+    await invoke("loop_arm", { slug, on });
+    toast(on ? t("loop ligado") : t("loop desligado"));
+    await refreshLoops(true);
+  } catch (e) { toast(tErr(String(e))); }
+}
+
+// Quem mandou rodar fica sabendo o que aconteceu. Só os ciclos que a PESSOA disparou: um
+// ciclo automático a cada 30 min virando toast seria ruído — a marca do cabeçalho é o
+// sinal dele. Medido no acervo do dono (2026-08-18): cinco «rodar agora», 4/7/8/10 passos,
+// sete documentos lidos por ciclo, e a tela calada em todos — «rodei e não aconteceu nada»
+// era literalmente verdade do ponto de vista da interface.
+const loopRanByHand = new Set();
+
+async function runLoopNow(slug) {
+  try {
+    await invoke("loop_run_now", { slug, now: loopNow() });
+    loopRanByHand.add(slug);
+    loopSteps = loopSteps.filter((s) => s.loop !== slug);
+    loopWatch = slug;
+    openLoopsPanel();
+    await refreshLoops(true);
+  } catch (e) { toast(tErr(String(e)), 5000); }
+}
+
+function openLoopsPanel() {
+  settings.aiPanelOpen = true;
+  LoroShell.setPanelOpen(true);
+  settings.aiPanelTab = LoroShell.setPanelTab("loops");
+  persistSettings();
+  applyPanelWidth();
+  if (!panelRendered()) { panelUnavailable(); return; }
+  renderLoopPanel();
+}
+
+// ---- a tela do loop: visualizar ----
+// Painter puro (dados → HTML), como indexSurfaceHtml: é assim que o teste o
+// exercita de verdade em vez de olhar o fonte.
+function loopSurfaceHtml(v, ctx) {
+  const c = ctx || {};
+  // §4.18 — as concessões são do PROJETO e chegam pelo ctx, nunca lidas de um global:
+  // este pintor é dados → HTML, que é o que permite exercitá-lo de verdade num teste
+  const perms = c.permite || [];
+  const rt = v.runtime || {};
+  const cycles = LP.collapseCycles(rt.cycles || []);
+  const willRun = v.ligado && !v.blocked && v.state !== "expired" && v.state !== "failing";
+  const nextAt = willRun ? LP.nextRunAt(v.ritmo, rt.lastRunMs, c.nowMs || 0) : 0;
+  const dots = LP.timelineDots(cycles, { running: c.running, nextAt, max: 4 });
+  const tone = LP.stateTone(v.state);
+  const seal = `<span class="lstate ${tone === "amber" ? "amber" : tone === "muted" ? "muted" : "teal"}">` +
+    `${esc(loopStateLabel(v.state))}${v.state === "running" && c.startedMs ? " · " + esc(loopElapsed(c.startedMs)) : ""}</span>`;
+  const brakes = [
+    t("%1 arquivo(s)/ciclo", [String(v.maxArquivos || 0)]),
+    t("%1×/dia", [String(v.maxCiclosDia || 0)]),
+    v.expira ? t("desliga %1", [loopDayLabel(v.expira)]) : "",
+  ].filter(Boolean).join(" · ");
+  const timeline = dots.map((d, i) => {
+    const line = i < dots.length - 1
+      ? `<div class="tlline${dots[i + 1] && dots[i + 1].kind === "next" ? " next" : ""}"></div>` : "";
+    if (d.kind === "now") {
+      return `<div class="tlstep"><span class="ldot teal now"></span>` +
+        `<span class="tllabel teal">${esc(t("agora"))}<br>${esc(t("rodando"))}</span></div>` + line;
+    }
+    if (d.kind === "next") {
+      return `<div class="tlstep"><span class="ldot soft"></span>` +
+        `<span class="tllabel">${esc(loopWhen(d.at))}</span></div>`;
+    }
+    const dtone = LP.outcomeTone(d.outcome);
+    const label = d.outcome === "ok"
+      ? t("%1 item(ns)", [String(d.files)])
+      : d.outcome === "nothing"
+        ? (d.n > 1 ? `×${d.n} · ${t("nada novo")}` : t("nada novo"))
+        : d.outcome === "skipped" ? t("pulado")
+          : d.outcome === "stopped" ? t("parou")
+            : d.outcome === "blocked" ? loopStateLabel("blocked") : t("falhou");
+    return `<div class="tlstep"><span class="ldot ${dtone}"></span>` +
+      `<span class="tllabel ${dtone === "amber" ? "amber" : dtone === "green" ? "ink" : ""}">${esc(loopDayLabel(d.date))}<br>${esc(label)}</span></div>` + line;
+  }).join("");
+  const cycleRows = cycles.length
+    ? cycles.map((cy) => {
+      const dtone = LP.outcomeTone(cy.outcome);
+      const when = cy.n > 1
+        ? `${loopDayLabel(cy.from)} – ${loopDayLabel(cy.to)}`
+        : `${loopDayLabel(cy.startedDate)} ${loopWhen(cy.startedMs)}`;
+      // «impedido» tem caso PRÓPRIO: sem ele, um ciclo parado por uma pergunta que
+      // só a pessoa responde caía no último ramo e o histórico dizia «falhou» —
+      // a diferença que o §3.9 existe para não perder.
+      const note = cy.n > 1
+        ? `×${cy.n} · ${t("nada novo")}`
+        : cy.outcome === "ok"
+          ? t("produziu %1 item(ns)", [String((cy.files || []).length)])
+          : cy.outcome === "nothing" ? t("nada novo")
+            : cy.outcome === "skipped" ? `${t("pulado")} — ${esc(tErr(cy.err || ""))}`
+              : cy.outcome === "blocked" ? `${loopStateLabel("blocked")} · ${esc(tErr(cy.err || ""))}`
+                : `${cy.outcome === "stopped" ? t("parou") : t("falhou")} · ${esc(tErr(cy.err || ""))}`;
+      const files = (cy.files || []).map((f) =>
+        `<button type="button" class="lcfile mono" data-lfile="${esc(f)}">${esc(f.split("/").pop())}</button>`).join("");
+      // TODA linha abre. O ciclo quieto era o único que não abria — e é justamente o que
+      // precisa de explicação: a pessoa mandou rodar, o ciclo leu sete documentos, abriu o
+      // que já havia escrito, decidiu que não havia o que acrescentar, e a tela mostrava
+      // uma linha cinza sem nada por trás.
+      const corpo = cy.n > 1
+        // uma linha que resume N ciclos não afirma os passos de UM deles
+        ? `<div class="lcsteps">${esc(t("%1 ciclos, de %2 a %3", [String(cy.n), loopDayLabel(cy.from), loopDayLabel(cy.to)]))}</div>` +
+          `<div class="lcsteps">${esc(t("um ciclo quieto olhou e não achou o que acrescentar — ele não escreve para não repetir o que já está lá."))}</div>`
+        : (files ? `<div class="lcfiles">${files}</div>` : "") +
+          (cy.outcome === "ok" && cy.err ? `<div class="lcsteps">${esc(tErr(cy.err))}</div>` : "") +
+          (cy.outcome === "nothing" ? `<div class="lcsteps">${esc(t("um ciclo quieto olhou e não achou o que acrescentar — ele não escreve para não repetir o que já está lá."))}</div>` : "") +
+          `<div class="lcsteps">${esc(t("passos: %1 · começou %2", [String(cy.steps || 0), loopWhen(cy.startedMs)]))}</div>`;
+      return `<details><summary><span class="ldot ${dtone}"></span><span class="lcwhen">${esc(when)}</span>` +
+        `<span class="lcnote">${note}</span></summary>` +
+        `<div class="lcbody">${corpo}</div></details>`;
+    }).join("")
+    : `<div class="lcrow"><span class="lcnote">${t("nenhum ciclo ainda")}</span></div>`;
+  // §4.17 — um impedimento que a pessoa não tem como resolver é um beco sem saída. A
+  // negação nomeia a ferramenta, e a ação é a MENOR possível: permitir AQUELA, neste
+  // loop. Não «liberar tudo e repetir» (o que o chat oferece a quem está olhando):
+  // aqui ninguém está olhando.
+  const tool = deniedTool(v.blocked);
+  // uma ferramenta que um loop NUNCA pode receber (um comando livre) não ganha
+  // botão: oferecê-lo seria uma ação que responde com erro. A tela diz por quê.
+  const grantable = tool && LP.grantableTool(tool);
+  const blocked = v.blocked
+    ? `<p class="notifbar warm"><span>${esc(loopBlockedNote(v.blocked))}</span>` +
+      (grantable
+        ? `<button class="btn sm" type="button" data-lallow="${esc(tool)}">${esc(t("permitir neste loop"))}</button>`
+        : "") + `</p>` +
+      (grantable
+        ? `<p class="hint">${esc(t("permitir vale só para este loop e fica escrito na definição dele — o time vê em Revisão. O ciclo não roda agora: ele volta no ritmo de sempre."))}</p>`
+        : tool
+          ? `<p class="hint">${esc(t("isto não se libera para um loop: rodar comandos livres num ciclo sem você é a única coisa que o Loro nunca oferece. Ajuste a instrução para ele não precisar disso."))}</p>`
+          : `<p class="hint">${esc(t("o agente não disse qual ferramenta faltou — o passo a passo na aba ⟳ Loops mostra o que ele tentou. Libere pelo botão «pode usar» abaixo; para o loop voltar a tentar, desligue e ligue."))}</p>`)
+    : "";
+  const missed = v.missed
+    ? `<p class="hint">${esc(t("não rodou %1 vez(es): o app estava fechado. Ao voltar, ele recupera no máximo uma.", [String(v.missed)]))}</p>`
+    : "";
+  return `<h1 class="loophead">${esc(v.titulo || v.slug)}</h1>` +
+    `<p class="hint">${esc(t("%1 este loop roda a IA e escreve em %2.", [loopRhythmLabel(v.ritmo), v.dest]))}</p>` +
+    blocked + missed +
+    `<div class="loopnow"><div class="loopnowhead">` +
+    // §3.9 — «vai rodar» e «pode rodar» são fatos diferentes: um loop impedido,
+    // falhando ou expirado NÃO promete uma próxima execução. Prometer seria a
+    // interface sabendo algo que não diz.
+    `<span class="loopnext">${esc(willRun && nextAt ? t("próxima execução %1", [loopWhen(nextAt)]) : loopStateLabel(v.state))}</span>` +
+    `<span class="loopwhen">${esc(loopRhythmLabel(v.ritmo))}</span>` +
+    `<span class="loopbrakes">${esc(t("freios: %1", [brakes]))}</span></div>` +
+    `<div class="looptl">${timeline}</div></div>` +
+    `<div class="loopeff"><div class="sect">${t("instrução efetiva")}</div>` +
+    `<p>${esc(v.instrucao || t("(sem instrução)"))}</p>` +
+    `<p class="loopcite">${esc(loopCiteLine(v, perms))}</p></div>` +
+    `<div class="loopacts">` +
+    // DESIGN.md §1 — a ação, não a afordância de algo que não está lá: um loop
+    // impedido não oferece «rodar agora» para responder com um erro no toast
+    `<button class="btn solid" type="button" data-lrun ${v.state === "running" || v.blocked ? "disabled" : ""}` +
+    `${v.blocked ? ` title="${esc(loopBlockedNote(v.blocked))}"` : ""}>${t("rodar agora")}</button>` +
+    `<button class="btn" type="button" data-larm>${v.ligado ? t("desligar") : t("ligar")}</button>` +
+    // §4.17 — A PERMISSÃO TEM DE SER ACHÁVEL SEM UMA RECUSA. Ela morava só no editar
+    // (as caixinhas) e no bloco âmbar quando a negação vinha com nome: quem estava em
+    // «visualizar» não tinha por onde. Agora é um controle ao lado das ações, como o
+    // do chat, e ele diz o estado antes de abrir.
+    `<button class="btn" type="button" data-lperms>${esc(t("pode usar: %1", [perms.length ? String(perms.length) : t("nada")]))} ⌄</button>` +
+    `<span class="loopprice">${esc(t("roda só com o app aberto · permissão: ler e editar o projeto"))}</span></div>` +
+    `<div class="sect">${t("ciclos")}</div>` +
+    `<div class="loopcycles">${cycleRows}</div>` +
+    `<p class="hint">${esc(t("o histórico guarda quando, quanto durou, quais arquivos e o resultado — nunca o texto produzido (BR-8)."))}</p>` +
+    `<div class="sect">${t("ajustar conversando")}</div>` +
+    `<div class="composerbox"><textarea id="loopAdj" rows="1" aria-label="${esc(t("ajustar conversando"))}" placeholder="${esc(t("a partir de agora ignore as reuniões canceladas…"))}"></textarea>` +
+    `<button class="sendbtn" type="button" data-ladj title="${esc(t("enviar ajuste"))}" aria-label="${esc(t("enviar ajuste"))}">↑</button></div>` +
+    `<p class="hint">${esc(t("um ajuste vale a partir do «próximo» ciclo e entra na instrução efetiva acima — o loop continua legível depois de cinco correções."))}</p>`;
+}
+
+function loopCiteLine(v, permite) {
+  const parts = [];
+  if (v.habilidade) parts.push(t("cita a habilidade %1", [v.habilidade]));
+  parts.push(t("escopo: %1", [LP.scopeKind(v.escopo) === "projeto" ? t("o projeto") : LP.scopeValue(v.escopo)]));
+  // §4.15 — um escopo apontado lê SÓ aquilo, e a tela diz a mesma coisa que o ciclo
+  // recebe: o estado nunca é mais generoso do que o fato (DESIGN.md §1)
+  parts.push(LP.scopeKind(v.escopo) === "projeto"
+    ? t("lê %1, nunca a própria pasta de saída", [v.scope])
+    : t("lê só %1, nunca a própria pasta de saída", [v.scope]));
+  // §4.16 — com que modelo isto roda é parte do preço, então está na tela
+  const como = [v.modelo, v.esforco ? effortLabel(v.esforco) : ""].filter(Boolean).join(" · ");
+  parts.push(como ? t("roda com %1", [como]) : t("roda com o padrão do agente"));
+  // §4.18 — o que um ciclo alcança fora do projeto é do PROJETO, não deste loop; a tela
+  // do loop diz o fato, e quem muda é o controle abaixo (uma fonte de verdade)
+  const perms = permite || [];
+  parts.push(perms.length ? t("os ciclos podem usar %1", [perms.join(", ")]) : t("nada fora do projeto"));
+  return parts.join(" · ");
+}
+
+async function renderLoopSurface(tab, stale) {
+  B.editHost.hidden = true;
+  B.editBar.hidden = true;
+  B.doc.hidden = false;
+  B.wsBody.classList.remove("editing");
+  fmById.set(tab.id, null);
+  const slug = LP.slugOfRel(tab.rel);
+  if (!loopViewOf(slug)) await refreshLoops(false);
+  if (stale && stale()) return;
+  const v = loopViewOf(slug);
+  if (!v) {
+    B.doc.innerHTML = `<p class="hint">${t("este loop não existe mais")}</p>`;
+    return;
+  }
+  const cycle = (loopsStatus.cycles || []).find((c) => c.slug === slug);
+  B.doc.innerHTML = loopSurfaceHtml(v, {
+    nowMs: Date.now(),
+    running: (loopsStatus.running || []).includes(slug),
+    startedMs: cycle && cycle.startedMs,
+    permite: loopsStatus.permite || [],
+  });
+  const run = B.doc.querySelector("[data-lrun]");
+  if (run) run.onclick = () => withPending(run, () => runLoopNow(slug));
+  const arm = B.doc.querySelector("[data-larm]");
+  if (arm) arm.onclick = () => withPending(arm, () => armLoop(slug, !v.ligado));
+  const allow = B.doc.querySelector("[data-lallow]");
+  if (allow) allow.onclick = () => withPending(allow, () => decideLoopTool(allow.dataset.lallow, "permitir"));
+  const perms = B.doc.querySelector("[data-lperms]");
+  if (perms) perms.onclick = (e) => { e.stopPropagation(); openLoopPermsMenu(perms, v); };
+  B.doc.querySelectorAll("[data-lfile]").forEach((b) => (b.onclick = () => openDoc(b.dataset.lfile, { preview: true })));
+  const adj = B.doc.querySelector("[data-ladj]");
+  const box = $("loopAdj");
+  const send = async () => {
+    const texto = (box && box.value || "").trim();
+    if (!texto) { toast(t("escreva o ajuste")); return; }
+    try {
+      await invoke("loop_enrich", { slug, texto, hoje: loopNow().date });
+      toast(t("ajuste anotado — vale a partir do próximo ciclo"));
+      await refreshLoops(true);
+      renderActive();
+    } catch (e) { toast(tErr(String(e))); }
+  };
+  if (adj) adj.onclick = send;
+  if (box) box.onkeydown = (e) => {
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); }
+  };
+}
+
+// §4.17 — permitir UMA ferramenta neste loop. A pergunta que o ciclo deixou aberta
+// era exatamente esta, então respondê-la também limpa a pendência (o backend faz as
+// duas coisas juntas: sem isso o loop continuaria impedido pela pergunta já
+// respondida). E não roda nada: permitir e rodar são duas decisões.
+// O menu do «pode usar»: o que o PROJETO oferece, com marca no que já está liberado.
+// Mesmo idioma do menu de modelo do chat — nenhuma peça nova, e tirar uma permissão é
+// o mesmo gesto de dar (um controle que só soma não pode ser corrigido).
+async function openLoopPermsMenu(anchor, v) {
+  const caps = await loopCapacidades();
+  // a decisão é do PROJETO (§4.18): a marca vem de loop_status, não da definição
+  const on = new Set((loopsStatus && loopsStatus.permite) || []);
+  const no = new Set((loopsStatus && loopsStatus.recusa) || []);
+  B.acervoMenu.hidden = true;
+  B.bMenu.innerHTML = `<div class="fhead">${t("o que este loop pode usar")}</div>` +
+    (caps.length
+      // sem o nome da máquina AO LADO: `.fitem2 .fn` é nowrap com ellipsis, então o
+      // id longo de um servidor MCP esmagava o rótulo até uma letra («c»). O id
+      // aparece onde ele serve — nas caixinhas do editar e no bloco do impedimento.
+      ? caps.map((c) => `<div class="fitem2${on.has(c.id) ? " on" : ""}" data-lcap="${esc(c.id)}" title="${esc(c.id)}">` +
+        `<span class="fn">${esc(capLabel(c))}</span>` +
+        (no.has(c.id) ? `<span class="fmeta">${esc(t("recusado"))}</span>` : "") + `</div>`).join("")
+      : `<div class="fitem2 muted fstatic"><span class="fn">${t("este projeto não tem nada fora dele para oferecer")}</span></div>`) +
+    // e o que este menu NUNCA oferece, dito onde a pessoa está olhando (§4.9). Em
+    // PROSA: `.fhead` é rótulo de seção — mono e caixa alta — e mono nunca é prosa
+    // (DESIGN.md §3).
+    `<div class="fsep"></div><div class="fnote">${t("ler e editar o projeto ele já pode · «tudo, sem perguntar» e comandos livres não são de um ciclo")}</div>`;
+  B.bMenu.querySelectorAll("[data-lcap]").forEach((b) => (b.onclick = () => {
+    const id = b.dataset.lcap;
+    closeFloat();
+    // marcado → esquecer a decisão (o próximo ciclo pergunta de novo); não marcado →
+    // permitir. «Recusar» é ato do PEDIDO, onde a pergunta está na frente da pessoa.
+    decideLoopTool(id, on.has(id) ? "esquecer" : "permitir");
+  }));
+  placeMenu(anchor);
+}
+
+// ---- a tela do loop: editar / criar (a MESMA tela, §1b do desenho) ----
+let loopForm = null;
+
+async function newLoopForm() {
+  const p = LP.clampBrakes(loopPolicy);
+  return {
+    novo: true, slug: "", titulo: "", habilidade: "", instrucao: "",
+    kind: "semana", minutes: 30, hh: 9, mi: 0, dow: 1,
+    escopo: "projeto", escopoIdeia: "", escopoPasta: "", escopoCtx: "", destino: "pasta",
+    modelo: "", esforco: "",
+    maxArquivos: p.maxArquivos, maxCiclosDia: p.maxCiclosDia,
+    expira: LP.dateIn(p.expiraDias, new Date()),
+    ideias: await loopIdeias(), skills: loopSkills(),
+    pastas: await loopPastas(), contextos: loopContextos(),
+    capacidades: await loopCapacidades(),
+  };
+}
+
+async function formFromLoop(v) {
+  const r = LP.parseRhythm(v.ritmo) || { kind: "semana", dow: 1, hh: 9, mi: 0 };
+  const kind = LP.scopeKind(v.escopo);
+  const alvo = LP.scopeValue(v.escopo);
+  return {
+    novo: false, slug: v.slug, titulo: v.titulo || v.slug, habilidade: v.habilidade || "",
+    instrucao: v.instrucao || "",
+    kind: r.kind, minutes: r.minutes || 30, hh: r.hh || 0, mi: r.mi || 0, dow: r.dow || 0,
+    escopo: kind,
+    escopoIdeia: kind === "ideia" ? alvo : "",
+    escopoPasta: kind === "pasta" ? alvo : "",
+    escopoCtx: kind === "conhecimento" ? alvo : "",
+    destino: v.destino, modelo: v.modelo || "", esforco: v.esforco || "",
+    maxArquivos: v.maxArquivos, maxCiclosDia: v.maxCiclosDia,
+    expira: v.expira || "", ligado: v.ligado,
+    ideias: await loopIdeias(), skills: loopSkills(),
+    // editar não reabre o escopo (§4.8), então não paga a lista de pastas
+    pastas: [], contextos: loopContextos(),
+    capacidades: await loopCapacidades(),
+  };
+}
+
+async function loopIdeias() {
+  try { return ((await invoke("brain_list_brainstorms")) || []).map((x) => ({ slug: x.slug, nome: x.nome || x.slug })); }
+  catch (_) { return []; }
+}
+
+// As pastas do projeto, para o escopo poder ser ESCOLHIDO em vez de digitado
+// (§4.15). O campo continua aceitando o que a pessoa escreve — a lista é a
+// sugestão, não a única forma.
+async function loopPastas() {
+  try { return (await invoke("loop_folders")) || []; }
+  catch (_) { return []; }
+}
+function loopContextos() {
+  return (lastSt && lastSt.contexts ? lastSt.contexts : []).map((c) => c.name);
+}
+
+// §4.17 — o que ESTE PROJETO tem a oferecer a um loop. A lista não é um vocabulário
+// de conectores escrito aqui: ela vem do backend, que a descobre do projeto (o que um
+// pacote instalou, o que a pessoa declarou). Um conector novo aparece no dia em que é
+// instalado, sem release do Loro no meio.
+async function loopCapacidades() {
+  try { return (await invoke("loop_capabilities")) || []; }
+  catch (_) { return []; }
+}
+
+// O nome da ferramenta como se lê: «slack (tudo)» em vez de «mcp__slack__*». O id
+// continua sendo o que vai para o documento e para o agente.
+function capLabel(cap) {
+  if (!cap) return "";
+  // curto de propósito: este rótulo aparece também num MENU, onde `.fn` corta o que
+  // não cabe — «conector-do-time — tudo que ele oferece» virava «conector-do-time — …»
+  if (cap.kind === "mcp") return t("%1 — tudo dele", [cap.label]);
+  return cap.label;
+}
+
+// A ferramenta que um ciclo pediu, vinda do err.*:tool. Sem tradução: é o nome que o
+// agente usa, e é por ele que a pessoa vai procurar na documentação do conector.
+function deniedTool(code) {
+  const raw = String(code || "");
+  return raw.startsWith("err.loop_permission_refused:") ? raw.slice("err.loop_permission_refused:".length) : "";
+}
+function loopSkills() {
+  return (lastToolFiles || []).map((f) => ({
+    cmd: "/" + String(f.name || "").replace(/\.md$/, ""),
+    label: habilidadeLabel(f),
+  }));
+}
+
+function loopFormHtml(f) {
+  const opt = (val, label, sel) => `<option value="${esc(val)}"${sel ? " selected" : ""}>${esc(label)}</option>`;
+  const seg = (name, opts) => `<span class="segrow" role="group" aria-label="${esc(name)}">` +
+    opts.map(([v, l, on]) => `<button class="segbtn${on ? " on" : ""}" type="button" data-seg="${esc(v)}">${esc(l)}</button>`).join("") +
+    `</span>`;
+  // hora e data usam o seletor NATIVO do sistema (`type="time"` / `type="date"`):
+  // o formato que eles devolvem é exatamente o que o backend guarda (HH:MM e
+  // YYYY-MM-DD), e o `color-scheme` do :root já os pinta no tema certo. Onde a
+  // plataforma não tiver o seletor, o campo degrada para texto — que é o que
+  // havia antes.
+  const time = `<input type="time" class="mono" data-f="hora" aria-label="${esc(t("hora"))}" value="${esc(String(f.hh).padStart(2, "0") + ":" + String(f.mi).padStart(2, "0"))}" />`;
+  const ritmo =
+    seg(t("ritmo"), [["min", t("a cada…"), f.kind === "min"], ["dia", t("todo dia"), f.kind === "dia"], ["semana", t("toda semana"), f.kind === "semana"]]) +
+    (f.kind === "min"
+      // o segmentado já disse «a cada…»: o campo COMPLETA a frase, não a repete.
+      // Repetindo, a linha lia «a cada… a cada 30 min» — em inglês, a mesma palavra
+      // duas vezes com quatro pixels de distância.
+      ? `<span class="loopwhen"><input type="text" class="mono" data-f="minutos" aria-label="${esc(t("minutos"))}" value="${esc(String(f.minutes))}" style="max-width: 82px" /> ${t("min")}</span>`
+      : f.kind === "dia"
+        ? `<span class="loopwhen">${t("às")} ${time}</span>`
+        : `<span class="segrow" role="group" aria-label="${esc(t("dia da semana"))}">` +
+          LOOP_DOW_LONG.map((_, i) => `<button class="segbtn${f.dow === i ? " on" : ""}" type="button" data-dow="${i}" title="${esc(t(LOOP_DOW_LONG[i]))}" aria-label="${esc(t(LOOP_DOW_LONG[i]))}">${esc(loopDowShort(i))}</button>`).join("") +
+          `</span><span class="loopwhen">${t("às")} ${time}</span>`);
+  const next = LP.nextRunAt(loopFormRhythm(f), 0, Date.now());
+  return `<h1 class="loophead">${esc(f.novo ? t("Novo loop") : f.titulo)}</h1>` +
+    (f.novo ? `<p class="hint">${t("escreva uma vez o que quer feito e com que ritmo — a instrução manda no que sai (uma nota, uma análise, uma planilha, um anexo). Criar e editar são a mesma tela.")}</p>` : "") +
+    `<label class="loopfield"><span>${t("nome")}</span><input type="text" data-f="titulo" value="${esc(f.titulo)}" /></label>` +
+    `<label class="loopfield"><span>${t("habilidade")}</span><select data-f="habilidade" aria-label="${esc(t("habilidade que o loop cita"))}">` +
+    opt("", t("nenhuma — só a instrução abaixo"), !f.habilidade) +
+    f.skills.map((s) => opt(s.cmd, `${s.label} (${s.cmd})`, f.habilidade === s.cmd)).join("") +
+    `</select></label>` +
+    `<label class="loopfield stack"><span>${t("instrução")}</span><textarea rows="4" data-f="instrucao">${esc(f.instrucao)}</textarea></label>` +
+    // §4.16 — um ciclo é um turno de IA como o do Chat, e quem escolhe o modelo e o
+    // esforço é a pessoa: um loop que roda oito vezes por dia é uma conta que ela
+    // paga. «o padrão do agente» não manda bandeira nenhuma.
+    `<label class="loopfield"><span>${t("modelo")}</span><select data-f="modelo" aria-label="${esc(t("modelo deste loop"))}">` +
+    opt("", t("o padrão do agente"), !f.modelo) +
+    AGENT_MODELS.map((m) => opt(m, m, f.modelo === m)).join("") +
+    (f.modelo && !AGENT_MODELS.includes(f.modelo) ? opt(f.modelo, f.modelo, true) : "") +
+    `</select></label>` +
+    `<label class="loopfield"><span>${t("esforço")}</span><select data-f="esforco" aria-label="${esc(t("esforço deste loop"))}">` +
+    opt("", t("o padrão do agente"), !f.esforco) +
+    EFFORT_LEVELS.map((e) => opt(e.cli, t(e.label), f.esforco === e.cli)).join("") +
+    `</select></label>` +
+    `<p class="hint">${t("cada ciclo é um turno de IA: um modelo maior ou um esforço maior custa mais, no ritmo escolhido acima.")}</p>` +
+    (f.novo
+      ? `<div class="loopfield stack"><span>${t("escopo")}</span><span class="looprow wrap">` +
+        seg(t("escopo"), [
+          ["projeto", t("o projeto"), f.escopo === "projeto"],
+          ["ideia", t("uma ideia"), f.escopo === "ideia"],
+          ["pasta", t("uma pasta"), f.escopo === "pasta"],
+          ["conhecimento", t("um conhecimento"), f.escopo === "conhecimento"],
+        ]) +
+        (f.escopo === "ideia"
+          ? `<select data-f="escopoIdeia" aria-label="${esc(t("ideia do escopo"))}">` +
+            f.ideias.map((i) => opt(i.slug, i.nome, f.escopoIdeia === i.slug)).join("") + `</select>`
+          : f.escopo === "pasta"
+            // escrever OU escolher: um `list` é o campo de texto de sempre com as
+            // pastas do projeto sugeridas — sem inventar um seletor novo
+            ? `<input type="text" class="mono" data-f="escopoPasta" list="loopScopeDirs" value="${esc(f.escopoPasta)}" ` +
+              `placeholder="brainstorming/…" aria-label="${esc(t("pasta do escopo"))}" />` +
+              `<datalist id="loopScopeDirs">` +
+              f.pastas.map((d) => `<option value="${esc(d)}"></option>`).join("") + `</datalist>`
+            : f.escopo === "conhecimento"
+              ? `<select data-f="escopoCtx" aria-label="${esc(t("conhecimento do escopo"))}">` +
+                (f.contextos.length ? "" : opt("", t("nenhum tema ainda"), true)) +
+                f.contextos.map((c) => opt(c, c, f.escopoCtx === c)).join("") + `</select>`
+              : "") +
+        `</span></div>` +
+        (f.escopo === "pasta" || f.escopo === "conhecimento"
+          ? `<p class="hint">${t("apontado assim, o ciclo lê SÓ o que está aí dentro — nada fora. Escreva o caminho ou escolha uma das pastas do projeto.")}</p>`
+          : "") +
+        `<p class="hint">${t("o escopo é declarado uma vez, na criação — re-apontar é criar outro loop. É o único campo que o editar não reabre.")}</p>`
+      : "") +
+    `<div class="loopfield stack"><span>${t("ritmo")}</span><span class="looprow wrap">${ritmo}</span></div>` +
+    (next ? `<p class="loopwhen">${esc(t("→ próxima: %1", [loopWhen(next)]))}</p>` : "") +
+    `<label class="loopfield"><span>${t("destino")}</span><select data-f="destino" aria-label="${esc(t("onde o loop escreve"))}">` +
+    opt("pasta", t("a pasta do loop"), f.destino === "pasta") +
+    f.ideias.map((i) => opt("ideia:" + i.slug, t("na ideia %1", [i.nome]), f.destino === "ideia:" + i.slug)).join("") +
+    opt("conhecimento", t("o conhecimento — propõe mudanças, via revisão"), f.destino === "conhecimento") +
+    `</select></label>` +
+    `<p class="hint">${t("o destino pode ser a pasta do loop, dentro de uma ideia, ou o conhecimento: nesse caso o ciclo «propõe» a mudança no seu rascunho de trabalho — ela aparece em Revisão e nada vira oficial sem você.")}</p>` +
+    `<div class="sect">${t("freios deste loop")}</div>` +
+    `<label class="loopfield"><span>${t("pode criar, por ciclo, até")}</span><input type="text" inputmode="numeric" data-f="maxArquivos" value="${esc(String(f.maxArquivos))}" style="max-width: 110px" /></label>` +
+    `<label class="loopfield"><span>${t("pode rodar, por dia, até")}</span><input type="text" inputmode="numeric" data-f="maxCiclosDia" value="${esc(String(f.maxCiclosDia))}" style="max-width: 110px" /></label>` +
+    `<label class="loopfield"><span>${t("desliga sozinho em")}</span><input type="date" class="mono" data-f="expira" value="${esc(f.expira)}" aria-label="${esc(t("desliga sozinho em"))}" /></label>` +
+    `<p class="hint">${t("são freios, não metas: batendo um, o ciclo termina e esta tela diz qual foi.")}</p>` +
+    (f.novo ? `<p class="pmnote">${t("o preço, dito agora: este loop roda a IA no ritmo acima ENQUANTO o app estiver aberto — fechado, ele não roda, conta o que perdeu e recupera no máximo uma execução. Roda com «ler e editar o projeto»; «tudo, sem perguntar» é recusado num ciclo sem você.")}</p>` : "") +
+    `<div class="editfoot"><button class="btn solid" type="button" data-lsave>${f.novo ? t("Ligar loop") : t("Salvar")}</button>` +
+    (f.novo ? `<button class="btn" type="button" data-lsaveoff>${t("criar desligado")}</button>` : `<button class="btn" type="button" data-lcancel>${t("cancelar")}</button>`) +
+    `<span class="editnote">${f.novo ? t("ligar é um ato seu — um loop vindo de plugin chega sempre desligado") : t("a mudança vale a partir do próximo ciclo")}</span></div>`;
+}
+
+function loopFormRhythm(f) {
+  if (f.kind === "min") return LP.buildRhythm({ kind: "min", minutes: Number(f.minutes) || 30 });
+  if (f.kind === "dia") return LP.buildRhythm({ kind: "dia", hh: f.hh, mi: f.mi });
+  return LP.buildRhythm({ kind: "semana", dow: f.dow, hh: f.hh, mi: f.mi });
+}
+
+async function renderLoopForm(tab, stale) {
+  B.editHost.hidden = true;
+  B.editBar.hidden = true;
+  B.doc.hidden = false;
+  B.wsBody.classList.remove("editing");
+  fmById.set(tab.id, null);
+  const slug = LP.slugOfRel(tab.rel);
+  // o formulário é DAQUELE loop: sem esta conferência, abrir o loop B depois de
+  // editar o A mostrava (e salvava) os campos do A
+  if (!loopForm || (slug ? loopForm.slug !== slug : !loopForm.novo)) {
+    const v = slug ? loopViewOf(slug) : null;
+    loopForm = v ? await formFromLoop(v) : await newLoopForm();
+  }
+  if (stale && stale()) return;
+  B.doc.innerHTML = loopFormHtml(loopForm);
+  wireLoopForm(tab);
+}
+
+function wireLoopForm(tab) {
+  const f = loopForm;
+  const repaint = () => {
+    // o clique que repinta é o clique que perde o foco: quem repinta devolve
+    const mark = focusMarkIn(B.doc);
+    B.doc.innerHTML = loopFormHtml(f);
+    wireLoopForm(tab);
+    restoreFocusMark(B.doc, mark);
+  };
+  B.doc.querySelectorAll("[data-f]").forEach((el2) => {
+    const key = el2.dataset.f;
+    const read = () => {
+      if (key === "hora") {
+        // um campo em branco não é meia-noite: sem esta guarda, apagar a hora para
+        // digitar outra movia o ritmo para 00:00 no meio da digitação
+        const m = /^(\d{1,2}):(\d{2})$/.exec(String(el2.value || "").trim());
+        if (!m) return;
+        f.hh = Math.min(Math.max(parseInt(m[1], 10), 0), 23);
+        f.mi = Math.min(Math.max(parseInt(m[2], 10), 0), 59);
+        return;
+      }
+      if (key === "minutos") { f.minutes = Math.min(Math.max(parseInt(el2.value, 10) || 30, 1), 1440); return; }
+      f[key] = el2.value;
+    };
+    el2.onchange = () => { read(); if (key === "escopo" || key === "hora" || key === "minutos") repaint(); };
+    if (el2.tagName === "SELECT") el2.onchange = () => { read(); repaint(); };
+    el2.oninput = read;
+  });
+  B.doc.querySelectorAll("[data-seg]").forEach((b) => (b.onclick = () => {
+    const v = b.dataset.seg;
+    if (["min", "dia", "semana"].includes(v)) f.kind = v; else f.escopo = v;
+    repaint();
+  }));
+  B.doc.querySelectorAll("[data-dow]").forEach((b) => (b.onclick = () => { f.dow = Number(b.dataset.dow); repaint(); }));
+  const save = B.doc.querySelector("[data-lsave]");
+  if (save) save.onclick = () => withPending(save, () => saveLoopForm(true));
+  const saveOff = B.doc.querySelector("[data-lsaveoff]");
+  if (saveOff) saveOff.onclick = () => withPending(saveOff, () => saveLoopForm(false));
+  const cancel = B.doc.querySelector("[data-lcancel]");
+  if (cancel) cancel.onclick = () => { loopForm = null; setActiveMode("view"); };
+}
+
+async function saveLoopForm(ligado) {
+  const f = loopForm;
+  if (!f) return;
+  const brakes = LP.clampBrakes({ maxArquivos: f.maxArquivos, maxCiclosDia: f.maxCiclosDia });
+  // O escopo é um só campo com quatro formas (§4.15). LP.buildScope devolve "" para
+  // uma forma incompleta — uma pasta em branco, um tema que não existe — e aí a tela
+  // recusa DELA MESMA, em vez de mandar ao backend algo que ele vai recusar.
+  const escopo = LP.buildScope(f.escopo, f.escopo === "ideia" ? f.escopoIdeia
+    : f.escopo === "pasta" ? f.escopoPasta : f.escopoCtx);
+  const input = {
+    slug: f.novo ? "" : f.slug,
+    titulo: (f.titulo || "").trim(),
+    habilidade: f.habilidade || "",
+    instrucao: (f.instrucao || "").trim(),
+    ritmo: loopFormRhythm(f),
+    escopo,
+    destino: f.destino || "pasta",
+    modelo: f.modelo || "",
+    esforco: f.esforco || "",
+    ligado: f.novo ? !!ligado : (typeof f.ligado === "boolean" ? f.ligado : true),
+    expira: (f.expira || "").trim(),
+    maxArquivos: brakes.maxArquivos,
+    maxCiclosDia: brakes.maxCiclosDia,
+    hoje: loopNow().date,
+  };
+  if (!input.titulo) { toast(t("dê um nome ao loop")); return; }
+  if (f.novo && !escopo) { toast(t("diga sobre o que este loop trabalha — escolha a pasta ou o tema do escopo")); return; }
+  try {
+    const rel = await invoke("loop_save", { input });
+    loopForm = null;
+    await refreshLoops(true);
+    toast(f.novo ? (ligado ? t("loop criado e ligado") : t("loop criado — desligado")) : t("loop salvo"));
+    if (f.novo) {
+      closeTabsUnder(LOOP_NEW_REL, true);
+      await openDoc(rel, { preview: false });
+    } else {
+      await setActiveMode("view");
+    }
+  } catch (e) { toast(tErr(String(e)), 5000); }
+}
+
+// ---- plugins (pacotes) ----
+// De onde veio uma habilidade: a pergunta que importa quando ela se comporta mal.
+function pluginOfRel(rel) {
+  for (const p of pluginList || []) {
+    if ((p.files || []).some((f) => f.rel === rel)) return p;
+  }
+  return null;
+}
+
+async function refreshPlugins() {
+  try { pluginList = (await invoke("brain_list_plugins")) || []; }
+  catch (e) { clog("brain_list_plugins error: " + e); pluginList = []; }
+  renderPluginList();
+  try { renderTools(lastToolFiles); } catch (_) {}
+}
+
+function renderPluginList() {
+  const host = $("pluginList");
+  if (!host) return;
+  if (!pluginList.length) {
+    host.innerHTML = `<p class="hint">${t("nenhum plugin instalado. Um plugin traz habilidades, temas e loops prontos — e você revê tudo antes de virar oficial.")}</p>`;
+    return;
+  }
+  host.innerHTML = pluginList.map((p) => {
+    const b = p.brings || {};
+    const bits = [
+      (b.skills || []).length ? t("%1 habilidade(s)", [String((b.skills || []).length)]) : "",
+      (b.contexts || []).length ? t("%1 tema(s)", [String((b.contexts || []).length)]) : "",
+      (b.loops || []).length ? t("%1 loop(s)", [String((b.loops || []).length)]) : "",
+    ].filter(Boolean).join(" · ");
+    const src = p.source || {};
+    return `<div class="modelrow"><div class="modelinfo">` +
+      `<div class="modelhead"><b class="modelname">${esc(p.name || p.id)}</b>` +
+      (p.version ? `<span class="mono pluginmeta">${esc(p.version)}</span>` : "") + `</div>` +
+      `<span class="pluginmeta">${esc(`${src.kind || "dir"} · ${src.path || ""} · ${t("instalado em %1", [p.installedAt || "—"])}`)}</span>` +
+      `</div><span class="pluginbrings">${esc(bits)}</span>` +
+      rowMenuHtml(`data-pluginmenu="${esc(p.id)}"`, p.name || p.id, t("ações do plugin")) +
+      `</div>`;
+  }).join("");
+  host.querySelectorAll("[data-pluginmenu]").forEach((b) => (b.onclick = (e) => {
+    e.stopPropagation();
+    openPluginMenu(b, b.dataset.pluginmenu);
+  }));
+}
+
+function openPluginMenu(anchor, id) {
+  const p = (pluginList || []).find((x) => x.id === id);
+  if (!p) return;
+  B.acervoMenu.hidden = true;
+  B.bMenu.innerHTML =
+    `<div class="fhead">${esc(p.name || id)}</div>` +
+    `<div class="fitem2" data-a="what"><span class="fn">${t("ver o que trouxe")}</span></div>` +
+    `<div class="fsep"></div>` +
+    `<div class="fitem2 ditem" data-a="rm"><span class="fn">${t("remover…")}</span></div>`;
+  B.bMenu.querySelector('[data-a="what"]').onclick = () => { closeFloat(); openPluginContents(p); };
+  B.bMenu.querySelector('[data-a="rm"]').onclick = () => openConfirmRemovePlugin(anchor, p);
+  placeMenu(anchor);
+}
+
+function openPluginContents(p) {
+  const rows = (p.files || []).map((f) => `<div class="intakerow"><i class="mono">${esc(f.rel)}</i></div>`).join("");
+  openModal(
+    t("O que este plugin trouxe"),
+    `<p class="pmnote">${t("remover subtrai só estes arquivos — e um que você editou depois fica.")}</p>` +
+    `<div class="pmpreview">${rows || t("nada registrado")}</div>`,
+    null, null,
+  );
+}
+
+function openConfirmRemovePlugin(anchor, p) {
+  B.acervoMenu.hidden = true;
+  B.bMenu.innerHTML =
+    `<div class="fhead">${t("remover plugin")}</div>` +
+    `<div class="fitem2 muted fstatic">${t("remover “%1”? o que ele trouxe sai do projeto. Um arquivo que você editou depois FICA, e a tela diz qual.", [esc(p.name || p.id)])}</div>` +
+    `<div class="confirm-actions">` +
+    `<button class="btn-danger" data-yes>${t("remover")}</button>` +
+    `<button class="link mono muted" data-no>${t("cancelar")}</button></div>`;
+  B.bMenu.querySelector("[data-yes]").onclick = async () => {
+    closeFloat();
+    try {
+      const r = await invoke("brain_remove_plugin", { id: p.id });
+      const kept = (r && r.kept) || [];
+      toast(kept.length
+        ? t("removido — %1 arquivo(s) que você editou ficaram", [String(kept.length)])
+        : t("plugin removido"), kept.length ? 6000 : 2600);
+      for (const rel of (r && r.removed) || []) closeTabsUnder(rel, true);
+      await refreshPlugins();
+      await refreshLoops(true);
+      sideSig = ""; brainRefresh();
+    } catch (e) { toast(tErr(String(e))); }
+  };
+  B.bMenu.querySelector("[data-no]").onclick = closeFloat;
+  placeMenu(anchor);
+}
+
+// A folha do instalar: preview lido, triagem na porta, uma ação primária. O
+// erro mora no slot role="alert" da própria folha (throw de um código), e só o
+// sucesso a fecha.
+function openInstallPlugin() {
+  const body =
+    `<p class="hint">${t("um plugin traz habilidades, temas iniciais e loops para este projeto. Nada roda sozinho: o que ele traz entra como uma mudança, e loops chegam desligados.")}</p>` +
+    // dizer o que se procura ANTES do clique evita o beco sem saída em vez de
+    // explicá-lo depois (DESIGN.md §1 — a cópia explica)
+    `<p class="hint">${t("aponte para a pasta do plugin — a que tem .claude-plugin/plugin.json dentro.")}</p>` +
+    `<div class="wfield"><span>${t("do computador")}</span>` +
+    `<span class="dirpick"><input id="plugDir" type="text" spellcheck="false" autocapitalize="off" autocorrect="off" />` +
+    `<button id="plugPick" class="btn sm" type="button">${t("escolher pasta…")}</button></span></div>` +
+    `<div id="plugPrev"></div>`;
+  openModal(t("Instalar plugin"), body, t("Instalar plugin"), async () => {
+    const dir = ($("plugDir") && $("plugDir").value || "").trim();
+    if (!dir) throw t("escolha a pasta do plugin");
+    const out = await invoke("brain_install_plugin", { source: dir, hoje: loopNow().date });
+    const n = (out && out.written || []).length;
+    const skipped = (out && out.skipped || []).length;
+    toast(skipped
+      ? t("plugin instalado — %1 arquivo(s), %2 ignorado(s) porque já existiam", [String(n), String(skipped)])
+      : t("plugin instalado — %1 arquivo(s). Reveja em Revisão antes de virar oficial.", [String(n)]), 6000);
+    await refreshPlugins();
+    await refreshLoops(true);
+    sideSig = ""; brainRefresh();
+  });
+  const pick = $("plugPick");
+  const input = $("plugDir");
+  const preview = async () => {
+    const host = $("plugPrev");
+    if (!host) return;
+    const dir = (input && input.value || "").trim();
+    if (!dir) { host.innerHTML = ""; return; }
+    host.innerHTML = `<p class="hint">${t("lendo…")}</p>`;
+    try {
+      const pv = await invoke("brain_plugin_manifest", { source: dir });
+      host.innerHTML = pluginPreviewHtml(pv);
+    } catch (e) {
+      host.innerHTML = "";
+      // a recusa mais comum é apontar para uma pasta que não é um pacote: a
+      // mensagem diz o que ela precisa ter, em vez de só dizer que não serve
+      const code = String(e);
+      pmError(code);
+      if (code.startsWith("err.plugin_manifest_invalid")) {
+        host.innerHTML = `<p class="hint">${t("uma pasta de plugin tem um arquivo .claude-plugin/plugin.json com o nome dele, e as habilidades em commands/ ou skills/.")}</p>`;
+      }
+    }
+  };
+  if (pick) pick.onclick = async () => {
+    try {
+      const d = await invoke("pick_folder");
+      if (d && input) { input.value = d; await preview(); }
+    } catch (e) { clog("pick_folder error: " + e); }
+  };
+  if (input) input.onchange = preview;
+}
+
+function pluginPreviewHtml(pv) {
+  const b = pv.brings || {};
+  const line = (label, items, extra) => items && items.length
+    ? `<span>· ${esc(label)} — <span class="mono">${esc(items.join(" · "))}</span>${extra ? ` <span class="loopwhen">${esc(extra)}</span>` : ""}</span>`
+    : "";
+  const exec = pv.class === "executable"
+    ? `<div class="pmerr" role="alert"><span>${t("este plugin traz automações que rodam comandos no seu computador (%1). O Loro ainda não instala esse tipo — só habilidades, temas e loops, que são instruções.", [pv.executable.join(" · ")])}</span></div>`
+    : "";
+  const triage = (pv.findings || []).length
+    ? `<p class="intakehead ${pv.blocked ? "block" : "warn"}">${pv.blocked
+      ? t("um arquivo não vai entrar — o projeto é versionado e vai para o git")
+      : t("confira antes de instalar")}</p>` +
+    pv.findings.map((f) => `<div class="intakerow ${f.findings.some((x) => x.severity === "block") ? "block" : "warn"}">` +
+      `<b>${esc(f.rel.split("/").pop())}</b>` +
+      f.findings.map((x) => `<span>${esc(INTAKE_LABEL[x.rule] ? INTAKE_LABEL[x.rule](x) : x.rule)}</span>`).join("") +
+      `<i class="mono">${esc(f.rel)}</i></div>`).join("")
+    : "";
+  const conflicts = (pv.conflicts || []).length
+    ? `<p class="hint">${t("%1 arquivo(s) já existem e não serão sobrescritos.", [String(pv.conflicts.length)])}</p>`
+    : "";
+  const unsupported = (pv.unsupported || []).length
+    ? `<p class="hint">${t("este plugin também declara %1, que esta versão ainda não instala.", [pv.unsupported.join(" · ")])}</p>`
+    : "";
+  return `<div class="sect">${t("o que este plugin traz")}</div>` +
+    `<div class="pmpreview"><div class="modelhead"><b>${esc(pv.name || pv.id)}</b>` +
+    `<span class="mono pluginmeta">${esc([pv.version, pv.author].filter(Boolean).join(" · "))}</span></div>` +
+    (pv.description ? `<p class="hint">${esc(pv.description)}</p>` : "") +
+    `<div class="plugbrings">` +
+    line(t("habilidades"), b.skills) +
+    line(t("temas iniciais"), b.contexts) +
+    line(t("loops"), b.loops, t("(chega desligado; ligar é um ato seu)")) +
+    `</div></div>` + exec + triage + conflicts + unsupported +
+    (pv.installed ? `<p class="hint">${t("a versão %1 deste plugin já está instalada.", [pv.installed])}</p>` : "") +
+    `<p class="hint">${t("as habilidades entram no projeto como uma mudança — você revê em Revisão antes de virar oficial. Nada é enviado nem publicado.")}</p>`;
+}
+
+// ---- Configurações → Loops ----
+function paintLoopPolicy() {
+  const p = LP.clampBrakes(loopPolicy);
+  const set = (id, v) => { const el2 = $(id); if (el2) el2.value = String(v); };
+  set("cfgLoopFiles", p.maxArquivos);
+  set("cfgLoopRuns", p.maxCiclosDia);
+  set("cfgLoopDays", p.expiraDias);
+  document.querySelectorAll("#loopParSeg .segbtn").forEach((b) =>
+    b.classList.toggle("on", Number(b.dataset.looppar) === p.paralelo));
+  const hint = $("cfgLoopParHint");
+  if (hint) {
+    hint.textContent = p.paralelo > 1
+      ? t("em paralelo cada ciclo é um processo próprio do agente — mais rápido e mais gasto. A aba ⟳ Loops mostra todos.")
+      : t("um por vez é o padrão: os outros esperam a vez.");
+  }
+  paintLoopPerms();
+}
+
+// §4.18 — o que os ciclos podem usar: LIDO e DESFEITO aqui. Conceder é no pedido, e uma
+// concessão sem lugar de revisão seria uma decisão que a pessoa não pode voltar atrás —
+// principalmente depois de apagar o loop que a provocou.
+function paintLoopPerms() {
+  const host = $("cfgLoopPerms");
+  if (!host) return;
+  const rows = [
+    ...(loopPolicy.permite || []).map((tool) => ({ tool, kind: "on" })),
+    ...(loopPolicy.recusa || []).map((tool) => ({ tool, kind: "no" })),
+  ];
+  if (!rows.length) {
+    host.innerHTML = `<p class="hint">${t("nada além do projeto — nenhum ciclo pediu ainda.")}</p>`;
+    return;
+  }
+  host.innerHTML = rows.map((r) =>
+    `<div class="cfgperm"><span class="mono">${esc(r.tool)}</span>` +
+    `<span class="permstate ${r.kind === "on" ? "teal" : "amber"}">${esc(r.kind === "on" ? t("liberado") : t("recusado"))}</span>` +
+    `<button class="abtn" type="button" data-permforget="${esc(r.tool)}">${esc(t("esquecer"))}</button></div>`).join("");
+  host.querySelectorAll("[data-permforget]").forEach((b) => (b.onclick = () =>
+    withPending(b, async () => {
+      await decideLoopTool(b.dataset.permforget, "esquecer");
+      await loadLoopPolicy();
+    })));
+}
+
+// `LP.clampBrakes` é o clamp dos NÚMEROS e devolve SÓ eles — de propósito: um freio tem
+// piso e teto, uma lista de ferramentas não. Passar a política inteira por ele descartava
+// `permite`/`recusa` em três lugares, um deles a cada tique de 10s: as concessões estavam
+// no disco e a tela de Configurações nascia (e voltava a ficar) vazia. Pego pelo smoke.
+const clampPolicy = (p) => ({ ...(p || {}), ...LP.clampBrakes(p || {}) });
+
+async function loadLoopPolicy() {
+  try { loopPolicy = clampPolicy(await invoke("loop_policy")); }
+  catch (e) { clog("loop_policy error: " + e); }
+  paintLoopPolicy();
+}
+
+async function saveLoopPolicy(patch) {
+  loopPolicy = clampPolicy({ ...loopPolicy, ...patch });
+  try {
+    loopPolicy = clampPolicy(await invoke("loop_set_policy", { policy: loopPolicy }));
+    paintLoopPolicy();
+    toast(t("freios atualizados"));
+  } catch (e) { toast(tErr(String(e))); paintLoopPolicy(); }
+}
+
+// ---- wiring ----
+{
+  const add = $("addLoopBtn");
+  if (add) add.addEventListener("click", (e) => {
+    e.stopPropagation();
+    B.acervoMenu.hidden = true;
+    B.bMenu.innerHTML =
+      `<div class="fitem2 strong" data-a="new"><span class="fn">⟳ ${t("novo loop…")}</span></div>` +
+      `<div class="fitem2" data-a="plug"><span class="fn">⇩ ${t("instalar de um plugin…")}</span></div>`;
+    B.bMenu.querySelector('[data-a="new"]').onclick = () => { closeFloat(); openNewLoop(); };
+    B.bMenu.querySelector('[data-a="plug"]').onclick = () => { closeFloat(); openInstallPlugin(); };
+    placeMenu(add);
+  });
+  const stop = $("pLoopStop");
+  if (stop) stop.addEventListener("click", async () => {
+    if (!loopWatch) return;
+    try { await invoke("loop_stop", { slug: loopWatch }); toast(t("ciclo parado")); await refreshLoops(true); }
+    catch (e) { toast(tErr(String(e))); }
+  });
+  const pill = $("headLoops");
+  if (pill) pill.addEventListener("click", () => openLoopsPanel());
+  const inst = $("cfgInstallPlugin");
+  if (inst) inst.addEventListener("click", () => openInstallPlugin());
+  for (const [id, key] of [["cfgLoopFiles", "maxArquivos"], ["cfgLoopRuns", "maxCiclosDia"], ["cfgLoopDays", "expiraDias"]]) {
+    const el2 = $(id);
+    if (el2) el2.addEventListener("change", () => saveLoopPolicy({ [key]: el2.value }));
+  }
+  document.querySelectorAll("#loopParSeg .segbtn").forEach((b) =>
+    b.addEventListener("click", () => saveLoopPolicy({ paralelo: Number(b.dataset.looppar) })));
+}
+
+// Os passos de um ciclo chegam pelo mesmo stream do chat, com o loop no payload.
+listen("loop-tool", (e) => {
+  const p = (e && e.payload) || {};
+  loopSteps.push({ id: p.id, loop: p.loop || "", name: p.name || "", input: prettyJson(p.input), done: false, failed: false });
+  if (loopSteps.length > 200) loopSteps = loopSteps.slice(-200);
+  renderLoopSteps();
+});
+listen("loop-tool-result", (e) => {
+  const p = (e && e.payload) || {};
+  const s = loopSteps.find((x) => x.id === p.id);
+  // A RESPOSTA ERA DESCARTADA. O painel mostrava o pedido e um «!» mudo: um `Read`
+  // numa pasta (EISDIR) ficava indistinguível de uma recusa de permissão, e a pessoa
+  // concluía — corretamente, pelo que a tela dava — que faltava permissão (relatado
+  // 2026-08-18). O Chat sempre mostrou a resposta; o loop, não.
+  if (s) {
+    s.done = true;
+    s.failed = !!(p.isError || p.permission);
+    s.permission = !!p.permission;
+    s.text = p.text || "";
+  }
+  renderLoopSteps();
+});
+// ADR-0029 §4.6(a) — O RELÓGIO É O APP ABERTO. Não há agendador no núcleo: este
+// tique é o único que pergunta "quem está na hora", e por isso um loop
+// simplesmente não roda com a janela fechada (e a tela diz o que ele perdeu).
+// Ele arma no FIM do bloco, depois dos pintores: armá-lo antes deixava o
+// `LOOP_TICK_MS` na zona morta do `const`.
+setInterval(loopTick, LOOP_TICK_MS);
+refreshPlugins();
+
+listen("loop-cycle", (e) => {
+  const p = (e && e.payload) || {};
+  if (p.phase === "started") {
+    loopSteps = loopSteps.filter((s) => s.loop !== p.slug);
+    if (!loopWatch) loopWatch = p.slug;
+  }
+  if (p.phase === "ended") {
+    // o ciclo acabou: um passo que estava no ar (o freio ou «parar» mataram o
+    // processo no meio) não pode continuar dizendo «rodando»
+    for (const st of loopSteps) {
+      if (st.loop === p.slug && !st.done) {
+        st.done = true;
+        st.failed = p.outcome === "failed" || p.outcome === "stopped" || p.outcome === "blocked";
+      }
+    }
+    renderLoopSteps();
+    const meu = loopRanByHand.has(p.slug);
+    loopRanByHand.delete(p.slug);
+    if (p.outcome === "failed" || p.outcome === "stopped" || p.outcome === "blocked") {
+      toast(`${t("loop %1", [p.slug])}: ${tErr(p.err || "err.loop_cycle_failed")}`, 6000);
+    } else if (meu && p.outcome === "nothing") {
+      toast(t("%1: nada novo — o ciclo olhou e não achou o que acrescentar", [p.slug]), 6000);
+    } else if (meu && p.outcome === "ok") {
+      toast(t("%1: %2 arquivo(s) — está na árvore", [p.slug, String((p.files || []).length)]), 6000);
+    }
+    // o que o ciclo escreveu passa a existir na árvore
+    sideSig = ""; brainRefresh();
+  }
+  refreshLoops(true);
+});
+
+
 invoke("selftest_enabled").then((on) => {
   if (!on) return;
   invoke("list_capture_devices").then((d) => clog("selftest: devices=" + JSON.stringify(d)))
