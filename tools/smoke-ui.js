@@ -783,6 +783,29 @@ const DRIVER = `
     if (!list.includes("1 loop(s)")) throw new Error("não diz o que trouxe: " + list);
     if (!q("#pluginList [data-pluginmenu]")) throw new Error("sem o ⋯ da linha");
   });
+  // ADR-0022 §24b — o interruptor do microfone nas reuniões existe, nasce LIGADO e o
+  // empurrão do eco escreve nele. O que resolve o eco é uma escolha da pessoa, e ela tem
+  // de aparecer no controle (senão a tela e o ajuste discordam).
+  await step("cfg-microfone-nas-reunioes", async () => {
+    window.showCfgSection("cap");
+    await new Promise((r) => setTimeout(r, 250));
+    const mm = q("#optMeetingMic");
+    if (!mm) throw new Error("Captura não tem o interruptor do microfone nas reuniões");
+    if (!mm.checked) throw new Error("ele nasce DESLIGADO: com fone não há eco, e a sua voz é metade da análise");
+    const secao = mm.closest(".cfgcard").textContent;
+    if (!/uma trilha/.test(secao)) throw new Error("a dica não diz o que desligar significa");
+    // desligar escreve no ajuste, e o pintor único devolve o estado
+    mm.checked = false;
+    mm.dispatchEvent(new Event("change"));
+    await new Promise((r) => setTimeout(r, 150));
+    window.paintCaptureSettings();
+    await new Promise((r) => setTimeout(r, 80));
+    if (q("#optMeetingMic").checked) throw new Error("o pintor desfez a escolha da pessoa");
+    mm.checked = true;
+    mm.dispatchEvent(new Event("change"));
+    await new Promise((r) => setTimeout(r, 120));
+  });
+
   await step("cfg-loops", async () => {
     // sem rolar nem realçar: um campo de limite vazio afirma «sem limite»
     for (const id of ["cfgLoopFiles", "cfgLoopRuns", "cfgLoopDays"]) {
