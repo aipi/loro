@@ -517,7 +517,12 @@ test("ADR-0026 — o portão diz o que a migração faz, antes de fazer", () => 
 test("ADR-0026 — com estrutura antiga o casco não é desenhado", () => {
   const src = fnBody("brainRefresh");
   assert.match(src, /legacyLayout/, "brainRefresh lê o estado");
+  // C32 moveu os `hidden` para o pintor único do cromo do wizard; o portão
+  // continua sendo decidido ANTES de o casco poder aparecer, porque é o `legado`
+  // que entra no pintor
   const gate = src.indexOf("legacyLayout");
-  const shell = src.indexOf("B.shell.hidden");
-  assert.ok(gate >= 0 && shell >= 0 && gate < shell, "o portão decide antes de mostrar o casco");
+  const paint = src.indexOf("paintWizardChrome(showWizard, legado)");
+  assert.ok(gate >= 0 && paint >= 0 && gate < paint, "o portão decide antes de mostrar o casco");
+  assert.match(fnBody("paintWizardChrome"), /B\.shell\.hidden = showWizard \|\| !!legado/,
+    "e é o portão que mantém o casco escondido");
 });

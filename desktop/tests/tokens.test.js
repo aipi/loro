@@ -1939,12 +1939,17 @@ test("o cabeçalho cede prosa e decoração antes de cortar um controle (DESIGN.
   // e quem cede é a PROSA: o bloco do projeto encolhe, e encolhe DE VERDADE — sem
   // `display: flex` nele o botão de dentro fica no seu tamanho de conteúdo e
   // transborda a caixa (medido: caixa 142px, conteúdo 177px a 1016px, com o nome
-  // e o ⌄ por cima da pílula da nav)
+  // e o ⌄ por cima da pílula da nav).
+  // O cabeçalho é um grid de três trilhas (`#appHead`) desde que a pílula deixou de
+  // ser `position: absolute` — o que cede passou a ser a TRILHA da esquerda, e é
+  // este `min-width: 0` que a autoriza a encolher (o piso dela, abaixo de 1015px,
+  // é o `min-width` do próprio bloco).
   const proseBlock = declsOf(".apphead .switch");
-  assert.equal(proseBlock.get("flex"), "0 1 auto", "o bloco do projeto é o item que cede");
-  assert.equal(proseBlock.get("min-width"), "0");
+  assert.equal(proseBlock.get("min-width"), "0", "o bloco do projeto é quem cede");
   assert.equal(proseBlock.get("display"), "flex",
-    "sem isto o filho não é item de flex e transborda em vez de elidir");
+    "sem isto o filho fica no tamanho do conteúdo e transborda em vez de elidir");
+  assert.match(declsOf("#appHead").get("grid-template-columns") || "", /1fr auto 1fr/,
+    "as laterais do cabeçalho são as trilhas flexíveis: a pílula é empurrada, nunca sobreposta");
   assert.equal(declsOf(".projname").get("min-width"), "0");
   assert.match(declsOf(".projname").get("text-overflow") || "", /ellipsis/);
 

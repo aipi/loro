@@ -83,8 +83,14 @@ business logic in the Tauri `run()` wiring.
 ## 7. Working philosophy
 
 - **Never assume premises** (§ top). Ask; then record what was decided.
-- **The ADR records everything non-trivial**: amend `docs/adr/0001-baseline.md`
-  (or, if the project returns to incremental ADRs, add `0002-…`). Trivial style → linter.
+- **An ADR is for an architectural change or a NEW proposal** — nothing else.
+  It is not for a code review, and not for a bug in functionality that is already
+  mapped: fixing what a decision already promised is not a new decision. The
+  reasoning behind a fix belongs where it will be read when someone next touches
+  the line — the **code comment** (the *why*, with the measurement that proved it)
+  and the **PR** — not in a new numbered file. When an existing ADR turns out to
+  describe behaviour that never worked, amend that ADR instead of adding one.
+  Trivial style → linter.
 - **Nothing is by accident:** every change traces back to the brain source of
   truth or the ADR.
 - **The app is not an experiment:** treat all code as production code.
@@ -101,7 +107,9 @@ business logic in the Tauri `run()` wiring.
 5. Write a failing test.
 6. Implement the minimum to pass.
 7. Refactor; comment only the *why*.
-8. Record a non-trivial decision in the ADR series (`docs/adr/`).
+8. If — and only if — the change is **architectural or a new proposal**, record it
+   in the ADR series (`docs/adr/`). A fix, a review finding or a defect in mapped
+   functionality gets a code comment and a PR description, never a new ADR.
 9. **Docs sweep (ADR-0002 §7):** for every feature added or changed, evaluate
    and update the in-app manual (`desktop/src/manual.pt.md` + `manual.en.md`),
    the ADR, `README.md` and `docs/ARCHITECTURE.md`. Structural docs are never

@@ -71,6 +71,12 @@ process is local and the account is yours.
   streams into the chat itself.
 - The **chips** above the field are the most-used AI skills. Clicking one arms
   it; sending with no text runs it with its default instruction, and `×` unsets it.
+- **Drag a file from Finder/Explorer into the chat** (image, audio, PDF, anything):
+  its **path** is pasted into the field at the cursor, for the agent to read the
+  file as it answers. Several files at once paste every path. The file is not copied
+  and does not enter the project — only the path is written, and you go on typing. Same
+  in the **terminal**: there the path is typed onto the line, quoted if it needs to
+  be, and **nothing runs** — the Enter is yours.
 - The conversation **continues** from one question to the next. **restart** starts
   over.
 - `sonnet · high ⌄` is a single control: pick the **model** and the **effort**
