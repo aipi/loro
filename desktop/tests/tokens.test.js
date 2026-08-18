@@ -2173,6 +2173,34 @@ test("R60 — o título de seção da Revisão é prosa em --sans, e a escada de
     "nenhuma frase do destino pode voltar para a classe do rótulo de cesto");
 });
 
+// A ESCADA DAS CAMADAS é uma ORDEM, e ela precisa de um teste porque cada número mora numa
+// regra diferente e ninguém os lê juntos. Custou um «clico e não acontece nada»: a folha
+// estava em 40 e a página de Configurações em 45, então uma folha aberta de dentro dela
+// nascia ATRÁS (medido no DOM em 2026-08-18 — o centro da folha devolvia `.cfgcard`).
+test("as camadas empilham na ordem: aviso < Configurações < folha < menu < paleta", () => {
+  // varredura de BLOCOS, sem montar regex com escape: o seletor pode aparecer em mais de
+  // uma regra e só uma delas declara a camada
+  const z = (sel) => {
+    for (const bloco of CSS.split("}")) {
+      const i = bloco.lastIndexOf("{");
+      if (i < 0) continue;
+      const seletores = bloco.slice(0, i).split(",").map((x) => x.trim());
+      if (!seletores.includes(sel)) continue;
+      const m = /z-index:\s*(\d+)/.exec(bloco.slice(i));
+      if (m) return Number(m[1]);
+    }
+    assert.fail(`nenhum z-index para ${sel}`);
+  };
+  const aviso = z(".toast"), cfg = z(".cfgpage"), folha = z(".sheet-wrap"),
+    menu = z(".floatmenu"), paleta = z(".cmdk");
+  assert.ok(aviso < cfg, `aviso (${aviso}) tem de ficar abaixo de Configurações (${cfg})`);
+  assert.ok(cfg < folha,
+    `a FOLHA (${folha}) tem de ficar acima de Configurações (${cfg}) — quem abriu a folha foi ela`);
+  assert.ok(folha < menu,
+    `o MENU (${menu}) tem de ficar acima da folha (${folha}) — um menu aberto de dentro dela a cobre`);
+  assert.ok(menu < paleta, `a paleta (${paleta}) fica acima de tudo (menu ${menu})`);
+});
+
 test("R60 — o chip do rascunho põe a prosa em --sans e só o endereço em mono", () => {
   // .pbranch é `font: 11.5px var(--mono)` e a frase inteira («no rascunho X», «no
   // conhecimento oficial») morava dentro dele. §5: o rótulo de um campo é prosa, e

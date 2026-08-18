@@ -19,7 +19,7 @@ Every screen shares one anatomy:
 ```
 HEADER 54px — [project ⌄] [Home · Organize · Knowledge · Review] ··· [Record] [✦ AI]
 SIDEBAR      │ TABS (only when a document is open) │ PANEL 330px
-250px or 60px│ CONTENT                             │ Document · Chat · Terminal
+250px or 60px│ CONTENT                             │ Document · Chat · ⟳ Loops · Terminal
 ```
 
 - **The four destinations** live in the header: **Home** (what do you want to
@@ -54,8 +54,8 @@ SIDEBAR      │ TABS (only when a document is open) │ PANEL 330px
   tree opens a preview tab (italic); a double click pins it.
 - The **sidebar toggle** (250px ⇄ 60px) sits at the bottom, next to
   **⚙ Settings**.
-- The three sidebar sections (**ideas**, **to organize**, **knowledge**)
-  **collapse**: click the heading. With many topics that is what keeps the tree
+- The sidebar sections (**ideas**, **to organize**, **knowledge**, **loops** and
+  **AI skills**) **collapse**: click the heading. With many topics that is what keeps the tree
   navigable.
 - `Cmd/Ctrl+K` opens the **palette**: files and commands in one list, grouped
   into *go to · record · create · document · do*, each with its shortcut on the
@@ -229,6 +229,16 @@ palette: `Cmd/Ctrl+K` → "Loro tour".
   hand) onto a folder header (📁 notes, 📁 attachments or 📁 misc) to move it —
   the same effect as **move to…**, confined to the world of ideas (never
   touches what has a version history). The rest of the row stays click-to-open.
+- **Dragging from your computer into the tree:** drop a file from Finder/Explorer onto a
+  **folder** in the sidebar — an idea, one of its folders (📁 notes, 📁 attachments), a
+  knowledge topic or a **loop** — and it is **filed there: the file is MOVED, and the
+  original leaves its folder**, as in any file manager. The receiving folder **lights up**
+  while you drag, and the notice afterwards says where it went and where it came from
+  (there is no undo — to correct it, use **move to…** in the row's ⋯). Dropping on the
+  **to organize** area still **copies**: there the gesture means «hand this to the AI», and your
+  original stays where it was. A file already inside the project is refused with a notice —
+  moving within the project is **move to…**. And a credential in a file headed for the
+  **knowledge** (which is versioned) is refused before anything moves.
 - **Right-side actions rail:** opening any note/document shows separate
   action cards on the right — **skill** (a dropdown with friendly
   names; the selected skill's description stays visible right below
@@ -325,6 +335,147 @@ that document.
   controls, like Claude's own skills icon). Click the "AI skills" section
   title to **collapse/expand** the whole list (the ▾/▸ caret shows the
   state).
+
+## Loops (work the AI repeats at a rhythm)
+
+A **loop** is standing work: you write ONCE what you want done — *"read this
+week's ideas and write what has not been decided yet"* — say at what rhythm, and
+Loro runs it with the AI on that rhythm. What comes out is a file, in the folder
+you chose, that opens and reads like any other document.
+
+Loops live in the **LOOPS section of the sidebar**, between *knowledge* and *AI
+skills* — a loop can belong to the whole project, so it does not live inside one
+idea. Create one with the section's **＋**.
+
+**The price, said up front:** a loop runs the AI **while the app is open**. With
+the app closed it does not run — and the loop's screen counts how many runs it
+missed, catching up at most **once** when you come back. Every cycle runs with
+«read and edit the project»; «everything, without asking» is refused for a cycle
+that happens without you.
+
+**Creating is the same screen as editing.** Name, the skill it cites (optional),
+instruction, **model**, **effort**, scope, rhythm, destination and the **brakes**:
+
+- **may create, per cycle, up to** N files · **may run, per day, up to** N times ·
+  **turns itself off on** a date. These are **brakes, not targets**: hitting one
+  ends the cycle, and the screen says which. They exist so a forgotten loop does
+  not spend the AI with nobody watching. The defaults for a new loop live in
+  **Settings → Loops**.
+- **The model and the effort** belong to this loop: each cycle is one AI turn like
+  the Chat's, and a bigger model (or a bigger effort) costs more — at the rhythm you
+  chose above. Left on **«the agent's own default»**, the cycle runs with whatever
+  the project's agent already uses. Unlike the scope, editing DOES reopen this — and
+  the loop's screen says what it runs with (*«runs with opus · very high»*).
+- **You do not declare permissions up front** — and you do not need to. A cycle can
+  already read and edit the project. When one needs something **outside** it (a
+  connector, a web search), it stops, and the request shows up in the **⟳ Loops →
+  REQUESTS** tab, naming the tool and which loop hit it: **allow** or **no**. Allowing
+  applies to the **next cycles of every loop in this project** — once granted, granted.
+  It does not apply to the **Chat**, which has its own control in *Settings → AI*. «No»
+  closes the door: cycles stop trying it and the request does not come back.
+  What has been decided is read and undone in **Settings → Loops**, and each loop's
+  screen shows the same under the **may use** button.
+  *Never* granted to a cycle: «everything, without asking» and **running commands** — a
+  cycle runs no commands at all, which is why it cannot version, push, or step outside the
+  project's folder. That is a lock, not a request made of the agent.
+  *Two honest caveats:* allowing a connector allows what that tool does (Loro cannot tell,
+  from a name, what only reads from what writes — the cycle's instruction forbids sending,
+  but that is a rule told to the agent, not a lock); and what a connector returns can
+  bring **other people's personal data** into the project, which is versioned and shared.
+- **The scope** is **what** the loop works on, and it has four shapes: **the
+  project**, **one idea**, **one folder** (type the path or pick one of the
+  project's folders) or **one knowledge topic**. Pointed at a folder or a topic, the
+  cycle reads **only what is in there — nothing outside**. It is declared **once, at
+  creation** — the only field editing does not reopen; re-pointing it means another
+  loop. If the folder it points at stops existing, the loop reads **blocked** and
+  the screen names it.
+- **The destination** can be the loop's folder, an idea's attachments, or **the
+  knowledge**. In that last case the cycle **proposes**: the change lands on your
+  working draft and shows up in **Review** — nothing becomes official without you.
+
+**The seven states**, and what each one says:
+
+| State | What it means |
+|---|---|
+| **off** | it exists and does nothing — you turned it off, or it arrived that way from a plugin |
+| **on** | it will run, and the screen says when |
+| **running** | a cycle is running now (the **⟳ Loops** panel shows the steps) |
+| **waiting for you** | its turn came and you are using the AI — it never cancels your conversation |
+| **blocked** | it is on and **cannot** run; the screen says why (no agent configured, the skill it cites was deleted, the scope's folder no longer exists, a tool was not allowed — and then the screen offers to allow it —, another window is running this loop) |
+| **failing** | it failed a few times in a row and is backing off; after five it turns itself off and says so |
+| **expired** | it lived its declared span: it ran one last time and turned itself off |
+
+**Where you see that something is happening:** on the sidebar row (the state and
+the next run), in the **header** (a teal mark while a cycle runs — the same idea
+as the recording seal, but never red and never blinking; clicking it opens the
+tab), and in the **⟳ Loops tab of the ✦ AI panel**, which lists the cycles and
+shows one cycle's steps with **■ stop this cycle**. A cycle **does not take over
+your chat**: the Chat stays yours, and each cycle is the project agent's own turn.
+
+**The loop's screen** shows the rhythm, a timeline of the last cycles, the
+**effective instruction** and the **cycles**. Each cycle says when it ran, how
+long it took, what it produced and the outcome — never the produced text.
+Consecutive quiet cycles collapse into a single row (`×2 · nothing new`), and a
+skipped cycle (because the previous one was still running) is recorded rather
+than turned into silence.
+
+**A cycle has three ways out, and none of them is silence without explanation.** It opens
+what it produced before and then: **updates** that document with whatever is new (the
+preferred one — rather than creating another like it beside it), **writes a new document**,
+or answers *nothing new* when there is nothing to add and nothing to correct. On the
+**first** cycle the third way does not exist: with nothing of its own to compare against, it
+produces what the instruction asks for.
+
+**In the step-by-step (⟳ Loops tab) every step expands**: the request and the **response**.
+A step marked **!** shows why — it may be an ordinary error (a path that does not exist) or a
+missing permission; in that second case it **says** it is a permission and carries the
+*allow* button right there.
+
+**When you run it yourself, the screen says what happened** — how many files, or *nothing
+new*, or why it failed. An automatic cycle stays quiet on purpose (the header mark is its
+signal). And **every history row expands**: inside are the files, the steps and the time —
+and on a quiet cycle, what «nothing new» means.
+
+**Adjust by talking:** at the bottom of the loop's screen there is a field. What
+you write there joins the instruction as a dated line (*"from 18/08: ignore
+cancelled meetings"*) and applies from the **next** cycle — that is what keeps the
+loop readable after five corrections instead of becoming a black box.
+
+**Where what it produced shows up:** in the **LOOPS section of the sidebar**, by opening
+the caret beside the loop's name — the files of its destination folder are there, and each
+opens like any document — **with the same ⋯**: ask the AI, rename, **move to** (an idea, say),
+**copy path** (relative or absolute) and **delete**. When the destination is the knowledge, the row says the change is in
+**Review**. A new file shows up on its own, with nothing to reload.
+
+**What a loop never does:** save a version, send for the team's review, approve,
+push, or send a message outside. Those are the person's acts.
+
+## Plugins (ready-made skills, topics and loops)
+
+A **plugin** is a folder that brings ready-made things into the project: skills,
+starting topics and loops. It is the same format as Claude Code's plugins, so a
+package written for it works here.
+
+Install one with the **＋ of the "AI skills" section → install plugin…** (or the
+loops ＋). Before installing, the sheet shows what the plugin brings and what the
+**triage** found in its files: a credential **blocks** the install (the project is
+versioned and goes to git), a CPF **warns** and you decide.
+
+- **Installing is a change**, not a publication: the files land in the project and
+  show up in **Review** like any other change of yours. Nothing is sent.
+- **A plugin's loops arrive off.** Turning one on is always your act.
+- **Nothing is overwritten.** A file that already exists is skipped, and the sheet
+  says how many were.
+- **Loro does not install plugins that run commands** on your computer (`hooks/`,
+  `bin/`, MCP servers). It recognises that kind and refuses **naming it** — only
+  skills, topics and loops, which are instructions.
+- In the sidebar, a skill that came from a plugin shows the **plugin's name**
+  beside it — "where did this come from" is the question that matters when a skill
+  misbehaves.
+- **Settings → Plugins** lists what is installed (name, version, origin, what it
+  brought) with a **⋯** for *see what it brought* and *remove*. Removing subtracts
+  only what the plugin brought: **a file you edited afterwards stays**, and the
+  screen says which.
 
 ## Highlight, comment, and act on an excerpt
 

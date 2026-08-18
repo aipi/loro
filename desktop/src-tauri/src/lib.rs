@@ -38,7 +38,11 @@ mod intake;
 use git::*;
 mod acervo;
 use acervo::*;
+// ADR-0029 — extensão como pacote, e o loop como um dos seus tipos. Módulos
+// próprios: o núcleo não cresce com a superfície nova (CLAUDE.md §5).
+mod loops;
 mod meeting;
+mod plugins;
 use meeting::*;
 mod models;
 // ADR-0011 v1 contract-lock. `pub mod` because these types/commands are the
@@ -1348,7 +1352,12 @@ fn context_file(dir: &Path) -> Option<PathBuf> {
     None
 }
 
-fn seed_context(base: &Path, name: &str, lang: &str, mold: Option<&str>) -> Result<(), String> {
+pub(crate) fn seed_context(
+    base: &Path,
+    name: &str,
+    lang: &str,
+    mold: Option<&str>,
+) -> Result<(), String> {
     let d = crate::paths::contexts_dir(base).join(name);
     std::fs::create_dir_all(&d).map_err(|e| folder_write_error(&e))?;
     let ch = d.join("CHANGELOG.md");
@@ -4764,6 +4773,7 @@ pub fn run() {
             brain_import,
             brain_import_files,
             brain_new_note_in,
+            brain_drop_into,
             brain_delete_inbox,
             brain_write_inbox,
             brain_send_files_to_queue,
@@ -4803,6 +4813,23 @@ pub fn run() {
             brain_index_terms,
             brain_index_write,
             brain_pii_scan,
+            plugins::brain_plugin_manifest,
+            plugins::brain_install_plugin,
+            plugins::brain_list_plugins,
+            plugins::brain_remove_plugin,
+            loops::loop_status,
+            loops::loop_tick,
+            loops::loop_save,
+            loops::loop_arm,
+            loops::loop_enrich,
+            loops::loop_delete,
+            loops::loop_stop,
+            loops::loop_run_now,
+            loops::loop_policy,
+            loops::loop_set_policy,
+            loops::loop_folders,
+            loops::loop_capabilities,
+            loops::loop_permit,
             brain_topic_doc,
             brain_promote,
             brain_meeting_start,

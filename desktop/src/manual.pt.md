@@ -20,7 +20,7 @@ Toda tela tem a mesma anatomia:
 ```
 CABEÇALHO 54px — [projeto ⌄] [Início · Organizar · Conhecimento · Revisão] ··· [Gravar] [✦ IA]
 BARRA LATERAL │ ABAS (só quando há documento aberto) │ PAINEL 330px
-250px ou 60px │ CONTEÚDO                             │ Documento · Chat · Terminal
+250px ou 60px │ CONTEÚDO                             │ Documento · Chat · ⟳ Loops · Terminal
 ```
 
 - **Os quatro destinos** ficam no cabeçalho: **Início** (o que você quer guardar
@@ -56,9 +56,9 @@ BARRA LATERAL │ ABAS (só quando há documento aberto) │ PAINEL 330px
   árvore abre uma aba de pré-visualização (em itálico); dois cliques fixam.
 - O **alternador da barra lateral** (250px ⇄ 60px) fica embaixo, ao lado de
   **⚙ Configurações**.
-- As três seções da barra lateral (**ideias**, **para organizar**,
-  **conhecimento**) **recolhem**: clique no título. Com muitos temas isso é o que
-  mantém a árvore navegável.
+- As seções da barra lateral (**ideias**, **para organizar**, **conhecimento**,
+  **loops** e **Habilidades de IA**) **recolhem**: clique no título. Com muitos
+  temas isso é o que mantém a árvore navegável.
 - `Cmd/Ctrl+K` abre a **paleta**: arquivos e comandos na mesma lista, agrupados
   em *ir para · gravar · criar · documento · fazer*, com o atalho de cada um à
   direita. Ela é a lista viva de tudo o que dá para fazer.
@@ -231,6 +231,17 @@ quando quiser pela paleta: `Cmd/Ctrl+K` → "apresentação do Loro".
   📁 avulso) para movê-lo — o mesmo efeito do **mover para…**, restrito ao
   mundo das ideias (nunca toca o que tem histórico de versões). O resto da linha
   continua sendo clique-para-abrir.
+- **Arrastar do seu computador para a árvore:** solte um arquivo do Finder/Explorer
+  sobre uma **pasta** da lateral — uma ideia, uma pasta dela (📁 notas, 📁 anexos),
+  um tema do conhecimento ou um **loop** — e ele é **arquivado ali: o arquivo é
+  movido, e o original sai da pasta de origem**, como em qualquer gerenciador de
+  arquivos. A pasta que vai receber **acende** enquanto você arrasta, e o aviso
+  depois diz para onde foi e de onde saiu (não há desfazer — para corrigir, use
+  **mover para…** no ⋯ da linha). Soltar na área de **para organizar** continua **copiando**:
+  ali o gesto é «entregue isto à IA», e o seu arquivo original fica onde estava.
+  Um arquivo que já está no projeto é recusado com um aviso — mover dentro do
+  projeto é o **mover para…**. E uma credencial num arquivo destinado ao
+  **conhecimento** (que é versionado) é recusada antes de qualquer coisa se mexer.
 - **Rail de ações à direita do arquivo:** ao abrir qualquer nota/documento,
   a lateral direita mostra cartões de ação separados — **habilidade** (um
   dropdown com nomes amigáveis; a descrição da habilidade selecionada fica
@@ -333,6 +344,144 @@ documento, o alvo já vem preenchido com ele.
   de habilidade, como no próprio Claude). Clique no título da seção
   "Habilidades de IA" para **recolher/exibir** a lista inteira (o caret ▾/▸
   mostra o estado).
+
+## Loops (trabalho que a IA repete num ritmo)
+
+Um **loop** é trabalho de pé: você escreve UMA vez o que quer feito — *"leia as
+ideias desta semana e escreva o que ainda não foi decidido"* — diz com que ritmo,
+e o Loro roda isso com a IA nesse ritmo. O que sai é um arquivo, na pasta que
+você escolheu, que abre e se lê como qualquer outro documento.
+
+Os loops ficam na **seção LOOPS da barra lateral**, entre *conhecimento* e
+*Habilidades de IA* — um loop pode ser do projeto inteiro, então ele não vive
+dentro de uma ideia. Crie um no **＋** da seção.
+
+**O preço, dito antes:** um loop roda a IA **enquanto o app estiver aberto**. Com
+o app fechado ele não roda — e a tela do loop conta quantas execuções ele perdeu,
+recuperando no máximo **uma** quando você volta. Cada ciclo roda com «ler e
+editar o projeto»; «tudo, sem perguntar» é recusado num ciclo sem você.
+
+**Criar é a mesma tela do editar.** Nome, habilidade que ele cita (opcional),
+instrução, **modelo**, **esforço**, escopo, ritmo, destino e os **freios**:
+
+- **pode criar, por ciclo, até** N arquivos · **pode rodar, por dia, até** N vezes
+  · **desliga sozinho em** uma data. São **freios, não metas**: batendo um, o
+  ciclo termina e a tela diz qual foi. Eles existem para um loop esquecido não
+  gastar a IA sem ninguém olhar. Os padrões de um loop novo ficam em
+  **Configurações → Loops**.
+- **O modelo e o esforço** são deste loop: cada ciclo é um turno de IA como o do
+  Chat, e um modelo maior (ou um esforço maior) custa mais — no ritmo que você
+  escolheu acima. Deixando **«o padrão do agente»**, o ciclo roda com o que o
+  agente do projeto já usa. Diferente do escopo, isto o editar reabre — a tela do
+  loop diz com que ele roda (*«roda com opus · muito alto»*).
+- **Permissão você não declara de antemão** — e não precisa. Ler e editar o projeto um
+  ciclo já pode. Quando um ciclo precisa de algo **fora** dele (um conector, buscar na
+  web), ele para, e o pedido aparece na aba **⟳ Loops → PEDIDOS**, com o nome da
+  ferramenta e de qual loop veio: **permitir** ou **não**. Permitir vale para os
+  **próximos ciclos de todos os loops deste projeto** — uma vez concedido, está
+  concedido. Não vale para o **Chat**, que tem o controle dele em *Configurações → IA*.
+  «Não» fecha a porta: o ciclo não tenta mais aquilo e o pedido não volta.
+  O que já foi decidido se vê e se desfaz em **Configurações → Loops**, e a tela de cada
+  loop mostra o mesmo no botão **pode usar**.
+  *Nunca* são liberados a um ciclo: «tudo, sem perguntar» e **rodar comandos** — um
+  ciclo não roda comando nenhum, e é por isso que ele não versiona, não dá push e não sai
+  da pasta do projeto. Isso é uma tranca, não uma recomendação ao agente.
+  *Dois avisos honestos:* liberar um conector libera o que aquela ferramenta faz (o Loro
+  não sabe, pelo nome, o que só lê e o que escreve — a instrução do ciclo proíbe enviar,
+  mas isso é regra dita ao agente, não tranca); e o que um conector devolve pode trazer
+  **dado pessoal de terceiros** para dentro do projeto, que é versionado e compartilhado.
+- **O escopo** é **sobre o que** o loop trabalha, e tem quatro formas: **o
+  projeto**, **uma ideia**, **uma pasta** (escreva o caminho ou escolha uma das
+  pastas do projeto) ou **um conhecimento**. Apontado numa pasta ou num
+  conhecimento, o ciclo lê **só o que está aí dentro — nada fora**. Ele é declarado
+  **uma vez, na criação** — é o único campo que o editar não reabre; re-apontar é
+  criar outro loop. Se a pasta apontada deixar de existir, o loop fica
+  **impedido** e a tela diz qual era.
+- **O destino** pode ser a pasta do loop, os anexos de uma ideia, ou **o
+  conhecimento**. Nesse último caso o ciclo **propõe**: a mudança cai no seu
+  rascunho de trabalho e aparece em **Revisão** — nada vira oficial sem você.
+
+**Os sete estados**, e o que cada um diz:
+
+| Estado | O que significa |
+|---|---|
+| **desligado** | existe e não faz nada — você o desligou, ou ele chegou assim de um plugin |
+| **ligado** | vai rodar, e a tela diz quando |
+| **rodando** | um ciclo roda agora (o painel **⟳ Loops** mostra o passo a passo) |
+| **esperando você terminar** | a vez dele chegou e você está usando a IA — ele nunca cancela a sua conversa |
+| **impedido** | está ligado e **não pode** rodar; a tela diz o motivo (sem agente configurado, a habilidade que ele cita foi apagada, a pasta do escopo não existe mais, faltou permissão para uma ferramenta — e aí a tela oferece liberar —, outra janela está rodando este loop) |
+| **falhando** | falhou algumas vezes seguidas e está recuando; depois de cinco, ele se desliga e diz isso |
+| **expirou** | viveu o prazo declarado: rodou uma última vez e se desligou |
+
+**Onde você vê que algo está acontecendo:** na linha da árvore (o estado e a
+próxima execução), no **cabeçalho** (uma marca teal enquanto um ciclo roda — a
+mesma ideia do selo de gravação, mas nunca vermelha e sem piscar; clicar abre a
+aba), e na **aba ⟳ Loops do painel ✦ IA**, que lista os ciclos e mostra o passo a
+passo de um deles, com **■ parar este ciclo**. Um ciclo **não ocupa o seu chat**:
+o Chat continua seu, e cada ciclo é um turno próprio do agente do projeto.
+
+**A tela do loop** mostra o ritmo, a linha do tempo dos últimos ciclos, a
+**instrução efetiva** e os **ciclos**. Cada ciclo diz quando rodou, quanto durou,
+o que produziu e o resultado — nunca o texto produzido. Ciclos silenciosos
+seguidos aparecem numa linha só (`×2 · nada novo`), e um ciclo pulado (porque o
+anterior ainda rodava) fica registrado em vez de virar silêncio.
+
+**Um ciclo tem três saídas, e nenhuma delas é silêncio sem explicação.** Ele abre o que
+já produziu antes e então: **atualiza** aquele documento com o que houver de novo (o
+preferido — em vez de criar outro parecido ao lado), **escreve um documento novo**, ou
+responde *nada novo* quando não há o que acrescentar nem corrigir. No **primeiro** ciclo a
+terceira saída não existe: sem nada seu para comparar, ele produz o que a instrução pede.
+
+**No passo a passo (aba ⟳ Loops) cada passo abre**: o pedido e a **resposta**. Um passo
+com **!** mostra o motivo — pode ser um erro comum (um caminho que não existe) ou uma
+permissão que faltou; nesse segundo caso ele **diz** que é permissão e traz o botão
+*permitir* ali mesmo.
+
+**Quando você mesmo manda rodar, a tela diz o que aconteceu** — quantos arquivos, ou *nada
+novo*, ou o motivo da falha. Um ciclo automático fica quieto de propósito (a marca do
+cabeçalho é o sinal dele). E **toda linha do histórico abre**: dentro dela estão os
+arquivos, os passos e a hora — e num ciclo quieto, o que «nada novo» quer dizer.
+
+**Ajustar conversando:** no fim da tela do loop há um campo. O que você escreve
+ali entra na instrução como uma linha datada (*"a partir de 18/08: ignore as
+reuniões canceladas"*) e vale a partir do **próximo** ciclo — é o que mantém o
+loop legível depois de cinco correções, em vez de virar caixa preta.
+
+**Onde o que ele produziu aparece:** na **seção LOOPS da lateral**, abrindo a seta ao
+lado do nome do loop — ali estão os arquivos da pasta de destino dele, e cada um abre como
+qualquer documento — **com o mesmo ⋯**: pedir à IA, renomear, **mover para** (uma ideia, por
+exemplo), **copiar caminho** (relativo ou absoluto) e **apagar**. Quando o destino é o conhecimento, a linha diz que a mudança está em
+**Revisão**. Um arquivo novo aparece sozinho, sem recarregar nada.
+
+**O que um loop nunca faz:** salvar versão, enviar para revisão do time, aprovar,
+dar push, ou mandar mensagem para fora. Isso é ato de pessoa.
+
+## Plugins (habilidades, temas e loops prontos)
+
+Um **plugin** é uma pasta que traz coisas prontas para o projeto: habilidades,
+temas iniciais e loops. É o mesmo formato dos plugins do Claude Code, então um
+pacote escrito para lá serve aqui.
+
+Instale pelo **＋ da seção "Habilidades de IA" → instalar plugin…** (ou pelo ＋
+dos loops). A folha mostra, **antes de instalar**, o que o plugin traz e o que a
+**triagem** encontrou nos arquivos dele: uma credencial **bloqueia** a instalação
+(o projeto é versionado e vai para o git), um CPF **avisa** e você decide.
+
+- **Instalar é uma mudança**, não uma publicação: os arquivos caem no projeto e
+  aparecem em **Revisão** como qualquer outra mudança sua. Nada é enviado.
+- **Loops de um plugin chegam desligados.** Ligar é sempre um ato seu.
+- **Nada é sobrescrito.** Um arquivo que já existe é ignorado, e a folha diz
+  quantos foram.
+- **O Loro não instala plugins que rodam comandos** no seu computador (`hooks/`,
+  `bin/`, servidores MCP). Ele reconhece esse tipo e recusa **dizendo qual é** —
+  só habilidades, temas e loops, que são instruções.
+- Na lateral, uma habilidade que veio de um plugin mostra o **nome do plugin** ao
+  lado — "de onde veio isto" é a pergunta que importa quando uma habilidade se
+  comporta mal.
+- **Configurações → Plugins** lista o que está instalado (nome, versão, origem, o
+  que trouxe) com um **⋯** para *ver o que trouxe* e *remover*. Remover subtrai
+  só o que o plugin trouxe: **um arquivo que você editou depois fica**, e a tela
+  diz qual.
 
 ## Grifar, comentar e agir sobre um trecho
 

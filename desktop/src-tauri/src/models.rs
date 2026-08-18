@@ -186,6 +186,12 @@ mod tests {
     fn scratch() -> std::path::PathBuf {
         let n = COUNTER.fetch_add(1, Ordering::SeqCst);
         let d = std::env::temp_dir().join(format!("loro-models-test-{}-{n}", std::process::id()));
+        // A PASTA É NOVA, sempre. `pid + contador` colide entre execuções (o sistema
+        // reusa PID), e um `ggml-medium.bin` deixado por uma rodada anterior derrubava
+        // `a_model_outside_the_catalog_falls_back_to_existence` na PRIMEIRA asserção —
+        // um vermelho que aparecia e sumia, que é o pior tipo (2026-08-18). É a mesma
+        // limpeza que `loops::tests::tmp` já fazia.
+        let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
     }

@@ -107,6 +107,11 @@ struct ChatTool {
     id: String,
     name: String,
     input: String,
+    /// ADR-0029: o mesmo stream serve a um CICLO DE LOOP, e aí o passo precisa
+    /// dizer de qual loop é. Ausente no chat, e por isso `skip_serializing_if`:
+    /// a carga do chat continua idêntica byte a byte.
+    #[serde(rename = "loop", skip_serializing_if = "Option::is_none")]
+    loop_slug: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -115,6 +120,8 @@ struct ChatToolResult {
     id: String,
     is_error: bool,
     text: String,
+    #[serde(rename = "loop", skip_serializing_if = "Option::is_none")]
+    loop_slug: Option<String>,
     /// A negação de permissão chega AQUI, num tool_result — o turno ainda
     /// termina com is_error=false, então esperar pelo fim era tarde demais.
     permission: bool,
@@ -132,16 +139,47 @@ fn cap(s: &str) -> String {
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct ChatDone {
-    ok: bool,
+pub(crate) struct ChatDone {
+    pub(crate) ok: bool,
     /// Código de erro estável (err.*) quando `ok` é falso — nunca a mensagem crua.
-    error: Option<String>,
+    pub(crate) error: Option<String>,
     /// Trecho da falha do agente, quando ele mesmo explicou (já é texto do usuário).
-    detail: Option<String>,
+    pub(crate) detail: Option<String>,
     /// Verdadeiro quando a falha foi de PERMISSÃO: a interface oferece liberar a
     /// pasta ou continuar no terminal em vez de mostrar um erro seco (ADR-0021).
-    permission: bool,
+    pub(crate) permission: bool,
+    /// QUAL ferramenta foi recusada (`mcp__slack__…`, `WebFetch`). A negação chega
+    /// num `tool_result`, que carrega só o `tool_use_id`; o nome veio antes, no
+    /// bloco `assistant`, com o mesmo id. Sem casar os dois, a tela dizia «faltou
+    /// permissão» sem poder dizer para quê — e um loop não tinha o que oferecer
+    /// (ADR-0029 §4.17). É o NOME da ferramenta, nunca o input dela: um argumento
+    /// pode carregar conteúdo do acervo, e o nome não (BR-8).
+    #[serde(default)]
+    pub(crate) permission_tool: Option<String>,
+    /// id → nome de cada ferramenta anunciada neste turno. Bookkeeping do leitor de
+    /// stream, não resultado: `skip`, para não viajar até a tela.
+    #[serde(skip)]
+    pub(crate) tool_names: std::collections::HashMap<String, String>,
 }
+
+/// O turno começa dando certo: só uma linha de erro o derruba. Um `Default` que
+/// nascesse com `ok: false` reportaria falha em todo ciclo que não falhou.
+impl Default for ChatDone {
+    fn default() -> Self {
+        Self {
+            ok: true,
+            error: None,
+            detail: None,
+            permission: false,
+            permission_tool: None,
+            tool_names: std::collections::HashMap::new(),
+        }
+    }
+}
+
+/// O mesmo resultado, sob o nome que o ciclo de loop usa (ADR-0029): o leitor de
+/// stream é um só, e duplicá-lo seria um segundo parser para manter em sincronia.
+pub(crate) type StreamOutcome = ChatDone;
 
 // Heurística de negação de permissão. O CLI não devolve um código estável para
 // isso, então casamos com o vocabulário que ele usa. Errar para menos é seguro:
@@ -157,12 +195,42 @@ fn looks_like_permission_denial(s: &str) -> bool {
             || s.contains("allow"))
 }
 
-fn is_claude(agent: &str) -> bool {
+/// The tool a denial names, read from the MESSAGE. This is the path a real refusal
+/// takes in print mode: the CLI does not always deny inside a `tool_result` (where the
+/// id would identify the tool) — it ends the whole turn with «Claude requested
+/// permissions to use X, but you haven't granted it yet», and the only place the tool's
+/// identity exists is that sentence.
+///
+/// The discriminator is CASE: an agent tool is CamelCase (`Bash`, `WebFetch`) or an MCP
+/// name (`mcp__slack__read`), while «permissions to write» is a verb. Without it, the
+/// screen offered to allow a tool called "write", which no agent has.
+pub(crate) fn tool_in_denial(text: &str) -> Option<String> {
+    let at = text.find("to use ")? + "to use ".len();
+    let word: String = text[at..]
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+        .collect();
+    // o ponto está no conjunto porque um modelo local se chama `llama3.1` — e por
+    // isso a frase «to use Bash.» devolvia uma ferramenta chamada "Bash."
+    let word = word.trim_end_matches(['.', '-']).to_string();
+    if word.is_empty() || word.len() > 80 {
+        return None;
+    }
+    let first = word.chars().next()?;
+    (first.is_ascii_uppercase() || word.starts_with("mcp__")).then_some(word)
+}
+
+pub(crate) fn agent_is_claude(agent: &str) -> bool {
     crate::agent_process_name(agent).to_lowercase() == "claude"
 }
 
 // Argumentos do turno. Separado da execução para poder ser testado sem processo.
-fn claude_args(model: &str, effort: &str, permission: &str, resume: Option<&str>) -> Vec<String> {
+pub(crate) fn claude_args(
+    model: &str,
+    effort: &str,
+    permission: &str,
+    resume: Option<&str>,
+) -> Vec<String> {
     let mut args: Vec<String> = vec![
         "-p".into(),
         "--output-format".into(),
@@ -187,6 +255,21 @@ fn claude_args(model: &str, effort: &str, permission: &str, resume: Option<&str>
     args
 }
 
+/// A negação, casada com o NOME da ferramenta que a causou. O primeiro nome ganha:
+/// um turno pode negar várias vezes, e a que a pessoa precisa resolver é a primeira.
+/// Separada de `handle_stream_line` para poder ser testada: aquela função precisa de
+/// um `AppHandle`, e portanto de um app rodando.
+fn note_denial(out: &mut ChatDone, tool_use_id: &str, text: &str) {
+    out.permission = true;
+    if out.permission_tool.is_none() {
+        out.permission_tool = out
+            .tool_names
+            .get(tool_use_id)
+            .cloned()
+            .or_else(|| tool_in_denial(text));
+    }
+}
+
 // Uma linha do stream-json → efeito na interface. Devolve `Some(session_id)`
 // quando a linha carrega o id da sessão (para o --resume do próximo turno).
 // O fim do turno, sem emitir nada — separado para poder ser testado: é aqui que
@@ -201,13 +284,25 @@ fn apply_result_line(v: &serde_json::Value, out: &mut ChatDone) {
     // ACUMULA. O `result` é sempre a última linha do fluxo, então ATRIBUIR aqui
     // apagava a negação que um `tool_result` já registrara no meio do turno — e o
     // bloco âmbar, que existe para oferecer a escolha, nunca aparecia.
-    out.permission = out.permission || looks_like_permission_denial(detail);
+    if looks_like_permission_denial(detail) {
+        out.permission = true;
+        // e o nome vem do TEXTO: nesta linha não existe `tool_use_id` para casar
+        if out.permission_tool.is_none() {
+            out.permission_tool = tool_in_denial(detail);
+        }
+    }
     if !detail.is_empty() {
         out.detail = Some(detail.to_string());
     }
 }
 
-fn handle_stream_line(app: &AppHandle, line: &str, out: &mut ChatDone) -> Option<String> {
+pub(crate) fn handle_stream_line(
+    app: &AppHandle,
+    line: &str,
+    out: &mut ChatDone,
+    ch: &str,
+    slug: Option<&str>,
+) -> Option<String> {
     let v: serde_json::Value = serde_json::from_str(line).ok()?;
     match v.get("type").and_then(|t| t.as_str()) {
         Some("stream_event") => {
@@ -218,7 +313,7 @@ fn handle_stream_line(app: &AppHandle, line: &str, out: &mut ChatDone) -> Option
                     if d.get("type").and_then(|t| t.as_str()) == Some("text_delta") {
                         let text = d.get("text").and_then(|t| t.as_str()).unwrap_or("");
                         if !text.is_empty() {
-                            let _ = app.emit("chat-delta", text);
+                            let _ = app.emit(&format!("{ch}-delta"), text);
                         }
                     }
                 }
@@ -239,12 +334,18 @@ fn handle_stream_line(app: &AppHandle, line: &str, out: &mut ChatDone) -> Option
                 .flatten()
             {
                 if b.get("type").and_then(|t| t.as_str()) == Some("tool_use") {
+                    let id = b.get("id").and_then(|x| x.as_str()).unwrap_or("");
+                    let name = b.get("name").and_then(|x| x.as_str()).unwrap_or("");
+                    if !id.is_empty() && !name.is_empty() {
+                        out.tool_names.insert(id.to_string(), name.to_string());
+                    }
                     let _ = app.emit(
-                        "chat-tool",
+                        &format!("{ch}-tool"),
                         ChatTool {
                             id: b.get("id").and_then(|x| x.as_str()).unwrap_or("").into(),
                             name: b.get("name").and_then(|x| x.as_str()).unwrap_or("").into(),
                             input: cap(&b.get("input").map(|i| i.to_string()).unwrap_or_default()),
+                            loop_slug: slug.map(str::to_string),
                         },
                     );
                 }
@@ -267,12 +368,24 @@ fn handle_stream_line(app: &AppHandle, line: &str, out: &mut ChatDone) -> Option
                         None => String::new(),
                     };
                     let is_error = b.get("is_error").and_then(|e| e.as_bool()).unwrap_or(false);
-                    let permission = looks_like_permission_denial(&text);
+                    // SÓ UM RESULTADO DE ERRO É UMA NEGAÇÃO. `looks_like_permission_denial`
+                    // é uma heurística sobre TEXTO, e o texto de um tool_result que deu
+                    // certo é CONTEÚDO: uma página que o WebFetch trouxe com as palavras
+                    // «permission» e «request» dentro dela virava uma negação que nunca
+                    // houve, e o ciclo — que tinha acabado de escrever o arquivo — era
+                    // registrado como impedido (medido no acervo do dono em 2026-08-18:
+                    // 9 passos, 1 arquivo produzido, «err.loop_permission_refused»).
+                    // `is_error` já era lido nesta linha e não era usado para decidir.
+                    let permission = is_error && looks_like_permission_denial(&text);
                     if permission {
-                        out.permission = true;
+                        note_denial(
+                            out,
+                            b.get("tool_use_id").and_then(|x| x.as_str()).unwrap_or(""),
+                            &text,
+                        );
                     }
                     let _ = app.emit(
-                        "chat-tool-result",
+                        &format!("{ch}-tool-result"),
                         ChatToolResult {
                             id: b
                                 .get("tool_use_id")
@@ -281,6 +394,7 @@ fn handle_stream_line(app: &AppHandle, line: &str, out: &mut ChatDone) -> Option
                                 .into(),
                             is_error,
                             text: cap(&text),
+                            loop_slug: slug.map(str::to_string),
                             permission,
                         },
                     );
@@ -336,6 +450,12 @@ fn kill_current_child() {
     }
 }
 
+/// A pessoa está usando o agente? Um ciclo de loop espera a vez em vez de
+/// cancelar a conversa de ninguém (ADR-0029 §4.10).
+pub(crate) fn agent_busy() -> bool {
+    chat_status().running
+}
+
 #[tauri::command]
 pub fn chat_reset() {
     kill_current_child();
@@ -358,7 +478,7 @@ pub fn chat_cancel() {
 pub fn chat_handoff() -> Result<String, String> {
     let agent = crate::active_agent();
     let id = with_state(|st| st.session_id.clone()).ok_or("err.chat_no_session")?;
-    if !is_claude(&agent) {
+    if !agent_is_claude(&agent) {
         return Err("err.chat_handoff_unsupported".into());
     }
     Ok(format!("{agent} --resume {id}"))
@@ -401,7 +521,7 @@ pub fn chat_send(app: AppHandle, input: ChatSendInput) -> Result<(), String> {
     let mut cmd = command(&bin);
     cmd.current_dir(&dir);
     cmd.args(&base_args);
-    let claude = is_claude(&agent);
+    let claude = agent_is_claude(&agent);
     if claude {
         cmd.args(claude_args(
             &input.model,
@@ -458,19 +578,15 @@ pub fn chat_send(app: AppHandle, input: ChatSendInput) -> Result<(), String> {
 
     let dir_for_session = dir.clone();
     std::thread::spawn(move || {
-        let mut done = ChatDone {
-            ok: true,
-            error: None,
-            detail: None,
-            permission: false,
-        };
+        // o mesmo estado inicial do `Default`, que é onde ele mora
+        let mut done = ChatDone::default();
         let mut session: Option<String> = None;
         let mut lines = 0usize;
 
         for line in BufReader::new(stdout).lines().map_while(Result::ok) {
             lines += 1;
             if claude {
-                if let Some(id) = handle_stream_line(&app, &line, &mut done) {
+                if let Some(id) = handle_stream_line(&app, &line, &mut done, "chat", None) {
                     session = Some(id);
                 }
             } else {
@@ -538,10 +654,8 @@ mod tests {
         // negação lida no meio do turno, e o usuário via o erro cru em vez da
         // escolha (ADR-0021 §2).
         let mut out = ChatDone {
-            ok: true,
-            error: None,
-            detail: None,
             permission: true, // um tool_result já negou, no meio do turno
+            ..Default::default()
         };
         let v: serde_json::Value =
             serde_json::from_str(r#"{"is_error":true,"result":"API Error: 500"}"#).unwrap();
@@ -552,14 +666,46 @@ mod tests {
         );
     }
 
+    // ADR-0029 §4.17 — a negação NOMEIA a ferramenta. Ela chega num `tool_result`,
+    // que carrega só o `tool_use_id`; o nome veio antes, no bloco `assistant`. Sem
+    // casar os dois, um loop impedido dizia «faltou permissão» e não tinha o que
+    // oferecer à pessoa.
+    #[test]
+    fn a_denial_carries_the_name_of_the_tool_that_caused_it() {
+        let mut out = ChatDone::default();
+        out.tool_names
+            .insert("t1".into(), "mcp__slack__read_channel".into());
+        out.tool_names.insert("t2".into(), "WebFetch".into());
+        note_denial(&mut out, "t1", "");
+        assert!(out.permission);
+        assert_eq!(
+            out.permission_tool.as_deref(),
+            Some("mcp__slack__read_channel")
+        );
+        // a segunda negação do mesmo turno não sobrescreve a primeira
+        note_denial(&mut out, "t2", "");
+        assert_eq!(
+            out.permission_tool.as_deref(),
+            Some("mcp__slack__read_channel")
+        );
+        // um id que não veio anunciado cai no TEXTO da negação
+        let mut sem = ChatDone::default();
+        note_denial(
+            &mut sem,
+            "desconhecido",
+            "requested permissions to use WebFetch, but…",
+        );
+        assert!(sem.permission);
+        assert_eq!(sem.permission_tool.as_deref(), Some("WebFetch"));
+        // e quando nem o texto diz, fica vazio em vez de inventar um nome
+        let mut nada = ChatDone::default();
+        note_denial(&mut nada, "x", "permission denied");
+        assert_eq!(nada.permission_tool, None);
+    }
+
     #[test]
     fn a_result_that_denies_permission_sets_the_flag() {
-        let mut out = ChatDone {
-            ok: true,
-            error: None,
-            detail: None,
-            permission: false,
-        };
+        let mut out = ChatDone::default();
         let v: serde_json::Value =
             serde_json::from_str(r#"{"is_error":true,"result":"permission to write was denied"}"#)
                 .unwrap();
@@ -633,6 +779,76 @@ mod tests {
         assert_eq!(cap("curto"), "curto");
     }
 
+    // O CAMINHO QUE ACONTECE DE VERDADE (2026-08-18, relatado pelo dono): a recusa
+    // não vem num `tool_result` com id — vem na ÚLTIMA linha do turno, e o nome da
+    // ferramenta só existe na prosa dela. Sem ler daí, a tela do loop dizia «faltou
+    // permissão» sem nome e sem ação: exatamente o beco sem saída que §4.17 fechou.
+    #[test]
+    fn the_final_line_of_a_refused_turn_still_names_the_tool() {
+        let mut out = ChatDone::default();
+        let v: serde_json::Value = serde_json::from_str(
+            r#"{"is_error":true,"result":"Claude requested permissions to use mcp__slack__read_channel, but you haven't granted it yet"}"#,
+        )
+        .unwrap();
+        apply_result_line(&v, &mut out);
+        assert!(out.permission);
+        assert_eq!(
+            out.permission_tool.as_deref(),
+            Some("mcp__slack__read_channel")
+        );
+    }
+
+    #[test]
+    fn a_verb_is_not_a_tool_name() {
+        // «permissions to write» é o que o CLI diz quando falta escrever num arquivo:
+        // oferecer liberar uma ferramenta chamada "write" seria oferecer nada
+        assert_eq!(tool_in_denial("requested permissions to write, but…"), None);
+        assert_eq!(
+            tool_in_denial("requested permissions to use Bash."),
+            Some("Bash".into())
+        );
+        assert_eq!(
+            tool_in_denial("permissions to use WebFetch, but"),
+            Some("WebFetch".into())
+        );
+        assert_eq!(
+            tool_in_denial("to use mcp__x__y\n"),
+            Some("mcp__x__y".into())
+        );
+        assert_eq!(tool_in_denial("nada aqui"), None);
+        assert_eq!(tool_in_denial("to use "), None);
+    }
+
+    // O FALSO POSITIVO QUE CUSTOU UM CICLO (2026-08-18, acervo do dono): o resultado de
+    // uma busca web é CONTEÚDO, e conteúdo com as palavras certas parecia uma negação.
+    #[test]
+    fn the_content_of_a_successful_step_is_not_a_denial() {
+        // a heurística sozinha acusa — e é por isso que ela não decide sozinha
+        assert!(looks_like_permission_denial(
+            "A página fala de permission e request de acesso ao pátio"
+        ));
+        // o que decide é o resultado ter dado ERRO
+        let mut done = ChatDone::default();
+        let ok_result = r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","is_error":false,"content":"…permission… request…"}]}}"#;
+        let v: serde_json::Value = serde_json::from_str(ok_result).unwrap();
+        let block = &v["message"]["content"][0];
+        let is_error = block
+            .get("is_error")
+            .and_then(|e| e.as_bool())
+            .unwrap_or(false);
+        let text = block.get("content").and_then(|c| c.as_str()).unwrap_or("");
+        // a mesma expressão que `handle_stream_line` avalia (ela precisa de um AppHandle)
+        let permission = is_error && looks_like_permission_denial(text);
+        assert!(
+            !permission,
+            "um passo que DEU CERTO não pede permissão nenhuma"
+        );
+        if permission {
+            note_denial(&mut done, "t1", text);
+        }
+        assert!(!done.permission);
+    }
+
     #[test]
     fn permission_denial_is_recognized_in_both_languages() {
         assert!(looks_like_permission_denial(
@@ -650,12 +866,7 @@ mod tests {
     #[test]
     fn text_deltas_and_session_id_are_extracted() {
         // Formas reais do stream-json (probe contra o CLI em 2026-08-11).
-        let mut done = ChatDone {
-            ok: true,
-            error: None,
-            detail: None,
-            permission: false,
-        };
+        let mut done = ChatDone::default();
         let init = r#"{"type":"system","subtype":"init","session_id":"s-1"}"#;
         let v: serde_json::Value = serde_json::from_str(init).unwrap();
         assert_eq!(v.get("session_id").unwrap().as_str(), Some("s-1"));

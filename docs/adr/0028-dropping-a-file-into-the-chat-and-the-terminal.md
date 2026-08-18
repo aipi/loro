@@ -120,3 +120,60 @@ branch contains no `\n`; the paste lands at the cursor with and without a
 preceding space; the highlight covers exactly the router's destinations and is
 cleared on drop and on leave. `state-truth.test.js` C6 still holds the
 `_prompt.md` refusal on the same handler.
+
+
+---
+
+## Extension — a folder of the tree is a fourth destination (2026-08-18)
+
+«Ao arrastar um arquivo do meu computador para dentro da árvore, quero mover esse arquivo
+para o destino, como é possível fazer no vscode.» The router this ADR built already answers
+the only question that matters — **the place of the drop decides** — so the change is one
+more answer, not a new mechanism: `dropDestination` returns `pasta:<rel>` when the pointer
+is over a row that declares itself a folder.
+
+### The gesture means different things in the two places, and that is the decision
+
+Every import door in Loro **copies** (`import_into_inbox`, `brain_import_files`: `fs::copy`,
+never overwriting). The owner asked for **move**, and after the trade-off was named the
+decision (2026-08-18) was:
+
+- **onto a FOLDER of the tree → MOVE.** Dropping into a folder of the cabinet is *filing*,
+  which is what a file manager does on one disk: the original leaves. The toast says so —
+  «N → pasta · o original saiu de ~/Desktop» — because a move has no undo here.
+- **onto the FILA → COPY**, unchanged. There the gesture means «hand this to the AI», and
+  the original stays the person's.
+
+### What declares itself a drop target, and why that list is one line
+
+`folderGroupHtml` already received the folder's `rel` (for the path menu), so every folder
+group in the tree — an idea's *notas*/*anexos*, a topic's *anexos* — became a target at once.
+Plus three rows that ARE folders: an idea (→ its `attachments`), a knowledge topic (→ its
+`attachments`, the same door «＋ do computador» opens) and a **loop** (→ its own folder). A
+group without a real folder passes no `rel` and does not pretend to receive.
+
+The highlight moved with it: the row itself lights (`.droprow`), and the fila's highlight no
+longer promises a destination the drop will not take (DESIGN.md §1).
+
+### Two refusals come before the first move, because a move has no undo
+
+- **a source already inside the acervo** is the other door (`move_pessoal_file`, which knows
+  the worlds and rewrites inbound refs) — `err.drop_from_inside`;
+- **a credential heading for the versioned tree** is refused for the whole batch
+  (ADR-0024/BR-9) — scanned BEFORE anything moves, because afterwards the bytes are no
+  longer where they were.
+
+Destinations are one rule (`acervo::guarded_drop_dir`): any folder of a non-versioned world
+(`brainstorming/`, `pessoal/`, `loops/<slug>/`) plus `contexts/**/attachments`. `inbox/` is
+refused by name — the fila has its own door, and it copies. Cross-volume drops fall back to
+copy+remove, so a file from an external disk still files.
+
+### And the harness grew two guards
+
+`__SMOKE__.fire` plus the row's real coordinates let the smoke drive the actual Tauri event
+through `elementFromPoint`, which is what decides the destination — the only way to know the
+drop lands where the person aimed. And the smoke now **compiles the STUB and the DRIVER
+before opening Chrome**: they live inside template literals, so `node --check` never saw
+them, and a syntax error there printed «o driver não chegou ao fim» — which reads like an app
+defect. It happened twice in one day (a backtick inside a comment; a `\/` that the template
+literal collapsed into `//`, commenting out the line). It now names the error.

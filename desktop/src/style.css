@@ -520,8 +520,17 @@ body {
 /* modo acervo esconde a faixa de controles do live */
 
 /* ---- folha de configurações ---- */
+/* A ESCADA DAS CAMADAS, e ela é uma ordem, não três números soltos:
+     conteúdo < barra de aviso (30) < CONFIGURAÇÕES (45) < FOLHA (50) < menu (60)
+     < paleta (80) < dica (95)
+   A folha estava em 40 — ABAIXO da página de Configurações (45). Uma folha aberta de
+   dentro de Configurações («instalar plugin…») abria ATRÁS dela: `elementFromPoint` no
+   centro da folha devolvia `.cfgcard`, os botões dela eram inalcançáveis, e o gesto se
+   lia como «clico e não acontece nada» (medido no DOM em 2026-08-18, relatado pelo dono).
+   Ela sobe para 50: acima de Configurações, porque quem abriu a folha foi ela, e ABAIXO
+   do menu (60), porque um menu aberto de dentro da folha tem de cobri-la. */
 .sheet-wrap {
-  position: fixed; inset: 0; z-index: 40;
+  position: fixed; inset: 0; z-index: 50;
   background: color-mix(in srgb, var(--ink) 22%, transparent);
   display: grid; place-items: center;
 }
@@ -903,6 +912,27 @@ body {
 .fitem2.add { color: var(--accent); font-family: var(--mono); font-size: 11px; }
 .fitem2.muted { color: var(--muted); cursor: default; }
 .fsep { height: 1px; background: var(--line); margin: 4px 0; }
+/* Uma nota de pé de menu: PROSA curta, não rótulo de seção. `.fhead` é mono e caixa
+   alta, e uma frase escrita nele vira quatro linhas de grito (DESIGN.md §3: mono
+   nunca é prosa). Ela quebra — é a única coisa num menu que pode ocupar duas linhas. */
+.fnote {
+  padding: 4px 12px 6px;
+  font: 11.5px/1.45 var(--sans); color: var(--muted);
+}
+/* ADR-0029 §4.17 — o menu do «pode usar» carrega NOMES DE CONECTOR, que não são
+   palavras curtas: «conector-do-time — tudo dele» pede 177px de texto numa linha de
+   166px na coluna de 196px (medido no DOM), e `.fn` é nowrap+ellipsis — o corte
+   escondia justamente QUAL conector é, que é a única coisa que a pessoa precisa
+   reconhecer ali. Mesma saída que o `.confirm-actions` já usa: a caixa ganha a largura
+   que o conteúdo pede, dentro de um teto que nunca cruza a borda, e o nome quebra em
+   vez de ser cortado (DESIGN.md §2.9 e §5). O gatilho é o `.fnote`, que só este menu
+   tem. */
+.floatmenu:has(.fnote) {
+  width: auto; min-width: 240px; max-width: min(300px, calc(100vw - 24px));
+}
+.floatmenu:has(.fnote) .fitem2 .fn {
+  white-space: normal; overflow: visible; overflow-wrap: anywhere;
+}
 .floatmenu {
   position: fixed; z-index: 60; min-width: 190px; max-width: 230px;
   background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
@@ -2617,6 +2647,7 @@ body.resizing #mainRow * { pointer-events: none; }
 .findbar:focus-within, .composerbox:focus-within { outline: 1.5px solid var(--accent); outline-offset: 2px; }
 /* controles que não são campo de texto não devem esticar */
 .cfgcard .field .segrow, .cfgcard .field .swatches,
+.cfgcard .field > .btn,
 .wizcard .wfield .swatches { justify-self: start; }
 /* "onde guardar": o campo e o SELETOR na mesma linha. O picker vivia no fim da
    frase de ajuda, como link cinza em mono — lia-se como parte da prosa, e a tela
@@ -3162,3 +3193,330 @@ button.refitem {
   .gaprow { flex-wrap: wrap; }
   .gaprow .mini.act { margin-left: 0; }
 }
+
+/* ============ ADR-0029 · pacotes e loops ============
+   Nada aqui inventa token, cor ou medida: o loop reaproveita a gramática que já
+   existe (linha da árvore, cartão de 700px, caixa de bloco de código, aba do
+   painel, cartão de Configurações). As três cores são as semânticas do §3 do
+   DESIGN.md — teal = IA, âmbar = precisa de você, --ink3/--muted = não faz nada.
+   Vermelho continua sendo só gravação e irreversível: um ciclo rodando NÃO é
+   vermelho e NÃO pisca (§3.9, segunda distância). */
+
+/* separador entre CONHECIMENTO e LOOPS — o loop não vive dentro de uma ideia */
+.secsep { height: 1px; background: var(--line-soft); margin: 12px 8px 0; }
+
+/* a marca de estado na linha da árvore: um fato em mono + um ponto */
+.bitem .lstate { flex: none; font: 10.5px var(--mono); color: var(--muted); }
+.bitem .lstate.teal { color: var(--teal); }
+.bitem .lstate.amber { color: var(--yellow-ink); }
+.bitem .lstate.muted { color: var(--ink3); }
+/* o ponto neutro é um CONTORNO (o token de fronteira, 3:1), não um preenchimento
+   com --ghost: --ghost é a tinta do desabilitado, e um loop parado não é um
+   controle desabilitado. */
+.ldot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: none; border: 1px solid var(--line-control); }
+.ldot.teal { background: var(--teal); border-color: var(--teal); }
+.ldot.soft { background: none; border: 1.5px solid var(--teal); }
+.ldot.amber { background: var(--yellow); border-color: var(--yellow); }
+.ldot.green { background: var(--green); border-color: var(--green); }
+.ldot.muted { background: none; border: 1px solid var(--line-control); }
+
+/* a marca no cabeçalho: o mesmo pill da gravação, em teal e sem piscar */
+.headrec.teal {
+  border-color: var(--teal); color: var(--teal);
+  background: color-mix(in srgb, var(--teal) 7%, transparent);
+}
+
+/* ---- a tela do loop (dentro do cartão de 700px) ---- */
+.loopnow { border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px 12px; margin-bottom: 16px; }
+.loopnowhead { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.loopnext { font: 600 15px var(--sans); color: var(--ink); }
+.loopwhen { font: 11px var(--mono); color: var(--muted); }
+.loopbrakes { margin-left: auto; font: 10.5px var(--mono); color: var(--muted); }
+/* a linha do tempo: passado com o resultado de cada ciclo, «agora», o próximo em
+   contorno. Rola dentro de si em coluna estreita (DESIGN.md §7). */
+.looptl { display: flex; align-items: flex-start; overflow-x: auto; }
+.tlstep { display: flex; flex-direction: column; align-items: center; gap: 4px; flex: none; width: 64px; }
+.tlstep .ldot { margin-top: 2px; }
+.tlstep .ldot.now { width: 11px; height: 11px; }
+.tllabel { font: 9.5px var(--mono); color: var(--muted); text-align: center; }
+.tllabel.teal { color: var(--teal); }
+.tllabel.amber { color: var(--yellow-ink); }
+.tllabel.ink { color: var(--ink2); }
+.tlline { flex: 1 1 auto; min-width: 12px; height: 1px; background: var(--line); margin-top: 6px; }
+.tlline.next { background: none; border-top: 1px dashed var(--line-dash); }
+
+/* a instrução efetiva: a mesma caixa de um bloco de código (§3 do DESIGN.md) */
+.loopeff {
+  border: 1px solid var(--line-control); border-radius: 8px;
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
+  padding: 12px 14px; margin-bottom: 16px;
+}
+.loopeff .sect { margin: 0 0 6px; }
+.loopeff p { font: 13px/1.65 var(--sans); color: var(--ink2); margin: 0 0 6px; }
+.loopeff .loopcite { font: 11px var(--sans); color: var(--ink3); margin: 0; }
+
+.loopacts { display: flex; align-items: center; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
+/* o preço é uma FRASE, e uma frase é prosa em --sans (DESIGN.md §3): em mono ela
+   ficava com o espaçamento da máquina sem ter um único valor de máquina dentro */
+.loopacts .loopprice { margin-left: auto; font: 11.5px/1.5 var(--sans); color: var(--muted); }
+
+/* os ciclos: uma lista, não um feed. Um ciclo silencioso é uma linha com contagem. */
+.loopcycles {
+  display: flex; flex-direction: column;
+  border: 1px solid var(--line); border-radius: 10px; overflow: hidden; margin-bottom: 16px;
+}
+.lcrow { display: flex; align-items: center; gap: 10px; padding: 9px 12px; font: 11px var(--mono); color: var(--ink2); }
+.lcrow + .lcrow, .loopcycles > details + .lcrow, .loopcycles > .lcrow + details { border-top: 1px solid var(--line-soft); }
+.lcrow .lcwhen { color: var(--ink); }
+.lcrow .lcnote { color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.lcrow.amber .lcwhen { color: var(--yellow-ink); }
+.loopcycles > details { border-top: 1px solid var(--line-soft); }
+.loopcycles > details:first-child { border-top: 0; }
+.loopcycles > details > summary { display: flex; align-items: center; gap: 10px; padding: 9px 12px; font: 11px var(--mono); color: var(--ink2); cursor: pointer; list-style: none; }
+.loopcycles > details > summary::-webkit-details-marker { display: none; }
+.loopcycles > details > summary::after { content: "▾"; margin-left: auto; color: var(--muted); }
+.loopcycles > details[open] > summary::after { content: "▴"; }
+.lcbody { padding: 2px 12px 12px 29px; display: flex; flex-direction: column; gap: 8px; }
+.lcfiles { display: flex; gap: 6px; flex-wrap: wrap; }
+.lcsteps { font: 10.5px/1.7 var(--mono); color: var(--ink3); }
+/* o que o ciclo produziu abre o documento: é controle, e o seu contorno é o do
+   controle (3:1). A classe antiga só existia sob `.tree`, que não existe. */
+.lcfile {
+  font-size: 10.5px; color: var(--ink2); background: none; cursor: pointer;
+  border: 1px solid var(--line-control); border-radius: 999px; padding: 2px 9px;
+}
+.lcfile:hover { color: var(--accent); border-color: var(--accent); }
+
+/* ---- a aba ⟳ Loops do painel ✦ ---- */
+.ploops { display: flex; flex-direction: column; gap: 2px; }
+.plooprow {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 7px 9px; border: none; border-radius: 7px; background: none;
+  color: var(--ink3); font: 12.5px var(--sans); cursor: pointer; text-align: left;
+}
+.plooprow:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); }
+.plooprow.on {
+  background: color-mix(in srgb, var(--teal) 13%, transparent);
+  box-shadow: inset 3px 0 0 var(--teal); color: var(--teal); font-weight: 600;
+}
+.plooprow .pln { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.plooprow .plmeta { flex: none; font: 10px var(--mono); color: var(--muted); }
+.plooprow.on .plmeta { color: var(--teal); }
+.loopsteps { max-height: 46vh; }
+
+/* ---- Configurações ---- */
+.cfgsec > .hint.secnote { margin: -6px 0 12px; }
+.pluginmeta { font: 10.5px var(--mono); color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pluginbrings { flex: none; font: 10.5px var(--mono); color: var(--ink3); }
+
+/* O painel ✦ IA tira COLUNA, não janela (DESIGN.md §7): abaixo de 560px a linha
+   do topo da tela do loop empilha em vez de espremer o selo de freios, e a
+   linha do tempo rola dentro de si. Nenhum controle é cortado. */
+@container (max-width: 560px) {
+  .loopbrakes { margin-left: 0; }
+  .loopacts .loopprice { margin-left: 0; }
+}
+
+/* a linha de campo do formulário do loop: controles lado a lado dentro de um
+   .wfield, sem inventar grade nova */
+.looprow { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1 1 auto; }
+.looprow.wrap { flex-wrap: wrap; }
+.loophead { font: 650 23px var(--sans); color: var(--ink); margin: 2px 0 4px; }
+
+/* ============ um eixo só: os destinos centram como o cartão do documento ============
+   Decisão do dono (2026-08-18): a tela não tinha padrão — Início e o cartão de um
+   documento centravam, e Organizar/Conhecimento/Revisão encostavam à esquerda,
+   deixando metade da janela vazia à direita numa janela larga.
+   QUEM CENTRA É O CONTÊINER, não cada bloco. A primeira tentativa pôs
+   `margin-inline: auto` em cada um deles e o resultado foi PIOR: `.revlist`,
+   `.revcard` e o cartão de salvar são itens de um flex column, e margem automática
+   num item de flex cancela o `stretch` — eles encolheram para o tamanho do
+   conteúdo e centraram cada um na sua largura, enquanto o cabeçalho (bloco comum)
+   continuou preenchendo a coluna. Quatro bordas esquerdas diferentes na mesma tela.
+   Centrando a coluna do destino, cada bloco lá dentro mantém o layout que sempre
+   teve e todos herdam o MESMO eixo — que é o que o olho lê como padrão.
+   Início fica fora: o herói dele é largo de propósito. */
+/* a largura é a da COLUNA mais o respiro que o próprio contêiner já carrega
+   (`padding: 34px 44px`), com box-sizing: border-box — escrita como soma para não
+   virar um número mágico que ninguém confere. */
+.dest-view:not(.home) { max-width: calc(720px + 2 * 44px); margin-inline: auto; }
+/* e a grade do Conhecimento passa a nascer na mesma borda das listas (era 760px:
+   40px de diferença que se lia como desalinhamento) */
+.knowgrid { max-width: 720px; }
+/* Configurações é a mesma pergunta: a seção tinha largura e nenhuma margem, então
+   ela encostava à esquerda de uma coluna muito mais larga. */
+.cfgsec { margin-inline: auto; }
+
+/* ============ ADR-0029 · o formulário do loop, no CARTÃO do documento ============
+   Classe PRÓPRIA, e não `.wfield`: aquela linha de campo tem grade só sob
+   `.wizcard`/`.cfgcard`/`.sheet` (solta dentro de `.doc` ela voltava à forma base —
+   caixa com borda própria, rótulo de 78px fixos, controles sem borda — e cada linha
+   virava um bloco enorme), e reaproveitá-la aqui redefiniria a borda da linha de
+   campo das FOLHAS, cuja caixa É a sua afordância (tokens.test.js pega isso).
+   A grade é a mesma de Configurações: rótulo à esquerda, controle encostado à
+   direita, e é o controle que desenha a sua caixa. */
+.loopfield {
+  display: grid; grid-template-columns: 170px minmax(0, 1fr);
+  align-items: center; gap: 12px; width: 100%;
+  border: none; border-bottom: 1px solid var(--line-soft); border-radius: 0;
+  background: none; padding: 11px 0;
+}
+.loopfield.stack, .loopfield:has(textarea) { align-items: start; }
+.loopfield > span:first-child {
+  width: auto; justify-self: start; align-self: center; line-height: 1.3;
+  font: 600 12.5px var(--sans); letter-spacing: normal; color: var(--ink2);
+}
+.loopfield > *:last-child { justify-self: stretch; min-width: 0; }
+.loopfield input, .loopfield select, .loopfield textarea {
+  width: 100%; max-width: none; flex: none;
+  font: 13px var(--sans); color: var(--ink);
+  background: var(--paper); border: 1px solid var(--line-control);
+  border-radius: 8px; padding: 7px 10px; outline: none;
+}
+.loopfield textarea { font: 13px/1.55 var(--sans); resize: vertical; }
+/* DESIGN.md §3 — O QUE O MARKUP PEDE É O QUE A FOLHA PINTA. `class="mono"` nos
+   campos de valor (os minutos, a hora, a data) não pintava nada: a regra acima é
+   `.loopfield input` (classe + tipo), vence a `.mono` de uma classe só e o `font:`
+   dela reseta a família. O resultado era a linha do ritmo com TRÊS tipografias —
+   o número em sans, a unidade «min» em mono, os botões em sans semibold — e um
+   valor da máquina pintado como prosa. O dígito de largura fixa também é o certo
+   aqui: um campo de número que não se mexe quando o valor muda. */
+.loopfield input.mono { font-family: var(--mono); }
+.loopfield input:focus, .loopfield select:focus, .loopfield textarea:focus { border-color: var(--accent); }
+/* O anel é do CONTROLE, porque é ele que tem caixa própria aqui. E não há anel de
+   linha para desligar: `.loopfield` é classe própria, então a regra
+   `.wfield:focus-within` nunca a alcança — desligar um anel que não existe seria
+   uma isenção sem contrapartida (tokens.test.js pega isso também). */
+.loopfield input:focus-visible, .loopfield select:focus-visible, .loopfield textarea:focus-visible {
+  outline: 1.5px solid var(--accent); outline-offset: 2px;
+}
+/* controles que não são campo de texto não esticam nem ganham caixa de campo */
+.loopfield .looprow { justify-self: stretch; }
+/* A LINHA QUEBRA. O escopo e o ritmo põem dois controles numa linha (segmentado +
+   seletor, círculos + hora): sem quebrar, o segundo transbordava o cartão à direita
+   — e um controle nunca é cortado (DESIGN.md §2.9). */
+.looprow { flex-wrap: wrap; row-gap: 8px; }
+.loopfield .looprow select { width: auto; flex: 1 1 220px; min-width: 0; }
+.loopfield .looprow input { width: auto; flex: none; }
+/* hora e data têm a largura do seu conteúdo: um seletor nativo esticado a 100%
+   deixa o indicador do sistema longe do valor */
+.loopfield input[type="time"], .loopfield input[type="date"] {
+  width: auto; justify-self: start; min-width: 7.5em;
+}
+.loopfield .segrow { justify-self: start; }
+.loopfield .looprow input { width: auto; }
+/* E O SEGMENTADO TAMBÉM QUEBRA. `.looprow` quebrava entre os seus filhos, mas o
+   segmentado é UM filho: numa janela de ~1040px com o painel aberto, a coluna do
+   controle fica com ~200px e os botões do ritmo somam ~260px — um flex row sem
+   quebra não encolhe abaixo do próprio conteúdo, então ele saía do cartão pela
+   direita e «toda semana» ficava cortada por baixo do painel. Medido em
+   tools/smoke-ui.js; DESIGN.md §2.9: um controle nunca é cortado. */
+.loopfield .looprow .segrow { flex-wrap: wrap; min-width: 0; row-gap: 2px; }
+/* um campo com sugestões (a pasta do escopo) é um combobox: ele cresce como um
+   seletor, e não fica com a largura de caixa de número do freio */
+.loopfield .looprow input[list] { flex: 1 1 220px; min-width: 0; }
+/* ADR-0029 §8.5 — a seta de «o que este loop produziu» ocupa o LUGAR do ícone da linha
+   (medido: numa linha de 225px ela custava 22px de um nome que já ficava com 80), então
+   ela carrega a margem que o ícone carregava. */
+.bitem > .rowtoggle.loopcaret { margin-right: 2px; }
+
+/* ADR-0028 (extensão de 2026-08-18) — A PASTA QUE VAI RECEBER acende sozinha. O realce da
+   fila (`#app.dropping`) prometia o destino errado quando o ponteiro estava sobre a árvore,
+   e DESIGN.md §1 diz que o realce não pode prometer o que não vai acontecer. Mesma cor de
+   destino que as outras duas superfícies de solto usam. */
+.bitem[data-dropdir].droprow {
+  outline: 1.5px dashed var(--accent); outline-offset: -2px; border-radius: 7px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+/* §4.18 — um PASSO recusado por permissão não é «um erro»: é uma pergunta, e ela carrega a
+   resposta de um clique ali mesmo. Mesmo âmbar do pedido, dentro do passo que a provocou. */
+.chatstep.permission > summary .st { color: var(--yellow-ink); }
+.stepperm {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin: 6px 0 2px; padding: 7px 9px;
+  border: 1px solid color-mix(in srgb, var(--yellow) 45%, var(--line));
+  border-left: 2px solid var(--yellow-ink); border-radius: 8px;
+  font: 11.5px/1.45 var(--sans); color: var(--ink2);
+}
+.stepperm > span { flex: 1 1 auto; min-width: 0; }
+.stepperm .btn { flex: none; }
+
+/* §4.18 — a lista do que os ciclos podem usar, em Configurações → Loops: uma linha por
+   decisão, o nome da máquina à esquerda, o estado e o desfazer à direita. */
+.cfgperms { display: flex; flex-direction: column; gap: 6px; min-width: 0; width: 100%; }
+.cfgperm { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.cfgperm > .mono { flex: 1 1 auto; min-width: 0; font: 11.5px var(--mono); overflow-wrap: anywhere; }
+.cfgperm .permstate { flex: none; font: 10.5px var(--mono); }
+.cfgperm .permstate.teal { color: var(--teal); }
+.cfgperm .permstate.amber { color: var(--yellow-ink); }
+
+/* ADR-0029 §4.18 — UM PEDIDO no painel ⟳ Loops: a ferramenta que o ciclo pediu (nome de
+   máquina, mono), quando, quais loops pararam, e as duas respostas. Ele é a única coisa
+   do painel com AÇÃO, então tem caixa própria — mas nenhum token novo: a mesma borda e o
+   mesmo âmbar do impedimento, porque é a mesma pergunta esperando a mesma pessoa. */
+.preq {
+  /* o âmbar do app é `--yellow`, na mesma mistura que `.qcard.warm` usa — não existe
+     token `--amber`, e inventar um seria uma cor nova para uma pergunta que já tem a sua */
+  border: 1px solid color-mix(in srgb, var(--yellow) 45%, var(--line));
+  border-left: 2px solid var(--yellow-ink);
+  border-radius: 10px; padding: 9px 11px; margin-bottom: 8px;
+  display: flex; flex-direction: column; gap: 6px; min-width: 0;
+}
+.preqhead { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.preqtool {
+  flex: 1 1 auto; min-width: 0; font: 11.5px var(--mono); color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.preqwhen { flex: none; font: 10.5px var(--mono); color: var(--muted); }
+.preqwho { font: 11.5px/1.4 var(--sans); color: var(--ink3); }
+.preqacts { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* ADR-0029 §4.17 — «pode usar»: uma caixinha por coisa que o projeto oferece, com o
+   NOME DA MÁQUINA ao lado (é por ele que a pessoa procura na documentação do
+   conector) e de onde veio, quando veio de um pacote. Lista, não grade: o número de
+   itens é o do projeto, não um layout que o Loro escolhe. */
+.loopperms { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.loopperm {
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  font: 13px var(--sans); color: var(--ink); cursor: pointer;
+}
+.loopperm input { flex: none; width: auto; margin: 0; accent-color: var(--accent); }
+.loopperm .permid { font: 11px var(--mono); color: var(--muted); }
+.loopperm .permfrom { font: 11px var(--mono); color: var(--ink3); }
+/* a barra de impedimento passa a carregar uma AÇÃO, então ela vira linha com peça à
+   direita em vez de só prosa */
+.notifbar.warm:has(.btn) { display: flex; align-items: center; gap: 12px; }
+.notifbar.warm > span { flex: 1 1 auto; min-width: 0; }
+.notifbar.warm .btn { flex: none; }
+
+/* E A LINHA DE CAMPO EMPILHA numa coluna estreita. Com o rótulo ocupando 170px
+   fixos, o controle fica com ~200px — e um segmentado de quatro opções não é uma
+   peça de 200px: ele quebrava um botão por linha, o que é legível mas já não se lê
+   como um segmentado. Com o rótulo EM CIMA, o controle tem a largura do cartão e
+   volta a caber numa linha. Vem depois das regras acima de propósito: a mesma
+   especificidade, então quem vence é quem está por último. */
+@container (max-width: 560px) {
+  .loopfield { grid-template-columns: minmax(0, 1fr); gap: 6px; align-items: start; }
+  .loopfield > span:first-child { align-self: start; }
+}
+
+/* ============ o seletor de pasta da folha ============
+   `.wfield > span` fixa 78px para QUALQUER span filho, e o `.dirpick` é o segundo:
+   a caixa do caminho ficava com 78px e o botão «escolher pasta…» transbordava por
+   cima — o campo em que se digita o caminho ficava sem largura para mostrá-lo. */
+/* E ela EMPILHA: um caminho não cabe ao lado do rótulo numa folha de 460px — o
+   campo media 87px e não mostrava o que a pessoa digita. É a única linha da folha
+   que empilha, porque é a única que carrega um valor longo. */
+.sheet .wfield:has(.dirpick) { grid-template-columns: minmax(0, 1fr); }
+.sheet .wfield .dirpick {
+  display: flex; gap: 8px; align-items: center;
+  width: auto; min-width: 0; justify-self: stretch;
+}
+.sheet .wfield .dirpick input { flex: 1 1 auto; min-width: 0; }
+.sheet .wfield .dirpick > .btn { flex: none; }
+
+/* o que um plugin traz é uma LISTA: uma linha por tipo, o rótulo em prosa e os
+   nomes em mono (os spans corriam num parágrafo só, colados) */
+.plugbrings { display: flex; flex-direction: column; gap: 4px; font: 11.5px/1.5 var(--sans); color: var(--ink2); }
+.plugbrings .loopwhen { color: var(--ink3); }

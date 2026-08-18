@@ -55,6 +55,15 @@ separate, user-chosen folder and is **not** part of the codebase.
 - **Knowledge base (brain)** — setup and layout of the acervo, per-context guide
   + change log, inbox/processed queue, import of files, status for the UI. The
   actual distillation is performed by the external Claude loop, not the app.
+- **Extensions & loops (ADR-0029)** — `plugins.rs` installs a **pacote** (a Claude
+  Code plugin plus `loro.json`) into the acervo: it reads the manifest, classifies
+  it **from the tree** (declarative vs executable), plans the writes, runs them
+  through the intake triage and records what it wrote in `.loro/plugins.json`.
+  `loops.rs` owns **standing work**: a loop's definition is a versioned document
+  (`loops/<slug>.md`), its runtime is quarantined bookkeeping
+  (`.loro/loops/<slug>.json`), and a cycle is ONE agent turn spawned the same way
+  the chat spawns one. Nothing in either module is ever executed by the app — a
+  pacote is instructions, and a loop is an instruction plus a rhythm.
 - **Settings & platform** — persisted user settings, window/tray/background
   behavior, global shortcut, diagnostics.
 
@@ -138,6 +147,7 @@ that is already under review updates it (see `brain_propose_change`).
 | `brain_read` | `rel` | content | read a file inside the acervo (path-traversal guarded) |
 | `brain_import` | `context?` | count | copy files into the inbox (prefix `<ctx>--`) |
 | `brain_import_files` | `destRel` | count | native file picker → copy chosen files into an `attachments/` folder — a brainstorming's or a context's (guarded, ADR-0005) |
+| `brain_drop_into` | `paths, destRel` | `[rel]` | files dropped from the COMPUTER onto a folder of the tree: **moved** there (filing), never overwriting. Destinations are one rule (`guarded_drop_dir`): any folder of a non-versioned world (`brainstorming/`, `pessoal/`, `loops/<slug>/`) plus `contexts/**/attachments`; `inbox/` is refused by name — the fila has its own door and it COPIES (ADR-0028, extended 2026-08-18). Two refusals come before the first move: a source already inside the acervo (`err.drop_from_inside`, that is `brain_move_pessoal`'s job) and a credential headed for the versioned tree (`err.intake_secret:<name>`, ADR-0024) |
 | `brain_new_note_in` | `destRel, titulo` | rel | create a living-front-matter note inside an `attachments/` folder (context counterpart of `brain_new_notebook`, ADR-0005) |
 | `brain_delete_inbox` | `name` | `()` | delete an unprocessed queue item |
 | `brain_set_auto_context` | `value: bool` | `()` | post-creation toggle (Settings) for autoContext — global config + local `.loro/settings.json` (ADR-0005 §3) |
@@ -174,6 +184,28 @@ keyed by acervo + mtime + size of **each** `context.md`:
 | `brain_pii_scan` | — | `[{rel, kind, sample, count}]` | reports PII **candidates** in the versioned contexts — an e-mail with a dotted local part, a `nome.sobrenome` handle (ADR-0026 §17). Read-only by contract: it never edits, because a person's name and a product's name have the same shape. A functional mailbox (`sinistros@`) is a role and is not reported |
 | `brain_topic_doc` | `rel` | `"<rel>/<file>"` / err | the topic document that EXISTS in that directory: `index.md`, or `index.md` in an acervo written before ADR-0026 §14. The frontend used to build this path by hand, in three places |
 | `brain_meeting_set_origin` | `{id, origem}` | `origem` / err | records the open point a meeting came from (ADR-0026 §11), in `manifest.origem`. `normalize_origin` accepts **only** `<contexto>#H-<n>` or `D-YYYY-MM-DD-<slug>`; a path, a title or a sentence is refused with `err.origin_not_an_id` and the recorded value is left untouched. An empty origin is not serialized, so an old manifest stays byte-identical |
+
+Extensions and loops (ADR-0029) — all `async` (they walk folders, hash files and
+spawn the agent; synchronous, that happens on the main thread — ADR-0022 §28):
+
+| Command | Args | Returns | Purpose |
+|---|---|---|---|
+| `brain_plugin_manifest` | `source` | `PluginPreview` | read-only: what a pacote is, what it would write, its **class** read from the TREE (never from the manifest), the intake findings, the destinations that already exist, and the declared parts this version does not install. Writes nothing, anywhere |
+| `brain_install_plugin` | `source, hoje` | `{id, version, written[], skipped[], brings}` | copy the declarative parts in and record them in `.loro/plugins.json` (versioned: it is the project's policy). Refuses an executable class BY NAME (`err.plugin_kind_unsupported:<markers>`), a credential (`err.intake_secret:<file>`, BR-9), a path escaping the pacote root, an id already installed. Never overwrites, never shadows a built-in habilidade, and a loop it brings arrives **disarmed**. Commits nothing and pushes nothing — the files land in the working tree, where Revisão already shows them |
+| `brain_list_plugins` | — | `[InstalledPlugin]` | what this acervo has installed, with what each pacote brought and a digest per file |
+| `brain_remove_plugin` | `id` | `{removed[], kept[]}` | subtract what the pacote wrote. A file whose bytes changed after the install — or whose digest is unknown, or whose recorded path does not resolve inside the project — is **kept** and named: the record is versioned, so it arrives in someone else's commit and is treated as untrusted input |
+| `loop_status` | `now` | `{loops[], running[], queued[], cycles[], agentBusy, paralelo, requests[], permite[], recusa[]}` | **the single authority** (§3.9): the sidebar row, the header mark, the ⟳ Loops tab and the loop's own screen all read this one answer. Each loop carries its definition, its runtime, its computed `state` and — when it cannot run — the `blocked` code that says why |
+| `loop_tick` | `now` | `{started[], queued[], skipped[]}` | the clock's question: who is due? Decides with the LOCAL civil time the frontend hands it (`{epochMs, date, hh, mi, weekday}`), so a weekly rhythm is compared in the person's calendar and a sub-daily one is a duration — no timezone database in the core. A skipped tick is returned with its reason instead of being silence |
+| `loop_run_now` | `slug, now` | `()` / err | run one cycle now: one agent turn, in the acervo, always `--permission-mode acceptEdits` (§4.9 — `bypassPermissions` is refused for an unattended cycle) **plus `--disallowedTools Bash`, always**: the mode auto-approves Bash, so «no commands, no git, read and edit the project» is that flag and not the mode (§8.8, measured from a session log). Re-checks everything the tick checked, and passes the loop's own `--model`/`--effort` when it has them (§4.16) plus `--allowedTools` with what the person allowed (§4.17) — every one of them re-derived from the definition at spawn time, because that document is versioned and arrives in someone else's commit |
+| `loop_stop` | `slug` | `()` | kill the running cycle and release its lock |
+| `loop_save` | `input` | rel | create or update a loop. The rhythm is validated here; the **scope is not re-openable** (§4.8) and its four shapes (`projeto`, `ideia:<slug>`, `pasta:<rel>`, `conhecimento:<slug>`) are normalized, with an unrecognized shape **refused** rather than widened to the project (§4.15). `modelo`/`esforco` ARE re-openable and are sanitized to a plain token |
+| `loop_arm` | `slug, on` | `()` | turn it on/off; turning it on clears a backoff |
+| `loop_enrich` | `slug, texto, hoje` | instruction | an adjustment made by talking becomes a DATED line inside the instruction, so the loop stays one readable document |
+| `loop_delete` | `slug` | `()` | remove the definition and its runtime record. **What the loop produced stays** |
+| `loop_policy` / `loop_set_policy` | — / `policy` | `LoopPolicy` | the project's own loop settings (the brakes a NEW loop is born with, and how many cycles may run at once), in `.loro/settings.json` |
+| `loop_folders` | — | `[rel]` | the project's folders, three levels deep and nothing hidden — what lets the scope be CHOSEN instead of typed (§4.15). The field still accepts a typed path; this is the suggestion list |
+| `loop_capabilities` | — | `[{id, label, kind, origin}]` | **what this project can offer a loop** beyond reading/editing itself (§4.17): the MCP servers `.mcp.json` declares, each with the pacote that brought it, plus the agent's own outward tools. DISCOVERED, never a list of connector names inside Loro — one installed today shows up today. `Bash` is deliberately absent (§4.3) |
+| `loop_permit` | `tool, decision` | `LoopPolicy` | the PROJECT's decision about ONE tool — `permitir` · `recusar` (→ `--disallowedTools`, so a closed door is not «ask again») · `esquecer`. Written to `.loro/settings.json` and applied to every cycle of every loop (§4.18): the pending question is «may a cycle use X», so answering it once clears it on every loop that asked. Reachable from the request in the ⟳ Loops panel, from the amber block on a blocked loop, and from the «pode usar» control on a loop's screen. Does **not** run a cycle |
 
 Brainstorming world + the fila → contexto flow (ADR-0001 §7):
 
@@ -243,6 +275,8 @@ description or a review comment — the log lines carry counts, review numbers a
 | `hotkey-toggle` | — | global shortcut or tray toggle fired |
 | `model-download-progress` | `{model, downloaded, total}` | model download progress in bytes (ADR-0006) |
 | `model-download-done` | `string` | a model finished downloading and was installed (ADR-0006) |
+| `loop-cycle` | `{slug, phase: "started"\|"ended", outcome?, err?, files[], startedMs}` | a loop's cycle began or ended (ADR-0029). `files` are the acervo-relative paths it created — an address, never content (BR-8) |
+| `loop-tool` / `loop-tool-result` | same shape as `chat-tool` / `chat-tool-result`, plus `loop` | the steps of a cycle, on the SAME reader the chat uses (`chat.rs::handle_stream_line`, one parser for both channels). The `loop` field is what keeps a parallel cycle from painting into another's list; it is absent — and the payload byte-identical — for the chat |
 
 Path resolution: `LORO_HOME` (exported by `loro.sh`) or a sensible default;
 `~/.loro/config.json` holds engine/model/brain configuration.
@@ -327,6 +361,21 @@ Path resolution: `LORO_HOME` (exported by `loro.sh`) or a sensible default;
   generate material (markdown by default) into `attachments/` — a
   brainstorming's `brainstorming/<tema>/attachments/` or a context's
   `contexts/<c>/attachments/`; there is no separate presentations folder.
+- **A loop's cycle (ADR-0029 §3.8):** the frontend's clock ticks every 30s (there
+  is no scheduler in the core — decision §4.6a: a loop runs only while the app is
+  open, and the screen counts what it missed while closed). The tick hands
+  `loop_tick` the local civil time; `loops.rs` decides who is due, respecting the
+  brakes, the backoff, one-cycle-per-loop, the project's parallelism and whether
+  the PERSON is using the agent (a due cycle then waits its turn — it never
+  cancels a conversation). `loop_run_now` spawns one agent turn with a prompt that
+  states the destination, the reading scope (excluding the loop's OWN output — a
+  loop whose output is inside its input feeds itself), the file brake and the acts
+  a loop never performs (no git, no version, no send for review, nothing
+  outbound). The brake is checked DURING the cycle, so hitting it ends the cycle
+  instead of being reported afterwards. What came out is the difference between two
+  listings of the destination — so the record never reads a byte of what was
+  written. The runtime record keeps when, how long, which files and an `err.*`
+  code, and nothing else (BR-8).
 - **Knowledge versioning (ADR-0001 §5), Git hidden behind two buttons:**
   a project created with versioning on gets its **baseline commit** at setup
   (`ensure_baseline_commit`), so the official branch exists from day one — without
@@ -429,4 +478,6 @@ All technical decisions are consolidated in the single **`docs/adr/0001-baseline
 | Document frame | the frame does not change with the mode: edit mode uses the SAME centered 700px card as view mode, the editor filling its height | ADR-0022 §23 |
 | Blocking probes | `env_doctor` runs on the blocking pool (`spawn_blocking`) and only re-runs when the Versions/GitHub section is opened — as a sync command it froze the window on `gh auth status` | ADR-0022 |
 | Addressable context | the lateral link written in the markdown IS the graph — kind in one word, target must exist. Read-only commands compute the neighbourhood, the backlinks and the índice remissivo on every read: **no index file is ever written** into the acervo. Hotspot ids qualified on read (`<ctx>#H-n`), never renumbered; a meeting cited by ID only; an external code linked only where the project configured a base URL. Refused with reasons: node-and-edge picture, mermaid, embeddings, typed catalogue | ADR-0026 |
+| Extension as a package | a pacote IS a Claude Code plugin + `loro.json`; the class is read from the TREE, not the manifest; the executable class is refused by name; installing is a change that passes the intake triage and shows up in Revisão | ADR-0029 |
+| Loops (standing AI work) | definition = versioned document (`loops/<slug>.md`), runtime = quarantined record; the CLOCK is the open app (no scheduler in the core), the local civil time comes from the frontend; one authority (`loop_status`) for every surface; seven states, of which **blocked** is the one that keeps «on» from lying; a cycle is `acceptEdits` only, never `bypassPermissions`; the scope may be POINTED at one folder or one context, and then the cycle is told to read only that (§4.15); the model and the effort are the loop's own (§4.16); what a cycle may reach OUTSIDE the project is **the project's** grant, never declared in advance but given in answer to a request that names the tool, applied to cycles only (the Chat keeps its own control), never grantable by a pacote, with `Bash`/`*` refused (§4.18) | ADR-0029 |
 | Edit-mode formatting | markdown-aware bar (not WYSIWYG): pure `LoroMdEdit.apply(doc, anchor, head, action)` → CM6 `{changes, selection}`; `⌘B`/`⌘I`/`⌘K` captured off the editor DOM; same bar + CM6 in the Studio tab and the modal editor | ADR-0016 |

@@ -32,7 +32,7 @@ const ASSET_MAX_BYTES: u64 = 5 * 1024 * 1024; // 5 MiB cap (reject larger)
 
 // The active acervo root, canonicalized (the single trust boundary for every FS
 // path below). None-configured surfaces the same error as the other commands.
-fn acervo_base() -> Result<PathBuf, String> {
+pub(crate) fn acervo_base() -> Result<PathBuf, String> {
     let cfg = read_brain_config().ok_or("err.acervo_not_configured")?;
     PathBuf::from(&cfg.brain_dir)
         .canonicalize()
@@ -54,8 +54,10 @@ pub(crate) fn guarded_existing(base: &Path, rel: &str) -> Result<PathBuf, String
 
 // Lexically normalize an acervo-relative path (resolve `.`/`..`), REFUSING any
 // path that escapes the root. Pure — used to resolve refs to a canonical
-// acervo-root-relative form even when the target does not exist yet.
-fn normalize_rel(rel: &str) -> Result<String, String> {
+// acervo-root-relative form even when the target does not exist yet, and by
+// `loops::scope_folder` for the folder a loop is pointed at (ADR-0029 §4.15): one
+// rule for «is this path inside the acervo», not one per caller.
+pub(crate) fn normalize_rel(rel: &str) -> Result<String, String> {
     let mut stack: Vec<&str> = Vec::new();
     let normalized = rel.replace('\\', "/");
     for part in normalized.split('/') {
@@ -895,6 +897,23 @@ fn new_note_in(base: &Path, dest_rel: &str, titulo: &str, today: &str) -> Result
         .map_err(|e| e.to_string())
 }
 
+/// Files dropped from the computer onto a FOLDER of the tree: they are filed there, which
+/// means MOVED (ADR-0028, extended 2026-08-18). The fila's door keeps copying.
+#[tauri::command]
+pub fn brain_drop_into(
+    app: AppHandle,
+    paths: Vec<String>,
+    dest_rel: String,
+) -> Result<Vec<String>, String> {
+    let base = acervo_base()?;
+    let srcs: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
+    let out = drop_into(&base, &srcs, &dest_rel)?;
+    if !out.is_empty() {
+        emit_brainstorming_changed(&app, serde_json::json!({ "rel": out[0] }));
+    }
+    Ok(out)
+}
+
 #[tauri::command]
 pub fn brain_new_note_in(dest_rel: String, titulo: String) -> Result<String, String> {
     new_note_in(&acervo_base()?, &dest_rel, &titulo, &today_iso())
@@ -1589,13 +1608,7 @@ pub fn brain_topic_doc(rel: String) -> Result<String, String> {
 #[tauri::command]
 pub fn brain_brainstorm_delete(app: AppHandle, input: DeleteBrainstormInput) -> Result<(), String> {
     let rel = input.rel.replace('\\', "/");
-    let world = if rel.starts_with("brainstorming/") {
-        "brainstorming"
-    } else if rel.starts_with("pessoal/") {
-        "pessoal"
-    } else {
-        return Err("err.brainstorm_delete_only".into());
-    };
+    let world = pessoal_world_of(&rel).ok_or("err.brainstorm_delete_only")?;
     if rel.contains("..") {
         return Err("err.invalid_path".into());
     }
@@ -1617,15 +1630,133 @@ pub fn brain_brainstorm_delete(app: AppHandle, input: DeleteBrainstormInput) -> 
 // confinement as delete (never a versioned contexts/ path); the new name is a
 // bare filename — the original extension is kept when the user omits one.
 // Returns the new acervo-relative path. Pure core, testable without Tauri.
+/// A folder the tree may accept a DROP from the computer into. One rule, so the row that
+/// offers the gesture and the door that performs it cannot disagree:
+///
+///   • any folder inside a non-versioned world — `brainstorming/…`, `pessoal/…`,
+///     `loops/<slug>/…` (`pessoal_world_of`), which is where material lives;
+///   • `contexts/**/attachments`, and ONLY that inside the versioned tree — the same door
+///     the «＋ do computador» button already opens (`guarded_anexos_dir`).
+///
+/// Everything else is refused by name, including `inbox/` (the fila has its own door, and
+/// it COPIES — a drop there is «entregue isto à IA», not «arquive isto») and a loop's own
+/// definition path.
+pub(crate) fn guarded_drop_dir(base: &Path, dest_rel: &str) -> Result<PathBuf, String> {
+    let rel = normalize_rel(dest_rel)?;
+    if rel.is_empty() {
+        return Err("err.invalid_drop_dest".into());
+    }
+    let ok = pessoal_world_of(&rel).is_some()
+        || (rel.starts_with("contexts/") && rel.ends_with("/attachments"));
+    if !ok {
+        return Err("err.invalid_drop_dest".into());
+    }
+    let dir = base.join(&rel);
+    if !dir.is_dir() {
+        return Err("err.invalid_drop_dest".into());
+    }
+    let canon = dir
+        .canonicalize()
+        .map_err(|_| "err.not_found".to_string())?;
+    if !canon.starts_with(base) {
+        return Err("err.outside_acervo".into());
+    }
+    Ok(canon)
+}
+
+/// Files dropped from the computer into a folder of the tree: MOVED, because dropping into
+/// a folder of the cabinet is filing (the owner's decision, 2026-08-18) — the same thing a
+/// file manager does on one disk. The fila's door keeps copying: there the gesture means
+/// «hand this to the AI», and the original stays the person's.
+///
+/// Returns the new acervo-relative paths. Never overwrites (`next_free_name`): these bytes
+/// come from outside, so a repeated name is a DIFFERENT file.
+///
+/// TWO REFUSALS COME BEFORE THE FIRST MOVE, because a move has no undo:
+///   • a source already INSIDE the acervo is the other door (`move_pessoal_file`), which
+///     rewrites inbound refs and knows the worlds; renaming it here would bypass all that;
+///   • a credential heading for the VERSIONED tree is refused for the whole batch
+///     (ADR-0024/BR-9) — after a move the file would be gone from where it was, so the
+///     scan cannot happen afterwards.
+pub(crate) fn drop_into(
+    base: &Path,
+    srcs: &[PathBuf],
+    dest_rel: &str,
+) -> Result<Vec<String>, String> {
+    let dir = guarded_drop_dir(base, dest_rel)?;
+    let versioned = normalize_rel(dest_rel)?.starts_with("contexts/");
+    let mut planned: Vec<(&PathBuf, String)> = Vec::new();
+    for src in srcs {
+        if !src.is_file() {
+            continue;
+        }
+        if src.canonicalize().is_ok_and(|p| p.starts_with(base)) {
+            return Err("err.drop_from_inside".into());
+        }
+        let Some(name) = src.file_name().map(|s| s.to_string_lossy().to_string()) else {
+            continue;
+        };
+        if versioned {
+            if let Ok(text) = std::fs::read_to_string(src) {
+                let found = crate::intake::scan(&text);
+                if crate::intake::blocked(&found) {
+                    return Err(format!("err.intake_secret:{name}"));
+                }
+            }
+        }
+        planned.push((src, name));
+    }
+    let mut out = Vec::new();
+    for (src, name) in planned {
+        let dest = next_free_name(&dir, &name);
+        // `rename` falha entre volumes (EXDEV) — um arquivo vindo de um disco externo ou
+        // de um volume de rede cairia aqui. O recuo é copiar e apagar a origem: o efeito
+        // que a pessoa pediu, sem exigir que os dois lados estejam no mesmo disco.
+        if std::fs::rename(src, &dest).is_err() {
+            std::fs::copy(src, &dest).map_err(|e| format!("{name}: {e}"))?;
+            std::fs::remove_file(src).map_err(|e| format!("{name}: {e}"))?;
+        }
+        out.push(
+            dest.strip_prefix(base)
+                .map(|p| p.to_string_lossy().replace('\\', "/"))
+                .map_err(|e| e.to_string())?,
+        );
+    }
+    Ok(out)
+}
+
+/// The NON-VERSIONED worlds a person may rename, move and delete in, from the tree:
+/// `brainstorming/` (ideias), `pessoal/` (produção) and `loops/<slug>/` — what a loop
+/// produced. All three are git-ignored (`git::GIT_IGNORED`), which is what makes them the
+/// same class of act; `contexts/` is not here on purpose (it is versioned, and it changes
+/// through Revisão).
+///
+/// `loops/` needs a SEGMENT COUNT, not a prefix: `loops/<slug>/<file>` is material, and
+/// `loops/<slug>.md` is the loop's own definition — versioned, the document the person
+/// reads, and deleting it is `loop_delete`, which also cancels a running cycle and forgets
+/// the runtime record (ADR-0029 §3.10 F3/F4). Renaming it here would orphan that record.
+pub(crate) fn pessoal_world_of(p: &str) -> Option<&'static str> {
+    let p = p.trim_end_matches('/');
+    if p == "brainstorming" || p.starts_with("brainstorming/") {
+        return Some("brainstorming");
+    }
+    if p == "pessoal" || p.starts_with("pessoal/") {
+        return Some("pessoal");
+    }
+    // `loops`, `loops/x.md` → não; `loops/x` (a pasta) e `loops/x/y.md` → sim
+    let mut parts = p.split('/');
+    if parts.next() == Some("loops") {
+        let slug = parts.next().unwrap_or("");
+        if !slug.is_empty() && !slug.ends_with(".md") {
+            return Some("loops");
+        }
+    }
+    None
+}
+
 pub(crate) fn rename_pessoal_file(base: &Path, rel: &str, name: &str) -> Result<String, String> {
     let rel = rel.replace('\\', "/");
-    let world = if rel.starts_with("brainstorming/") {
-        "brainstorming"
-    } else if rel.starts_with("pessoal/") {
-        "pessoal"
-    } else {
-        return Err("err.outside_brainstorm".into());
-    };
+    let world = pessoal_world_of(&rel).ok_or("err.outside_brainstorm")?;
     if rel.contains("..") {
         return Err("err.invalid_path".into());
     }
@@ -1936,17 +2067,8 @@ pub(crate) fn move_pessoal_file(base: &Path, rel: &str, dest_dir: &str) -> Resul
         .replace('\\', "/")
         .trim_end_matches('/')
         .to_string();
-    let world_of = |p: &str| -> Option<&'static str> {
-        if p == "brainstorming" || p.starts_with("brainstorming/") {
-            Some("brainstorming")
-        } else if p == "pessoal" || p.starts_with("pessoal/") {
-            Some("pessoal")
-        } else {
-            None
-        }
-    };
-    let src_world = world_of(&rel).ok_or("err.outside_brainstorm")?;
-    let dst_world = world_of(&dest_dir).ok_or("err.outside_brainstorm")?;
+    let src_world = pessoal_world_of(&rel).ok_or("err.outside_brainstorm")?;
+    let dst_world = pessoal_world_of(&dest_dir).ok_or("err.outside_brainstorm")?;
     if rel.contains("..") || dest_dir.contains("..") {
         return Err("err.invalid_path".into());
     }
@@ -3185,10 +3307,18 @@ pub async fn brain_index_terms() -> Result<Vec<IndexTerm>, String> {
 mod graph_tests {
     use super::*;
 
+    // A PASTA É ÚNICA, e `pid + nanos` não bastava: o MESMO teste roda em três binários
+    // (lib, bin e o de teste) ao mesmo tempo, e o relógio do macOS não tem resolução de
+    // nanossegundo — duas cópias que começam no mesmo instante recebiam a mesma pasta e
+    // uma via os arquivos da outra. Pego em 2026-08-18 por um teste novo que falhava em 2
+    // de 5 execuções («nota-2.md» onde a pasta estava vazia). Um contador atômico fecha o
+    // caso dentro do processo, como `models::tests::scratch` já faz.
+    static TMP_N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     fn tmp(tag: &str) -> PathBuf {
         let root = std::env::temp_dir().join(format!(
-            "loro-graph-{tag}-{}-{}",
+            "loro-graph-{tag}-{}-{}-{}",
             std::process::id(),
+            TMP_N.fetch_add(1, std::sync::atomic::Ordering::SeqCst),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -4514,6 +4644,145 @@ mod tests {
     }
 
     // moving a note/anexo between folders of the non-versioned world
+    #[test]
+    // ADR-0029 §8.5 — O QUE UM LOOP PRODUZ É UM DOCUMENTO COMUM, e portanto se move, se
+    // renomeia e se apaga como qualquer outro. `loops/<slug>/` é um mundo NÃO-VERSIONADO
+    // como `brainstorming/` e `pessoal/` (git.rs::GIT_IGNORED tem `loops/*/`), então é a
+    // mesma classe de ato. Sem isto as três ações eram recusadas com
+    // `err.outside_brainstorm` — o artefato de um loop era um documento de segunda classe.
+    //
+    // E A DEFINIÇÃO NÃO ENTRA POR ESTA PORTA: `loops/<slug>.md` é versionado, é o que a
+    // pessoa lê e edita, e apagá-lo é `loop_delete` — que também cancela o ciclo em curso
+    // e esquece o registro (§3.10 F3/F4). Renomeá-lo por aqui deixaria um runtime órfão.
+    #[test]
+    // ADR-0028 §2 (extensão de 2026-08-18, decisão do dono) — SOLTAR UM ARQUIVO DO
+    // COMPUTADOR NUMA PASTA DA ÁRVORE É ARQUIVAR: o arquivo é MOVIDO, como em qualquer
+    // gerenciador de arquivos no mesmo disco. Soltar na FILA continua copiando: ali o
+    // gesto é «entregue isto à IA», e o original continua seu. O gesto muda de
+    // significado com o LUGAR, que é o que o roteador do ADR-0028 já faz.
+    #[test]
+    fn dropping_from_outside_moves_into_the_folder_and_refuses_what_it_should() {
+        let base = tmp("drop");
+        let fora = tmp("drop-fora");
+        std::fs::create_dir_all(base.join("brainstorming/vendas/attachments")).unwrap();
+        std::fs::create_dir_all(base.join("loops/teste")).unwrap();
+        std::fs::create_dir_all(base.join("contexts/produto/attachments")).unwrap();
+        std::fs::write(fora.join("relatorio.md"), "corpo").unwrap();
+        std::fs::write(fora.join("outro.md"), "outro").unwrap();
+
+        // move para os anexos de uma ideia — e o ORIGINAL sai
+        let novos = drop_into(
+            &base,
+            &[fora.join("relatorio.md")],
+            "brainstorming/vendas/attachments",
+        )
+        .unwrap();
+        assert_eq!(novos, vec!["brainstorming/vendas/attachments/relatorio.md"]);
+        assert!(base
+            .join("brainstorming/vendas/attachments/relatorio.md")
+            .is_file());
+        assert!(
+            !fora.join("relatorio.md").exists(),
+            "arquivar move, não copia"
+        );
+
+        // a pasta de um loop também recebe
+        std::fs::write(fora.join("nota.md"), "x").unwrap();
+        let novos = drop_into(&base, &[fora.join("nota.md")], "loops/teste").unwrap();
+        assert_eq!(novos, vec!["loops/teste/nota.md"]);
+
+        // NUNCA sobrescreve: um nome repetido vem de outro arquivo
+        std::fs::write(fora.join("relatorio.md"), "diferente").unwrap();
+        let novos = drop_into(
+            &base,
+            &[fora.join("relatorio.md")],
+            "brainstorming/vendas/attachments",
+        )
+        .unwrap();
+        assert_eq!(
+            novos,
+            vec!["brainstorming/vendas/attachments/relatorio-2.md"]
+        );
+
+        // uma ORIGEM DE DENTRO do acervo não é um solto do sistema: é a outra porta
+        // (`brain_move_pessoal`), e confundi-las apagaria a lógica dela
+        assert_eq!(
+            drop_into(
+                &base,
+                &[base.join("loops/teste/nota.md")],
+                "brainstorming/vendas/attachments"
+            ),
+            Err("err.drop_from_inside".into())
+        );
+
+        // destinos recusados: o que não é pasta de material
+        for ruim in [
+            "contexts/produto",
+            "",
+            "loops",
+            "loops/teste.md",
+            "../fora",
+            "inbox",
+        ] {
+            assert!(
+                drop_into(&base, &[fora.join("outro.md")], ruim).is_err(),
+                "«{ruim}» virou destino de solto"
+            );
+        }
+
+        // e uma CREDENCIAL num destino versionado é recusada ANTES de mover (ADR-0024):
+        // o arquivo continua do outro lado, e nada entrou no que vai para o commit
+        std::fs::write(
+            fora.join("segredo.md"),
+            "AWS_SECRET_ACCESS_KEY=AKIAIOSFODNN7EXAMPLEKEYzzzzzzzzzzzzzzzzzz",
+        )
+        .unwrap();
+        let r = drop_into(
+            &base,
+            &[fora.join("segredo.md")],
+            "contexts/produto/attachments",
+        );
+        assert!(
+            r.as_ref()
+                .is_err_and(|e| e.starts_with("err.intake_secret")),
+            "entrou credencial na árvore versionada: {r:?}"
+        );
+        assert!(fora.join("segredo.md").is_file(), "recusou DEPOIS de mover");
+    }
+
+    #[test]
+    fn a_loops_output_is_an_ordinary_document_but_its_definition_is_not() {
+        let base = tmp("loopfiles");
+        std::fs::create_dir_all(base.join("loops/teste")).unwrap();
+        std::fs::create_dir_all(base.join("brainstorming/vendas/attachments")).unwrap();
+        std::fs::write(base.join("loops/teste/01-insights.md"), "corpo").unwrap();
+        std::fs::write(base.join("loops/teste.md"), "---\nloop: teste\n---\n").unwrap();
+
+        // renomear
+        let novo = rename_pessoal_file(&base, "loops/teste/01-insights.md", "insights").unwrap();
+        assert_eq!(novo, "loops/teste/insights.md");
+        // mover para dentro de uma ideia (mundo diferente, mesma classe)
+        let movido = move_pessoal_file(
+            &base,
+            "loops/teste/insights.md",
+            "brainstorming/vendas/attachments",
+        )
+        .unwrap();
+        assert_eq!(movido, "brainstorming/vendas/attachments/insights.md");
+
+        // a DEFINIÇÃO é recusada nas três
+        assert_eq!(
+            rename_pessoal_file(&base, "loops/teste.md", "outro"),
+            Err("err.outside_brainstorm".into())
+        );
+        assert_eq!(
+            move_pessoal_file(&base, "loops/teste.md", "brainstorming/vendas/attachments"),
+            Err("err.outside_brainstorm".into())
+        );
+        // e a pasta do loop não é um destino de fora do mundo
+        assert!(move_pessoal_file(&base, "loops/teste.md", "loops/teste").is_err());
+    }
+
     #[test]
     fn move_pessoal_file_moves_between_folders() {
         let base = tmp("mv");

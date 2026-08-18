@@ -44,7 +44,16 @@ function loadRouter(env) {
     let sideSig = "", brainTab = spy.brainTab, hostOs = spy.hostOs;
     const toast = (m) => spy.toasts.push(m);
     const brainRefresh = () => {};
-    const invoke = async (cmd, args) => { spy.imported = { cmd, args }; return (args.paths || []).length; };
+    // cada porta devolve o que ela devolve de verdade: a fila conta, o arquivar devolve os
+    // caminhos NOVOS (é deles que o toast e o realce vivem)
+    const invoke = async (cmd, args) => {
+      spy.imported = { cmd, args };
+      const paths = args.paths || [];
+      if (cmd === "brain_drop_into") {
+        return paths.map((p) => args.destRel + "/" + String(p).split("/").pop());
+      }
+      return paths.length;
+    };
     const dropDestinationAt = () => spy.dest;
     const paintDropTarget = (d) => spy.marks.push(d);
     const insertIntoChatInput = (s) => { spy.chat = s; return true; };
@@ -54,6 +63,7 @@ function loadRouter(env) {
     ${fnSource("quoteDropPathShell")}
     ${fnSource("quoteDropPathPrompt")}
     ${fnSource("dropPathsText")}
+    ${fnSource("dropOriginLabel")}
     return ${fnSource("handleSystemDrop")};
   `)(spy);
   return { run: fn, spy };
@@ -69,6 +79,44 @@ test("o LUGAR do solto nomeia o destino — chat, terminal ou fila", () => {
   assert.equal(dest(hitting("#panelDoc")), "fila", "fora das duas, o destino de sempre");
   assert.equal(dest(null), "fila", "sem alvo (fora da janela) o comportamento não muda");
   assert.equal(dest({}), "fila", "um alvo sem closest não pode explodir o drop");
+});
+
+// ---------------------------------------------------------------- arquivar
+// «Ao arrastar um arquivo do meu computador para dentro da árvore, quero mover esse
+// arquivo para o destino» (dono, 2026-08-18). O quarto destino entra no MESMO roteador: o
+// lugar do solto decide. E o gesto tem significados diferentes nos dois lugares —
+// arquivar numa pasta MOVE (o original sai, como em qualquer gerenciador de arquivos no
+// mesmo disco); soltar na FILA copia, porque ali é «entregue isto à IA».
+test("uma PASTA da árvore é um destino, e ela nomeia a si mesma", () => {
+  const dest = loadPure("dropDestination");
+  const hitting = (sel, attrs) => ({
+    closest: (s) => (s === sel ? { dataset: attrs || {} } : null),
+  });
+  assert.equal(
+    dest(hitting("[data-dropdir]", { dropdir: "brainstorming/vendas/attachments" })),
+    "pasta:brainstorming/vendas/attachments"
+  );
+  assert.equal(dest(hitting("[data-dropdir]", { dropdir: "loops/teste" })), "pasta:loops/teste");
+  // uma pasta sem caminho não vira destino — cair na fila é o certo, não adivinhar
+  assert.equal(dest(hitting("[data-dropdir]", {})), "fila");
+  // o chat e o terminal continuam vencendo (eles são superfícies, não pastas)
+  assert.equal(dest({ closest: (s) => (s === "#panelChat" ? {} : null) }), "chat");
+});
+
+test("soltar numa pasta MOVE; soltar na fila copia", () => {
+  const { run, spy } = loadRouter({ dest: "pasta:brainstorming/vendas/attachments" });
+  return run({ paths: ["/Users/x/Desktop/relatorio.pdf"], position: { x: 1, y: 1 } }).then(() => {
+    assert.equal(spy.imported.cmd, "brain_drop_into", "a porta que MOVE, não a que copia");
+    assert.deepEqual(spy.imported.args.paths, ["/Users/x/Desktop/relatorio.pdf"]);
+    assert.equal(spy.imported.args.destRel, "brainstorming/vendas/attachments");
+    assert.ok(spy.toasts.join(" ").includes("→"), "a tela diz para onde foi");
+  }).then(() => {
+    // a fila continua sendo a porta que COPIA (o original é seu)
+    const f = loadRouter({ dest: "fila" });
+    return f.run({ paths: ["/Users/x/Desktop/a.pdf"], position: { x: 1, y: 1 } }).then(() => {
+      assert.equal(f.spy.imported.cmd, "brain_import_paths");
+    });
+  });
 });
 
 // A unidade do `position` do Tauri não é a mesma nos três sistemas: dividir
