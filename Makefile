@@ -11,9 +11,9 @@
 export PATH := $(HOME)/.cargo/bin:$(PATH)
 
 # Vanilla JS frontend files that must at least parse (node --check).
-JS_SRC := desktop/src/app.js desktop/src/shell.js desktop/src/overlay.js desktop/src/text.js desktop/src/audio.js desktop/src/mdedit.js desktop/src/review.js desktop/src/workspace.js
+JS_SRC := desktop/src/app.js desktop/src/shell.js desktop/src/overlay.js desktop/src/text.js desktop/src/audio.js desktop/src/mdedit.js desktop/src/review.js desktop/src/workspace.js desktop/src/loops.js
 
-.PHONY: help test test-rust test-js test-cli test-layout lint fmt build app test-docker syscap vendor-cm6 require-rust release
+.PHONY: help test test-rust test-js test-cli test-layout test-ui lint fmt build app test-docker syscap vendor-cm6 require-rust release
 
 help: ## Show this help menu
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -38,6 +38,13 @@ test-js: ## Run the JS frontend tests (node --test)
 # trusted. Skips with exit 0 when no Chrome/Chromium is installed.
 test-layout: ## Measure the header across viewport widths (needs Chrome)
 	node tools/measure-header.js --verbose
+
+# Também FORA do `test`, e pela mesma razão: precisa de um navegador. Ele roda o
+# index.html + app.js de verdade e exercita a superfície, que é a única forma de
+# pegar um defeito de CARREGAMENTO (uma const na zona morta, um id que não existe,
+# um innerHTML que lança) — a suíte portátil lê o fonte e não vê nenhum deles.
+test-ui: ## Smoke the real UI in headless Chrome (needs Chrome)
+	node tools/smoke-ui.js
 
 lint: ## Lint: clippy (deny warnings) + rustfmt --check + node --check on the JS sources
 	cargo clippy --manifest-path desktop/src-tauri/Cargo.toml -- -D warnings

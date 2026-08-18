@@ -41,6 +41,10 @@
                não teria trilha, e a largura dele tem de contar no bloco cuja parte
                decide se a pílula fica no eixo. É onde ele já aparecia. -->
           <span id="headRec" class="headrec mono" hidden></span>
+          <!-- ADR-0029 §3.9, segunda distância: um ciclo rodando é visível de
+               QUALQUER tela, como a gravação — mas em teal (IA) e sem piscar, e
+               clicar abre a aba ⟳ Loops do painel. -->
+          <button id="headLoops" class="headrec teal mono" type="button" hidden data-i18n-dyn></button>
           <span id="appVersion" class="localtag mono" title="tudo roda 100% no seu computador" data-i18n-attrs="title">—</span>
           <!-- R64 · O RASCUNHO NO CABEÇALHO, como o desenho previu. Ele vivia só na
                seção TIME do painel ✦ IA, então em que rascunho você está — o fato que
@@ -187,6 +191,12 @@
               <div class="bgroup teal"><button class="secttl" data-sect="knowledge" aria-expanded="true"><span class="seccaret">▾</span><span data-i18n>conhecimento</span></button><button id="addCtxBtn" class="gadd" aria-label="Novo tema" title="Novo tema" data-i18n-attrs="aria-label,title">＋</button></div>
               <div data-sectbody="knowledge"><div id="navCtx" class="btree"></div></div>
 
+              <!-- LOOPS (ADR-0029) — trabalho que a IA repete num ritmo. Fica
+                   FORA das ideias: um loop pode ser do projeto inteiro. -->
+              <div class="secsep" aria-hidden="true"></div>
+              <div class="bgroup teal"><button class="secttl" data-sect="loops" aria-expanded="true"><span class="seccaret">▾</span><span data-i18n>loops</span></button><button id="addLoopBtn" class="gadd" aria-label="Novo loop" title="Novo loop" data-i18n-attrs="aria-label,title">＋</button></div>
+              <div data-sectbody="loops"><div id="navLoops" class="btree"></div></div>
+
               <!-- habilidades customizadas: acessíveis, mas fora do caminho -->
               <div id="toolsSection" class="toolsec" hidden>
                 <div class="bgroup"><button class="bgtoggle" id="toolsToggle" title="Recolher/expandir habilidades de IA" data-i18n-attrs="title" aria-expanded="true" aria-controls="navTools"><span class="seccaret">▾</span> <span data-i18n>Habilidades de IA</span></button><button id="addToolBtn" class="gadd" aria-label="Nova habilidade de IA" title="Nova habilidade de IA" data-i18n-attrs="aria-label,title">＋</button></div>
@@ -243,6 +253,10 @@
             </button>
             <button class="minibtn teal" data-mini="knowledge" title="conhecimento" data-i18n-attrs="title">
               <svg class="ic" viewBox="0 0 24 24"><path d="M12 3L1 9l4 2.18v6L12 21l7-3.82v-6l2-1.09V17h2V9L12 3zm6.82 6L12 12.72 5.18 9 12 5.28 18.82 9zM17 15.99l-5 2.73-5-2.73v-3.72L12 15l5-2.73v3.72z"/></svg>
+            </button>
+            <button class="minibtn teal" data-mini="loops" title="loops" data-i18n-attrs="title">
+              <svg class="ic" viewBox="0 0 24 24"><path d="M12 6v3l4-4-4-4v3c-4.42 0-8 3.58-8 8 0 1.57.46 3.03 1.24 4.26L6.7 14.8c-.45-.83-.7-1.79-.7-2.8 0-3.31 2.69-6 6-6zm6.76 1.74L17.3 9.2c.44.84.7 1.79.7 2.8 0 3.31-2.69 6-6 6v-3l-4 4 4 4v-3c4.42 0 8-3.58 8-8 0-1.57-.46-3.03-1.24-4.26z"/></svg>
+              <span id="miniLoopsBadge" class="minibadge" hidden>0</span>
             </button>
             <button class="minibtn" data-mini="skills" title="Habilidades de IA" data-i18n-attrs="title">
               <svg class="ic" viewBox="0 0 24 24"><path d="M18 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 4h5v8l-2.5-1.5L6 12V4z"/></svg>
@@ -677,6 +691,10 @@
             <svg class="ic" viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H5.2L4 17.2V4h16v12z"/></svg>
             <span data-i18n>Chat</span>
           </button>
+          <button class="ptab" data-ptab="loops" id="ptabLoops" role="tab" aria-selected="false" aria-controls="panelLoops">
+            <svg class="ic" viewBox="0 0 24 24"><path d="M12 6v3l4-4-4-4v3c-4.42 0-8 3.58-8 8 0 1.57.46 3.03 1.24 4.26L6.7 14.8c-.45-.83-.7-1.79-.7-2.8 0-3.31 2.69-6 6-6zm6.76 1.74L17.3 9.2c.44.84.7 1.79.7 2.8 0 3.31-2.69 6-6 6v-3l-4 4 4 4v-3c4.42 0 8-3.58 8-8 0-1.57-.46-3.03-1.24-4.26z"/></svg>
+            <span data-i18n>Loops</span><span id="ptabLoopsN" class="destbadge" hidden>0</span>
+          </button>
           <button class="ptab" data-ptab="term" id="ptabTerm" role="tab" aria-selected="false" aria-controls="panelTerm">
             <svg class="ic" viewBox="0 0 24 24"><path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V8h16v10zM6.5 10l3 3-3 3L8 17l4-4-4-4-1.5 1zM13 16h5v-1.5h-5V16z"/></svg>
             <span data-i18n>Terminal</span>
@@ -741,6 +759,30 @@
         </div>
 
         <!-- Terminal: ponto de montagem lateral -->
+        <!-- ⟳ Loops (ADR-0029): o Chat continua sendo da pessoa — um ciclo nunca
+             ocupa a conversa dela. Aqui ficam os ciclos e o passo a passo de UM. -->
+        <div id="panelLoops" class="panelpane" role="tabpanel" aria-labelledby="ptabLoops" hidden>
+          <!-- ADR-0029 §4.18 — um pedido de permissão aparece AQUI, quando o ciclo pede.
+               Ele é do projeto: uma resposta vale para os próximos ciclos de todos os
+               loops. A seção só existe quando há pedido: uma cabeça vazia seria uma
+               afordância para algo que não está lá. -->
+          <div class="psec" id="pLoopReqs" hidden>
+            <h2 class="phead" data-i18n>PEDIDOS</h2>
+            <div id="pLoopReqList" class="ploops"></div>
+          </div>
+          <div class="psep" id="pLoopReqSep" hidden></div>
+          <div class="psec">
+            <h2 class="phead" id="pLoopsHead" data-i18n-dyn>CICLOS</h2>
+            <div id="pLoopsList" class="ploops"></div>
+          </div>
+          <div class="psep"></div>
+          <div class="psec">
+            <h2 class="phead" id="pLoopStepsHead" data-i18n-dyn>PASSO A PASSO</h2>
+            <div id="pLoopSteps" class="chatthread loopsteps"></div>
+            <button id="pLoopStop" class="btn sm" type="button" hidden data-i18n>■ parar este ciclo</button>
+            <p class="pnote" data-i18n>um ciclo é um turno próprio do agente do projeto: o Chat continua seu. Por padrão roda um por vez — os outros esperam a vez.</p>
+          </div>
+        </div>
         <div id="panelTerm" class="panelpane term" role="tabpanel" aria-labelledby="ptabTerm" hidden></div>
       </aside>
 
@@ -780,6 +822,8 @@
             <button class="cfgnavbtn" data-sec="cap" data-i18n>Captura</button>
             <button class="cfgnavbtn" data-sec="store" data-i18n="storage">Armazenamento</button>
             <button class="cfgnavbtn" data-sec="ai" data-i18n>IA e terminal</button>
+            <button class="cfgnavbtn" data-sec="plugins" data-i18n>Plugins</button>
+            <button class="cfgnavbtn" data-sec="loops" data-i18n>Loops</button>
             <button class="cfgnavbtn" data-sec="look" data-i18n>Aparência</button>
             <button class="cfgnavbtn" data-sec="git" data-i18n>Versões e GitHub</button>
           </nav>
@@ -901,6 +945,54 @@
               </div>
             </section>
 
+            <!-- ADR-0029 §4.2 — a gerência de pacotes mora na página que já
+                 existe; o instalar mora no ＋ da lateral, onde a pessoa está. -->
+            <section class="cfgsec" data-sec="plugins">
+              <h3 data-i18n>Plugins</h3>
+              <p class="hint secnote" data-i18n>um plugin traz habilidades, temas iniciais e loops para este projeto. Nada roda sozinho: o que ele traz entra como uma mudança, e loops chegam desligados.</p>
+              <div class="cfgcard">
+                <div id="pluginList" class="modelmgr"></div>
+                <div class="field"><span class="mono" data-i18n>do computador</span>
+                  <button id="cfgInstallPlugin" class="btn sm" type="button" data-i18n>instalar plugin…</button>
+                </div>
+                <p class="hint" data-i18n>o registro fica em .loro/plugins.json, versionado com o projeto. Remover subtrai só o que o plugin trouxe — um arquivo que você editou depois fica, e a tela diz qual.</p>
+              </div>
+            </section>
+            <!-- ADR-0029 §4.11 — aqui NÃO se configura nenhum loop específico:
+                 só os freios com que um loop novo nasce e a política de execução. -->
+            <section class="cfgsec" data-sec="loops">
+              <h3 data-i18n>Loops</h3>
+              <p class="hint secnote" data-i18n>cada loop — instrução, ritmo, destino, limites — se configura na própria tela (lateral → loops → editar). Aqui fica só o que vale para todos.</p>
+              <div class="cfgcard">
+                <label class="field"><span class="mono" data-i18n>pode criar, por ciclo, até</span>
+                  <input id="cfgLoopFiles" type="text" inputmode="numeric" spellcheck="false" />
+                </label>
+                <label class="field"><span class="mono" data-i18n>pode rodar, por dia, até</span>
+                  <input id="cfgLoopRuns" type="text" inputmode="numeric" spellcheck="false" />
+                </label>
+                <label class="field"><span class="mono" data-i18n>desliga sozinho depois de (dias)</span>
+                  <input id="cfgLoopDays" type="text" inputmode="numeric" spellcheck="false" />
+                </label>
+                <p class="hint" data-i18n>são freios, não metas: eles existem para um loop esquecido não gastar a IA sem ninguém olhar. Batendo um freio, o ciclo termina e a tela do loop diz qual foi. Antes de se desligar de vez, ele roda uma última vez.</p>
+                <div class="field"><span class="mono" id="lblLoopPar" data-i18n>ciclos ao mesmo tempo</span>
+                  <div class="segrow" id="loopParSeg" role="group" aria-labelledby="lblLoopPar">
+                    <button class="segbtn on" data-looppar="1" type="button" data-i18n>um por vez</button>
+                    <button class="segbtn" data-looppar="2" type="button" data-i18n>até 2</button>
+                    <button class="segbtn" data-looppar="4" type="button" data-i18n>até 4</button>
+                  </div>
+                </div>
+                <p class="hint" id="cfgLoopParHint" data-i18n-dyn>um por vez é o padrão: os outros esperam a vez.</p>
+                <!-- ADR-0029 §4.18 — o que os ciclos podem usar fora do projeto é do
+                     PROJETO, então ele se LÊ e se DESFAZ aqui. Conceder acontece no
+                     pedido (painel ⟳ Loops), quando um ciclo pede; sem esta lista, uma
+                     concessão dada lá não teria onde ser revista se o loop que a
+                     provocou fosse apagado. -->
+                <div class="field stack"><span class="mono" data-i18n>o que os ciclos podem usar</span>
+                  <div id="cfgLoopPerms" class="cfgperms"></div>
+                </div>
+                <p class="hint" data-i18n>ler e editar o projeto os ciclos já podem. Isto é o que foi liberado ALÉM disso — cada linha veio de um pedido seu. «tudo, sem perguntar» e comandos livres nunca são liberados a um ciclo.</p>
+              </div>
+            </section>
             <section class="cfgsec" data-sec="look">
               <h3 data-i18n>Aparência</h3>
               <div class="cfgcard">
@@ -983,6 +1075,7 @@
     <script src="brainstorm.js"></script>
     <script src="presets.js"></script>
     <script src="modelui.js"></script>
+    <script src="loops.js"></script>
     <script src="audio.js"></script>
     <script src="shell.js"></script>
     <script src="app.js"></script>

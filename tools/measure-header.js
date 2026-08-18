@@ -50,6 +50,13 @@ const header = m[0];
 // plausível, não um caso típico: prever o típico foi o erro que produziu os
 // cortes anteriores.
 const CASES = [
+  // ADR-0029 — a marca dos loops é o SEGUNDO pill do cabeçalho, e também é
+  // flex:none. O pior caso passou a ser este: gravando E com ciclos rodando, nos
+  // dois idiomas. O texto é o que o app escreve de verdade (paintLoopChrome:
+  // "⟳ N rodando", com N em dois dígitos como pior caso) — medir um texto que o
+  // app não produz mede uma ficção.
+  { nome: "pt · rascunho longo · gravando · LOOPS · contadores", lang: "pt", proj: "Base de conhecimento do time", draft: "feat/acervo-navegacao-lateral", rec: true, loops: true, badges: true },
+  { nome: "en · rascunho longo · gravando · LOOPS · contadores", lang: "en", proj: "Loro", draft: "feat/acervo-navegacao-lateral", rec: true, loops: true, badges: true },
   { nome: "en · rascunho longo · gravando · contadores", lang: "en", proj: "Loro", draft: "feat/acervo-navegacao-lateral", rec: true, badges: true },
   { nome: "pt · rascunho longo · gravando · contadores", lang: "pt", proj: "Loro", draft: "feat/acervo-navegacao-lateral", rec: true, badges: true },
   { nome: "pt · projeto longo · rascunho longo · gravando", lang: "pt", proj: "Base de conhecimento do time", draft: "feat/acervo-navegacao-lateral", rec: true, badges: true },
@@ -74,6 +81,9 @@ if (${!!c.draft}) dr.innerHTML = '<span class="mono">' + ${JSON.stringify(c.draf
 const rec = document.getElementById("headRec");
 rec.hidden = ${!c.rec};
 if (${!!c.rec}) rec.textContent = "\\u25cf gravando \\u00b7 12:34";
+const lp = document.getElementById("headLoops");
+lp.hidden = ${!c.loops};
+if (${!!c.loops}) lp.textContent = ${JSON.stringify(c.lang === "en" ? "\u27f3 12 running" : "\u27f3 12 rodando")};
 document.getElementById("recLabel").textContent = ${JSON.stringify(c.lang === "en" ? "Record" : "Gravar")};
 if (${c.lang === "en"}) {
   const rot = ${JSON.stringify(ROTULOS_EN)};
@@ -88,6 +98,13 @@ const head = document.getElementById("appHead"), nav = document.getElementById("
 const left = document.getElementById("acervoSwitch"), right = head.querySelector(".headright");
 const r = (n) => { const b = n.getBoundingClientRect(); return { l: Math.round(b.left), r: Math.round(b.right), w: Math.round(b.width) }; };
 const H = r(head), N = r(nav), L = r(left), R = r(right);
+// ADR-0029 — a CAIXA do bloco direito mente: ele alinha ao FIM, e o conteúdo que
+// não cabe sai pelo INÍCIO. A caixa fica onde estava e o primeiro filho
+// aparece à esquerda dela, por baixo do nav (absoluto e centrado). Foi assim que uma
+// SEGUNDA marca no cabeçalho passou por 6 casos × 16 larguras sem acusar colisão, e
+// só apareceu numa captura de tela. O que se mede é a extensão do CONTEÚDO.
+const kids = [...right.children].filter((el) => !el.hidden && el.getBoundingClientRect().width > 0);
+R.l = Math.min(R.l, ...kids.map((el) => Math.round(el.getBoundingClientRect().left)));
 document.title = "RESULT" + JSON.stringify({
   W: H.w, nav: N, left: L, right: R,
   colideDireita: N.r - R.l,

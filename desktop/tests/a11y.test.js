@@ -294,9 +294,9 @@ test("F7 — cada segmento é um grupo com nome, não seis botões soltos", () =
 test("F7 — as abas do painel direito são abas de verdade", () => {
   assert.match(HTML, /id="panelTabs"[^>]*role="tablist"/);
   const tabs = [...HTML.matchAll(/<button class="ptab[^"]*"[^>]*>/g)];
-  assert.equal(tabs.length, 3);
+  assert.equal(tabs.length, 4);
   for (const m of tabs) assert.match(m[0], /role="tab"/);
-  for (const id of ["panelDoc", "panelChat", "panelTerm"]) {
+  for (const id of ["panelDoc", "panelChat", "panelLoops", "panelTerm"]) {
     assert.match(tag(id), /role="tabpanel"/);
     assert.match(tag(id), /aria-labelledby=/);
   }
