@@ -583,6 +583,68 @@ pub(crate) fn next_free_name(dir: &Path, name: &str) -> PathBuf {
     target
 }
 
+// A ideia "mais recente" da lateral tem de refletir o TRABALHO que chegou nela.
+// `atualizado_em` do meta.json é escrito só quando a ideia é editada PELO APP, e
+// uma análise que o agente grava em `meetings/<id>/notes/` nunca o move — medido
+// num acervo real de nove ideias, o campo estava vazio em TODAS, o comparador do
+// corte (brainstorm.js::filterAndCapTemas) devolvia 0 para todo par e quais 8
+// sobreviviam era arbitrário: a ideia com o conteúdo mais novo era a escondida, e
+// a análise rodava sem aparecer. Este é o único uso do campo — ele nunca é exibido.
+//
+// A varredura é RASA de propósito, porque isto roda no poll de ~10s da lateral: a
+// pasta da ideia, os três grupos, e cada reunião com o seu `notes/`. O mtime de um
+// diretório muda quando um filho DIRETO entra, então esses níveis bastam para ver
+// uma análise chegar. Nenhum arquivo é lido e nenhum áudio é percorrido.
+fn dir_mtime_iso(p: &Path) -> String {
+    std::fs::metadata(p)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| {
+            let secs = d.as_secs();
+            let (y, m, day) = civil_from_days((secs / 86_400) as i64);
+            let rest = secs % 86_400;
+            format!(
+                "{y:04}-{m:02}-{day:02}T{:02}:{:02}:{:02}",
+                rest / 3600,
+                (rest % 3600) / 60,
+                rest % 60
+            )
+        })
+        .unwrap_or_default()
+}
+fn brainstorming_freshness(dir: &Path, meta_atualizado_em: &str) -> String {
+    // O meta nunca é REBAIXADO (uma data futura que o app escreveu continua
+    // valendo); ele só deixa de ser o teto.
+    let mut newest = meta_atualizado_em.to_string();
+    let mut bump = |p: &Path| {
+        let t = dir_mtime_iso(p);
+        if t > newest {
+            newest = t;
+        }
+    };
+    bump(dir);
+    let meetings = crate::paths::acervo_dir(dir, "meetings", "reunioes");
+    for (cur, legacy) in [
+        ("meetings", "reunioes"),
+        ("notes", "notas"),
+        ("attachments", "anexos"),
+    ] {
+        bump(&crate::paths::acervo_dir(dir, cur, legacy));
+    }
+    if let Ok(rd) = std::fs::read_dir(&meetings) {
+        for e in rd.flatten() {
+            let p = e.path();
+            if !p.is_dir() {
+                continue;
+            }
+            bump(&p);
+            bump(&crate::paths::acervo_dir(&p, "notes", "notas"));
+        }
+    }
+    newest
+}
+
 fn list_brainstormings(base: &Path) -> Vec<BrainstormingListItem> {
     let mut out: Vec<BrainstormingListItem> = std::fs::read_dir(brainstorming_dir(base))
         .map(|rd| {
@@ -605,7 +667,7 @@ fn list_brainstormings(base: &Path) -> Vec<BrainstormingListItem> {
                             "meetings",
                             "reunioes",
                         )),
-                        atualizado_em: m.atualizado_em,
+                        atualizado_em: brainstorming_freshness(&e.path(), &m.atualizado_em),
                         slug,
                     }
                 })
@@ -3763,6 +3825,55 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         root.canonicalize().unwrap()
+    }
+
+    // A ideia "mais recente" tem de refletir o TRABALHO que chegou nela. O
+    // `atualizado_em` do meta.json só é escrito quando a ideia é editada pelo app,
+    // então uma análise que o AGENTE grava em `meetings/<id>/notes/` nunca o move.
+    // Medido num acervo real de nove ideias: o campo estava VAZIO em todas as nove,
+    // o comparador do corte da lateral (brainstorm.js::filterAndCapTemas) devolvia 0
+    // para todo par, e quais 8 sobreviviam era arbitrário — a ideia com o conteúdo
+    // MAIS NOVO era justamente a escondida, então a análise rodava e não aparecia.
+    #[test]
+    fn brainstorming_freshness_sees_work_the_agent_wrote() {
+        let root = tmp("freshness");
+        let idea = root.join("brainstorming").join("engenharia");
+        std::fs::create_dir_all(idea.join("meetings/2026-08-13-1437-reuniao/notes")).unwrap();
+        std::fs::create_dir_all(idea.join("notes")).unwrap();
+        std::fs::create_dir_all(idea.join("attachments")).unwrap();
+
+        // sem meta e sem conteúdo: a chave não pode ser vazia (era o que anulava a ordem)
+        let vazia = brainstorming_freshness(&idea, "");
+        assert!(
+            !vazia.is_empty(),
+            "uma chave de frescor vazia torna a ordenação arbitrária"
+        );
+
+        // a análise que o agente grava fundo na árvore MOVE a chave
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        std::fs::write(
+            idea.join("meetings/2026-08-13-1437-reuniao/notes/analise-2026-08-13T144Z.md"),
+            "# análise",
+        )
+        .unwrap();
+        let depois = brainstorming_freshness(&idea, "");
+        assert!(
+            depois > vazia,
+            "uma análise em meetings/<id>/notes/ tem de deixar a ideia mais recente: {vazia} -> {depois}"
+        );
+
+        // o que o meta afirma nunca é REBAIXADO — só nunca é o teto
+        let futuro = brainstorming_freshness(&idea, "2099-01-01");
+        assert!(
+            futuro.starts_with("2099-01-01"),
+            "o meta mais novo que o disco continua valendo: {futuro}"
+        );
+        let antigo = brainstorming_freshness(&idea, "1999-01-01");
+        assert_eq!(
+            antigo, depois,
+            "um meta velho não pode esconder trabalho novo"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

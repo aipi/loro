@@ -2476,6 +2476,25 @@ function groupMonths(files) {
   return new Map([...m.entries()].sort((a, b) => b[0].localeCompare(a[0])));
 }
 
+// UM dono para "a tela do wizard está à mostra": os dois `hidden` e a classe que
+// tira do cabeçalho o que não tem assunto sem projeto (#app.firstrun — nav, Gravar,
+// ✦ IA e o painel). `openNewAcervo` revelava a tela NA HORA e deixava a classe para
+// o brainRefresh, que é um poll de ~10s: até o tique chegar, a tela de projeto novo
+// aparecia com o cromo do projeto CONFIGURADO — pílula de destinos, Gravar, ✦ IA e
+// o painel aberto estreitando a coluna do cartão. Era a mesma tela em três
+// aparências, dependendo de quando se olhava. Mesma doença de C1/C2/C28: um estado,
+// um pintor (DESIGN.md §1 — o estado não mente).
+function paintWizardChrome(showWizard, legado) {
+  B.setup.hidden = !showWizard;
+  B.shell.hidden = showWizard || !!legado;
+  document.getElementById("app").classList.toggle("firstrun", !!showWizard);
+  // C33 · o seletor de projeto lê deste mesmo estado (o ⌄ e o `disabled`): sem
+  // esta linha a seta só sumiria no próximo tique do poll — a mesma espera que
+  // C32 tirou do resto do cromo.
+  renderSwitch();
+  return !!showWizard;
+}
+
 async function brainRefresh() {
   if (!brainTab) return;
   // Nada de trabalho enquanto a janela está oculta: cada passada dispara dois
@@ -2517,11 +2536,8 @@ async function brainRefresh() {
     }
     gate.hidden = !legado;
   }
-  B.setup.hidden = !showWizard;
-  B.shell.hidden = showWizard || legado;
   // 1j: sem projeto não há destinos, nem o que gravar, nem documento no painel
-  document.getElementById("app").classList.toggle("firstrun", showWizard);
-  renderSwitch();
+  paintWizardChrome(showWizard, legado);   // pinta o seletor também (C33)
   if (showWizard) return;
   renderHome(st);
   // git: estado geral + status por arquivo (cores estilo VSCode na árvore)
@@ -4076,6 +4092,15 @@ const TOOL_ORDER = {
     "loro-context.md", "loro-tool.md",
   ],
 };
+// ADR-0005 · Numa reunião as habilidades DA REUNIÃO lideram — "perguntar sobre a
+// reunião" primeiro. O mapa TOOL_ORDER.meeting existia para isso e nenhum chamador
+// o alcançava: todos passavam o literal "doc", então a ordem da reunião era código
+// morto e, AO VIVO — que é justamente quando analisar ainda não está disponível —,
+// a habilidade mais útil ficava atrás de sete outras. A superfície agora é DERIVADA
+// do documento que a ação mira, num lugar só.
+function habilidadeSurface(rel) {
+  return LM.meetingDir(rel) ? "meeting" : "doc";
+}
 function habilidadeRank(name, surface) {
   const order = TOOL_ORDER[surface] || TOOL_ORDER.doc;
   const i = order.indexOf(name);
@@ -4310,7 +4335,7 @@ function openMeetingMenu(rel, id, title, status, anchor, notas) {
     B.bMenu.querySelector("[data-mtgclose]").onclick = () => { closeFloat(); finishInterruptedMeeting(id, rel); };
   }
   B.bMenu.querySelector("[data-question]").onclick = () => { closeFloat(); askMeetingQuestion(id, rel); };
-  B.bMenu.querySelector("[data-tools]").onclick = () => openHabilidadeMenu(rel, anchor);
+  B.bMenu.querySelector("[data-tools]").onclick = () => openHabilidadeMenu(rel, anchor, false, habilidadeSurface(rel));
   B.bMenu.querySelector("[data-ren]").onclick = () => { closeFloat(); promptRenameMeeting(id, title); };
   B.bMenu.querySelector("[data-del]").onclick = () => { closeFloat(); delPessoal(rel, "reuniao"); };
   placeMenu(anchor);
@@ -6222,7 +6247,7 @@ function renderDocRail(tab, isGuide) {
       `<button class="pact" data-pact="ai">✦ ${t("Pedir mudança à IA")}</button>` +
       (anexos ? `<button class="pact" data-pact="attach">${t("Anexar arquivo")}</button>` : "");
   } else {
-    const top = skillable ? allHabilidadeEntries("doc").slice(0, 3) : [];
+    const top = skillable ? allHabilidadeEntries(habilidadeSurface(tab.rel)).slice(0, 3) : [];
     acts.innerHTML = top.map((e, i) =>
         `<button class="pact" data-skill="${i}" title="${esc(e.title || "")}">${esc(e.label)}</button>`).join("") +
       (aiable ? `<button class="pact" data-pact="ai">✦ ${t("Pedir mudança à IA")}</button>` : "");
@@ -6239,8 +6264,8 @@ function renderDocRail(tab, isGuide) {
     // N15 · o rótulo contava ARQUIVOS e o menu lista ENTRADAS (loro-sync abre em
     // 4 fontes, a aposentada loro-digest sai): 12 no rótulo, 14 no menu. Uma
     // contagem só pode vir da lista que o controle abre.
-    all.textContent = `${t("todas as habilidades de IA")} (${allHabilidadeEntries("doc").length}) ▸`;
-    all.onclick = (e) => { e.stopPropagation(); openHabilidadeMenu(tab.rel, all, true, "doc"); };
+    all.textContent = `${t("todas as habilidades de IA")} (${allHabilidadeEntries(habilidadeSurface(tab.rel)).length}) ▸`;
+    all.onclick = (e) => { e.stopPropagation(); openHabilidadeMenu(tab.rel, all, true, habilidadeSurface(tab.rel)); };
   }
   renderPanelTimeline(tab);
   renderPanelTeam(tab, isGuide);
@@ -6719,7 +6744,7 @@ const COMMANDS = [
   { group: "documento", label: "Fechar aba", combo: IS_MAC ? "⌘W" : "Ctrl+W", when: hasDoc, run: () => closeActiveTab() },
   { group: "documento", label: "Reabrir aba", combo: IS_MAC ? "⇧⌘T" : "Ctrl+Shift+T", when: hasClosedTab, run: () => reopenClosedTab() },
 
-  { group: "fazer", label: "Executar habilidade…", run: () => openHabilidadeMenu(currentRel(), $("aiPanelBtn"), true, "doc") },
+  { group: "fazer", label: "Executar habilidade…", run: () => openHabilidadeMenu(currentRel(), $("aiPanelBtn"), true, habilidadeSurface(currentRel())) },
   // N5 · a outra metade do fluxo (o que o time mandou revisar) só tinha porta
   // num toast que expira e numa faixa que se dispensa: aqui ela é permanente.
   { group: "fazer", label: "Ver revisões do time", when: () => !!(envDoctor && envDoctor.versioningEnabled), run: () => { openHome(); goDest("review", "team"); } },
@@ -6895,10 +6920,26 @@ window.addEventListener("keydown", (e) => {
 // ---- seletor de acervo (projetos) ----
 function renderSwitch() {
   const cur = acervos.find((a) => a.id === activeAcervo);
+  const wizard = !B.setup.hidden;
+  // B7 fixou este rótulo de propósito (o defeito era a palavra interna "acervo"
+  // vazando): sem projeto carregado o chip diz "projeto". Com o ⌄ fora, ele se lê
+  // como rótulo e não como um projeto que se pode escolher.
   B.acervoName.textContent = cur ? cur.name : t("projeto");
+  // O ⌄ é a promessa de um menu, e com o wizard à vista não há menu para abrir:
+  // quem não é controle não se veste de controle (DESIGN.md §1 — nunca mostrar um
+  // controle que não faz nada).
+  const caret = B.acervoBtn.querySelector(".swcaret");
+  if (caret) caret.hidden = wizard;
+  // `disabled` de verdade, não só `pointer-events: none`: aquilo barra o mouse e
+  // deixa o botão no tab order, então Enter ainda abria o menu — o controle
+  // "desligado" era operável pelo teclado. Um botão desligado também não pode
+  // seguir anunciando um popup.
+  B.acervoBtn.disabled = wizard;
+  if (wizard) B.acervoBtn.removeAttribute("aria-haspopup");
+  else B.acervoBtn.setAttribute("aria-haspopup", "true");
   // com o wizard à vista o accent é o preview da cor escolhida nele — sem o
   // desvio, este poll (10s) revertia o preview para a cor do acervo ativo
-  applyAccent(!B.setup.hidden ? wizColor : (cur ? cur.color : ""));
+  applyAccent(wizard ? wizColor : (cur ? cur.color : ""));
 }
 B.acervoBtn.addEventListener("click", (e) => {
   e.stopPropagation();
@@ -7004,7 +7045,9 @@ function openNewAcervo() {
   B.wizTitle.textContent = t("Novo projeto");
   resetWizardFields();
   B.cancelBtn.hidden = false;
-  B.setup.hidden = false; B.shell.hidden = true;
+  // o cromo é do mesmo pintor do refresh: revelar a tela sem ele deixava o
+  // cabeçalho do projeto configurado em volta de um formulário de projeto novo
+  paintWizardChrome(true);
   B.nameInput.focus();
 }
 function drawWizColors() {
@@ -10153,7 +10196,87 @@ function openSystemAudioSetup() {
   wireFloatMenu(B.bMenu, null);
 }
 
-// ---- arrastar arquivos do SISTEMA para a fila (Tauri drag-drop) ----
+// ---- arrastar arquivos do SISTEMA para dentro do app (Tauri drag-drop) ----
+// ADR-0028 · a janela aceitava arquivos soltos com UM destino: a fila do acervo.
+// Sobre o chat e sobre o terminal — as duas superfícies onde se conversa com o
+// agente — soltar não fazia nada, e o caminho de um arquivo é justamente o
+// contexto que se quer dar ali. Agora o LUGAR do solto decide o destino; nas
+// duas superfícies novas entra o CAMINHO como TEXTO: nada é importado para o
+// acervo (a porta da fila é de mão única, ADR-0024) e nada é executado.
+//
+// O `position` do evento é declarado "physical" pelo Tauri, mas a unidade depende
+// do sistema: no macOS vem de NSDraggingInfo.draggingLocation (pontos) e no Linux
+// do GTK (lógico) — já são px de CSS; no Windows vem de ScreenToClient, em px de
+// dispositivo. Dividir sempre pelo devicePixelRatio punha o ponto na metade da
+// tela num Retina; nunca dividir erra no Windows a 150%.
+function dropPointCss(pos, ratio, os) {
+  const s = os === "windows" ? Number(ratio) || 1 : 1;
+  return { x: (Number(pos && pos.x) || 0) / s, y: (Number(pos && pos.y) || 0) / s };
+}
+function dropDestination(hit) {
+  if (!hit || !hit.closest) return "fila";
+  if (hit.closest("#panelChat")) return "chat";
+  if (hit.closest("#termPanel")) return "terminal";
+  return "fila";
+}
+function dropDestinationAt(pos) {
+  const p = dropPointCss(pos, window.devicePixelRatio, hostOs);
+  return dropDestination(document.elementFromPoint(p.x, p.y));
+}
+// No terminal quem lê o caminho é um SHELL (zsh no unix, cmd.exe via COMSPEC no
+// Windows — term_open): um espaço sem aspas parte o caminho em dois argumentos.
+// Aspas simples são literais no zsh, mas o cmd.exe não as entende.
+function quoteDropPathShell(p, os) {
+  const s = String(p || "");
+  if (!/[\s"'$`\\&|;<>()[\]{}*?!#~]/.test(s)) return s;
+  if (os === "windows") return `"${s.replace(/"/g, '\\"')}"`;
+  return `'${s.replace(/'/g, "'\\''")}'`;
+}
+// O composer não passa por shell: o texto vai como PROMPT para o CLI do agente,
+// onde só o espaço ambiguiza o caminho — aspas por metacaractere só sujariam.
+function quoteDropPathPrompt(p) {
+  const s = String(p || "");
+  return /\s/.test(s) ? `"${s.replace(/"/g, '\\"')}"` : s;
+}
+function dropPathsText(paths, dest, os) {
+  const quote = dest === "terminal" ? (p) => quoteDropPathShell(p, os) : quoteDropPathPrompt;
+  return paths.map(quote).join(" ");
+}
+// A cola cai no CURSOR, como uma cola de verdade, e nunca gruda no que já estava
+// escrito: o espaço à esquerda só entra se faltar.
+function insertIntoChatInput(text) {
+  const inp = $("chatInput");
+  if (!inp) return false;
+  const at = inp.selectionStart == null ? inp.value.length : inp.selectionStart;
+  const to = inp.selectionEnd == null ? at : inp.selectionEnd;
+  const head = inp.value.slice(0, at), tail = inp.value.slice(to);
+  const ins = (head && !/\s$/.test(head) ? " " : "") + text + " ";
+  inp.value = head + ins + tail;
+  inp.focus();
+  const caret = head.length + ins.length;
+  try { inp.setSelectionRange(caret, caret); } catch (_) {}
+  inp.dispatchEvent(new Event("input"));   // o composer cresce com o texto
+  return true;
+}
+// O caminho é DIGITADO, sem "\n": o terminal roda o agente do projeto, e disparar
+// um comando por acidente não tem volta. Depois de `term-exit` o PTY não existe
+// mais e o term_input sumiria em silêncio — a recusa é dita.
+function dropIntoTerminal(text) {
+  if (!termReady) { toast(t("o terminal não está rodando — use “reiniciar”")); return; }
+  invoke("term_input", { data: text }).catch(() => {});
+  if (term) term.focus();
+}
+// O realce diz QUAL superfície recebe. Havia um só (o da fila, no #app) e ele
+// acendia com o ponteiro sobre o chat, prometendo o destino errado (DESIGN.md §1).
+const DROP_MARKS = { chat: "panelChat", terminal: "termPanel" };
+function paintDropTarget(dest) {
+  const app = document.getElementById("app");
+  if (app) app.classList.toggle("dropping", dest === "fila" && brainTab);
+  for (const [k, id] of Object.entries(DROP_MARKS)) {
+    const n = document.getElementById(id);
+    if (n) n.classList.toggle("droptarget", dest === k);
+  }
+}
 // um ou mais arquivos soltos na janela (na aba acervo) entram na fila do acervo ativo
 // C6 · `_prompt.md` é o arquivo de INSTRUÇÕES do loop (GUIDE_REL), não um item:
 // importado, ele sobrescreve o guia — que não é versionado, então não há volta —
@@ -10170,11 +10293,18 @@ function splitQueueGuideDrop(paths) {
     guides: paths.filter(isQueueGuidePath).length,
   };
 }
-listen("tauri://drag-drop", async (e) => {
-  if (!brainTab) return;
-  const dropped = (e.payload && e.payload.paths) || [];
-  if (!dropped.length) return;
-  document.getElementById("app").classList.remove("dropping");
+// O roteador é uma função NOMEADA, não o corpo do listener: é ela que os testes
+// executam de verdade (um destino a mais que só o listener conhecesse voltaria a
+// ser conferido por leitura de fonte). Devolve o destino escolhido.
+async function handleSystemDrop(payload) {
+  const p = payload || {};
+  const dropped = p.paths || [];
+  const dest = dropDestinationAt(p.position);
+  paintDropTarget(null);
+  if (!dropped.length) return dest;
+  if (dest === "chat") { insertIntoChatInput(dropPathsText(dropped, "chat", hostOs)); return dest; }
+  if (dest === "terminal") { dropIntoTerminal(dropPathsText(dropped, "terminal", hostOs)); return dest; }
+  if (!brainTab) return dest;
   const { ok: paths, guides } = splitQueueGuideDrop(dropped);
   try {
     const n = paths.length ? await invoke("brain_import_paths", { paths, context: null }) : 0;
@@ -10183,9 +10313,14 @@ listen("tauri://drag-drop", async (e) => {
   // a recusa fala por último e fica mais tempo: é ela que explica o arquivo que
   // NÃO entrou (antes ele entrava, por cima do guia, e a contagem o incluía)
   if (guides) toast(t("_prompt.md é o arquivo de instruções do loop — renomeie antes de importar"), 6000);
-});
-listen("tauri://drag-enter", () => { if (brainTab) document.getElementById("app").classList.add("dropping"); });
-listen("tauri://drag-leave", () => document.getElementById("app").classList.remove("dropping"));
+  return dest;
+}
+listen("tauri://drag-drop", (e) => handleSystemDrop(e && e.payload));
+// o realce segue o ponteiro: `drag-over` é o único evento que diz onde ele está
+// agora, e sem ele o realce ficava preso no destino da ENTRADA
+listen("tauri://drag-enter", (e) => paintDropTarget(dropDestinationAt(e && e.payload && e.payload.position)));
+listen("tauri://drag-over", (e) => paintDropTarget(dropDestinationAt(e && e.payload && e.payload.position)));
+listen("tauri://drag-leave", () => paintDropTarget(null));
 
 // ---- eventos do backend ----
 // reunião em transcrição: acumula as linhas e persiste abaixo do marcador
@@ -10356,7 +10491,7 @@ document.querySelectorAll("#sideMini .minibtn").forEach((b) => b.addEventListene
   if (what === "expand") return toggleSidebar(false);
   if (what === "settings") return openCfg();
   if (what === "rec") return setLivePanel(true);
-  if (what === "skills") return openHabilidadeMenu(currentRel(), b, true, "doc");
+  if (what === "skills") return openHabilidadeMenu(currentRel(), b, true, habilidadeSurface(currentRel()));
   toggleSidebar(false);
   goDest(what === "ideas" ? "home" : what);
 }));
@@ -10672,13 +10807,13 @@ let chatArmed = null;
 function renderChatChips() {
   const chips = $("chatChips");
   if (!chips) return;
-  const todas = allHabilidadeEntries("doc");
+  const todas = allHabilidadeEntries(habilidadeSurface(currentRel()));
   const top = todas.slice(0, 3);
   chips.innerHTML = top.map((e, i) => `<button class="chip" data-chip="${i}">${esc(e.label)}</button>`).join("") +
     `<button class="chip" data-chipall>${t("todas")} (${todas.length}) ▸</button>`;
   chips.querySelectorAll("[data-chip]").forEach((b) => (b.onclick = () => armChat(top[Number(b.dataset.chip)])));
   const all = chips.querySelector("[data-chipall]");
-  if (all) all.onclick = (e) => { e.stopPropagation(); openHabilidadeMenu(currentRel(), all, true, "doc"); };
+  if (all) all.onclick = (e) => { e.stopPropagation(); openHabilidadeMenu(currentRel(), all, true, habilidadeSurface(currentRel())); };
 }
 function armChat(entry) {
   chatArmed = entry || null;

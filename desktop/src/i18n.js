@@ -1515,6 +1515,9 @@
     // ---- N11/N28 · o terminal e a sua doca ---------------------------------
     "o terminal está na doca embaixo": "the terminal is docked at the bottom",
     "o terminal está fechado": "the terminal is closed",
+    // ADR-0028 · soltar um arquivo no terminal cola o caminho; sem PTY vivo o
+    // term_input sumiria em silêncio
+    "o terminal não está rodando — use “reiniciar”": "the terminal is not running — use “restart”",
     "abrir o terminal": "open the terminal",
     "trazer para o painel": "bring it to the panel",
     "mover o terminal para baixo": "move the terminal to the bottom",

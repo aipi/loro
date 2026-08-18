@@ -73,6 +73,12 @@ Loro: o processo é local e a conta é sua.
   aparecendo aos poucos, no próprio chat.
 - Os **chips** acima do campo são as habilidades de IA mais usadas. Clicar arma a ação;
   enviar sem texto roda com a instrução padrão, e o `×` desarma.
+- **Arraste um arquivo do Finder/Explorador para dentro do chat** (imagem, áudio,
+  PDF, qualquer coisa): o **caminho** dele é colado no campo, no cursor, para o
+  agente ler o arquivo ao responder. Vários arquivos de uma vez colam todos os
+  caminhos. O arquivo não é copiado nem entra no projeto — só o caminho é escrito, e
+  você continua a frase. Vale igual no **terminal**: lá o caminho é digitado na
+  linha, com aspas se precisar, e **nada é executado** — o Enter é seu.
 - A conversa **continua** de uma pergunta para a outra. **reiniciar** começa do
   zero.
 - `sonnet · alto ⌄` é um controle só: escolha o **modelo** e o **esforço** (quanto

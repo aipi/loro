@@ -15,6 +15,11 @@
 //   C28 applyI18n clobbered the chat's agent pill back to its boot msgid
 //   C29 a Settings hint explained the OFF behaviour while the switch was ON
 //   C6  a file named _prompt.md overwrote the loop's own guide, silently
+//   C32 the new-project screen wore the CONFIGURED project's chrome until a ~10s
+//       poll got around to applying `firstrun` — one state, two owners
+//   C33 …and in that screen the project switch still showed its ⌄ (a menu the
+//       click would not open), while `pointer-events: none` left the button in
+//       the tab order, so Enter opened it anyway
 //
 // DESIGN.md §1 ("state must never lie", "never show a control that does nothing"),
 // BR-8 (the privacy indicator is the one claim that must be exact).
@@ -28,6 +33,7 @@ const path = require("path");
 const SRC = path.join(__dirname, "..", "src");
 const APP = fs.readFileSync(path.join(SRC, "app.js"), "utf8");
 const HTML = fs.readFileSync(path.join(SRC, "index.html"), "utf8");
+const CSS = fs.readFileSync(path.join(SRC, "style.css"), "utf8");
 const { EN } = require("../src/i18n.js");
 
 function fnSource(name) {
@@ -250,12 +256,78 @@ test("C6 — _prompt.md é o guia do loop, não um item: arrastar não o sobresc
   assert.equal(isGuide("C:\\Users\\x\\_PROMPT.md"), true, "o disco não diferencia caixa");
   assert.equal(isGuide("/Users/x/notes.md"), false);
   assert.equal(isGuide("/Users/x/_prompt.md.txt"), false);
-  const drop = APP.match(/listen\("tauri:\/\/drag-drop"[\s\S]*?\n\}\);/);
-  assert.ok(drop, "o handler de arrastar continua no lugar");
-  assert.match(drop[0], /isQueueGuidePath|splitQueueGuideDrop/,
+  // ADR-0028 moveu o corpo do listener para o roteador `handleSystemDrop` (o solto
+  // agora tem três destinos) — o guard segue no ramo da fila, que é o único que importa
+  const drop = fnSource("handleSystemDrop");
+  assert.match(drop, /isQueueGuidePath|splitQueueGuideDrop/,
     "o guia é barrado ANTES do import (o backend ainda não o barra)");
+  assert.match(APP, /listen\("tauri:\/\/drag-drop", \(e\) => handleSystemDrop\(/,
+    "e o listener continua ligado ao roteador");
   assert.ok(EN["_prompt.md é o arquivo de instruções do loop — renomeie antes de importar"],
     "a recusa tem par em inglês");
+});
+
+// ---------------------------------------------------------------- C32
+// A tela de PROJETO NOVO aparecia em três aparências, dependendo de quando se
+// olhava: `openNewAcervo` revelava a tela na hora (os dois `hidden`) e deixava a
+// classe `firstrun` — que é o que tira do cabeçalho o que não tem assunto sem
+// projeto — para o `brainRefresh`, um poll de ~10s. No intervalo, o formulário de
+// projeto novo ficava cercado pelo cromo do projeto CONFIGURADO: pílula de
+// destinos, Gravar, ✦ IA, e o painel aberto estreitando a coluna do cartão.
+// Um estado, um pintor — a mesma cura de C1/C2/C28.
+test("C32 — a tela de projeto novo tem UM dono do cromo, não um poll", () => {
+  const painter = fnBody("paintWizardChrome");
+  assert.match(painter, /B\.setup\.hidden = !showWizard/, "o pintor mostra o wizard");
+  assert.match(painter, /B\.shell\.hidden = showWizard \|\| !!legado/, "e esconde o casco");
+  assert.match(painter, /classList\.toggle\("firstrun", !!showWizard\)/,
+    "e é ele que aplica a classe — não um tique posterior");
+
+  // as DUAS entradas passam pelo mesmo pintor
+  const open = fnBody("openNewAcervo");
+  assert.match(open, /paintWizardChrome\(true\)/, "quem abre a tela pinta o cromo dela na hora");
+  assert.match(fnBody("brainRefresh"), /paintWizardChrome\(showWizard, legado\)/,
+    "e o refresh periódico usa o MESMO pintor");
+
+  // ninguém mais escreve os três sinais por fora do pintor
+  const fora = APP.replace(fnSource("paintWizardChrome"), "");
+  for (const [re, o_que] of [
+    [/B\.setup\.hidden\s*=/, "B.setup.hidden"],
+    [/B\.shell\.hidden\s*=/, "B.shell.hidden"],
+    [/classList\.toggle\("firstrun"/, 'a classe "firstrun"'],
+  ]) assert.doesNotMatch(fora, re, `${o_que} tem um dono só`);
+
+  // e o que a classe tira é justamente o que não tem assunto sem projeto
+  for (const sel of ["\\.destnav", "\\.recbtn", "#aiPanelBtn", "#aiPanel"]) {
+    assert.match(CSS, new RegExp("#app\\.firstrun " + sel),
+      `#app.firstrun precisa cobrir ${sel}: é ele que some quando não há projeto`);
+  }
+});
+
+// ---------------------------------------------------------------- C33
+// No modo de criação de projeto o seletor de projeto mostrava um ⌄ — a promessa de
+// um menu — que o clique não cumpria. E o "desligado" era só `pointer-events: none`,
+// que barra o MOUSE e deixa o botão no tab order: com Enter o menu de projetos
+// abria por cima do wizard. DESIGN.md §1 — nunca mostrar um controle que não faz
+// nada. O rótulo em si é de B7 e não muda: sem o ⌄ ele se lê como rótulo.
+test("C33 — criando um projeto, o seletor não se veste de controle", () => {
+  const src = fnBody("renderSwitch");
+
+  // o estado vem da MESMA fonte do resto do cromo do wizard
+  assert.match(src, /const wizard = !B\.setup\.hidden/,
+    "a decisão lê a única fonte de verdade, não uma flag paralela");
+
+  // a seta e o anúncio do popup acompanham o estado
+  assert.match(src, /caret\.hidden = wizard/, "o ⌄ some quando não há menu para abrir");
+  assert.match(src, /B\.acervoBtn\.disabled = wizard/,
+    "`disabled` é o que tira do tab order e barra o Enter, não pointer-events");
+  assert.match(src, /removeAttribute\("aria-haspopup"\)/,
+    "um botão desligado não pode seguir anunciando um popup");
+  assert.match(src, /setAttribute\("aria-haspopup", "true"\)/, "e volta a anunciar quando volta a abrir");
+
+  // e não espera o poll: o pintor do cromo do wizard já repinta o seletor (C32)
+  assert.match(fnBody("paintWizardChrome"), /renderSwitch\(\)/,
+    "quem muda o estado pinta o seletor na hora");
+  assert.match(HTML, /<span class="swcaret"/, "o ⌄ continua existindo no markup (é ele que é escondido)");
 });
 
 // Escape (or a click outside) on the "Nova gravação" sheet used to leave the ●

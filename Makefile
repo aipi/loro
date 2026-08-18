@@ -13,7 +13,7 @@ export PATH := $(HOME)/.cargo/bin:$(PATH)
 # Vanilla JS frontend files that must at least parse (node --check).
 JS_SRC := desktop/src/app.js desktop/src/shell.js desktop/src/overlay.js desktop/src/text.js desktop/src/audio.js desktop/src/mdedit.js desktop/src/review.js desktop/src/workspace.js
 
-.PHONY: help test test-rust test-js test-cli lint fmt build app test-docker syscap vendor-cm6 require-rust release
+.PHONY: help test test-rust test-js test-cli test-layout lint fmt build app test-docker syscap vendor-cm6 require-rust release
 
 help: ## Show this help menu
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -30,6 +30,14 @@ test-rust: ## Run the Rust backend tests (cargo test)
 
 test-js: ## Run the JS frontend tests (node --test)
 	cd desktop && node --test tests/*.test.js
+
+# Deliberately NOT part of `test`: it needs a real browser, and `test` is
+# portable. The header had three hand-measured breakpoints, each one
+# measured once and each one outliving its measurement; this renders the shipped
+# markup and sheet across widths so the claim can be re-checked instead of
+# trusted. Skips with exit 0 when no Chrome/Chromium is installed.
+test-layout: ## Measure the header across viewport widths (needs Chrome)
+	node tools/measure-header.js --verbose
 
 lint: ## Lint: clippy (deny warnings) + rustfmt --check + node --check on the JS sources
 	cargo clippy --manifest-path desktop/src-tauri/Cargo.toml -- -D warnings
