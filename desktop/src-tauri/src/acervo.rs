@@ -625,7 +625,11 @@ fn brainstorming_freshness(dir: &Path, meta_atualizado_em: &str) -> String {
     };
     bump(dir);
     let meetings = crate::paths::acervo_dir(dir, "meetings", "reunioes");
-    for (cur, legacy) in [("meetings", "reunioes"), ("notes", "notas"), ("attachments", "anexos")] {
+    for (cur, legacy) in [
+        ("meetings", "reunioes"),
+        ("notes", "notas"),
+        ("attachments", "anexos"),
+    ] {
         bump(&crate::paths::acervo_dir(dir, cur, legacy));
     }
     if let Ok(rd) = std::fs::read_dir(&meetings) {
@@ -3840,7 +3844,10 @@ mod tests {
 
         // sem meta e sem conteúdo: a chave não pode ser vazia (era o que anulava a ordem)
         let vazia = brainstorming_freshness(&idea, "");
-        assert!(!vazia.is_empty(), "uma chave de frescor vazia torna a ordenação arbitrária");
+        assert!(
+            !vazia.is_empty(),
+            "uma chave de frescor vazia torna a ordenação arbitrária"
+        );
 
         // a análise que o agente grava fundo na árvore MOVE a chave
         std::thread::sleep(std::time::Duration::from_millis(1100));
@@ -3862,7 +3869,10 @@ mod tests {
             "o meta mais novo que o disco continua valendo: {futuro}"
         );
         let antigo = brainstorming_freshness(&idea, "1999-01-01");
-        assert_eq!(antigo, depois, "um meta velho não pode esconder trabalho novo");
+        assert_eq!(
+            antigo, depois,
+            "um meta velho não pode esconder trabalho novo"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
