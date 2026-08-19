@@ -2014,7 +2014,10 @@ fn start_cycle(app: &AppHandle, base: &Path, def: &LoopDef, now: &Now) -> Result
     let base_args: Vec<String> = parts.map(str::to_string).collect();
     let claude = crate::chat::agent_is_claude(&agent);
 
-    let mut cmd = crate::proc::command(&bin);
+    let mut cmd = match crate::chat::agent_command(&bin) {
+        Ok(c) => c,
+        Err(e) => return Err(release(e)),
+    };
     cmd.current_dir(&dir);
     cmd.args(&base_args);
     if claude {

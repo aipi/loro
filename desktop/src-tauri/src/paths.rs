@@ -55,28 +55,52 @@ pub fn project_dir() -> PathBuf {
     std::env::current_dir().unwrap_or_else(|_| user_home())
 }
 
-// Directories searched for engine binaries. GUI apps on macOS get a minimal
-// PATH (no /opt/homebrew/bin), so well-known package-manager locations are
-// appended after the PATH entries.
+// Well-known locations for the tools Loro shells out to (the engine, the agent
+// CLI, git/gh) — the floor under `proc::hydrate_path` (ADR-0030) for when the
+// user's login shell cannot be reached. Measured on the installed Loro.app:
+// PATH=/usr/bin:/bin:/usr/sbin:/sbin, while `claude` and `gh` live only in
+// /opt/homebrew/bin.
+pub fn known_bin_dirs() -> Vec<PathBuf> {
+    // Loro-managed engine install: the guided Windows setup drops the whisper
+    // binaries here, so they are found without touching the user's PATH.
+    let mut dirs = vec![loro_data_dir().join("bin")];
+    for known in [
+        "/opt/homebrew/bin", // Homebrew (Apple Silicon)
+        "/opt/homebrew/sbin",
+        "/usr/local/bin", // Homebrew (Intel) / manual installs
+        "/opt/homebrew/opt/whisper-cpp/bin",
+        "/usr/bin",
+    ] {
+        dirs.push(PathBuf::from(known));
+    }
+    // Per-user installs. `~/.local/bin` is where the agent CLI's own native
+    // installer puts it, and `~/.claude/local` is where `migrate-installer`
+    // moves it — neither is ever on a GUI app's PATH.
+    let home = user_home();
+    for rel in [
+        ".local/bin",
+        ".claude/local",
+        ".bun/bin",
+        ".deno/bin",
+        ".volta/bin",
+        ".npm-global/bin",
+        ".cargo/bin",
+        "bin",
+    ] {
+        dirs.push(home.join(rel));
+    }
+    dirs
+}
+
+// Directories searched for engine binaries: the process PATH first (it is the
+// user's own ordering), then the known locations.
 pub fn engine_search_dirs() -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = std::env::var("PATH")
         .map(|p| std::env::split_paths(&p).collect())
         .unwrap_or_default();
-    // Loro-managed engine install: the guided Windows setup drops the whisper
-    // binaries here, so they are found without touching the user's PATH.
-    let managed = loro_data_dir().join("bin");
-    if !dirs.contains(&managed) {
-        dirs.push(managed);
-    }
-    for known in [
-        "/opt/homebrew/bin", // Homebrew (Apple Silicon)
-        "/usr/local/bin",    // Homebrew (Intel) / manual installs
-        "/opt/homebrew/opt/whisper-cpp/bin",
-        "/usr/bin",
-    ] {
-        let p = PathBuf::from(known);
-        if !dirs.contains(&p) {
-            dirs.push(p);
+    for known in known_bin_dirs() {
+        if !dirs.contains(&known) {
+            dirs.push(known);
         }
     }
     dirs
@@ -186,6 +210,21 @@ pub fn folder_write_error(err: &std::io::Error) -> String {
 
 // find an executable (PATH + known locations) — same search the engine uses
 pub fn which(name: &str) -> Option<String> {
+    // A command WRITTEN with a path ("/opt/homebrew/bin/claude", "./bin/agent")
+    // is not a name to look up: it already says where it is. Searching dirs for
+    // it only ever worked by accident (`Path::join` swallows an absolute right
+    // side) and answered "not found" for a relative one.
+    if name.contains('/') || name.contains('\\') {
+        let direct = PathBuf::from(name);
+        let mut cands = vec![direct.clone()];
+        if cfg!(windows) && direct.extension().is_none() {
+            cands.push(direct.with_extension("exe"));
+        }
+        return cands
+            .into_iter()
+            .find(|c| c.is_file())
+            .map(|p| p.display().to_string());
+    }
     engine_search_dirs()
         .into_iter()
         .flat_map(|d| exe_candidates(&d, name))
