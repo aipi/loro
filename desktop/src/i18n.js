@@ -49,6 +49,10 @@
     "err.plugin_source_unsupported": "por enquanto o Loro instala de uma pasta no seu computador",
     "err.plugin_write_failed": "não deu para escrever no projeto",
     "err.absolute_ref_not_allowed": "referência absoluta não permitida",
+    // ADR-0030 · um app aberto pelo Dock não herda o PATH do seu shell, e o
+    // errno cru ("os error 2") não dizia a ninguém o que fazer. Quando o comando
+    // realmente não está instalado, a mensagem diz qual é e o passo seguinte.
+    "err.agent_not_found": "não encontrei o comando do agente de IA neste computador: {detail} — instale o agente, ou escreva o caminho completo dele nas configurações do projeto",
     "err.agent_spawn": "não consegui iniciar o agente de IA",
     "err.chat_agent_failed": "o agente não conseguiu concluir",
     "err.chat_busy": "ainda estou respondendo — espere ou pare o turno",
@@ -1572,6 +1576,7 @@
     "enviado ao agente do projeto — a resposta aparece na aba Terminal.":
       "sent to the project agent — the answer shows up in the Terminal tab.",
     "roda no seu computador": "runs on your computer",
+    "err.agent_not_found": "could not find the AI agent command on this computer: {detail} — install the agent, or write its full path in the project settings",
     "err.agent_spawn": "could not start the AI agent",
     "err.chat_agent_failed": "the agent could not finish",
     "err.chat_busy": "still answering — wait or stop the turn",

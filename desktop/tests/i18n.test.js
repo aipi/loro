@@ -53,6 +53,19 @@ test("tErr passes through unknown codes and plain messages", () => {
   assert.equal(tErr(""), "");
 });
 
+test("a missing agent command names the command and never an errno", () => {
+  // ADR-0030 — o que a pessoa lia era "No such file or directory (os error 2)".
+  // A mensagem tem de dizer QUAL comando faltou e o que fazer, nos dois idiomas.
+  for (const lang of ["pt", "en"]) {
+    setLang(lang);
+    const msg = tErr("err.agent_not_found:claude");
+    assert.ok(msg.includes("claude"), `${lang}: não nomeia o comando: ${msg}`);
+    assert.ok(!msg.includes("os error"), `${lang}: vazou errno: ${msg}`);
+    assert.ok(!msg.startsWith("err."), `${lang}: código não traduzido: ${msg}`);
+  }
+  setLang("pt");
+});
+
 test("ffmpeg error renders the platform install hint from the detail", () => {
   // o backend manda o comando certo do SO no detail, então a mesma mensagem
   // serve para macOS e Windows sem citar Homebrew no lugar errado

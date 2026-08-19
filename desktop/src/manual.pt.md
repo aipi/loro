@@ -859,6 +859,15 @@ conforme os temas passam a se citar.
 **O Claude não abre no terminal.** Confira se o CLI está instalado (`claude`
 no PATH) e se há um projeto configurado. O app avisa quando não consegue abrir.
 
+**«Não encontrei o comando do agente de IA neste computador.»** O Loro procura o
+agente onde ele costuma ser instalado (Homebrew, `~/.local/bin`, `~/.claude/local`)
+e também no PATH do seu terminal — você não precisa mexer em PATH nenhum. Duas
+coisas fazem essa mensagem aparecer: o agente realmente não está instalado, ou
+você o instalou **depois** de abrir o Loro (reinicie o app, é uma vez só). Se o
+seu agente vive num lugar fora do comum, escreva o caminho completo dele no campo
+do agente, em ⚙ → configurações do projeto (`/opt/homebrew/bin/claude`, por
+exemplo).
+
 **Como mudo a largura da lateral?** Arraste a divisória entre a lateral e o
 editor; com a lateral larga, os arquivos mostram data e estado do histórico. Clique
 duplo na divisória volta ao padrão.

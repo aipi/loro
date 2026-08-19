@@ -484,6 +484,17 @@ pub fn chat_handoff() -> Result<String, String> {
     Ok(format!("{agent} --resume {id}"))
 }
 
+// The agent's binary, RESOLVED — never a bare name handed to the OS. Loro asks
+// `paths::which` (process PATH + known locations) so that what the app probes and
+// what the app spawns are the same answer; a bare name would be resolved by the
+// OS against the PATH alone, and on a GUI launch that PATH is not the user's
+// (ADR-0030). When it is genuinely not installed, the caller gets a sentence the
+// person can act on instead of "No such file or directory (os error 2)".
+pub(crate) fn agent_command(bin: &str) -> Result<std::process::Command, String> {
+    let exe = crate::paths::which(bin).ok_or_else(|| format!("err.agent_not_found:{bin}"))?;
+    Ok(command(exe))
+}
+
 #[tauri::command]
 pub fn chat_send(app: AppHandle, input: ChatSendInput) -> Result<(), String> {
     let prompt = input.prompt.trim().to_string();
@@ -518,7 +529,7 @@ pub fn chat_send(app: AppHandle, input: ChatSendInput) -> Result<(), String> {
     let bin = parts.next().unwrap_or("claude").to_string();
     let base_args: Vec<String> = parts.map(str::to_string).collect();
 
-    let mut cmd = command(&bin);
+    let mut cmd = agent_command(&bin)?;
     cmd.current_dir(&dir);
     cmd.args(&base_args);
     let claude = agent_is_claude(&agent);
@@ -647,6 +658,48 @@ pub fn chat_send(app: AppHandle, input: ChatSendInput) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+
+    // ADR-0030 — o defeito MEDIDO: o Loro.app instalado roda com
+    // PATH=/usr/bin:/bin:/usr/sbin:/sbin (lido com `ps eww` no app em execução) e
+    // o `claude` só existe em /opt/homebrew/bin. O spawn pelo nome nu respondia
+    // "No such file or directory (os error 2)" para um agente instalado e
+    // funcionando. Aqui o ~/.loro/bin faz o papel do /opt/homebrew/bin: os dois
+    // são locais conhecidos, nenhum dos dois está no PATH que este teste impõe.
+    #[test]
+    fn the_agent_is_found_where_it_is_installed_not_only_on_path() {
+        let tmp = std::env::temp_dir().join("loro-test-agent-resolve");
+        let bin = tmp.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let fake = bin.join("loro-fake-agent");
+        std::fs::write(&fake, "#!/bin/sh\nexit 0\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let saved_home = std::env::var("LORO_HOME").ok();
+        let saved_path = std::env::var("PATH").unwrap_or_default();
+        std::env::set_var("LORO_HOME", &tmp);
+        std::env::set_var("PATH", "/usr/bin:/bin:/usr/sbin:/sbin");
+        // a precondição do defeito: pelo nome nu, o binário é inalcançável
+        let bare = std::process::Command::new("loro-fake-agent").output();
+        let resolved = super::agent_command("loro-fake-agent");
+        let missing = super::agent_command("loro-agente-que-nao-existe");
+        std::env::set_var("PATH", &saved_path);
+        match saved_home {
+            Some(h) => std::env::set_var("LORO_HOME", h),
+            None => std::env::remove_var("LORO_HOME"),
+        }
+
+        assert!(bare.is_err(), "o PATH do teste tem de ser insuficiente");
+        let mut cmd = resolved.expect("o agente instalado tem de ser encontrado");
+        assert!(cmd.output().is_ok(), "encontrado, mas não executou");
+        // e o que REALMENTE não existe vira uma frase, não um errno
+        assert_eq!(
+            missing.unwrap_err(),
+            "err.agent_not_found:loro-agente-que-nao-existe"
+        );
+    }
 
     #[test]
     fn a_permission_denial_survives_the_end_of_the_turn() {

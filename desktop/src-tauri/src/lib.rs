@@ -4606,6 +4606,10 @@ fn term_agent() -> String {
 pub fn run() {
     init_logging();
     info!(os = std::env::consts::OS, "Loro starting");
+    // Before ANYTHING is spawned: an app opened from the Dock inherits launchd's
+    // PATH, not the user's, and the tools Loro shells out to live outside it
+    // (ADR-0030).
+    proc::hydrate_path();
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
