@@ -112,6 +112,34 @@ test("o padrão de captura é UMA trilha: «reunião» só acontece por escolha"
     "ela ainda pergunta em qual ideia antes de gravar");
 });
 
+// O ECO ENTRE AS TRILHAS, resolvido onde a pessoa está (dono, 2026-08-18: «foi isso que me
+// incomodou»). Fisicamente o eco só existe quando se ouve por ALTO-FALANTE — de fone, duas
+// trilhas são estritamente melhores. Então não há default global certo: o que há é a
+// resposta DELA, virando o padrão das próximas reuniões. O empurrão deixa de ser um beco
+// («ligue em Configurações → Captura») e passa a carregar as duas saídas.
+test("o empurrão do eco carrega a saída, e a resposta vira o padrão", () => {
+  const nudge = fnBody("noteCrossTalk");
+  assert.match(nudge, /toastAction\(/, "o empurrão era um beco: dizia o lugar, não a ação");
+  assert.match(nudge, /meetingMic/, "uma das saídas é gravar só o sistema");
+  assert.match(nudge, /micEchoCancel/, "a outra é cancelar o eco");
+  assert.match(nudge, /crossTalkNudged/, "e ele continua acontecendo UMA vez");
+  // as duas saídas PERSISTEM: é isso que as torna o padrão das próximas
+  assert.match(nudge, /persistSettings\(\)/);
+});
+
+test("BR-8: com o microfone desligado para reuniões, o selo não diz «sua voz»", () => {
+  const kind = loadPure("meterKind");
+  // o selo de reunião afirma DUAS captações: ele só pode dizer isso quando há duas
+  assert.equal(kind({ source: "meeting", micLive: true, paused: false }), "meeting");
+  assert.equal(kind({ source: "meeting", micLive: false, paused: false }), "system",
+    "sem microfone a reunião capta só o sistema — dizer «sua voz» seria mentira (BR-8)");
+  assert.equal(kind({ source: "meeting", micLive: false, paused: true }), "paused");
+  // e quem pinta passa o fato, em vez de assumir
+  assert.match(fnBody("paintCaptureMeter"), /micLive:/);
+  assert.match(fnBody("startMeetingWith"), /settings\.meetingMic/,
+    "a reunião nem pede o microfone quando ele está desligado para reuniões");
+});
+
 // ---------------------------------------------------------------- C26
 test("C26 — BR-8: o selo de captura não afirma microfone com a reunião pausada", () => {
   const kind = loadPure("meterKind");

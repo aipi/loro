@@ -356,6 +356,16 @@ Os loops ficam na **seção LOOPS da barra lateral**, entre *conhecimento* e
 *Habilidades de IA* — um loop pode ser do projeto inteiro, então ele não vive
 dentro de uma ideia. Crie um no **＋** da seção.
 
+**As duas trilhas, e o eco.** Uma reunião capta **a sua voz** (microfone) e **o áudio da
+máquina** (os outros participantes) — é o que a análise lê como «você» e «os outros». Se você
+ouve **pela caixa de som**, o microfone escuta a máquina de volta e a mesma fala chega pelas
+duas trilhas. O Loro detecta isso e oferece as duas saídas na hora: **gravar só o sistema**
+(uma trilha, sem eco, sem pedir permissão do microfone — a sua voz fica de fora) ou
+**cancelar o eco** (as duas trilhas seguem, mas o macOS troca o caminho de áudio e a sua voz
+sai mais baixa). O que você escolher vale **das próximas reuniões em diante**, e os dois
+interruptores ficam em **Configurações → Captura**. Com **fone de ouvido não existe eco** —
+aí o melhor é deixar as duas.
+
 **O preço, dito antes:** um loop roda a IA **enquanto o app estiver aberto**. Com
 o app fechado ele não roda — e a tela do loop conta quantas execuções ele perdeu,
 recuperando no máximo **uma** quando você volta. Cada ciclo roda com «ler e
