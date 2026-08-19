@@ -904,6 +904,11 @@
                 <label class="opt"><input type="checkbox" id="optScroll" checked /> <span data-i18n>auto-scroll</span></label>
                 <label class="opt"><input type="checkbox" id="optTop" /> <span data-i18n>sempre no topo</span></label>
                 <label class="opt"><input type="checkbox" id="optOverlay" /> <span data-i18n>modo legenda flutuante</span></label>
+                <!-- ADR-0022 §24b — uma reunião capta DUAS trilhas (você + a máquina). Quando o
+                     som sai pela caixa, o microfone escuta a máquina de volta e a mesma fala
+                     chega duas vezes. Desligar o microfone é a saída física: uma trilha só. -->
+                <label class="opt"><input type="checkbox" id="optMeetingMic" checked /> <span data-i18n>gravar também o meu microfone nas reuniões</span></label>
+                <p class="hint" data-i18n>ligado, a reunião capta a sua voz e o áudio da máquina — o que a análise lê como «você» e «os outros». Desligado, ela grava só a máquina: uma trilha, sem eco e sem pedir permissão do microfone. Com fone de ouvido não há eco, então deixe ligado.</p>
                 <label class="opt"><input type="checkbox" id="optEchoCancel" /> <span data-i18n>cancelar o eco do alto-falante</span></label>
                 <p class="hint" data-i18n>ligue se você ouve pela caixa e a transcrição confunde quem falou. O custo é real: o macOS troca o caminho de áudio da máquina e a sua voz sai mais baixa — com fone, deixe desligado.</p>
                 <button class="opt as-btn" id="clearBtn" data-i18n>limpar transcrição</button>

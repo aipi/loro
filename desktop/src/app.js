@@ -200,6 +200,11 @@ const meeting = {
   // descartada) e a do microfone só é resolvida quando a de sistema já foi ouvida
   // até o fim daquele segmento. Um por reunião (LM.coverageGate).
   gate: null,
+  // O microfone está de fato captando NESTA reunião? Ele pode estar desligado por
+  // ajuste (`meetingMic`) ou negado pelo sistema. O selo de privacidade afirma «sua voz
+  // + áudio do computador»: com uma trilha só ele tem de dizer outra coisa (BR-8), e é
+  // este fato que ele lê.
+  micLive: true,
 };
 
 // ---- configurações persistidas (localStorage) ----
@@ -230,6 +235,13 @@ const DEFAULTS = {
   // inteira e achata a voz (ADR-0022 §24). Só faz sentido para quem ouve por
   // alto-falante e precisa que o microfone NÃO escute os outros de volta.
   micEchoCancel: false,
+  // Gravar TAMBÉM o seu microfone numa reunião. Ligado por padrão: com fone não
+  // existe eco, e a sua voz (quem operou) é metade do que a análise lê. Quando o som
+  // sai por alto-falante o microfone escuta a máquina de volta e a MESMA fala chega
+  // por duas trilhas — o filtro do ADR-0022 §25 descarta o eco, mas a captação
+  // duplicada continua acontecendo. Desligar isto é a saída física: uma trilha só.
+  // Não é um palpite do app: é a resposta da pessoa ao empurrão, virando padrão.
+  meetingMic: true,
 };
 let settings = { ...DEFAULTS };
 function loadSettings() {
@@ -244,7 +256,7 @@ function applySettings() {
   el.lang.value = settings.lang;
   el.translate.checked = settings.translate;
   el.optScroll.checked = settings.autoscroll;
-  { const ec = $("optEchoCancel"); if (ec) ec.checked = !!settings.micEchoCancel; }
+  paintCaptureSettings();   // eco + microfone nas reuniões, de um lugar só
   el.autosave.checked = settings.autosave;
   paintSourceSelectors();
   el.mode.value = settings.mode;
@@ -715,15 +727,23 @@ function setMeter(kind) {
 // O que o selo está descrevendo. Pura, e o único lugar que decide: a captura
 // (startAudio) e a pausa/retomada liam a mesma regra de dois jeitos, e a pausa
 // simplesmente não repintava.
-function meterKind({ source, deviceLabel, paused }) {
+function meterKind({ source, deviceLabel, paused, micLive }) {
   if (paused) return "paused";
-  if (source === "meeting") return "meeting";
+  // BR-8 — o selo de «reunião» afirma DUAS captações («sua voz + áudio do computador»).
+  // Com o microfone desligado para reuniões (ou negado pelo sistema) há UMA: dizer a
+  // outra coisa é a interface afirmando o que não é. O selo de sistema é o fato.
+  if (source === "meeting") return micLive === false ? "system" : "meeting";
   return deviceLabel ? "system" : "mic";
 }
 // Repinta o selo a partir do estado atual — texto, tooltip E o vermelho que diz
 // "o áudio está indo para o disco", que também mente enquanto nada é gravado.
 function paintCaptureMeter() {
-  const kind = meterKind({ source: settings.source, deviceLabel: meterLabelFor(settings.source), paused: state.paused });
+  const kind = meterKind({
+    source: settings.source,
+    deviceLabel: meterLabelFor(settings.source),
+    paused: state.paused,
+    micLive: meeting.active ? meeting.micLive !== false : undefined,
+  });
   setMeter(kind);
   if (el.privacy) el.privacy.classList.toggle("warn", kind !== "paused" && audioGoesToDisk());
 }
@@ -922,12 +942,21 @@ async function startMeetingWith(choice) {
   // diálogo de permissão do macOS, o onStarted nunca rodava, o relógio ficava em
   // 00:00 e nenhum preview ao vivo começava. A interface afirmava um estado que
   // não havia alcançado (DESIGN.md §1).
-  const micReady = startAudio(undefined).then(
-    () => true,
-    (e) => { clog("startAudio (meeting) error — continuing with system audio only: " + e); return false; }
-  );
-  const mic = await settleWithin(micReady, MIC_GRANT_MS, "asking");
-  if (mic === "asking") toast(t("o sistema está pedindo permissão para o microfone — a reunião já grava o áudio do sistema"), 8000);
+  // O MICROFONE PODE ESTAR DESLIGADO PARA REUNIÕES (§24b). Aí ele não é nem pedido: não
+  // há diálogo de permissão, não há segunda trilha, e não há eco para filtrar — é a saída
+  // física para o som que sai por alto-falante, e ela é a resposta da própria pessoa ao
+  // empurrão do eco. A reunião já sabia rodar assim: era o caminho de quando o microfone
+  // falhava, e agora é também uma escolha.
+  const semMic = settings.meetingMic === false;
+  const micReady = semMic
+    ? Promise.resolve(false)
+    : startAudio(undefined).then(
+      () => true,
+      (e) => { clog("startAudio (meeting) error — continuing with system audio only: " + e); return false; }
+    );
+  const mic = semMic ? false : await settleWithin(micReady, MIC_GRANT_MS, "asking");
+  if (semMic) toast(t("esta reunião grava só o áudio do sistema — o seu microfone está desligado para reuniões em Configurações → Captura"), 8000);
+  else if (mic === "asking") toast(t("o sistema está pedindo permissão para o microfone — a reunião já grava o áudio do sistema"), 8000);
   else if (mic === false) toast(t("sem microfone — a reunião está gravando só o áudio do sistema"), 8000);
 
   meeting.active = true; meeting.id = res.id; meeting.dir = res.dir;
@@ -935,6 +964,7 @@ async function startMeetingWith(choice) {
   meeting.originEpoch = res.startedEpochMs || null; // ADR-0025: o t=0 das DUAS trilhas
   meeting.phase = "recording"; meeting.pendingLines = [];
   meeting.appended = []; crossTalkHits = 0; crossTalkNudged = false;
+  meeting.micLive = mic === true;   // o selo de privacidade lê este fato (BR-8)
   meeting.gate = LM.coverageGate(); // ADR-0025: o dono da junção é POR reunião
                            // histórico de eco é POR reunião (antes dependia de o
                            // relógio ler exatamente 0 — um tique de 1ms vazava a
@@ -1146,11 +1176,49 @@ async function appendMeetingSpeech(id, utterances, source) {
 // adivinhar que existe. Ao terceiro sinal, o app liga os dois: o sintoma que ele
 // está vendo e a chave que o desliga. Uma vez por reunião.
 let crossTalkHits = 0, crossTalkNudged = false;
+// O EMPURRÃO CARREGA A SAÍDA. Ele dizia «ligue o cancelamento de eco em Configurações →
+// Captura» — um lugar, não uma ação, e o problema seguia acontecendo enquanto a pessoa
+// procurava. As duas saídas são físicas e opostas, e qual serve depende do que só ela sabe
+// (fone ou caixa), então quem escolhe é ela — e a escolha PERSISTE, virando o padrão das
+// próximas reuniões. É esse o «padrão para não gravar os dois áudios ao mesmo tempo»: não
+// um palpite do app, mas a resposta dela.
+//
+// Vale da PRÓXIMA reunião em diante, e o texto diz isso: trocar o caminho de áudio ou
+// derrubar a captação do microfone no meio de uma reunião em curso abriria um buraco na
+// gravação — o preço de consertar agora seria perder o que está sendo gravado.
 function noteCrossTalk(n) {
   crossTalkHits += n;
-  if (crossTalkHits < 3 || crossTalkNudged || settings.micEchoCancel) return;
+  if (crossTalkHits < 3 || crossTalkNudged || settings.micEchoCancel || settings.meetingMic === false) return;
   crossTalkNudged = true;
-  toast(t("as duas trilhas estão ouvindo a mesma fala — ligue o cancelamento de eco em Configurações → Captura"), 12000);
+  toastAction(
+    t("as duas trilhas estão ouvindo a mesma fala (o som sai pela caixa)"),
+    [
+      {
+        label: t("gravar só o sistema"),
+        run: () => {
+          settings.meetingMic = false; persistSettings(); paintCaptureSettings();
+          toast(t("as próximas reuniões gravam só o áudio do sistema — a sua voz fica de fora. Reversível em Configurações → Captura."), 8000);
+        },
+      },
+      {
+        label: t("cancelar o eco"),
+        run: () => {
+          settings.micEchoCancel = true; persistSettings(); paintCaptureSettings();
+          toast(t("cancelamento de eco ligado nas próximas reuniões — com fone, deixe desligado (a sua voz sai mais baixa)."), 8000);
+        },
+      },
+    ],
+    14000
+  );
+}
+
+// Os interruptores da Captura repintados a partir do ajuste: a escolha feita pelo
+// empurrão tem de aparecer no controle, senão a tela e o ajuste discordam.
+function paintCaptureSettings() {
+  const eco = $("optEchoCancel");
+  if (eco) eco.checked = !!settings.micEchoCancel;
+  const mm = $("optMeetingMic");
+  if (mm) mm.checked = settings.meetingMic !== false;
 }
 
 async function onPreviewSegment(chunks, mime, segStartEpoch, segPausedMs, segEndEpoch) {
@@ -2094,6 +2162,16 @@ el.optScroll.addEventListener("change", (e) => {
 });
 el.optTop.addEventListener("change", (e) => { if (getWin) getWin().setAlwaysOnTop(e.target.checked); });
 el.optOverlay.addEventListener("change", (e) => invoke("toggle_overlay", { show: e.target.checked }));
+{
+  const mm = $("optMeetingMic");
+  if (mm) mm.addEventListener("change", (e) => {
+    settings.meetingMic = e.target.checked;
+    persistSettings();
+    // vale na PRÓXIMA reunião, pela mesma razão do eco: derrubar a captação do
+    // microfone no meio de uma reunião abriria um buraco na gravação
+    if (meeting.active) toast(t("vale na próxima reunião"));
+  });
+}
 $("optEchoCancel").addEventListener("change", (e) => {
   settings.micEchoCancel = e.target.checked;
   persistSettings();

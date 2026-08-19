@@ -552,3 +552,46 @@ run — the manual opens as a studio tab, and the studio shell is hidden behind
 the wizard. `openManual()` is now the single entry point: with the shell
 visible it opens the tab; without it, the manual renders in a read-only modal
 (the content already ships as a webview asset, so no IPC is involved).
+
+
+---
+
+## §24b — the third defence: one track, chosen by the person (2026-08-18)
+
+The owner asked for «uma configuração padrão para não gravar os dois áudios ao mesmo tempo»,
+and confirmed what was behind it: the cross-talk of §25 — both tracks hearing the same
+speech.
+
+Facts first. The default recording source was already a single track (`source: "mic"`), and
+a **meeting** is the one thing that captures two, by design (§25's filter drops the echo it
+detects, but the duplicated *capture* still happens). And the physics has a direction: the
+echo exists only when the sound comes out of **speakers**. On headphones there is no echo at
+all, and the mic track is half of what the analysis reads — «você» versus «os outros».
+
+So there is **no global default that is right for both setups**, and the app should not
+guess. What it has instead is evidence: §25's filter already detects real echo, with
+thresholds measured against real captures. That detection is what the answer hangs on.
+
+**The nudge became the answer.** It used to say «ligue o cancelamento de eco em
+Configurações → Captura» — a place, not an action, while the problem kept happening. It now
+carries both physical exits, and the one the person picks **persists**, becoming the default
+for the next meetings:
+
+- **gravar só o sistema** → `meetingMic: false`. A meeting then never even asks for the
+  microphone: no permission dialog, one track, no echo to filter. The meeting already knew
+  how to run this way — it was the path for when the mic failed; now it is also a choice.
+- **cancelar o eco** → `micEchoCancel: true`, with §24's measured cost stated in the same
+  breath (with headphones, it only flattens your voice).
+
+Both are also switches in Settings → Captura, painted from one place so the choice made in
+the toast shows up in the control.
+
+**BR-8 pays for this.** The privacy seal for a meeting claims TWO captures («sua voz + áudio
+do computador»). With the mic off — by setting or denied by the system — there is one, so
+`meterKind` now reads `micLive` and says *sistema* instead. A seal that kept claiming the
+microphone while nothing captured it is exactly the family of defect §19 and §26 exist to
+prevent.
+
+**Deliberately from the NEXT meeting on.** Swapping the machine's audio path, or dropping the
+mic capture mid-meeting, would open a hole in what is being recorded — the price of fixing it
+right now would be losing part of the meeting. The copy says so.

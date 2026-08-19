@@ -347,6 +347,16 @@ Loops live in the **LOOPS section of the sidebar**, between *knowledge* and *AI
 skills* — a loop can belong to the whole project, so it does not live inside one
 idea. Create one with the section's **＋**.
 
+**The two tracks, and the echo.** A meeting captures **your voice** (microphone) and **the
+machine's audio** (the other participants) — what the analysis reads as «you» and «the
+others». If you listen **through speakers**, the mic hears the machine back and the same
+speech arrives on both tracks. Loro detects that and offers both exits on the spot: **record
+only the system** (one track, no echo, no microphone permission asked — your voice stays out)
+or **cancel the echo** (both tracks stay, but macOS swaps the machine's audio path and your
+voice comes out quieter). Whatever you pick applies **from the next meetings on**, and both
+switches live in **Settings → Capture**. With **headphones there is no echo** — then keeping
+both is best.
+
 **The price, said up front:** a loop runs the AI **while the app is open**. With
 the app closed it does not run — and the loop's screen counts how many runs it
 missed, catching up at most **once** when you come back. Every cycle runs with
