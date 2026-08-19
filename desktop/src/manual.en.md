@@ -860,6 +860,14 @@ begin citing each other.
 (`claude` on PATH) and that a project is configured. The app tells you when it
 cannot open it.
 
+**"Could not find the AI agent command on this computer."** Loro looks for the
+agent where it is usually installed (Homebrew, `~/.local/bin`, `~/.claude/local`)
+and on your terminal's own PATH — you do not have to edit any PATH. Two things
+produce this message: the agent really is not installed, or you installed it
+**after** opening Loro (restart the app; it is a one-time thing). If your agent
+lives somewhere unusual, write its full path in the agent field under ⚙ → project
+settings (`/opt/homebrew/bin/claude`, for instance).
+
 **How do I resize the sidebar?** Drag the divider between the sidebar and the
 editor; with a wide sidebar, files show their date and git state. Double-click
 the divider to reset.

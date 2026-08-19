@@ -82,6 +82,16 @@ system binaries `whisper-cli` and `whisper-stream` from `PATH` or from
 Models are ggml files under `~/.loro/models` (configurable). If the engine is
 missing the app fails with an explicit, actionable message.
 
+**Which PATH does "from PATH" mean?** An app opened from the Dock/Finder inherits
+launchd's PATH (`/usr/bin:/bin:/usr/sbin:/sbin` — measured), so nothing a user
+profile adds is on it. At startup, before anything is spawned, `proc::hydrate_path`
+establishes the process PATH once: the user's login shell (`$SHELL -l -i -c
+/usr/bin/env`, asked only when the current PATH has no directory under `$HOME`),
+then whatever the process had, then `paths::known_bin_dirs()` last. Every later
+lookup — `paths::which`, `resolve_engine`, any bare-name spawn — reads that one
+PATH, so a probe and its own spawn can no longer disagree (ADR-0030). Windows is
+excluded: a GUI process there inherits the machine+user PATH from the registry.
+
 Live transcription uses `whisper-stream` in VAD mode; file/diarization flows use
 `whisper-cli`.
 
@@ -473,6 +483,7 @@ All technical decisions are consolidated in the single **`docs/adr/0001-baseline
 | Intake triage | content is inspected BEFORE entering the fila: a vendor-prefixed credential **blocks** (BR-9 — the acervo is versioned, so the door is one-way and re-checked in the backend), a CPF or a pasted transcript **warns** and the user decides. Closes the BR-8 hole where `is_queueable` judged by file NAME, so a transcript pasted into any other file walked in. Rules are narrow on purpose; the other three doors (`brain_import_files`, `/loro-sync`, AI notes) are not covered yet | ADR-0024 |
 | Meeting pause/resume | pausing kills the capture sidecar (nothing reaches disk while paused); resuming opens a new segment. Audio stays a LIST of segments (`system.wav`, `system-2.wav`, …) that `purge_audio_core` sweeps whole; the clock excludes pauses and the system tail rebases (`tailBase` + `tailFrom`) so mic and system stay interleaved | ADR-0022 §19 |
 | Recording indicator | the tray parrot blinks for a MEETING too, and stops while paused — `set_tray_recording` used to be called only by the loose-recording `start`/`stop` | ADR-0022 §21 |
+| Process PATH | hydrated ONCE at startup (`proc::hydrate_path`): login shell first, then the inherited PATH, then the known bin dirs last — a GUI launch has only launchd's four system dirs, which is why the chat spawned `claude` as ENOENT while the embedded terminal (a login shell) ran it, and why the doctor asked for a `gh` that was installed. The agent is additionally spawned through a resolution (`chat::agent_command`), and a genuinely missing one is `err.agent_not_found:<bin>`, never an errno | ADR-0030 |
 | Spawned-agent environment | `proc::INHERITED_SESSION_MARKERS` is stripped from every child (and from the PTY): a Loro started inside another agent's session used to hand that session's markers to its own agent, which then disabled its transcript. A deny list, never a `CLAUDE_*` wildcard — user configuration shares the prefix | ADR-0022 §18 |
 | Settings page | ONE scrolling page: every section visible, the nav scrolls to a section and a scroll-spy tracks it; the network check (`gh auth status`) still runs once per visit, when its section is first reached | ADR-0022 §22 |
 | Document frame | the frame does not change with the mode: edit mode uses the SAME centered 700px card as view mode, the editor filling its height | ADR-0022 §23 |

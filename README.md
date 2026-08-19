@@ -140,6 +140,11 @@ git clone https://github.com/aipi/loro.git && cd loro
 | **git** + **gh** | optional: knowledge versioning / remote collaboration | opt-in, validated by an in-app doctor |
 | **AI agent CLI** (`claude` by default) | optional: the agent loop and meeting AI skills | runs in the embedded terminal, user's own account; configurable per acervo (any CLI, including local models — ADR-0003) |
 
+Installed anywhere your own shell can find it is enough: an app opened from the
+Dock inherits none of your PATH, so Loro establishes it at startup from your login
+shell plus the usual install locations, and no PATH editing is asked of you
+(ADR-0030). Install a tool while Loro is open and it is seen after a restart.
+
 Models are ggml files under `~/.loro/models` (configurable via
 `LORO_MODELS_DIR`); the desktop app downloads the model you pick on first use,
 verified by SHA-256 (ADR-0006).
