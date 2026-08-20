@@ -75,6 +75,21 @@ speech → brainstormings → queue → shared, versioned contexts → produce w
    the file, so an unsaved editor buffer is named instead of hidden, and the team
    half says it is not connected *before* you click.
 
+5. **Extend** — an **extension** is a local folder that can add a whole screen to
+   Loro, built from what your project already knows, and may bring its own program
+   (an MCP server over stdio) that Loro is the client of. Nothing is downloaded and
+   nothing is built: the source is a directory on your machine. The program never
+   runs by itself — you start and stop it, and it stops when Loro closes; the first
+   start of a program this machine has not approved names the command and asks, and
+   that answer stays on the machine instead of travelling with the project. A started
+   program is not sandboxed: it runs with your own access, and the screen that asks
+   says so. The screen
+   is composed from a closed alphabet of primitives, so an extension asks for a role
+   (`tone: "amber"`) and never for a measurement: both themes and both languages keep
+   working, and no third-party byte reaches the network, the styles, or the focus
+   order. Two worked examples live in
+   [`examples/extensions/`](examples/extensions/) — one with no code at all.
+
 The knowledge base (the **acervo**) lives in a folder you choose, separate from
 the app. Ideas are cheap; context is earned: a context is production knowledge,
 promoted after review — never a raw dump of everything said. The full product
@@ -171,6 +186,12 @@ Security is a premise, enforced by immutable business rules with test coverage:
   invocation, via your own agent.
 - **BR-8** — logs are structured and content-free: no transcript text, no PII.
 - **BR-9** — no credential is ever requested, stored or logged.
+- **An extension's program is a peer, not a sandbox** — Loro states its trust
+  boundary instead of simulating one: the program you install runs with your own
+  access, nothing starts it but you, the command is named before the first run and
+  approved per machine, and no extension gets a filesystem, exec or network API
+  from Loro. A program that would hold audio can never also hold the network, and
+  that one has no consent path.
 
 See [`docs/adr/0001-baseline.md`](docs/adr/0001-baseline.md) §3 for the full
 posture, and [`SECURITY.md`](SECURITY.md) for reporting vulnerabilities.
@@ -183,6 +204,7 @@ posture, and [`SECURITY.md`](SECURITY.md) for reporting vulnerabilities.
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | How it is built: contexts, IPC contract, flows |
 | [`docs/adr/`](docs/adr/) | Technical decisions — `0001` is the consolidated baseline, `0002+` are incremental |
 | [`desktop/README.md`](desktop/README.md) | The desktop app's UI details |
+| [`examples/extensions/`](examples/extensions/) | Two working extensions and the contract an author writes against: a kanban of open points with **no code at all**, and a standard-library Python MCP server with its own protocol tests |
 | In-app manual (pt/en) | "Como funciona o Loro", in the sidebar footer |
 
 The app UI is pt-BR or English — chosen when you create an acervo, switchable

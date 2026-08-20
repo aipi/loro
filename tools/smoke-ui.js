@@ -36,6 +36,10 @@ const CHROME = CHROMES.find((p) => { try { fs.accessSync(p, fs.constants.X_OK); 
 if (!CHROME) { console.log("smoke: pulado — nenhum Chrome encontrado"); process.exit(0); }
 
 const html = fs.readFileSync(path.join(REAL_SRC, "index.html"), "utf8");
+// O DOCUMENTO REAL DO EXEMPLO, lido AQUI (lado node) e interpolado no dublê: o
+// dublê não tem view própria, então o exemplo e o teste não podem divergir.
+const BOARD_REAL = fs.readFileSync(
+  path.join(__dirname, "..", "examples", "extensions", "hotspots-board", "surface", "board.json"), "utf8");
 
 // ---- o dublê do backend: só o que o boot e a superfície nova pedem ----
 const STUB = `
@@ -93,6 +97,74 @@ const PREVIEW = {
   findings: [{ rel: "pt/AGENTS.md", findings: [{ severity: "warn", rule: "intake.cpf", line: 3, count: 1 }] }],
   blocked: false, conflicts: [], installed: null,
 };
+// A extensão de nível 1 do repositório, e uma de nível 2 parada: os dois estados
+// que a tela tem de saber dizer sem mentir (§5.1 — hasProgram:false é o que
+// impede a tela de oferecer iniciar/parar).
+const EXTS = [
+  { id: "hotspots-board", name: "Pontos em aberto", version: "1.0.0", state: "running", reason: "",
+    lastAnswerMs: 0, hasSurface: true, hasProgram: false, canStop: false, trusted: true,
+    surfaceLayout: "wide",
+    kinds: ["surface"], origin: "/Users/x/loro/examples/extensions/hotspots-board" },
+  // canStop e program sao o que o backend passou a mandar (ExtRow): um duble que
+  // nao os tem prova o duble e nao a tela -- «o campo que o backend envia e o campo
+  // que a tela le».
+  { id: "mcp-python", name: "Pontos (Python)", version: "1.0.0", state: "stopped", reason: "",
+    lastAnswerMs: 0, hasSurface: true, hasProgram: true, canStop: false, trusted: true,
+    program: { protocol: "mcp/stdio", server: "pontos", command: "python3", args: ["server/main.py"], cwd: "" },
+    kinds: ["surface", "program"], origin: "/Users/x/loro/examples/extensions/mcp-python" },
+];
+// o board.json REAL do exemplo, interpolado na geração do driver (lado node)
+const EXT_DOC = ${BOARD_REAL};
+// A ESCALA REAL medida no acervo do dono em 2026-08-20 (79 conhecimentos, 312
+// pontos): foi exatamente esta escala que provou o defeito das colunas de 12px,
+// então o dublê nunca mais encolhe para 2 cartões. Gerado determinístico (sem
+// Math.random: o smoke tem de medir os MESMOS pixels em toda rodada).
+const EXT_FACTS = (() => {
+  const areas = ["frota", "financeiro", "atendimento", "comercial", "engenharia", "produto",
+    "locacao", "sinistro", "cadastro", "assinatura", "governanca", "tesouraria",
+    "kyc", "b2b", "manutencao", "vistoria", "precificacao", "integracoes"];
+  const subs = ["eletrica", "conciliacao", "canais", "empresas", "portfolio", "danos",
+    "seguro", "verificacao", "cancelamento", "padroes", "balanco", "identidade"];
+  const statuses = ["aberto", "aberto", "aberto", "em-pauta", "em-resolucao", "concluido"];
+  const ctxs = [], hs = [];
+  for (let c = 0; c < 79; c++) {
+    const area = areas[c % areas.length];
+    const sub = subs[(c * 3) % subs.length];
+    const context = c % 3 ? area + "/" + sub + "-" + c : area + "/" + sub;
+    const rel = "contexts/" + context + "/context.md";
+    const n = 2 + ((c * 7) % 5);
+    ctxs.push({ context, area, rel, title: context, hotspots: n, decisions: 0, inlinks: 0, outlinks: 0 });
+    for (let k = 0; k < n && hs.length < 312; k++) {
+      const hid = k % 2 ? "H-2026-08-13-" + sub + "-fonte-verdade-dados" : "H-" + (hs.length + 1);
+      hs.push({ id: context + "#" + hid, hotspot: hid, context, area, rel, title: context,
+        status: statuses[(c + k) % statuses.length], comments: (c + k) % 4 === 0 ? ((c + k) % 3) + 1 : 0 });
+    }
+  }
+  const per = new Map();
+  for (const c2 of ctxs) {
+    const e = per.get(c2.area) || { area: c2.area, contexts: 0, hotspots: 0 };
+    e.contexts += 1; e.hotspots += c2.hotspots; per.set(c2.area, e);
+  }
+  return {
+    "acervo.hotspots": { count: hs.length, rows: hs },
+    "acervo.contexts": { count: ctxs.length, rows: ctxs },
+    "acervo.orphans": { count: 0, rows: [] },
+    "acervo.broken": { count: 0, rows: [] },
+    "acervo.areas": { count: per.size, rows: [...per.values()].sort((x, y) => x.area.localeCompare(y.area)) },
+  };
+})();
+
+const EXT_PREVIEW = {
+  id: "hotspots-board", name: "Pontos em aberto", version: "1.0.0", author: "loro",
+  source: "/Users/x/loro/examples/extensions/hotspots-board",
+  kinds: ["surface"], points: ["surface"], unsupported: ["facts@1"],
+  program: null, surface: { title: { pt: "Pontos em aberto", en: "Open points" }, served: false, viewFile: "surface/board.json" },
+  capabilities: [], settings: [], writes: [{ rel: ".claude/commands/pontos-em-aberto.md", classe: "declarative" }],
+  findings: [], blocked: false, conflicts: [], installed: null, trust: false,
+};
+// os ajustes do dublê são MUTÁVEIS: ext_settings_set mescla aqui, e o quadro
+// re-renderiza lendo isto — o mesmo ciclo do backend real (mescla por escopo)
+const EXT_SETTINGS = { rotulo: "Pontos em aberto", filtro: "", mostrar_comentarios: true, dica_de_uso: true };
 const ANSWERS = {
   selftest_enabled: false,
   ui_get_lang: "pt",
@@ -168,7 +240,31 @@ const ANSWERS = {
   ui_set_lang: "en",
   brain_resolve_ref: null,
   brain_annotations_get: { doc: "", anotacoes: [] },
+  // ADR-0031 R5a — as extensões. A tela usa o board.json DE VERDADE do exemplo
+  // (examples/extensions/hotspots-board), lido em tempo de geração deste arquivo:
+  // um documento inventado aqui provaria o dublê, não o renderizador.
+  ext_list: EXTS,
+  get ext_view() {
+    return { id: "hotspots-board", state: "running", view: EXT_DOC, facts: EXT_FACTS,
+      servedMs: 0, source: "manifest", settings: Object.assign({}, EXT_SETTINGS) };
+  },
+  ext_preview: EXT_PREVIEW,
+  ext_install: { id: "hotspots-board", version: "1.0.0", written: [".claude/commands/pontos-em-aberto.md"], skipped: [], trust: false },
+  ext_remove: { removed: [".claude/commands/pontos-em-aberto.md"], kept: [], dataKept: false, dataDir: "" },
+  ext_start: { ...EXTS[1], state: "running" },
+  ext_stop: { ...EXTS[1], state: "stopped" },
+  ext_action: { outcome: "ok", message: { pt: "marcado", en: "marked" }, invalidate: false },
+  ext_settings_schema: [
+    { id: "rotulo", kind: "string", escopo: "projeto", label: { pt: "título do quadro", en: "board title" }, default: "Pontos em aberto" },
+    { id: "filtro", kind: "string", escopo: "maquina", label: { pt: "busca", en: "search" }, default: "" },
+    { id: "mostrar_comentarios", kind: "bool", escopo: "projeto", label: { pt: "comentários", en: "comments" }, default: true },
+    { id: "dica_de_uso", kind: "bool", escopo: "maquina", label: { pt: "dica de uso", en: "usage hint" }, default: true },
+  ],
+  get ext_settings_get() { return Object.assign({}, EXT_SETTINGS); },
+  ext_capabilities: [{ id: "acervo.read:projeto", label: "acervo.read:projeto", kind: "acervo", decision: "", why: { pt: "para contar os pontos em aberto", en: "to count the open points" } }],
+  ext_permit: { permite: {}, recusa: {} },
 };
+window.__SMOKE__.answers = ANSWERS;
 window.__TAURI__ = {
   core: {
     invoke: (cmd, args) => {
@@ -181,7 +277,20 @@ window.__TAURI__ = {
         const rel = (args && args.rel) || "";
         return Promise.resolve(window.__SMOKE__.dirs[rel] || []);
       }
+      if (cmd === "ext_settings_set") {
+        Object.assign(EXT_SETTINGS, (args && args.values) || {});
+        return Promise.resolve(Object.assign({}, EXT_SETTINGS));
+      }
+      // o prompt inteiro fica no registro: o passo do modal afirma sobre a
+      // LINHA que chegou ao chat, não sobre o clique
+      if (cmd === "chat_send") {
+        (window.__SMOKE__.chat = window.__SMOKE__.chat || []).push(
+          String((args && args.input && args.input.prompt) || ""));
+        return Promise.resolve(null);
+      }
       if (cmd in ANSWERS) return Promise.resolve(ANSWERS[cmd]);
+      // (a tabela e exposta em __SMOKE__.answers: o roteiro muda UMA resposta para
+      // perguntar «e quando o handle esta vivo?», como ja faz com dirs)
       return Promise.resolve(null);
     },
   },
@@ -889,6 +998,271 @@ const DRIVER = `
     sel.value = "pt";
     sel.dispatchEvent(new Event("change"));
     await new Promise((r) => setTimeout(r, 200));
+  });
+
+  // ADR-0031 R5a — a SEXTA seção da lateral. A colocação foi MEDIDA aqui antes de
+  // ser escolhida (contrato §7.5 #4): a hairline só pode ficar entre duas
+  // seções que estão na tela, senão ela pende sob um vazio recolhido.
+  await step("sidebar-ext", async () => {
+    await window.refreshExt(true);
+    const rows = document.querySelectorAll("#navExt [data-ext]");
+    if (rows.length !== 2) throw new Error("esperava 2 extensões na árvore, achei " + rows.length);
+    const grupo = q('[data-sectbody="ext"]');
+    if (!vis(grupo)) throw new Error("a seção EXTENSÕES não está na tela");
+    // a hairline nova não pende sob um vazio: o grupo ACIMA dela tem altura
+    const seps = [...document.querySelectorAll(".sidescroll .secsep")];
+    if (seps.length !== 2) throw new Error("esperava 2 hairlines na lateral, achei " + seps.length);
+    const nova = seps[1];
+    const acima = nova.previousElementSibling;
+    if (!vis(acima)) throw new Error("a linha nova pende sob um vazio: " + (acima && acima.className));
+    const rb = nova.getBoundingClientRect(), gb = grupo.getBoundingClientRect();
+    if (!(rb.bottom <= gb.top + 1)) throw new Error("a linha não está acima da seção que ela separa");
+    // e a linha da extensão SEM programa não mostra selo de processo
+    const l1 = [...rows].find((r) => r.dataset.ext === "hotspots-board");
+    if (l1.querySelector(".lstate")) throw new Error("uma extensão sem programa ganhou selo de processo");
+    const l2 = [...rows].find((r) => r.dataset.ext === "mcp-python");
+    if (!l2.querySelector(".lstate")) throw new Error("uma extensão COM programa tem de dizer o estado dele");
+    // o botão da lateral recolhida chega na seção (e não em Início)
+    const mini = q('#sideMini .minibtn[data-mini="ext"]');
+    if (!mini) throw new Error("sem o botão de extensões na lateral recolhida");
+    mini.click();
+    await new Promise((r) => setTimeout(r, 200));
+    if (!vis(q('[data-sectbody="ext"]'))) throw new Error("o botão não trouxe a seção para a tela");
+  });
+
+  // A TELA de uma extensão, desenhada pelo renderizador de verdade a partir do
+  // board.json do exemplo. É o único lugar onde dá para ver que ela não recusou
+  // nada e que o layout aconteceu (não há DOM sob node --test).
+  await step("ext-screen", async () => {
+    await window.openExt("hotspots-board");
+    await new Promise((r) => setTimeout(r, 300));
+    const doc = q("#brainDoc");
+    if (!doc || doc.hidden) throw new Error("o documento não abriu");
+    const extv = doc.querySelector(".extv");
+    if (!extv) throw new Error("o renderizador não pintou nada: " + doc.textContent.slice(0, 160));
+    const err = doc.querySelectorAll(".extv-err");
+    if (err.length) throw new Error("a tela recusou " + err.length + " nó(s): " + [...err].map((e) => e.textContent.trim()).join(" | "));
+    if (!doc.querySelector(".extv-attr")) throw new Error("sem a linha de atribuição: a tela afirmaria como se fosse do Loro");
+    const cols = doc.querySelectorAll(".extv-scroll");
+    if (!cols.length) throw new Error("nenhuma coluna: o each sobre os fatos não produziu nada");
+    const links = doc.querySelectorAll("a[data-extv-rel]");
+    if (!links.length) throw new Error("nenhum localizador ligado");
+    // o gancho está LIGADO (um controle que não faz nada é o defeito proibido)
+    if (typeof links[0].onclick !== "function") throw new Error("o localizador não tem manipulador");
+    // a aba e a trilha nomeiam a extensão, não o sentinela cru
+    const aba = q("#wsTabs .wstab.on");
+    if (!aba || !/Pontos em aberto/.test(aba.textContent)) throw new Error("a aba não nomeia a extensão: " + (aba && aba.textContent));
+    if (q("#bCrumb").textContent.indexOf("loro://ext") >= 0) throw new Error("a trilha mostra o sentinela cru");
+    // nada transborda para o lado (WCAG 1.4.10) — a barra é do BLOCO
+    if (document.documentElement.scrollWidth > document.documentElement.clientWidth + 1) {
+      throw new Error("a página rola para o lado: " + document.documentElement.scrollWidth + " em " + document.documentElement.clientWidth);
+    }
+  });
+
+  // MEDIDO NO DOM DE VERDADE, e e o defeito que fechou o buraco pior desta rodada:
+  // com state no_answer o menu da linha oferecia open/start/set/cap/rm -- sem stop --
+  // enquanto o processo continuava VIVO, e «iniciar» subia um segundo filho. Agora
+  // quem responde e canStop, que o backend le do registro.
+  // AS COLUNAS DO QUADRO, MEDIDAS NA ESCALA REAL (79 conhecimentos, 312 pontos —
+  // a escala que produziu o defeito das colunas de 12px). O papel w-md promete
+  // 248px; uma coluna que pode ser encolhida é uma mentira com nome de token.
+  await step("ext-kanban-mede-as-colunas", async () => {
+    const doc = q("#brainDoc");
+    const sx = doc.querySelector(".extv-scroll-x");
+    if (!sx) throw new Error("sem o rolador horizontal do quadro");
+    const fila = sx.querySelector(".extv-row");
+    const cols = fila ? [...fila.children] : [];
+    if (cols.length !== 4) throw new Error("esperava 4 colunas de estado, achei " + cols.length);
+    for (const c of cols) {
+      const w = Math.round(c.getBoundingClientRect().width);
+      if (w < 246 || w > 250) throw new Error("coluna fora do papel w-md: " + w + "px");
+    }
+    for (let i = 1; i < cols.length; i++) {
+      const a = cols[i - 1].getBoundingClientRect(), b = cols[i].getBoundingClientRect();
+      if (b.left < a.right - 1) throw new Error("colunas sobrepostas: " + Math.round(a.right - b.left) + "px");
+    }
+    // amostra de texto: nada pinta por cima do vizinho (o defeito da captura)
+    const spill = [...sx.querySelectorAll(".extv-text")].slice(0, 40)
+      .filter((el2) => el2.scrollWidth > el2.clientWidth + 1);
+    if (spill.length) throw new Error(spill.length + " textos transbordando do cartão");
+    if (document.documentElement.scrollWidth > document.documentElement.clientWidth + 1) {
+      throw new Error("a página rola para o lado");
+    }
+    // e a TELA É LARGA: o layout wide larga a coluna de leitura de 700px…
+    const card = q("#bDocWrap .doccard");
+    const cw = Math.round(card.getBoundingClientRect().width);
+    if (cw <= 700) throw new Error("layout wide preso na coluna de leitura: " + cw + "px");
+    // …e o quadro inteiro pede mais do que o cartão tem — a rolagem é real
+    if (!(sx.scrollWidth > sx.clientWidth + 1)) throw new Error("o quadro coube sem rolar — a medição não mede nada");
+  });
+
+  // O FILTRO É UM DROPDOWN NASCIDO DOS FATOS (dono, 2026-08-20: «ao invés de
+  // busca, um dropdown»): as opções são as áreas do próprio acervo, escolher
+  // uma persiste via ext_settings_set (a MESMA porta de Configurações) e
+  // re-renderiza só aquela área. A opção vazia devolve todas.
+  await step("ext-dropdown-de-areas-filtra-e-persiste", async () => {
+    const doc = q("#brainDoc");
+    const antes = doc.querySelectorAll(".extv-surface").length;
+    if (antes < 20) throw new Error("o quadro cheio deveria ter dezenas de cartões, achei " + antes);
+    const campo = doc.querySelector('select[data-extv-field="filtro"]');
+    if (!campo) throw new Error("o filtro não é um dropdown");
+    const opcoes = [...campo.options].map((o) => o.value);
+    if (opcoes[0] !== "") throw new Error("sem a opção «todas»: um filtro sem volta é uma armadilha");
+    if (opcoes.length < 10) throw new Error("as áreas do acervo não viraram opções: " + opcoes.length);
+    if (!opcoes.includes("frota")) throw new Error("a área frota não está no dropdown");
+    const setChamadas = window.__SMOKE__.calls.ext_settings_set || 0;
+    campo.value = "frota";
+    campo.dispatchEvent(new Event("change"));
+    await new Promise((r) => setTimeout(r, 350));
+    if ((window.__SMOKE__.calls.ext_settings_set || 0) <= setChamadas) {
+      throw new Error("a escolha não passou por ext_settings_set");
+    }
+    const doc2 = q("#brainDoc");
+    const depois = doc2.querySelectorAll(".extv-surface").length;
+    if (!(depois > 0 && depois < antes)) {
+      throw new Error("o dropdown não filtrou: " + antes + " -> " + depois);
+    }
+    // só a área escolhida sobra na tela
+    const temas = [...doc2.querySelectorAll(".extv-surface .badge")].map((b) => b.textContent);
+    const fora = temas.filter((t2) => t2.indexOf("/") >= 0 && !t2.startsWith("frota"));
+    if (fora.length) throw new Error("cartão de outra área sobrou: " + fora[0]);
+    // a opção vazia devolve o quadro inteiro
+    const campo2 = doc2.querySelector('select[data-extv-field="filtro"]');
+    campo2.value = "";
+    campo2.dispatchEvent(new Event("change"));
+    await new Promise((r) => setTimeout(r, 350));
+    const cheio = q("#brainDoc").querySelectorAll(".extv-surface").length;
+    if (cheio !== antes) throw new Error("«todas» não devolveu o quadro: " + cheio + " de " + antes);
+  });
+
+  // O MODAL DO ask: o clique abre uma folha do LORO, a pessoa escreve, e o que
+  // chega ao chat é a habilidade + o alvo + as palavras dela. A extensão nunca
+  // despacha nada sozinha — sem o clique e a frase, o chat não recebe linha.
+  await step("ext-modal-pergunta-e-o-chat-recebe", async () => {
+    const btn = q('#brainDoc [data-extv-ask="loro-kanban-move"]');
+    if (!btn) throw new Error("sem o botão mover no cartão");
+    const alvo = btn.dataset.extvAskTarget || "";
+    if (!alvo.includes("#")) throw new Error("o alvo do ask não é um ponto: " + alvo);
+    btn.click();
+    await new Promise((r) => setTimeout(r, 120));
+    if (q("#pmWrap").hidden) throw new Error("o clique não abriu a folha");
+    const inp = q("#extAskInput");
+    if (!inp) throw new Error("a folha não tem o campo de escrever");
+    // a folha DIZ o que vai acontecer (usabilidade é premissa): a habilidade
+    // aparece nomeada antes do envio
+    if (!q("#pmBody").textContent.includes("/loro-kanban-move")) {
+      throw new Error("a folha não nomeia a habilidade que vai rodar");
+    }
+    inp.value = "em-pauta — decidir na reunião de quinta";
+    q("#pmConfirm").click();
+    await new Promise((r) => setTimeout(r, 250));
+    const linhas = window.__SMOKE__.chat || [];
+    const linha = linhas.find((l) => l.includes("/loro-kanban-move"));
+    if (!linha) throw new Error("o chat não recebeu a habilidade: " + JSON.stringify(linhas));
+    if (!linha.includes(alvo)) throw new Error("a linha perdeu o alvo: " + linha);
+    if (!linha.includes("em-pauta — decidir na reunião de quinta")) {
+      throw new Error("a linha perdeu as palavras da pessoa: " + linha);
+    }
+    if (!q("#pmWrap").hidden) throw new Error("a folha não fechou após o envio");
+  });
+
+  // O CARTÃO LARGO É POR ABA: sair do quadro devolve a coluna de leitura.
+  await step("ext-largo-volta-ao-normal-num-documento", async () => {
+    await window.openDoc("loro://manual", { preview: false });
+    await new Promise((r) => setTimeout(r, 250));
+    if (q("#bDocWrap").classList.contains("extwide")) {
+      throw new Error("o manual herdou a largura do quadro");
+    }
+    const cw = Math.round(q("#bDocWrap .doccard").getBoundingClientRect().width);
+    if (cw > 700) throw new Error("a coluna de leitura não voltou: " + cw + "px");
+    await window.openExt("hotspots-board");
+    await new Promise((r) => setTimeout(r, 250));
+  });
+
+  await step("ext-programa-mudo-ainda-para", async () => {
+    S.fire("ext-state", { id: "mcp-python", state: "no_answer", reason: "err.ext_timeout:5000", lastAnswerMs: 1 });
+    await new Promise((r) => setTimeout(r, 60));
+    const linha = q('#navExt [data-ext="mcp-python"]');
+    if (!linha) throw new Error("a linha da extensão saiu da lateral");
+    const selo = linha.querySelector(".lstate");
+    // o idioma pode ter sido trocado por um passo anterior: as duas frases valem
+    if (!selo || !/sem resposta|not answering/.test(selo.textContent)) throw new Error("o selo nao diz o estado: " + (selo && selo.textContent));
+    // sem handle vivo a unica oferta e iniciar
+    linha.querySelector("[data-extmenu]").click();
+    await new Promise((r) => setTimeout(r, 40));
+    let itens = [...document.querySelectorAll("#bMenu .fitem2")].map((n) => n.dataset.a || "");
+    if (itens.indexOf("start") < 0) throw new Error("sem handle vivo a oferta é iniciar: " + itens.join(","));
+    document.body.click();
+    // agora COM handle vivo (o que no_answer de verdade significa)
+    S.answers.ext_list = S.answers.ext_list.map((r) => (r.id === "mcp-python"
+      ? { ...r, state: "no_answer", reason: "err.ext_timeout:5000", canStop: true } : r));
+    S.fire("ext-state", { id: "mcp-python", state: "no_answer", reason: "err.ext_timeout:5000", lastAnswerMs: 2 });
+    await new Promise((r) => setTimeout(r, 80));
+    q('#navExt [data-ext="mcp-python"] [data-extmenu]').click();
+    await new Promise((r) => setTimeout(r, 40));
+    itens = [...document.querySelectorAll("#bMenu .fitem2")].map((n) => n.dataset.a || "");
+    if (itens.indexOf("stop") < 0) throw new Error("um programa vivo e mudo tem de poder ser parado: " + itens.join(","));
+    document.body.click();
+    // E O SELO E VISIVEL FORA DA LATERAL: medido em rgb/familia/tamanho, porque
+    // .lstate so existia sob .bitem e na tela caia em texto comum.
+    const sonda = document.createElement("span");
+    sonda.className = "lstate amber";
+    sonda.textContent = "sem resposta";
+    q("#brainDoc").appendChild(sonda);
+    const cs = getComputedStyle(sonda);
+    const fam = cs.fontFamily, tam = cs.fontSize, cor = cs.color;
+    sonda.remove();
+    if (!/mono|SF Mono|Menlo/i.test(fam)) throw new Error("o selo perdeu a face mono fora da lateral: " + fam);
+    if (parseFloat(tam) > 12) throw new Error("o selo perdeu o tamanho: " + tam);
+    const neutro = getComputedStyle(q("#brainDoc")).color;
+    if (cor === neutro) throw new Error("o selo tem a cor do texto comum: " + cor);
+  });
+
+  // MEDIDO: .doc p / .doc hr (classe+tipo) ganhavam de .extv-text / .extv-div, entao
+  // um gap 0 media 9px e uma regua de 4px era pintada com 16px. O papel que o autor
+  // pede tem de ser o papel que a folha pinta.
+  await step("ext-degrau-pedido-e-degrau-pintado", async () => {
+    const host = q("#brainDoc");
+    host.insertAdjacentHTML("beforeend",
+      '<div class="extv" data-ext="probe"><div class="extv-stack g-0 p-0 al-start">' +
+      '<p class="extv-text sz-body">um</p><p class="extv-text sz-body">dois</p>' +
+      '<hr class="extv-div" /></div></div>');
+    const probe = host.querySelector('[data-ext="probe"]');
+    const ps = probe.querySelectorAll(".extv-text");
+    // as strings SAEM antes do remove: getComputedStyle devolve um objeto VIVO, e
+    // depois de tirar o no do documento todo campo dele volta vazio (medido: "/")
+    const mb = getComputedStyle(ps[0]).marginBottom;
+    const larg = getComputedStyle(ps[0]).maxWidth;
+    const hrTop = getComputedStyle(probe.querySelector(".extv-div")).marginTop;
+    const hrBot = getComputedStyle(probe.querySelector(".extv-div")).marginBottom;
+    const dist = Math.round(ps[1].getBoundingClientRect().top - ps[0].getBoundingClientRect().bottom);
+    probe.remove();
+    if (parseFloat(mb) !== 0) throw new Error("gap 0 carrega margem escondida: " + mb);
+    if (dist !== 0) throw new Error("gap 0 nao e 0: " + dist + "px entre as linhas");
+    if (hrTop !== "4px" || hrBot !== "4px") throw new Error("a regua declarada nao e a pintada: " + hrTop + "/" + hrBot);
+    if (larg !== "100%") throw new Error("sem teto de largura um token longo fura a coluna: " + larg);
+  });
+
+  // O braço novo do despachante não pode ter roubado nenhuma das telas que ele
+  // já roteava: cada sentinela abre e desenha a SUA superfície.
+  await step("sentinels-still-render", async () => {
+    const casos = [
+      ["loro://indice", "#brainDoc .idxsurf, #brainDoc .idx, #brainDoc"],
+      ["loro://loop-novo", "#brainDoc .loopform, #brainDoc [data-seg]"],
+      ["loops/o-que-falta.md", "#brainDoc [data-loopact], #brainDoc .loopsurf, #brainDoc"],
+      ["loro://manual", "#brainDoc"],
+    ];
+    for (const [rel, sel] of casos) {
+      await window.openDoc(rel, { preview: false });
+      await new Promise((r) => setTimeout(r, 250));
+      const doc = q("#brainDoc");
+      if (!doc || doc.hidden) throw new Error(rel + ": o documento não abriu");
+      if (doc.querySelector(".extv")) throw new Error(rel + ": a tela de extensão roubou o sentinela");
+      if (!doc.querySelector(sel.split(",")[0].trim()) && !doc.textContent.trim()) {
+        throw new Error(rel + ": abriu vazio");
+      }
+      if (window.__SMOKE__.errors.length) throw new Error(rel + ": " + window.__SMOKE__.errors[0]);
+    }
   });
 
   document.title = "RESULT" + JSON.stringify({ steps: seen, errors: S.errors.slice(0, 12), calls: Object.keys(S.calls).length, header: S.header });

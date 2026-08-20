@@ -487,6 +487,76 @@ versioned and goes to git), a CPF **warns** and you decide.
   only what the plugin brought: **a file you edited afterwards stays**, and the
   screen says which.
 
+## Extensions (a new screen, built from what the project already has)
+
+An **extension** goes one step further than a plugin: besides bringing skills, it
+can draw a **screen** inside Loro. That screen is not a file — it is built on the
+spot from what your own project already knows (the open points in your knowledge,
+for example). You open it from the **EXTENSÕES** section of the sidebar.
+
+Install one with the **＋ of the "extensions" section** (or with **Settings →
+Extensions → install extension…**). Point at the extension's folder — the one with
+`loro.json` and `.claude-plugin/plugin.json` inside. **Loro downloads nothing and
+builds nothing:** the source is always a folder on your computer.
+
+Before installing, the sheet states everything the extension declared — including
+what Loro **does not do yet**. A request this version does not implement is named
+out loud instead of being dropped in silence.
+
+- **An extension may bring a program.** If it does, the sheet says which command
+  it is, and it **does not run by itself**: you look at the screen, click
+  **start**, and it stops when you click **stop** or when Loro closes. While it is
+  stopped the screen says stopped — never the opposite.
+- **Nobody starts a program on your behalf.** An extension's record is kept with
+  the project, so it can arrive in somebody else's change. The first time you click
+  **start** on a program **this computer** has never approved, Loro shows the command
+  and the arguments that would run, where they came from, and asks. The answer stays
+  here — it does not travel with the project — and you are asked again only if the
+  command changes.
+- **A program runs with your own access.** Loro does not put an extension's program
+  in a box: it reaches what you reach on this computer. That is why the question
+  above exists, and that is what the sheet says.
+- **If it stops answering, you can still stop it.** The row and the screen say «sem
+  resposta» — the program is alive and mute, not stopped — and **stop** stays on
+  offer. Starting again never leaves two programs behind.
+- **An extension with no program simply works.** It shows no start and no stop,
+  because there is no process to start.
+- **Audio never leaves your machine.** An extension that asks to hear the audio and
+  to talk to the network at the same time is **refused at the door**, and the
+  screen says why.
+- **No credentials.** If the extension declares a setting that asks for a password,
+  key or token, the install is refused and **nothing is written**.
+- **What it asks for is written down.** Each row's **⋯** has *what it asked for…*,
+  where you allow or refuse each item. In this version your answer is **recorded and
+  blocks nothing**, and the screen says so — instead of promising a barrier that does
+  not exist yet. Loro opens no door for an extension to read your project; what it
+  also does not do is isolate that extension's program, and both halves are written
+  there.
+- **Where the controls are.** Clicking the row opens the screen. The row's **⋯**
+  (the same menu in the sidebar and in Settings) has: *open* · *start* or *stop* —
+  only when there is a program — · *settings…* · *what it asked for…* ·
+  *remove…*. The screen itself also has start and stop, and states the current
+  state in words.
+- **A repaint never eats what you are typing.** If the extension says its screen
+  changed while you are filling one of its fields, Loro waits until you leave the
+  field to repaint — the notice is postponed, never lost.
+- **Settings** live in the same **⋯**, and each one is stored where the extension
+  asked for it: with the project, or with this computer.
+- **Settings → Extensions** lists what is installed (name, version, state, where it
+  came from). Removing subtracts only what the extension brought: **a file you
+  edited afterwards stays**, and the screen says which. You choose whether the data
+  it kept here is deleted too.
+- If the extension draws something Loro cannot draw, that piece shows up as a
+  **named refusal** inside the screen. A piece dropped in silence would be a screen
+  lying about what it showed. One exception, stated because it exists: inside a block
+  of running prose, an **image** and an outside address are removed with no warning —
+  that is content, and this version draws no image at all coming from an extension. A
+  link to a file **in this project** is still a link, and clicking it opens the file.
+
+Two worked examples ship in the repository, under `examples/extensions/`: a board
+of open points with **no code at all**, and a standard-library Python server that
+works both inside and outside Loro.
+
 ## Highlight, comment, and act on an excerpt
 
 In any project markdown — a meeting transcript, a topic, a note — **select a

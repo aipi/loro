@@ -493,6 +493,75 @@ dos loops). A folha mostra, **antes de instalar**, o que o plugin traz e o que a
   só o que o plugin trouxe: **um arquivo que você editou depois fica**, e a tela
   diz qual.
 
+## Extensões (uma tela nova, feita do que já existe no projeto)
+
+Uma **extensão** vai um passo além de um plugin: além de trazer habilidades, ela
+pode desenhar uma **tela** dentro do Loro. A tela não é um arquivo — é montada na
+hora, com o que o seu próprio projeto já sabe (os pontos em aberto do
+conhecimento, por exemplo). Você abre pela seção **EXTENSÕES** da lateral.
+
+Instale pelo **＋ da seção "extensões"** (ou por **Configurações → Extensões →
+instalar extensão…**). Aponte para a pasta da extensão — a que tem `loro.json` e
+`.claude-plugin/plugin.json` dentro. **O Loro não baixa nada e não compila nada:**
+a fonte é sempre uma pasta no seu computador.
+
+Antes de instalar, a folha diz tudo o que a extensão declarou — inclusive o que o
+Loro **ainda não faz**. Um pedido que esta versão não implementa aparece pelo nome
+em vez de ser descartado em silêncio.
+
+- **Uma extensão pode trazer um programa.** Se trouxer, a folha avisa qual comando
+  é, e ele **não roda sozinho**: você aprecia a tela, clica em **iniciar**, e ele
+  para quando você clica em **parar** ou quando o Loro fecha. Enquanto está
+  parado, a tela diz que está parado — nunca o contrário.
+- **Ninguém inicia um programa por você.** O registro de uma extensão é guardado
+  junto com o projeto, então ele pode chegar pela alteração de outra pessoa. Na
+  primeira vez que você clica em **iniciar** num programa que **este computador**
+  nunca aprovou, o Loro mostra o comando e os argumentos que vão rodar, de onde
+  eles vieram, e pergunta. A resposta fica só aqui — ela não viaja com o projeto —
+  e você só é perguntado de novo se o comando mudar.
+- **Um programa roda com o seu acesso.** O Loro não põe o programa de uma extensão
+  numa caixa: ele alcança o que você alcança neste computador. É por isso que a
+  pergunta acima existe, e é isso que a folha diz.
+- **Se ele parar de responder, você ainda pode pará-lo.** A linha e a tela dizem
+  «sem resposta» — o programa está vivo e mudo, não parado —, e **parar** continua
+  oferecido. Iniciar de novo não deixa dois programas para trás.
+- **Uma extensão sem programa simplesmente funciona.** Ela não mostra iniciar nem
+  parar, porque não há processo nenhum para iniciar.
+- **Áudio nunca sai da sua máquina.** Uma extensão que peça para ouvir o áudio e
+  falar com a rede ao mesmo tempo é **recusada na porta**, e a tela diz por quê.
+- **Nenhuma credencial.** Se a extensão declarar um ajuste que pede senha, chave
+  ou token, a instalação é recusada e **nada é escrito**.
+- **O que ela pede fica por escrito.** O **⋯** de cada linha tem *o que ela
+  pediu…*, onde você libera ou recusa cada item. Nesta versão a sua resposta fica
+  **registrada e não bloqueia nada**, e a própria tela diz isso — em vez de
+  prometer uma barreira que ainda não existe. O Loro não abre nenhuma porta para
+  uma extensão ler o seu projeto; o que ele também não faz é isolar o programa
+  dela, e as duas metades estão escritas ali.
+- **Onde ficam os controles.** Clicar na linha abre a tela. O **⋯** da linha (na
+  lateral e em Configurações, o mesmo menu) tem: *abrir* · *iniciar* ou *parar* —
+  só quando existe programa — · *ajustes…* · *o que ela pediu…* · *remover…*. A
+  própria tela também tem iniciar e parar, e diz o estado por escrito.
+- **Um repintar nunca come o que você está digitando.** Se a extensão avisar que a
+  tela dela mudou enquanto você preenche um campo dela, o Loro espera você sair do
+  campo para repintar — o aviso não é perdido, só adiado.
+- **Ajustes** ficam no mesmo **⋯**, e cada um é guardado onde a extensão pediu:
+  com o projeto ou com este computador.
+- **Configurações → Extensões** lista o que está instalado (nome, versão, estado,
+  de onde veio). Remover subtrai só o que a extensão trouxe: **um arquivo que você
+  editou depois fica**, e a tela diz qual. Você escolhe se apaga também os dados
+  que ela guardou aqui.
+- Se a extensão desenhar algo que o Loro não sabe desenhar, o pedaço aparece como
+  uma **recusa com nome** no meio da tela. Um pedaço descartado em silêncio seria
+  uma tela mentindo sobre o que mostrou. Uma exceção, dita porque existe: dentro de
+  um bloco de texto corrido, uma **imagem** e um endereço de fora são retirados sem
+  aviso — é conteúdo, e esta versão não desenha imagem nenhuma vinda de uma
+  extensão. Um link para um arquivo **deste projeto** continua sendo um link, e
+  clicar nele abre o arquivo.
+
+Há dois exemplos prontos no repositório, em `examples/extensions/`: um quadro dos
+pontos em aberto **sem uma linha de código**, e um servidor em Python de
+biblioteca padrão que funciona dentro e fora do Loro.
+
 ## Grifar, comentar e agir sobre um trecho
 
 Em qualquer markdown do projeto — a transcrição de uma reunião, um tema,

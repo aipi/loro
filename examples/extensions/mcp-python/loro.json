@@ -1,0 +1,25 @@
+{
+  "loro": 2,
+  "kinds": ["surface", "program"],
+  "lang": ["pt", "en"],
+  "points": { "surface": 1 },
+
+  "program": {
+    "protocol": "mcp/stdio",
+    "server": "pontos-python",
+    "command": "python3",
+    "args": ["server/main.py"]
+  },
+
+  "surface": {
+    "title": { "pt": "Pontos (Python)", "en": "Points (Python)" },
+    "served": true
+  },
+
+  "settings": [
+    { "id": "limite", "kind": "number", "escopo": "projeto", "default": 5,
+      "label": { "pt": "pontos por coluna", "en": "points per column" },
+      "hint": { "pt": "de 1 a 200 — quem passar disso é contado, nunca cortado em silêncio",
+                "en": "1 to 200 — anything past it is counted, never dropped in silence" } }
+  ]
+}

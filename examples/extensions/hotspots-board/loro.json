@@ -1,0 +1,33 @@
+{
+  "loro": 2,
+  "kinds": ["skills", "surface"],
+  "lang": ["pt", "en"],
+  "points": { "surface": 1 },
+
+  "surface": {
+    "title": { "pt": "Pontos em aberto", "en": "Open points" },
+    "served": false,
+    "viewFile": "surface/board.json",
+    "layout": "wide"
+  },
+
+  "settings": [
+    { "id": "rotulo", "kind": "string", "escopo": "projeto",
+      "default": "Pontos em aberto",
+      "label": { "pt": "título do quadro", "en": "board title" },
+      "hint": { "pt": "aparece no topo, como o time chama este quadro",
+                "en": "shown at the top, whatever the team calls this board" } },
+    { "id": "filtro", "kind": "string", "escopo": "maquina",
+      "default": "",
+      "label": { "pt": "área em foco (fica só neste computador)", "en": "area in focus (stays on this machine)" },
+      "hint": { "pt": "o quadro mostra só os pontos desta área — vazio mostra todas",
+                "en": "the board shows only this area's points — empty shows them all" } },
+    { "id": "mostrar_comentarios", "kind": "bool", "escopo": "projeto",
+      "default": true,
+      "label": { "pt": "mostrar contagem de comentários", "en": "show comment counts" } },
+    { "id": "dica_de_uso", "kind": "bool", "escopo": "maquina",
+      "default": true,
+      "label": { "pt": "mostrar a dica de uso (só neste computador)",
+                 "en": "show the usage hint (this machine only)" } }
+  ]
+}

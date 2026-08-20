@@ -337,6 +337,11 @@ pub struct AcervoSettings {
     // continua byte a byte o mesmo.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub loops: Option<crate::loops::LoopPolicy>,
+    // ADR-0031 R5a — as respostas de permissão por extensão. Mesmo padrão de
+    // `loops` acima, e pelo mesmo motivo medido: ausente até alguém decidir algo,
+    // um settings.json escrito por um Loro anterior continua byte a byte o mesmo.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ext: Option<crate::ext::ExtPolicy>,
 }
 
 pub fn acervo_settings_path(base: &Path) -> PathBuf {

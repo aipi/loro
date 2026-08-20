@@ -1,0 +1,6 @@
+{
+  "name": "hotspots-board",
+  "description": "A board over the open points already written in this project's knowledge documents. Level 1: no program, no code.",
+  "version": "0.1.0",
+  "author": { "name": "Loro examples" }
+}

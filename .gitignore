@@ -13,6 +13,12 @@ desktop/node_modules/
 # Python virtualenv (diarize_to_md.py)
 .venv/
 
+# Python bytecode — the MCP example under examples/extensions/ has stdlib tests
+# that are run directly (python3 …/tests/protocol_test.py), and running them
+# leaves a __pycache__/ next to the source.
+__pycache__/
+*.py[cod]
+
 # Runtime output
 transcripts/
 

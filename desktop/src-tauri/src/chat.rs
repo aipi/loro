@@ -667,6 +667,11 @@ mod tests {
     // são locais conhecidos, nenhum dos dois está no PATH que este teste impõe.
     #[test]
     fn the_agent_is_found_where_it_is_installed_not_only_on_path() {
+        // env is process-global: without this, an ext.rs test rewriting
+        // LORO_HOME under us failed this one 1 run in 3 (measured 2026-08-20)
+        let _env = crate::proc::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let tmp = std::env::temp_dir().join("loro-test-agent-resolve");
         let bin = tmp.join("bin");
         std::fs::create_dir_all(&bin).unwrap();
