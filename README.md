@@ -29,9 +29,10 @@ people and AI agents can use as context.
 - **Zero credentials** — Loro never asks for, stores, or logs a credential.
   Optional integrations (`git`, `gh`, your AI agent CLI) use your own ambient
   accounts.
-- **Capture both sides of a meeting with no driver setup** — on macOS, meeting
-  mode uses ScreenCaptureKit: one Screen Recording permission, no virtual audio
-  driver, no admin rights.
+- **Capture both sides of a meeting with no driver setup** — meeting mode taps
+  the computer's own audio: ScreenCaptureKit on macOS (one Screen Recording
+  permission) and WASAPI loopback on Windows (nothing to grant). No virtual
+  audio driver, no admin rights on either.
 - **Knowledge, not piles of transcripts** — an agent loop distills meetings,
   notes, and attached files into one `context.md` source of truth per topic,
   versioned in Git and evolved by pull request — with Git hidden behind two
@@ -157,7 +158,7 @@ verified by SHA-256 (ADR-0006).
 |---|---|---|
 | **Live** | mic (`SOURCE=mic`) or system audio (`SOURCE=system`), streamed as you speak | mic: none · system: loopback driver — BlackHole on macOS (`./loro.sh sysaudio-setup`, needs admin), "Stereo Mix"/VB-Cable on Windows |
 | **File** | the whole session, recorded then transcribed at once — more faithful than streaming | none |
-| **Meeting** *(macOS only)* | your voice **and** the computer's audio — both sides of a Meet/Zoom call — via a ScreenCaptureKit sidecar | one Screen Recording permission; no virtual driver, no admin |
+| **Meeting** *(macOS + Windows)* | your voice **and** the computer's audio — both sides of a Meet/Zoom call — via a ScreenCaptureKit sidecar (macOS) or WASAPI loopback (Windows, ADR-0031) | macOS: one Screen Recording permission. Windows: nothing — it taps the **default** output device, so send the call there. No virtual driver, no admin |
 
 In meeting mode the transcript accretes live into the meeting's notebook, and
 audio is transient — deleted once transcribed.

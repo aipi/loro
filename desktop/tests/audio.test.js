@@ -115,3 +115,15 @@ test("micConstraints religa SÓ o cancelamento de eco quando pedido", () => {
   assert.strictEqual(micConstraints(null, false).audio.echoCancellation, false);
   assert.strictEqual(micConstraints("dev1", true).audio.echoCancellation, true);
 });
+
+// ADR-0031: o modo reunião passou a existir no Windows (loopback do WASAPI), e a
+// trava de sistema aparecia em DOIS lugares do app.js — o seletor de fonte e o
+// início da sessão. Uma função pura para os dois evita que só um deles seja
+// liberado, que é como o seletor ofereceria "reunião" para depois o start negar.
+test("meetingSupported cobre macOS e Windows, e só eles", () => {
+  const { meetingSupported } = require("../src/audio.js");
+  assert.strictEqual(meetingSupported("macos"), true);
+  assert.strictEqual(meetingSupported("windows"), true);
+  assert.strictEqual(meetingSupported("linux"), false);
+  assert.strictEqual(meetingSupported(undefined), false);
+});
