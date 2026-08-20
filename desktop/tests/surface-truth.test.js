@@ -221,3 +221,70 @@ test("N26 — o re-limite roda na aplicação e no resize", () => {
   assert.match(APP, /addEventListener\("resize", *\(\) *=> *\{[\s\S]{0,200}reclampPanes\(\)/,
     "nada re-limitava ao redimensionar: o estado quebrado sobrevivia ao restart");
 });
+
+//   N27  um gancho de DOM MORTO: setRecPending pedia "[data-mtgfinish]" e
+//        NENHUM elemento carrega esse atributo, então "■ Encerrar reunião"
+//        nunca era desabilitado nem entrava em "encerrando…". Medido no
+//        Windows: o clique encerrava a reunião de verdade (análise gravada em
+//        disco), mas o botão continuava oferecido, o usuário clicava 3x e cada
+//        clique disparava outro carve da última janela — 3 "stop (meeting
+//        ADR-0010)" e 3 "hold expired" no log da mesma reunião.
+//   N28  e o rodapé só saía de "gravando" DEPOIS de dois await demorados
+//        (o flush da última janela roda ffmpeg + whisper). No macOS isso é
+//        sub-segundo; no Windows são segundos a minutos com o relógio já
+//        zerado — um estado que se contradiz na tela.
+
+// Todo seletor de atributo tem de ter alguém que ESCREVA o atributo. Sem isso o
+// querySelectorAll casa com zero elementos e a chamada é um no-op silencioso:
+// não há erro, não há log, e a única testemunha é o botão que não reage.
+test("N27 — nenhum seletor [data-x] é morto (alguém escreve o atributo)", () => {
+  const files = fs
+    .readdirSync(SRC)
+    .filter((f) => f.endsWith(".js") || f.endsWith(".html"))
+    .map((f) => fs.readFileSync(path.join(SRC, f), "utf8"));
+  // Comentários FORA da conta: o comentário que EXPLICA um gancho menciona o
+  // atributo, e isso bastava para um gancho morto parecer vivo. Descoberto
+  // testando este teste — com o data-mtgfinish removido do botão ele seguiu
+  // verde, sustentado pelo comentário ao lado.
+  const blob = files
+    .join("\n")
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .split("\n")
+    .filter((l) => !l.trim().startsWith("//"))
+    .join("\n");
+  const attrs = new Set([...blob.matchAll(/\[data-([a-zA-Z0-9_-]+)\]/g)].map((m) => m[1]));
+  assert.ok(attrs.size > 50, "o varredor tem de estar realmente achando seletores");
+  const dead = [...attrs].filter((a) => {
+    const total = (blob.match(new RegExp("data-" + a + "(?![a-zA-Z0-9_-])", "g")) || []).length;
+    const asSelector = blob.split("[data-" + a + "]").length - 1;
+    return total === asSelector; // só aparece dentro de seletor: ninguém o escreve
+  });
+  assert.deepStrictEqual(dead, [], "seletores que não casam com nada: " + dead.join(", "));
+});
+
+// O gancho específico do encerramento, apontado pelo nome. N27 pega a classe;
+// este pega ESTE botão, e continua valendo se algum dia N27 for afrouxado.
+test("N27 — o botão de encerrar reunião carrega o gancho que setRecPending usa", () => {
+  const painter = fnSource("setRecPending");
+  const hook = painter.match(/\[data-([a-zA-Z0-9_-]+)\]/);
+  assert.ok(hook, "setRecPending tem de pintar os botões de encerrar por um gancho");
+  const finish = HTML.match(/<button id="recFinish"[^>]*>/);
+  assert.ok(finish, "#recFinish existe no markup");
+  assert.ok(finish[0].includes("data-" + hook[1]), finish[0] + " nao carrega o gancho data-" + hook[1]);
+});
+
+// O rodapé tem de contar a verdade no instante do clique, não depois do
+// trabalho pesado. Duas exigências: o estado "encerrando" é pintado ANTES do
+// primeiro await, e um segundo clique não entra de novo.
+test("N28 — encerrar pinta 'encerrando' antes de qualquer await, e não re-entra", () => {
+  const src = fnSource("stopMeeting");
+  const paint = src.indexOf('setRecPending("stopping")');
+  assert.ok(paint >= 0, "stopMeeting tem de pintar o pendente ele mesmo (a paleta também encerra)");
+  const firstAwait = src.indexOf("await");
+  if (firstAwait >= 0) {
+    assert.ok(paint < firstAwait, "o pendente foi pintado só depois de um await");
+  }
+  assert.match(src, /^\s*(?:async )?function stopMeeting[^]*?\n\s*if \([^)]*\) return;/m,
+    "stopMeeting precisa de guarda de reentrância, como pauseMeeting tem");
+});
