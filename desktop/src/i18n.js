@@ -12,6 +12,10 @@
 })(typeof window !== "undefined" ? window : globalThis, function () {
   // ---- backend error codes: pt messages ----
   const ERR_PT = {
+    // ---- ADR-0032 · aviso de versão nova ----
+    "err.update_check_failed": "não deu para verificar se há versão nova",
+    "err.update_open_failed": "não deu para abrir a página da versão",
+    "err.update_pref_save": "não deu para guardar essa preferência",
     // ---- ADR-0029 · loops e plugins ----
     "err.loop_stopped": "o ciclo foi parado",
     "err.loop_parallel_full": "já há ciclos rodando — este espera a vez",
@@ -190,6 +194,35 @@
 
   // ---- English: err codes + UI msgids (pt string -> en string) ----
   const EN = {
+    // ============ ADR-0032 · há uma versão nova ============
+    "err.update_check_failed": "couldn't check whether a new version is out",
+    "err.update_open_failed": "couldn't open the release page",
+    "err.update_pref_save": "couldn't save that preference",
+    "v{v} disponível": "v{v} available",
+    "há uma versão nova ({v}) — clique para ver como atualizar":
+      "a new version is out ({v}) — click to see how to update",
+    "há uma versão nova: v{v}": "a new version is out: v{v}",
+    "você está na última versão": "you are on the latest version",
+    "ainda não verificado": "not checked yet",
+    "não deu para verificar agora": "couldn't check right now",
+    "você instalou pelo Homebrew — atualize com este comando no seu terminal:":
+      "you installed with Homebrew — update with this command in your terminal:",
+    "baixe o .dmg da página da versão e arraste o Loro para a pasta Aplicativos, por cima do antigo.":
+      "download the .dmg from the release page and drag Loro into your Applications folder, over the old one.",
+    "nunca verificado": "never checked",
+    "verificado em {v}": "checked on {v}",
+    "Atualizações": "Updates",
+    "comando copiado": "command copied",
+    "versão instalada": "installed version",
+    "última publicada": "latest published",
+    "verificar agora": "check now",
+    "ver notas da versão": "see the release notes",
+    "copiar comando": "copy command",
+    "avisar quando houver uma versão nova": "let me know when a new version is out",
+    "a consulta é anônima e vai só à página pública de versões do GitHub, no máximo uma vez por dia. desligado, o Loro nunca busca isso sozinho.":
+      "the query is anonymous and only reaches GitHub's public releases page, at most once a day. switched off, Loro never fetches it on its own.",
+    "o Loro não baixa nem instala a atualização por você — ele mostra o comando e você decide quando rodar.":
+      "Loro does not download or install the update for you — it shows the command and you decide when to run it.",
     // ============ ADR-0029 · pacotes e loops ============
     "aponte para a pasta do plugin — a que tem .claude-plugin/plugin.json dentro.": "point at the plugin's folder — the one with .claude-plugin/plugin.json inside.",
     "uma pasta de plugin tem um arquivo .claude-plugin/plugin.json com o nome dele, e as habilidades em commands/ ou skills/.": "a plugin folder has a .claude-plugin/plugin.json file with its name, and the skills in commands/ or skills/.",

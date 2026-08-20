@@ -45,7 +45,12 @@
                QUALQUER tela, como a gravação — mas em teal (IA) e sem piscar, e
                clicar abre a aba ⟳ Loops do painel. -->
           <button id="headLoops" class="headrec teal mono" type="button" hidden data-i18n-dyn></button>
-          <span id="appVersion" class="localtag mono" title="tudo roda 100% no seu computador" data-i18n-attrs="title">—</span>
+          <!-- ADR-0032 · a etiqueta da versão é onde o fato "há versão nova" já
+               mora. Sem atualização ela é a etiqueta de sempre; com atualização
+               vira BOTÃO e leva a Configurações → Atualizações. Ela é decoração
+               na regra 9 do DESIGN (some abaixo de 1015px), por isso NÃO é a
+               única porta: o ⚙ da lateral ganha o ponto, e esse não some. -->
+          <button id="appVersion" type="button" class="localtag mono verstag" title="tudo roda 100% no seu computador">—</button>
           <!-- R64 · O RASCUNHO NO CABEÇALHO, como o desenho previu. Ele vivia só na
                seção TIME do painel ✦ IA, então em que rascunho você está — o fato que
                decide onde a próxima versão cai — só era visível com o painel aberto e
@@ -222,6 +227,8 @@
                 <button id="cfgBtn" class="footcfg" title="Configurações" data-i18n-attrs="title">
                   <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 00.12-.61l-1.92-3.32a.49.49 0 00-.59-.22l-2.39.96a7.03 7.03 0 00-1.62-.94l-.36-2.54a.48.48 0 00-.48-.41h-3.84a.48.48 0 00-.48.41l-.36 2.54c-.59.24-1.13.56-1.62.94l-2.39-.96a.49.49 0 00-.59.22L2.74 8.87a.49.49 0 00.12.61l2.03 1.58c-.05.3-.07.62-.07.94 0 .33.02.64.07.94l-2.03 1.58a.49.49 0 00-.12.61l1.92 3.32c.13.22.39.3.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.48-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.49.49 0 00-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1112 8.4a3.6 3.6 0 010 7.2z"/></svg>
                   <span data-i18n="settings">Configurações</span>
+                  <!-- ADR-0032 · a única porta que não some em nenhuma largura -->
+                  <span id="cfgUpdDot" class="upddot" hidden aria-hidden="true"></span>
                 </button>
                 <!-- o ícone é aria-hidden e o botão não tem texto: sem aria-label
                      o nome acessível dependia do `title`, que nunca mudava —
@@ -826,6 +833,10 @@
             <button class="cfgnavbtn" data-sec="loops" data-i18n>Loops</button>
             <button class="cfgnavbtn" data-sec="look" data-i18n>Aparência</button>
             <button class="cfgnavbtn" data-sec="git" data-i18n>Versões e GitHub</button>
+            <!-- ADR-0032 · seção própria: "Versões e GitHub" é o versionamento do
+                 CONHECIMENTO (salvar versão, rascunho, revisão). A versão do APP é
+                 outro assunto e não pode dividir vocabulário com aquele. -->
+            <button class="cfgnavbtn" data-sec="upd" data-i18n>Atualizações</button>
           </nav>
           <div id="cfgPop" class="cfgmain">
             <p id="cfgSummary" class="cfgsummary mono">—</p>
@@ -1036,6 +1047,43 @@
                 <ul id="ghChecks" class="ghchecks"></ul>
               </div>
             </section>
+
+            <!-- ============ ADR-0032 · ATUALIZAÇÕES ============
+                 O app avisa e mostra o caminho; quem atualiza é o usuário, no
+                 gerenciador que instalou o bundle. Nada aqui baixa nem instala. -->
+            <section class="cfgsec" data-sec="upd">
+              <h3 data-i18n>Atualizações</h3>
+              <div class="cfgcard">
+                <div class="field"><span class="mono" data-i18n>versão instalada</span>
+                  <span id="updCurrent" class="mono dirinfo">—</span>
+                </div>
+                <div class="field"><span class="mono" data-i18n>última publicada</span>
+                  <span id="updLatest" class="mono dirinfo">—</span>
+                </div>
+                <!-- escrito por paintUpdate(): três estados, e "não verifiquei"
+                     nunca é dito como "está atualizado" (CLAUDE.md §7.1) -->
+                <p id="updState" class="updstate" data-i18n-dyn>—</p>
+                <div class="updrow">
+                  <button id="updCheck" class="btn sm" data-i18n>verificar agora</button>
+                  <button id="updNotes" class="btn sm" data-i18n>ver notas da versão</button>
+                  <span id="updStamp" class="hint" data-i18n-dyn></span>
+                </div>
+                <!-- a rota da instalação DESTE usuário: o comando do cask, ou o
+                     .dmg. Só aparece quando há o que atualizar. -->
+                <div id="updHow" class="updhow" hidden>
+                  <p id="updHowText" class="hint" data-i18n-dyn></p>
+                  <div id="updCmdRow" class="updcmd" hidden>
+                    <code id="updCmd" class="mono">brew upgrade --cask loro</code>
+                    <button id="updCopy" class="btn sm" data-i18n>copiar comando</button>
+                  </div>
+                </div>
+                <p class="hint" data-i18n>o Loro não baixa nem instala a atualização por você — ele mostra o comando e você decide quando rodar.</p>
+              </div>
+              <div class="cfgcard">
+                <label class="opt"><input type="checkbox" id="updEnabled" /> <span data-i18n>avisar quando houver uma versão nova</span></label>
+                <p class="hint" data-i18n>a consulta é anônima e vai só à página pública de versões do GitHub, no máximo uma vez por dia. desligado, o Loro nunca busca isso sozinho.</p>
+              </div>
+            </section>
           </div>
         </div>
       </div>
@@ -1081,6 +1129,7 @@
     <script src="presets.js"></script>
     <script src="modelui.js"></script>
     <script src="loops.js"></script>
+    <script src="update.js"></script>
     <script src="audio.js"></script>
     <script src="shell.js"></script>
     <script src="app.js"></script>

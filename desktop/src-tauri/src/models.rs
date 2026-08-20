@@ -280,8 +280,19 @@ mod tests {
         assert!(spec("does-not-exist").is_none());
     }
 
+    // LORO_HF_BASE é do PROCESSO, e os testes rodam em paralelo: os dois abaixo
+    // disputavam a mesma variável. Um remove a base no início; o outro a define
+    // e só então compara — e quando o primeiro caía nesse meio, o segundo falhava
+    // em `assert_eq` com a URL do HuggingFace no lugar do espelho. Foi assim que
+    // a CI ficou vermelha em 2026-08-20 (models.rs:294, 447 passaram e 1 falhou)
+    // e verde na re-execução seguinte, sem uma linha mudar: é o vermelho que
+    // aparece e some, o pior tipo (CLAUDE.md §7.1). O que a trava garante não é
+    // ordem, é EXCLUSÃO — enquanto um deles mexe na variável, o outro espera.
+    static HF_BASE_ENV: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn model_url_is_https_and_names_the_ggml_file() {
+        let _guard = HF_BASE_ENV.lock().unwrap_or_else(|e| e.into_inner());
         std::env::remove_var("LORO_HF_BASE");
         let u = model_url("small");
         assert!(u.starts_with("https://"), "url must be https: {u}");
@@ -290,6 +301,7 @@ mod tests {
 
     #[test]
     fn model_url_honors_mirror_override() {
+        let _guard = HF_BASE_ENV.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("LORO_HF_BASE", "https://mirror.example/x");
         assert_eq!(
             model_url("small"),

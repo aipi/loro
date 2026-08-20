@@ -1665,6 +1665,29 @@ body { background: var(--paper); color: var(--ink); }
 }
 .headright { margin-left: auto; display: inline-flex; align-items: center; gap: 10px; flex: none; }
 .localtag { font: 11px var(--mono); color: var(--muted); letter-spacing: .02em; }
+/* ADR-0032 · a etiqueta da versão virou botão para poder levar a Configurações
+   quando há versão nova. Sem atualização ela tem de continuar SENDO uma
+   etiqueta: nenhum contorno, nenhum fundo, o mesmo tom apagado — o cabeçalho
+   não ganha um controle novo por causa de um estado que quase nunca acontece. */
+.verstag { border: none; background: none; padding: 0; cursor: default; }
+.verstag.upd {
+  color: var(--teal); cursor: pointer;
+  font-weight: 600;
+}
+.verstag.upd:hover { text-decoration: underline; }
+/* o ponto no ⚙: a etiqueta acima some abaixo de 1015px (DESIGN §2, regra 9) e
+   este é o resto do aviso nas janelas estreitas. 7px, sem texto — quem lê a
+   frase inteira é a seção Atualizações. */
+.upddot { width: 7px; height: 7px; border-radius: 999px; background: var(--teal); flex: none; margin-left: 6px; }
+.updstate { font: 13px var(--sans); color: var(--fg); margin: 2px 10px 8px; }
+.updstate.on { color: var(--teal); font-weight: 600; }
+.updrow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 0 10px 8px; }
+.updhow { padding: 0 10px 8px; display: grid; gap: 6px; }
+.updcmd { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.updcmd code {
+  font: 12px var(--mono); background: var(--panel); border: 1px solid var(--line-control);
+  border-radius: 6px; padding: 4px 8px; user-select: all;
+}
 .recbtn {
   display: inline-flex; align-items: center; gap: 8px;
   border: none; background: var(--red); color: var(--on-red); border-radius: 999px;

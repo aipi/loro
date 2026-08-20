@@ -4644,7 +4644,6 @@ mod tests {
     }
 
     // moving a note/anexo between folders of the non-versioned world
-    #[test]
     // ADR-0029 §8.5 — O QUE UM LOOP PRODUZ É UM DOCUMENTO COMUM, e portanto se move, se
     // renomeia e se apaga como qualquer outro. `loops/<slug>/` é um mundo NÃO-VERSIONADO
     // como `brainstorming/` e `pessoal/` (git.rs::GIT_IGNORED tem `loops/*/`), então é a
@@ -4654,12 +4653,18 @@ mod tests {
     // E A DEFINIÇÃO NÃO ENTRA POR ESTA PORTA: `loops/<slug>.md` é versionado, é o que a
     // pessoa lê e edita, e apagá-lo é `loop_delete` — que também cancela o ciclo em curso
     // e esquece o registro (§3.10 F3/F4). Renomeá-lo por aqui deixaria um runtime órfão.
-    #[test]
     // ADR-0028 §2 (extensão de 2026-08-18, decisão do dono) — SOLTAR UM ARQUIVO DO
     // COMPUTADOR NUMA PASTA DA ÁRVORE É ARQUIVAR: o arquivo é MOVIDO, como em qualquer
     // gerenciador de arquivos no mesmo disco. Soltar na FILA continua copiando: ali o
     // gesto é «entregue isto à IA», e o original continua seu. O gesto muda de
     // significado com o LUGAR, que é o que o roteador do ADR-0028 já faz.
+    // UM #[test] SÓ, e é o de baixo. Havia TRÊS empilhados aqui — cada comentário
+    // novo ganhou o seu —, e `cargo test -- --list` mostrava este nome três vezes:
+    // o mesmo corpo rodava três vezes EM PARALELO. As três instâncias chamam
+    // `tmp("drop")`, cujo nome é pid+nanos, e o relógio do macOS não tem
+    // granularidade de 1ns: duas caíam no mesmo carimbo e o `remove_dir_all` de uma
+    // apagava a pasta da outra. Vermelho intermitente nos `assert_eq` de
+    // acervo.rs:4680 e :4702 — 2 de 8 rodadas locais, 2026-08-20.
     #[test]
     fn dropping_from_outside_moves_into_the_folder_and_refuses_what_it_should() {
         let base = tmp("drop");
