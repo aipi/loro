@@ -2226,14 +2226,33 @@ pub fn brain_read_asset(rel: String) -> Result<Asset, String> {
     read_asset(&acervo_base()?, &rel)
 }
 
+// The OS's own "open this local file in its default app". Never through a
+// shell: `cmd /C start` would hand the path to the command interpreter, so
+// Windows invokes the same file-protocol handler used for open_url_cmd
+// instead — it opens a local path just as well as an http(s) URL.
+fn open_file_cmd(path: &Path) -> (&'static str, Vec<String>) {
+    if cfg!(target_os = "windows") {
+        (
+            "rundll32.exe",
+            vec![
+                "url.dll,FileProtocolHandler".into(),
+                path.to_string_lossy().into_owned(),
+            ],
+        )
+    } else {
+        ("open", vec![path.to_string_lossy().into_owned()])
+    }
+}
+
 // Open a non-renderable local file (wav/webm/pdf/xlsx…) in the OS default app.
-// Restricted to inside the acervo root; fixed args, no shell (macOS `open`).
+// Restricted to inside the acervo root; fixed args, no shell.
 #[tauri::command]
 pub fn brain_open_external(rel: String) -> Result<(), String> {
     let base = acervo_base()?;
     let p = guarded_existing(&base, &rel)?;
-    crate::proc::command("open")
-        .arg(&p)
+    let (bin, args) = open_file_cmd(&p);
+    crate::proc::command(bin)
+        .args(args)
         .spawn()
         .map(|_| ())
         .map_err(|e| e.to_string())
@@ -4474,6 +4493,23 @@ mod tests {
         assert!(args.contains(&"https://github.com/acme/brain/pull/7".to_string()));
         if cfg!(target_os = "windows") {
             assert_eq!(bin, "rundll32.exe");
+        } else {
+            assert_eq!(bin, "open");
+        }
+    }
+
+    // The path is caller-supplied (via a rel guarded to the acervo root), so it
+    // never reaches a command interpreter: `cmd /C start` on Windows would let
+    // `&` split the line, same failure mode as open_url_cmd.
+    #[test]
+    fn open_file_cmd_never_goes_through_a_shell() {
+        let path = std::path::Path::new("/tmp/acervo/reuniao/audio.wav");
+        let (bin, args) = open_file_cmd(path);
+        assert!(bin != "cmd" && bin != "sh" && bin != "powershell.exe");
+        assert!(args.contains(&path.to_string_lossy().into_owned()));
+        if cfg!(target_os = "windows") {
+            assert_eq!(bin, "rundll32.exe");
+            assert!(args.contains(&"url.dll,FileProtocolHandler".to_string()));
         } else {
             assert_eq!(bin, "open");
         }
