@@ -24,6 +24,11 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const { execFileSync } = require("child_process");
+// `file://` + caminho cru só é URL válida quando o caminho começa com "/". No
+// Windows vira "file://C:\Users\…", que o Chrome não resolve (barra invertida e
+// uma barra a menos), e o app carregava sem app.js — o driver então parava sem
+// resultado e lia-se como defeito do app. pathToFileURL faz os dois lados.
+const { pathToFileURL } = require("url");
 
 const REAL_SRC = path.join(__dirname, "..", "desktop", "src");
 const CHROMES = [
@@ -31,6 +36,15 @@ const CHROMES = [
   "/Applications/Chromium.app/Contents/MacOS/Chromium",
   "/usr/bin/google-chrome",
   "/usr/bin/chromium",
+  // Windows: sem estes caminhos o `find` abaixo não achava nada e o smoke saía
+  // com 0 dizendo «pulado» numa máquina que tem DOIS navegadores instalados —
+  // medido em 2026-08-20 (Edge x86 + Chrome), e é por isso que a superfície
+  // nunca foi medida no Windows. O Edge serve: é o mesmo Chromium do WebView2
+  // que roda o app de verdade.
+  "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+  "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+  "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+  "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
 ];
 const CHROME = CHROMES.find((p) => { try { fs.accessSync(p, fs.constants.X_OK); return true; } catch (_) { return false; } });
 if (!CHROME) { console.log("smoke: pulado — nenhum Chrome encontrado"); process.exit(0); }
@@ -913,7 +927,7 @@ for (const [nome, corpo] of [["STUB", STUB], ["DRIVER", DRIVER]]) {
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "loro-smoke-"));
 const page = html
-  .replace("<head>", `<head><base href="file://${REAL_SRC}/">` + STUB)
+  .replace("<head>", `<head><base href="${pathToFileURL(REAL_SRC + path.sep)}">` + STUB)
   .replace("</body>", DRIVER + "</body>");
 const file = path.join(tmp, "smoke.html");
 fs.writeFileSync(file, page);
@@ -926,7 +940,7 @@ const dom = execFileSync(CHROME, [
   // no meio e o resultado sai como «o driver não chegou ao fim» — que se lê como defeito
   // do app e não é (custou uma caçada em 2026-08-18). Ele cresce com o roteiro; cada
   // `step` novo com esperas soma. 22 passos ≈ 11s de tempo virtual.
-  "--window-size=1400,900", "--virtual-time-budget=30000", "--dump-dom", `file://${file}`,
+  "--window-size=1400,900", "--virtual-time-budget=30000", "--dump-dom", pathToFileURL(file).href,
 ], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 1 << 28 });
 
 const m = /<title>RESULT(\{[\s\S]*?\})<\/title>/.exec(dom);
