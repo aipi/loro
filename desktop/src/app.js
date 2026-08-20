@@ -963,6 +963,7 @@ async function startMeetingWith(choice) {
   meeting.livingRel = res.livingRel; meeting.tema = choice.tema;
   meeting.originEpoch = res.startedEpochMs || null; // ADR-0025: o t=0 das DUAS trilhas
   meeting.phase = "recording"; meeting.pendingLines = [];
+  stopPending = false; // um encerramento que morreu no meio não trava esta
   meeting.appended = []; crossTalkHits = 0; crossTalkNudged = false;
   meeting.micLive = mic === true;   // o selo de privacidade lê este fato (BR-8)
   meeting.gate = LM.coverageGate(); // ADR-0025: o dono da junção é POR reunião
@@ -1326,8 +1327,20 @@ function setTailStatus(id, msg) {
 
 // Encerrar: para captura/onda; o MediaRecorder dispara finalizeMeeting no onstop.
 // Se o microfone falhou (sem recorder), conduzimos o encerramento diretamente.
+//
+// O pendente é pintado AQUI, antes de qualquer trabalho, e não só no clique do
+// #recFinish: a paleta e o atalho também encerram, e por eles o rodapé ficava
+// oferecendo "pausar" e "Encerrar reunião" até o flush da última janela acabar
+// (ffmpeg + whisper: sub-segundo no macOS, segundos a minutos no Windows), com o
+// relógio já zerado pelo onStopped. Medido no Windows: o botão não reagia, o
+// usuário clicou 3x e cada clique disparou outro carve da MESMA janela final
+// (3x "stop (meeting ADR-0010)" e 3x "hold expired" no log de uma reunião).
+let stopPending = false;
 function stopMeeting() {
+  if (stopPending) return;
+  stopPending = true;
   clog("stop (meeting ADR-0010)");
+  setRecPending("stopping");
   if (state.paused) { state.pausedMs += Date.now() - state.pauseStart; state.paused = false; state.pauseStart = 0; }
   stopMeetingTail();     // encerra o preview de sistema
   stopMeetingPreview();  // encerra o preview de mic (faz o flush do último segmento)
@@ -1425,7 +1438,7 @@ async function finalizeMeeting() {
   audio.chunks = []; audio.recorder = null;
   state.meetingMode = false;
   const id = meeting.id;
-  if (!id) return;
+  if (!id) { stopPending = false; return; }
   // ADR-0025: a ÚLTIMA janela de sistema tinha de ser despejada aqui e não era —
   // pausar fazia o tique final, encerrar ia direto para o brain_meeting_stop. Até
   // 18s de fala dos outros participantes se perdiam no fim de cada reunião, e o
@@ -1472,6 +1485,7 @@ async function flushMeetingLines() {
 async function finishMeetingAfterTranscription() {
   if (!meeting.active) return;
   meeting.active = false; meeting.phase = "done"; // reentrancy guard set synchronously
+  stopPending = false;
   const id = meeting.id;
   if (meeting.flushTimer) { clearTimeout(meeting.flushTimer); meeting.flushTimer = null; }
   await flushMeetingLines();
@@ -3224,7 +3238,6 @@ function wireSidebar() {
     e.stopPropagation(); openCtxMenu(el2, el2.dataset.cmenu, el2.dataset.isctx !== "1");
   }));
 
-  B.main.querySelectorAll("[data-addctx]").forEach((el2) => (el2.onclick = promptNewContext));
   // section-header ＋ buttons (compact creation, owner feedback 2026-07-28)
   if ($("addCtxBtn")) $("addCtxBtn").onclick = promptNewContext;
   if ($("addTemaBtn")) $("addTemaBtn").onclick = promptNewTema;
@@ -3556,7 +3569,7 @@ let bsSelection = new Set();
 function wirePessoal() {
   B.navPessoal.querySelectorAll("[data-doc]").forEach((el2) => {
     el2.onclick = (e) => {
-      if (e.target.closest("[data-delpessoal]") || e.target.closest("[data-bssel]")) return;
+      if (e.target.closest("[data-bssel]")) return;
       openDoc(el2.dataset.doc, { preview: true });
     };
     el2.ondblclick = () => openDoc(el2.dataset.doc, { preview: false });
@@ -3569,9 +3582,6 @@ function wirePessoal() {
       renderSelectionBar();
     };
   });
-  B.navPessoal.querySelectorAll("[data-delpessoal]").forEach((el2) => (el2.onclick = (e) => {
-    e.stopPropagation(); delPessoal(el2.dataset.delpessoal);
-  }));
   B.navPessoal.querySelectorAll("[data-artmenu]").forEach((el2) => (el2.onclick = (e) => {
     e.stopPropagation(); openArtefatoMenu(el2.dataset.artmenu, el2.dataset.artlabel, el2);
   }));
@@ -3603,7 +3613,6 @@ function wirePessoal() {
     else { bOpen.add(key); el2.classList.add("open"); if (child) child.hidden = false; }
   }));
   wirePathMenus(B.navPessoal);
-  B.navPessoal.querySelectorAll("[data-addtema]").forEach((el2) => (el2.onclick = promptNewTema));
   B.navPessoal.querySelectorAll("[data-addnota]").forEach((el2) => (el2.onclick = (e) => {
     e.stopPropagation(); promptNewNota(el2.dataset.addnota, el2);
   }));
@@ -11481,7 +11490,7 @@ function paintRecordingChrome() {
   if (fin) fin.hidden = !meeting.active;
   const pau = $("recPause");
   if (pau) {
-    const showPause = meeting.active && (meeting.phase === "recording" || state.paused);
+    const showPause = meeting.active && !stopPending && (meeting.phase === "recording" || state.paused);
     if (pau.hidden === showPause) { pau.hidden = !showPause; paintPauseBtn(); }
   }
   // C27 · "Marcar momento" grava um marcador no manifest da reunião e "Anexar

@@ -614,7 +614,10 @@
               <!-- os controles vêm ANTES do relógio; Encerrar tem o mesmo
                    tratamento do Parar do cabeçalho (.recbtn) -->
               <button id="recPause" class="btn sm" hidden>⏸ pausar</button>
-              <button id="recFinish" class="recbtn sm" hidden data-i18n>■ Encerrar reunião</button>
+              <!-- data-mtgfinish: o gancho que setRecPending usa para deixar este
+                   botão em "encerrando…". Sem ele o seletor casava com zero
+                   elementos e o clique não mudava nada na tela (N27) -->
+              <button id="recFinish" class="recbtn sm" hidden data-mtgfinish data-i18n>■ Encerrar reunião</button>
               <span id="timer" class="mono timer">00:00</span>
               <canvas id="wave" class="wave" width="640" height="26"></canvas>
               <span class="mono recnote" data-i18n>mic ativo · a gravação continua se você trocar de aba</span>
