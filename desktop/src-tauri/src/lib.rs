@@ -4295,9 +4295,23 @@ fn save_recording(data: Vec<u8>, filename: String) -> Result<String, String> {
     Ok(path.display().to_string())
 }
 
+// loro.sh is a POSIX script and diarization needs WhisperX (Python); Windows
+// has neither by default, and the only bash.exe a stock install has is WSL's,
+// which resolves paths against a different filesystem than the one the audio
+// was saved to. Refuse early with a dedicated message instead of letting the
+// spawn fail with a raw OS error the user cannot act on — same shape as
+// `system_capture_start`'s macOS guard.
+fn diarize_supported(is_windows: bool) -> Result<(), String> {
+    if is_windows {
+        return Err("err.diarize_windows_unsupported".into());
+    }
+    Ok(())
+}
+
 // runs the loro.sh diarize (WhisperX) handoff and returns the speaker Markdown
 #[tauri::command]
 async fn diarize(audio_path: String) -> Result<String, String> {
+    diarize_supported(cfg!(target_os = "windows"))?;
     tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
         let script = project_dir().join("loro.sh");
         let output = proc::command("bash")
@@ -7095,5 +7109,21 @@ mod tests {
             "o varredor não achou nenhum leitor do cache ({checked}) — ele cegou, \
              e uma asserção que não pode reprovar é a doença que ela existe para pegar"
         );
+    }
+
+    // Diarization runs loro.sh through `bash`, and depends on WhisperX (Python).
+    // Neither exists on a stock Windows box the way the code assumed: loro.sh is
+    // POSIX, and the only bash.exe a typical install has is WSL's, which resolves
+    // paths against a different filesystem than the one the audio was saved to.
+    // Refuse early with a dedicated message instead of letting the spawn fail with
+    // a raw OS error the user cannot act on (same shape as `system_capture_start`'s
+    // macOS guard).
+    #[test]
+    fn diarize_refuses_on_windows_with_a_dedicated_error() {
+        assert_eq!(
+            diarize_supported(true),
+            Err("err.diarize_windows_unsupported".into())
+        );
+        assert_eq!(diarize_supported(false), Ok(()));
     }
 }

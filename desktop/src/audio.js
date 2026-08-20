@@ -72,5 +72,12 @@
     return { audio: deviceId ? { ...base, deviceId: { exact: deviceId } } : base };
   }
 
-  return { pickCaptureDevice, loopbackPattern, micConstraints, RAW_AUDIO };
+  // Diarização (WhisperX) depende de bash + Python; o Windows não tem nenhum
+  // dos dois por padrão, e o bash.exe de uma instalação típica é o do WSL, que
+  // enxerga outro sistema de arquivos (não acha o áudio salvo pelo Loro).
+  function diarizeSupported(os) {
+    return os !== "windows";
+  }
+
+  return { pickCaptureDevice, loopbackPattern, micConstraints, diarizeSupported, RAW_AUDIO };
 });

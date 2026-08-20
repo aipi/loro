@@ -506,6 +506,23 @@ test("N8 — um despacho de IA entrega o pendente à superfície que responde", 
   assert.match(fnBody("dispatchAiFromSheet"), /return dispatchAi\(/);
 });
 
+// ---------------------------------------------------------------- diarização/Windows
+// Diarização (WhisperX) depende de bash + Python; o Windows não tem nenhum dos
+// dois por padrão. Mesma forma da reunião só-macOS (applySourceAvailability): a
+// caixa some da tela em vez de oferecer uma ação que só falha ao clicar.
+test("diarização: a caixa sai da tela no Windows, pelo mesmo padrão da fonte 'reunião'", () => {
+  const body = fnBody("applyDiarizeAvailability");
+  assert.match(body, /diarizeSupported\(hostOs\)/,
+    "a decisão usa o mesmo `hostOs` que a disponibilidade da reunião");
+  assert.match(body, /optDiar/, "o pintor precisa mexer no controle de diarização");
+});
+
+test("checkSetup também aplica a disponibilidade da diarização", () => {
+  const body = fnBody("checkSetup");
+  assert.match(body, /applyDiarizeAvailability\(\)/,
+    "sem isto a caixa nasce sem saber se o SO suporta diarização");
+});
+
 // ---------------------------------------------------------------- N13
 // A tira de rodapé do terminal (#termStatus + "■ parar") era cromo morto: uma
 // varredura por todo o frontend achava as duas linhas do index.html e mais nada
