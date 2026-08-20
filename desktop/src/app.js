@@ -112,6 +112,7 @@ function rerenderForLang() {
   try { REV.sig = ""; REV.teamSig = ""; } catch (_) {}
   try { brainRefresh(); } catch (_) {}
   try { paintSideToggle(); } catch (_) {}
+  try { paintUpdate(); } catch (_) {}
   try { paintTermSideBtn(); } catch (_) {}
   try { paintPanelTermPlaceholder(); } catch (_) {}
   try { renderSelectionBar(); } catch (_) {}
@@ -2017,6 +2018,93 @@ function drawProjColors(cur) {
 }
 // ADR-0029 — a recusa de um plugin manda para a seção que resolve.
 async function openCfgPlugins() { await openCfg(); showCfgSection("plugins"); }
+
+// ---- ADR-0032 · há uma versão nova -----------------------------------------
+// UM fato, três superfícies derivadas dele: a etiqueta do cabeçalho, o ponto no
+// ⚙ da lateral e a seção Atualizações. Quem decide se a versão é mais nova é o
+// backend (comparação por número); aqui só se pinta a resposta — repetir a
+// comparação em JS criaria uma segunda verdade sobre o mesmo fato.
+let updStatus = null;
+
+async function openCfgUpdates() { await openCfg(); showCfgSection("upd"); }
+
+function paintUpdate() {
+  const st = updStatus;
+  // a etiqueta do cabeçalho. O `title` é escrito AQUI e não por applyI18n: o
+  // texto depende do estado, e o data-i18n-attrs devolveria o rótulo do boot por
+  // cima (é a mesma doença do selo de privacidade, F25) — por isso o botão não
+  // carrega mais o atributo, e rerenderForLang chama esta função.
+  const tag = $("appVersion");
+  if (tag && st) {
+    const h = LoroUpdate.headTag(st, t);
+    tag.textContent = h.text;
+    tag.title = h.title;
+    tag.classList.toggle("upd", h.mark);
+  }
+  // o ⚙ da lateral: a etiqueta some abaixo de 1015px (DESIGN §2, regra 9), e
+  // este ponto é o que sobra do aviso nas janelas estreitas.
+  const dot = $("cfgUpdDot");
+  if (dot) dot.hidden = !(st && st.available);
+
+  if (!st) return;
+  const set = (id, txt) => { const n = $(id); if (n) n.textContent = txt; };
+  set("updCurrent", "v" + st.current);
+  set("updLatest", st.latest ? "v" + st.latest : "—");
+  set("updState", LoroUpdate.statusLine(st, t));
+  set("updStamp", LoroUpdate.lastCheckLabel(st, t));
+  const state = $("updState");
+  if (state) state.classList.toggle("on", !!st.available);
+  const chk = $("updEnabled");
+  if (chk) chk.checked = !!st.enabled;
+  // o "como atualizar" só aparece quando há o que atualizar: uma instrução de
+  // atualização sem atualização pendente é ruído na tela.
+  const how = $("updHow"), row = $("updCmdRow");
+  const info = LoroUpdate.howTo(st, t);
+  if (how) how.hidden = !st.available;
+  const text = $("updHowText"); if (text) text.textContent = info.text;
+  if (row) row.hidden = !info.command;
+  const cmd = $("updCmd"); if (cmd && info.command) cmd.textContent = info.command;
+}
+
+// `force` é o botão do usuário: passa por cima do intervalo e da chave, e é o
+// único caso em que uma falha de rede vira mensagem na tela (backend).
+async function refreshUpdate(force) {
+  try {
+    updStatus = await invoke("update_check", { force: !!force });
+    paintUpdate();
+  } catch (e) {
+    if (force) toast(tErr(String(e)));
+  }
+}
+
+{
+  const tag = $("appVersion");
+  if (tag) tag.addEventListener("click", () => { if (updStatus && updStatus.available) openCfgUpdates(); });
+  const dot = $("cfgUpdDot");
+  if (dot) dot.addEventListener("click", (e) => { e.stopPropagation(); openCfgUpdates(); });
+  const chk = $("updCheck");
+  if (chk) chk.addEventListener("click", async () => {
+    chk.disabled = true;
+    await refreshUpdate(true);
+    chk.disabled = false;
+  });
+  const notes = $("updNotes");
+  if (notes) notes.addEventListener("click", () => {
+    invoke("update_open_release").catch((e) => toast(tErr(String(e))));
+  });
+  const copy = $("updCopy");
+  if (copy) copy.addEventListener("click", async () => {
+    const cmd = ($("updCmd") || {}).textContent || "";
+    toast((await copyToClipboard(cmd)) ? t("comando copiado") : t("não consegui copiar"));
+  });
+  const en = $("updEnabled");
+  if (en) en.addEventListener("change", async () => {
+    try {
+      updStatus = await invoke("update_set_enabled", { enabled: en.checked });
+      paintUpdate();
+    } catch (e) { toast(tErr(String(e))); en.checked = !en.checked; }
+  });
+}
 function closeCfg() { cfgWrap.hidden = true; leaveOverlay(cfgWrap); }
 cfgClose.addEventListener("click", closeCfg);
 
@@ -11518,6 +11606,10 @@ applySettings();
 })();
 // o cabeçalho mostra a versão (o "100% local" vive no manual e no seletor de fonte)
 invoke("app_version").then((v) => { const n = $("appVersion"); if (n) n.textContent = "v" + v; }).catch(() => {});
+// ADR-0032 · a checagem do arranque. Vai à rede no máximo uma vez por dia e
+// nunca segura a abertura: o backend decide se hoje já foi, e uma falha de rede
+// não vira mensagem numa consulta que o usuário não pediu.
+setTimeout(() => { refreshUpdate(false); }, 1500);
 resizeWave();
 drawIdle();
 updateCfgLabel();
