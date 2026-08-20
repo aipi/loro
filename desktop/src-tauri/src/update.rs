@@ -129,19 +129,30 @@ pub fn state_path() -> PathBuf {
 }
 
 pub fn read_state() -> UpdateState {
-    std::fs::read_to_string(state_path())
+    read_state_at(&state_path())
+}
+
+// O caminho entra como argumento para o teste poder exercitar o disco de
+// verdade sem mexer em LORO_HOME: variável de ambiente é do PROCESSO, e os
+// testes rodam em paralelo — foi essa classe de corrida que deixou a CI
+// vermelha em 2026-08-20 (ver models.rs::tests::HF_BASE_ENV).
+pub fn read_state_at(path: &std::path::Path) -> UpdateState {
+    std::fs::read_to_string(path)
         .ok()
         .and_then(|t| serde_json::from_str(&t).ok())
         .unwrap_or_default()
 }
 
 pub fn write_state(st: &UpdateState) -> Result<(), String> {
-    let p = state_path();
+    write_state_at(&state_path(), st)
+}
+
+pub fn write_state_at(p: &std::path::Path, st: &UpdateState) -> Result<(), String> {
     if let Some(parent) = p.parent() {
         std::fs::create_dir_all(parent).map_err(|_| SAVE_ERR.to_string())?;
     }
     let body = serde_json::to_string_pretty(st).map_err(|_| SAVE_ERR.to_string())?;
-    std::fs::write(&p, body).map_err(|_| SAVE_ERR.to_string())
+    std::fs::write(p, body).map_err(|_| SAVE_ERR.to_string())
 }
 
 // ADR-0001 §10 — a tela recebe código de produto, nunca o texto do io::Error.
@@ -492,6 +503,52 @@ mod tests {
         assert!(s.available, "o que ontem viu continua valendo hoje");
         assert!(!s.checked);
         assert_eq!(s.latest, "0.14.0");
+    }
+
+    // O arquivo em disco é a memória do aviso entre execuções. Este teste escreve
+    // à mão a forma EXATA que ~/.loro/update.json tem (camelCase), porque é essa
+    // forma que uma simulação manual e uma versão anterior do app produzem.
+    #[test]
+    fn the_state_file_round_trips_through_disk() {
+        let dir = std::env::temp_dir().join(format!(
+            "loro-update-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let path = dir.join("update.json");
+
+        // arquivo ausente: ligado, nunca verificado — e não explode
+        assert_eq!(read_state_at(&path), UpdateState::default());
+
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            &path,
+            r#"{"enabled": true, "lastCheck": 1755000000, "latest": "9.9.9"}"#,
+        )
+        .unwrap();
+        let st = read_state_at(&path);
+        assert_eq!(st.latest, "9.9.9");
+        assert_eq!(st.last_check, 1_755_000_000);
+        // e o que o disco disse chega à tela como aviso, sem rede nenhuma
+        let s = status_from("0.13.1", &st, None, Route::Brew, 1_755_000_010);
+        assert!(s.available);
+        assert!(!s.checked);
+
+        let back = UpdateState {
+            enabled: false,
+            last_check: 42,
+            latest: "1.2.3".into(),
+        };
+        write_state_at(&path, &back).unwrap();
+        assert_eq!(read_state_at(&path), back);
+
+        // lixo em disco não derruba o app: vale o padrão
+        std::fs::write(&path, "não é json").unwrap();
+        assert_eq!(read_state_at(&path), UpdateState::default());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // BR-8: o que vai ao GitHub é um GET anônimo. Nada de versão instalada no
