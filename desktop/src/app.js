@@ -2051,7 +2051,7 @@ function paintUpdate() {
   set("updCurrent", "v" + st.current);
   set("updLatest", st.latest ? "v" + st.latest : "—");
   set("updState", LoroUpdate.statusLine(st, t));
-  set("updStamp", LoroUpdate.lastCheckLabel(st, t));
+  set("updStamp", LoroUpdate.lastCheckLabel(st, t, uiLocale()));
   const state = $("updState");
   if (state) state.classList.toggle("on", !!st.available);
   const chk = $("updEnabled");

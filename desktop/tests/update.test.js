@@ -56,9 +56,22 @@ test("o comando do Homebrew só aparece para quem instalou pelo Homebrew", () =>
 
 test("sem consulta nenhuma o carimbo é «nunca», não 1969", () => {
   assert.equal(U.lastCheckLabel(base, t), "nunca verificado");
-  const s = U.lastCheckLabel({ ...base, lastCheck: 1755000000 }, t);
+  const s = U.lastCheckLabel({ ...base, lastCheck: 1755000000 }, t, "pt-BR");
   assert.ok(!s.includes("1969"), s);
   assert.match(s, /verificado em /);
+});
+
+// Toda data do app segue o idioma da INTERFACE (`uiLocale()`), não o da
+// máquina: sem o locale explícito, uma interface em inglês num macOS pt-BR
+// imprimia "20/08/2026" no meio de um texto em inglês. E o formato é o da casa
+// — dia/mês/ano e hora:minuto, sem segundos.
+test("a data do carimbo segue o idioma da interface, não o da máquina", () => {
+  const st = { ...base, lastCheck: 1755000000 };
+  const pt = U.lastCheckLabel(st, t, "pt-BR");
+  const en = U.lastCheckLabel(st, t, "en-US");
+  assert.match(pt, /12\/08\/2025/, pt);
+  assert.match(en, /08\/12\/2025/, en);
+  assert.ok(!/\d{2}:\d{2}:\d{2}/.test(pt), `sem segundos: ${pt}`);
 });
 
 test("tudo que a tela diz tem par em inglês", () => {

@@ -63,14 +63,22 @@
     };
   }
 
-  // O carimbo da última consulta. Data local, e um travessão quando nunca houve
-  // consulta — nunca uma data inventada a partir do epoch 0 ("31/12/1969").
-  function lastCheckLabel(st, t, now) {
+  // O carimbo da última consulta. Um travessão quando nunca houve consulta —
+  // nunca uma data inventada a partir do epoch 0 ("31/12/1969").
+  //
+  // O LOCALE ENTRA DE FORA, como em toda data do app (`uiLocale()` em app.js).
+  // Sem ele, `toLocaleString()` usa o locale da MÁQUINA: com a interface em
+  // inglês e o sistema em pt-BR, esta era a única data da tela que saía
+  // "20/08/2026" no meio de um texto em inglês. O formato também é o da casa —
+  // dia/mês/ano e hora:minuto, sem segundos.
+  function lastCheckLabel(st, t, locale) {
     t = t || id;
     const secs = (st && st.lastCheck) || 0;
     if (!secs) return t("nunca verificado");
-    const d = new Date(secs * 1000);
-    return fill(t("verificado em {v}"), d.toLocaleString());
+    const when = new Date(secs * 1000).toLocaleString(locale, {
+      day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit",
+    });
+    return fill(t("verificado em {v}"), when);
   }
 
   return { headTag, statusLine, howTo, lastCheckLabel };
