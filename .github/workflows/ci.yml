@@ -4,6 +4,14 @@
 #   - Rust backend  (desktop/src-tauri, crate `desktop`)
 #   - Vanilla JS frontend tests (desktop/tests, run with the Node test runner)
 #
+# `test` covers all three desktop platforms Loro ships on. Windows was added
+# after four tests went red there unnoticed for a while (sha256_of/
+# verify_and_install using shasum/sha256sum, pty_opens_spawns_and_exits using
+# /bin/sh) — CI had no runner to catch it. Every step below either already
+# runs the same cargo/node commands on every OS, or is explicitly scoped with
+# `if: matrix.os == '…'` to the one platform it needs; there is no Makefile
+# recipe here to begin with (make requires a POSIX shell Windows does not have).
+#
 # The GUI bundle is NOT built here (that is a release concern). `build-check`
 # only compiles the backend to guarantee it still builds.
 name: CI
@@ -13,12 +21,12 @@ on:
   pull_request:
 
 jobs:
-  # Test + lint + format across Linux and macOS.
+  # Test + lint + format across Linux, macOS and Windows.
   test:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
