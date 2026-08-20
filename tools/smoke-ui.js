@@ -169,6 +169,14 @@ const ANSWERS = {
   selftest_enabled: false,
   ui_get_lang: "pt",
   app_version: "0.13.0",
+  // ADR-0032 · um app desatualizado, instalado pelo cask: é o estado em que a
+  // tela tem algo a dizer, e o único em que dá para MEDIR se ela diz.
+  update_check: { current: "0.13.0", latest: "0.13.1", available: true, checked: true, enabled: true,
+                  lastCheck: 1755000000, route: "brew", command: "brew upgrade --cask loro",
+                  url: "https://github.com/aipi/loro/releases/latest" },
+  update_set_enabled: { current: "0.13.0", latest: "0.13.1", available: true, checked: false, enabled: false,
+                        lastCheck: 1755000000, route: "brew", command: "brew upgrade --cask loro",
+                        url: "https://github.com/aipi/loro/releases/latest" },
   brain_get_config: { brainDir: "/tmp/acervo", contexts: ["produto"], agent: "claude" },
   brain_list_acervos: { acervos: [{ id: "turbi", name: "Turbi", dir: "/tmp/acervo", color: "", lang: "pt", template: "generico", agent: "claude", autoContext: true, ticketBase: "" }], active: "turbi" },
   brain_status: { configured: true, contexts: [{ name: "produto", updated: "2026-08-01" }], inbox: [], processed: 0,
@@ -882,6 +890,33 @@ const DRIVER = `
     await new Promise((r) => setTimeout(r, 400));
     if (!window.__SMOKE__.calls.brain_install_plugin) throw new Error("o install não foi chamado");
     if (!q("#pmWrap").hidden) throw new Error("o sucesso tem de fechar a folha");
+  });
+  // ADR-0032 — o aviso de versão nova. Três superfícies do MESMO fato, e a do
+  // cabeçalho some abaixo de 1015px (DESIGN §2 regra 9): é por isso que o passo
+  // mede também o ponto do ⚙, que é o que sobra numa janela estreita.
+  await step("atualizacao-disponivel", async () => {
+    await window.refreshUpdate(false);
+    await new Promise((r) => setTimeout(r, 120));
+    const tag = q("#appVersion");
+    if (!tag.classList.contains("upd")) throw new Error("a etiqueta do cabeçalho não marcou a versão nova");
+    if (!/0\.13\.1/.test(tag.textContent)) throw new Error("a etiqueta não diz qual é a versão: " + tag.textContent);
+    if (q("#cfgUpdDot").hidden) throw new Error("o ⚙ não ganhou o ponto — nas janelas estreitas o aviso sumiria inteiro");
+    // a etiqueta é a porta: clicar leva à seção que resolve
+    tag.click();
+    await new Promise((r) => setTimeout(r, 300));
+    if (!vis(q("#cfgWrap"))) throw new Error("clicar na etiqueta não abriu Configurações");
+    const sec = q('.cfgsec[data-sec="upd"]');
+    if (!sec || !vis(sec)) throw new Error("a seção Atualizações não está na tela");
+    const txt = sec.textContent;
+    if (!txt.includes("brew upgrade --cask loro")) throw new Error("não mostra o comando da rota que instalou: " + txt);
+    if (!/0\.13\.1/.test(q("#updLatest").textContent)) throw new Error("não diz qual versão saiu");
+    if (!/versão nova/.test(q("#updState").textContent)) throw new Error("a frase de estado não diz o que houve: " + q("#updState").textContent);
+    // o comando não pode ficar cortado: ele existe para ser lido e copiado
+    const code = q("#updCmd");
+    if (code.scrollWidth > code.clientWidth + 1) throw new Error("o comando está cortado: pede " + code.scrollWidth + "px em " + code.clientWidth + "px");
+    if (!q("#updEnabled").checked) throw new Error("a chave devia estar ligada");
+    window.closeCfg();
+    await new Promise((r) => setTimeout(r, 150));
   });
   await step("cfg-plugins", async () => {
     try { await window.openCfgPlugins(); } catch (e) { throw new Error("openCfgPlugins lançou: " + e.message + " | " + (e.stack||"").split("\\n")[1]); }

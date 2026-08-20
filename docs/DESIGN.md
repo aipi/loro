@@ -500,6 +500,18 @@ over `index.html` (half the msgids live there and went untested for a while).
 that becomes ink-coloured while recording; its compact form `.recbtn.sm` is used
 by "■ Encerrar reunião" — the same action must not have two appearances.
 
+**The version tag** (`.localtag` / `.verstag`, header right). It is prose about the
+app, not a control — until there is a new version, and then it is both (ADR-0032):
+`.verstag.upd` keeps the same 11px mono and gains the teal ink, the 600 weight and the
+pointer. It does **not** become a `.btn`, and it does not gain a badge: the header must
+not grow a control for a state that is false almost every day. Two consequences follow
+from rule 9, and both are in the code: the tag is *decoration*, so it disappears below
+1015px — which is why the same fact also lights a 7px dot on the **⚙ Configurações**
+row, the one surface no window width takes away — and the update instruction lives in
+**Configurações → Atualizações**, its own nav section. It is deliberately not inside
+«Versões e GitHub»: that section versions the *knowledge* (salvar versão, rascunho,
+revisão), and the app's own version must not borrow that vocabulary (§4).
+
 **Pills and badges.** Mono, `999px`, semantic colour. Meeting sources are
 coloured in read mode exactly as they are live: teal for você, amber for sistema.
 The family belongs to the **component**, not to whoever writes the markup: `.badge`

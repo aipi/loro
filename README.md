@@ -114,6 +114,22 @@ brew install --cask loro     # installs Loro.app + whisper-cpp + ffmpeg
 > click **Cancel**, then clear the quarantine attribute once:
 > `xattr -dr com.apple.quarantine /Applications/Loro.app`
 
+### Updating
+
+Loro checks GitHub for a newer release **at most once a day** and says so in the
+header, on the ⚙ row and in **Settings → Updates**, which shows how to update by
+the route you installed with (ADR-0032). It never downloads or installs anything
+by itself:
+
+```bash
+brew upgrade --cask loro     # cask install
+```
+
+A `.dmg` install is updated by downloading the new `.dmg` from the release page
+and dragging Loro over the old one. The check is an anonymous `GET` to GitHub's
+public releases endpoint — no identifier, not even your installed version — and
+a switch in **Settings → Updates** turns it off entirely.
+
 <details>
 <summary><strong>macOS troubleshooting</strong> (Homebrew 6+, non-admin installs)</summary>
 
@@ -192,6 +208,10 @@ Security is a premise, enforced by immutable business rules with test coverage:
   approved per machine, and no extension gets a filesystem, exec or network API
   from Loro. A program that would hold audio can never also hold the network, and
   that one has no consent path.
+
+The one request Loro makes on its own is the daily update check (ADR-0032): an
+anonymous `GET` to GitHub's public releases endpoint, off by one switch, sending
+nothing about you, your project or your recordings.
 
 See [`docs/adr/0001-baseline.md`](docs/adr/0001-baseline.md) §3 for the full
 posture, and [`SECURITY.md`](SECURITY.md) for reporting vulnerabilities.

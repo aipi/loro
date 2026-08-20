@@ -51,6 +51,9 @@ mod ext;
 mod mcp;
 use meeting::*;
 mod models;
+// ADR-0032 — o aviso de versão nova. Módulo próprio: a checagem é uma
+// política (intervalo, chave, rota de instalação), não uma linha de wiring.
+mod update;
 // ADR-0011 v1 contract-lock. `pub mod` because these types/commands are the
 // locked privacy surface for the (deferred) multi-agent graph — reachable API,
 // not dead code, even though the transport is not wired yet.
@@ -1636,6 +1639,101 @@ fn ui_get_lang() -> String {
 #[tauri::command]
 fn app_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
+}
+
+// ---- ADR-0032 · há uma versão nova ----------------------------------------
+// A tela pergunta; a política inteira (intervalo, chave, rota) mora em
+// update.rs. Aqui só entra o que precisa do app: a versão compilada e o disco.
+//
+// ASSÍNCRONO pela mesma razão do env_doctor: o corpo dispara `curl` e vai à
+// REDE. Um comando síncrono do Tauri roda na thread principal — foi assim que a
+// janela congelou por 18s (ADR-0022 §28). O bloqueante vai para o pool.
+#[tauri::command]
+async fn update_check(force: bool) -> Result<update::UpdateStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || update_check_blocking(force))
+        .await
+        .map_err(|_| "err.update_check_failed".to_string())?
+}
+
+fn update_check_blocking(force: bool) -> Result<update::UpdateStatus, String> {
+    let current = env!("CARGO_PKG_VERSION");
+    let route = update::detect_route(|p| p.exists());
+    let now = update::now_secs();
+    let mut st = update::read_state();
+
+    if !update::should_check(&st, now, force) {
+        return Ok(update::status_from(current, &st, None, route, now));
+    }
+    match update::fetch_latest_tag() {
+        Ok(tag) => {
+            st.last_check = now;
+            st.latest = tag.clone();
+            if let Err(e) = update::write_state(&st) {
+                warn!(target: "update", error = %e, "update state not persisted");
+            }
+            let status = update::status_from(current, &st, Some(&tag), route, now);
+            // BR-8: números e booleanos, nunca conteúdo do usuário.
+            info!(
+                target: "update",
+                available = status.available, latest = %status.latest, route = ?route,
+                "update check finished"
+            );
+            Ok(status)
+        }
+        // Uma checagem que o USUÁRIO não pediu não vira erro na tela: sem rede,
+        // o app segue com o que já sabia. O botão «verificar agora» é o único
+        // que tem direito de reportar a falha, porque alguém está esperando.
+        Err(e) => {
+            if force {
+                Err(e)
+            } else {
+                info!(target: "update", "update check skipped: unreachable");
+                Ok(update::status_from(current, &st, None, route, now))
+            }
+        }
+    }
+}
+
+// A chave de Configurações. Devolve o estado já repintado para a tela não ter
+// de adivinhar o que ficou gravado.
+#[tauri::command]
+fn update_set_enabled(enabled: bool) -> Result<update::UpdateStatus, String> {
+    let mut st = update::read_state();
+    st.enabled = enabled;
+    update::write_state(&st)?;
+    info!(target: "update", enabled, "update check preference changed");
+    Ok(update::status_from(
+        env!("CARGO_PKG_VERSION"),
+        &st,
+        None,
+        update::detect_route(|p| p.exists()),
+        update::now_secs(),
+    ))
+}
+
+// Abre a página da release no navegador do sistema. É a única ação com efeito
+// externo deste recurso — o app não baixa e não instala (ADR-0032).
+#[tauri::command]
+fn update_open_release() -> Result<(), String> {
+    let url = update::releases_page_url();
+    let (bin, args) = if cfg!(target_os = "windows") {
+        (
+            "cmd",
+            vec!["/C".to_string(), "start".into(), String::new(), url],
+        )
+    } else if cfg!(target_os = "macos") {
+        ("open", vec![url])
+    } else {
+        ("xdg-open", vec![url])
+    };
+    proc::command(bin)
+        .args(args)
+        .spawn()
+        .map(|_| ())
+        // ADR-0001 §10: o que chega à tela é código de produto. Um
+        // std::io::Error em inglês ("No such file or directory (os error 2)")
+        // não é uma frase que o usuário possa usar para nada.
+        .map_err(|_| "err.update_open_failed".to_string())
 }
 
 #[tauri::command]
@@ -4724,6 +4822,9 @@ pub fn run() {
             list_capture_devices,
             ui_get_lang,
             app_version,
+            update_check,
+            update_set_enabled,
+            update_open_release,
             ui_set_lang,
             brain_get_config,
             brain_setup,

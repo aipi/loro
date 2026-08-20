@@ -329,3 +329,23 @@ test("nenhuma chave de tradução é declarada duas vezes", () => {
   }
   assert.deepStrictEqual(repetidas, [], "chaves repetidas — a última vence sem avisar:\n  " + repetidas.join("\n  "));
 });
+
+// UMA DATA NA TELA SEGUE O IDIOMA DA INTERFACE. `toLocaleString()` sem
+// argumento usa o locale da MÁQUINA, então a interface em inglês num sistema
+// pt-BR imprimia "20/08/2026, 12:15" — e isso passou por toda a suíte de i18n,
+// que só olha o dicionário. Passou uma vez (update.js, 2026-08-20); o guarda
+// existe para não passar de novo. `uiLocale()` em app.js é quem sabe o idioma;
+// um módulo isolado recebe o locale de quem o chama.
+test("nenhuma data nasce sem locale — a tela fala o idioma da interface", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const dir = path.join(__dirname, "..", "src");
+  const faltas = [];
+  const semLocale = /\.toLocale(?:String|DateString|TimeString)\(\s*[),{]/;
+  for (const f of fs.readdirSync(dir).filter((f) => f.endsWith(".js"))) {
+    fs.readFileSync(path.join(dir, f), "utf8").split("\n").forEach((linha, i) => {
+      if (semLocale.test(linha)) faltas.push(`${f}:${i + 1} → ${linha.trim()}`);
+    });
+  }
+  assert.deepEqual(faltas, [], "chamada de data sem locale explícito");
+});
