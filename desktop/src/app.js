@@ -2212,6 +2212,21 @@ function applySourceAvailability() {
     clog("meeting source unavailable on " + hostOs + "; fell back to mic");
   }
 }
+// Diarização depende de bash + WhisperX (Python), que o Windows não tem por
+// padrão (ADR pendente): a caixa sai da tela em vez de deixar marcar uma opção
+// que só descobre no fim da gravação que não funciona.
+function applyDiarizeAvailability() {
+  if (!el.optDiar) return;
+  const label = el.optDiar.closest(".opt");
+  const supported = LoroAudio.diarizeSupported(hostOs);
+  if (label) label.hidden = !supported;
+  if (!supported && el.optDiar.checked) {
+    el.optDiar.checked = false;
+    state.recordForDiarize = false;
+    updatePrivacy();
+    clog("diarize unavailable on " + hostOs + "; option unchecked");
+  }
+}
 el.mode.addEventListener("change", () => { settings.mode = el.mode.value; persistSettings(); updateCfgLabel(); });
 el.model.addEventListener("change", () => { settings.model = el.model.value; persistSettings(); updateCfgLabel(); });
 el.lang.addEventListener("change", () => { settings.lang = el.lang.value; persistSettings(); updateCfgLabel(); });
@@ -10286,6 +10301,7 @@ async function checkSetup() {
     const d = await invoke("doctor");
     hostOs = d.os || hostOs; // antes de qualquer early-return: guia o áudio do sistema
     applySourceAvailability();
+    applyDiarizeAvailability();
     const missing = [];
     if (!d.whisper_stream) missing.push("whisper");
     if (!d.models || d.models.length === 0) missing.push("model");
