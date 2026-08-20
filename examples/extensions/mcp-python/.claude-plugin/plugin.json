@@ -1,0 +1,6 @@
+{
+  "name": "mcp-python",
+  "description": "An MCP server over stdio in the Python standard library, served as a Loro surface — and driven from outside the app by the same protocol.",
+  "version": "0.1.0",
+  "author": { "name": "Loro examples" }
+}

@@ -2301,6 +2301,13 @@ h3.rvhead { font: 650 14.5px var(--sans); margin: 16px 0 6px; }
 
 /* ============ 1d / 1e · DOCUMENTO ============ */
 #bDocWrap { padding: 26px 34px 32px; display: flex; gap: 22px; align-items: flex-start; }
+/* ADR-0031 round 2 — an extension screen may opt out of the 700px reading
+   column (`surface.layout: "wide"`, owner decision 2026-08-20): a board is not
+   reading, and 18 columns in 700px is a wall. The pane rule holds — what the
+   screen takes is the CONTENT COLUMN, never the window: wide content scrolls
+   inside its own .extv-scroll-x, and the class comes off with the tab
+   (renderActive removes it before every non-wide paint). */
+#bDocWrap.extwide .doccard { max-width: none; }
 .doccard {
   flex: 1; min-width: 0; max-width: 700px; margin: 0 auto;
   background: var(--panel); border: 1px solid var(--line-strong); border-radius: 16px;
@@ -3233,6 +3240,20 @@ button.refitem {
 .bitem .lstate.teal { color: var(--teal); }
 .bitem .lstate.amber { color: var(--yellow-ink); }
 .bitem .lstate.muted { color: var(--ink3); }
+/* O MESMO SELO FORA DA LINHA DA LATERAL. MEDIDO com getComputedStyle no DOM real:
+   o selo da TELA de uma extensão (`.modelhead`, app.js) e o de Configurações
+   caíam em `rgb(216,211,200)` / `-apple-system` / 14.5px — nenhuma regra casava,
+   porque as quatro acima são todas prefixadas por `.bitem`. Uma extensão que caiu
+   ficava tipograficamente idêntica a uma que está rodando, e em Configurações o
+   estado lia tão forte quanto o nome (DESIGN §1 — o estado não mente, §5 — a
+   mesma coisa não tem duas aparências). As regras de `.bitem` acima têm dois
+   nomes (0-2-0) e continuam ganhando destas (0-1-0), então a lateral não muda um
+   pixel; `.lstate.teal` também é 0-2-0, e para um selo DENTRO de `.bitem` a regra
+   `.bitem .lstate.teal` (0-3-0) continua sendo a que pinta. */
+.lstate { flex: none; font: 10.5px var(--mono); color: var(--muted); }
+.lstate.teal { color: var(--teal); }
+.lstate.amber { color: var(--yellow-ink); }
+.lstate.muted { color: var(--ink3); }
 /* o ponto neutro é um CONTORNO (o token de fronteira, 3:1), não um preenchimento
    com --ghost: --ghost é a tinta do desabilitado, e um loop parado não é um
    controle desabilitado. */
@@ -3543,3 +3564,164 @@ button.refitem {
    nomes em mono (os spans corriam num parágrafo só, colados) */
 .plugbrings { display: flex; flex-direction: column; gap: 4px; font: 11.5px/1.5 var(--sans); color: var(--ink2); }
 .plugbrings .loopwhen { color: var(--ink3); }
+
+/* ============ a tela de uma extensão (ADR-0031 R5a, contrato §8.C) ============
+   A LISTA DE CLASSES É FECHADA e é a de `extview.js` (`LoroExtView.CLASSES`, 58
+   nomes, fixada por `tests/extview.test.js`): o documento vem do processo de um
+   terceiro, e o que ele pode pedir é um PAPEL de um alfabeto fechado — nunca uma
+   medida. Por isso não há um hex, um px de fonte, uma família nem um `style`
+   embutido chegando daquele lado: cada nome abaixo resolve num token que já
+   existe nos DOIS blocos `:root`, e é isso que faz os dois temas continuarem
+   funcionando sem a extensão saber que existem temas.
+   Um modificador que não é classe (`wrap:false`, `family:"mono"`, o degrau de um
+   espaçador, o `doc` sem renderizador) chega como `data-`, para a lista ficar
+   fechada. */
+.extv { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+/* A atribuição é o PRIMEIRO filho: o que vem abaixo se lê como afirmação da
+   extensão, não do Loro (DESIGN §1 — o estado não mente sobre quem afirma). */
+.extv-attr {
+  font: 11.5px/1.5 var(--mono); color: var(--ink3);
+  margin: 0; padding-bottom: 6px; border-bottom: 1px solid var(--line-soft);
+}
+/* Uma recusa é VISÍVEL: um nó descartado em silêncio é uma tela que mente
+   (ADR-0029 §3.7). O código cru fica no `<code class="mono">` que o renderizador
+   escreve; a frase ao lado é a tradução que o app.js já fez. */
+.extv-err {
+  font: 12px/1.5 var(--sans); color: var(--ink2);
+  background: var(--panel); border: 1px solid var(--line-strong);
+  border-left: 3px solid var(--yellow); border-radius: 6px; padding: 6px 10px;
+}
+.extv-more { font: 11.5px/1.5 var(--sans); color: var(--ink3); margin: 0; }
+
+/* ---- os quatro nós de layout. `min-width: 0` em todos, sempre: sem ele um
+   token longo de uma linha de dados estica a coluna e empurra a página para o
+   lado (a mesma medição que `.doc` carrega em style.css:203-213). ---- */
+.extv-stack { display: flex; flex-direction: column; min-width: 0; }
+.extv-row { display: flex; flex-direction: row; min-width: 0; }
+.extv-row-wrap { flex-wrap: wrap; }
+.extv-grid { display: grid; min-width: 0; }
+/* O rolo é do BLOCO, nunca da página: a tela de uma extensão vive no cartão de
+   leitura, e uma barra horizontal na página inteira é o defeito que a regra de
+   `.doc` acima já mede. */
+.extv-scroll { display: flex; flex-direction: column; min-width: 0; overflow-y: auto; }
+.extv-scroll-x { flex-direction: row; overflow-x: auto; overflow-y: visible; }
+/* A horizontal scroller's children keep their NATURAL size — that is what
+   scrolling means. MEASURED (2026-08-20, scratch driver over smoke-ui at the
+   owner's real scale): without this, the row child kept flex-shrink:1, stayed
+   at the scroller's 638px while its content asked 1874px, and 79 columns
+   painted at 12px each — text over text, the screenshot the owner sent. */
+.extv-scroll-x > * { flex: none; }
+/* Width ROLES (extview.js WIDTHS). The role crosses the contract; the number
+   lives only here. sm = 196px, the picker vocabulary (DESIGN.md §5); md is the
+   kanban column — 248px holds `H-2026-08-13-fonte-verdade-dados` in 12.5px
+   mono with room for the badge row. flex:none for the same reason as above:
+   a declared width that can be shrunk away is a lie with a token name. */
+.extv-stack.w-xs, .extv-scroll.w-xs, .extv-row.w-xs, .extv-grid.w-xs { width: 140px; flex: none; }
+.extv-stack.w-sm, .extv-scroll.w-sm, .extv-row.w-sm, .extv-grid.w-sm { width: 196px; flex: none; }
+.extv-stack.w-md, .extv-scroll.w-md, .extv-row.w-md, .extv-grid.w-md { width: 248px; flex: none; }
+.extv-stack.w-lg, .extv-scroll.w-lg, .extv-row.w-lg, .extv-grid.w-lg { width: 320px; flex: none; }
+/* A card with no colour of its own: the page ground inside the panel card,
+   hairline border, the radius scale the app already uses. Both themes define
+   both tokens, which is the whole point of a role. */
+.extv-stack.extv-surface { background: var(--paper); border: 1px solid var(--line); border-radius: 10px; }
+.extv-scroll { scrollbar-width: thin; }
+.mx-sm { max-height: 180px; }
+.mx-md { max-height: 340px; }
+.mx-lg { max-height: 520px; }
+.extv-scroll-x.mx-sm, .extv-scroll-x.mx-md, .extv-scroll-x.mx-lg { max-height: none; }
+
+.g-0 { gap: 0; } .g-2 { gap: 2px; } .g-4 { gap: 4px; } .g-6 { gap: 6px; }
+.g-8 { gap: 8px; } .g-10 { gap: 10px; } .g-12 { gap: 12px; } .g-14 { gap: 14px; }
+.p-0 { padding: 0; } .p-2 { padding: 2px; } .p-4 { padding: 4px; } .p-6 { padding: 6px; }
+.p-8 { padding: 8px; } .p-10 { padding: 10px; } .p-12 { padding: 12px; } .p-14 { padding: 14px; }
+.c-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.c-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.c-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.c-5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.c-6 { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+/* `align` é o eixo TRANSVERSAL num `stack`/`row` e a distribuição no eixo
+   principal quando o autor pede `between` — um só nome, dois efeitos, porque é
+   o que o autor quer dizer: «encoste», «centralize», «separe». */
+.extv-stack.al-start, .extv-row.al-start { align-items: flex-start; }
+.extv-stack.al-center, .extv-row.al-center { align-items: center; }
+.extv-stack.al-end, .extv-row.al-end { align-items: flex-end; }
+.extv-row.al-between { align-items: center; justify-content: space-between; }
+.extv-stack.al-between { align-items: stretch; justify-content: space-between; }
+
+/* ---- as folhas ---- */
+/* MEDIDO, e a razão de o seletor ter DOIS nomes: `#brainDoc` carrega a classe
+   `doc reader`, e `.doc p` / `.doc hr` (classe+tipo, 0-1-1) ganham de
+   `.extv-text` / `.extv-div` (0-1-0). Um `{"kind":"stack","gap":0}` — o degrau
+   mais apertado do alfabeto fechado — media 9px entre as linhas: cada folha
+   levava 8.7px de `margin-bottom` que ninguém pediu, e a régua declarada de 4px
+   do `divider` era pintada com 16px. Como o papel é o que o autor pede, um papel
+   sobrescrito por uma regra que ele não pode ver quebra a premissa inteira — é o
+   mesmo defeito que CLAUDE.md §7.1 registra («.loopfield input silenciosamente
+   ganhou de .mono»). `.extv .extv-*` (0-2-0) devolve o degrau para quem o pediu.
+   `max-width: 100%` está aqui pelo outro defeito medido no mesmo bloco: com
+   `align-items: flex-start` (o padrão de `boxCls`) a folha é shrink-to-fit, então
+   um token de 46 caracteres sem hífen (`contextos/…/context.md`, a forma que a
+   própria fixture usa) media 330px numa coluna de 252px a 880px de janela e
+   empurrava 55px para fora do cartão, com a barra horizontal caindo no #wsBody
+   (WCAG 1.4.10). `overflow-wrap` é herdado de `.doc`, mas não muda min-content:
+   quem resolve é o teto de largura. */
+.extv .extv-text { margin: 0; min-width: 0; max-width: 100%; }
+.extv-text { margin: 0; font-family: var(--sans); }
+.extv-text[data-family="mono"] { font-family: var(--mono); }
+/* `wrap:false` corta com reticências e guarda o valor inteiro no `title`: um
+   corte nunca é uma perda. */
+.extv-text[data-wrap="false"] { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sz-title { font-size: 1.15em; line-height: 1.4; font-weight: 600; }
+.sz-body { font-size: 1em; line-height: 1.6; }
+.sz-label { font-size: .85em; line-height: 1.5; }
+/* 11px é o piso legível desta folha (o mesmo do `.badge`, DESIGN §3) e o degrau
+   `meta` para nele, em vez de continuar descendo em `em`. */
+.sz-meta { font-size: 11.5px; line-height: 1.5; }
+.tn-ink { color: var(--ink); }
+.tn-ink2 { color: var(--ink2); }
+.tn-ink3 { color: var(--ink3); }
+.tn-muted { color: var(--muted); }
+.tn-teal { color: var(--teal); }
+/* âmbar como TEXTO é `--yellow-ink`, não `--yellow`: o preenchimento não é
+   legível como tinta (tokens.test.js:1139 mede os dois). */
+.tn-amber { color: var(--yellow-ink); }
+.tn-red { color: var(--red); }
+.tn-green { color: var(--green); }
+.tn-accent { color: var(--accent); }
+.extv-div { border: 0; border-top: 1px solid var(--line); margin: 4px 0; width: 100%; }
+/* os três nós que também são `<p>`/`<hr>` dentro de `.doc` — ver a medição acima */
+.extv .extv-div { margin: 4px 0; }
+.extv .extv-attr { margin: 0; }
+.extv .extv-more { margin: 0; }
+.extv .extv-doc { min-width: 0; max-width: 100%; }
+.extv-spacer { flex: none; }
+.extv-spacer[data-step="0"] { height: 0; }
+.extv-spacer[data-step="2"] { height: 2px; }
+.extv-spacer[data-step="4"] { height: 4px; }
+.extv-spacer[data-step="6"] { height: 6px; }
+.extv-spacer[data-step="8"] { height: 8px; }
+.extv-spacer[data-step="10"] { height: 10px; }
+.extv-spacer[data-step="12"] { height: 12px; }
+.extv-spacer[data-step="14"] { height: 14px; }
+.extv-ico { display: inline-flex; flex: none; align-items: center; }
+.extv-ico svg { width: 16px; height: 16px; fill: currentColor; }
+/* O bloco de prosa de uma extensão é lido pelo leitor do próprio Loro; sem
+   renderizador ele cai em texto escapado, e aí a quebra de linha da fonte é a
+   única formatação que resta. */
+.extv-doc { min-width: 0; }
+.extv-doc[data-plain="true"] { white-space: pre-wrap; font-family: var(--sans); }
+/* Um localizador é um `<a>` dentro de `.doc`: ele herda o sublinhado permanente
+   e o anel de foco que `.doc a` já paga (WCAG 1.4.1/2.4.7) — nada de aparência
+   nova para a mesma coisa (DESIGN §5). */
+.extv-link { cursor: pointer; }
+/* Um campo é rótulo + controle, na ordem do DOM: o autor não escolhe a ordem de
+   foco porque não existe API para isso. A borda é `--line-control` (3:1, WCAG
+   1.4.11) e o anel de foco é o global — esta folha não desliga nenhum. */
+.extv-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.extv-field > label { font: .85em/1.5 var(--sans); color: var(--ink2); }
+.extv-field input[type="text"], .extv-field input[type="number"], .extv-field select {
+  font-family: var(--sans); font-size: 13px; background: var(--paper); color: var(--ink);
+  border: 1px solid var(--line-control); border-radius: 6px; padding: 4px 8px;
+  min-width: 0; max-width: 100%;
+}
+.extv-field input[readonly] { color: var(--ink3); }

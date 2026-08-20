@@ -277,6 +277,30 @@ description or a review comment — the log lines carry counts, review numbers a
 | `brain_timeline` | `rel?` | `[{id,when,author,label}]` | abstracted history (git log) for the timeline UI |
 | `brain_migrate` | `apply?` | report | non-destructive `guia.md`→`context.md` + scaffolding (dry-run default). The one file it may rewrite instead of create is `.github/pull_request_template.md`, and only while the bytes are still exactly what Loro shipped (`is_shipped_pr_template`): the headings are the send-for-review sheet's field labels, so an old one keeps asking for the retired words, while a template the team wrote is the team's and is never touched |
 
+**Extensions (ADR-0031 R5a, `ext.rs` + `mcp.rs`).** The source is a **local directory
+only** — nothing is downloaded and nothing is built. `surface` is the one point R5a
+implements; every other point an extension declares is reported as unsupported **by
+name** (`unsupported[]` on the install sheet, or `err.ext_point_unsupported:<point>@<v>`
+when it is required).
+
+| Command | Args | Returns | Purpose |
+|---|---|---|---|
+| `ext_list` | — | `[ExtRow]` | the installed extensions and the STATE of each program (`stopped\|starting\|running\|no_answer\|crashed\|blocked`). `hasProgram:false` on a level-1 extension is what stops the screen offering iniciar/parar: among six states `running` is the only one meaning "this works", and a manifest-only extension works right now. `canStop` is a SEPARATE fact read from the registry — there is a live handle — and never a deduction from `state`: `no_answer` means the program stopped ANSWERING, and `sweep` keeps the handle precisely because the child is still alive. `program` and `trusted` travel too, so the start path can NAME what it would run. An entry in `.loro/ext.json` whose `id` is not the shape `slugify` produces is dropped at the door: it is the one field that reaches a path constructor |
+| `ext_preview` | `source` | `ExtPreview` | read a folder without installing: what it declares, what it will write, what R5a does not implement, the triage findings, the id/server conflicts, and `trust` (this extension will run a program on this machine). Refuses at the door, `plugins.rs`-style: a credential in a file BLOCKS (the project is versioned), and `err.ext_audio_network` refuses an audio-holding point declared together with any `net.*` capability (BR-1 — R5a has no consent path) |
+| `ext_install` / `ext_remove` | `source, hoje` / `id, alsoData` | outcome | install from that folder (the declarative half is planned by `plugins::plan_for` — ONE planner, not two) / subtract only what it brought; a file edited afterwards is `kept` and named |
+| `ext_start` / `ext_stop` | `id, approve?` / `id` | `ExtRow` | spawn / stop the extension's MCP program. `stop` closes stdin, waits `STOP_GRACE_MS`, then kills the whole tree; it blocks by design and is called off the main thread (ADR-0022 §28). **`start` re-validates `program` out of the record before it spawns** (the record is versioned, so the argv is untrusted input on the way OUT too) and refuses with `err.ext_untrusted` until somebody on THIS machine has approved exactly this command: the approval lives in `loro_data_dir()/ext/<id>/trust.json`, stores the program verbatim so an edited command asks again, and `ext_install` records it because the install sheet is that confirmation (ADR-0029 §R5). `approve: true` arrives only from that screen. `start` also retires any live handle in the slot first — two children for one extension is one child nobody can reach |
+| `ext_view` | `id, lang` | `ExtViewPayload` | the ViewDocument plus **the facts the HOST computed** (§2.1: `acervo.hotspots` · `acervo.contexts` · `acervo.orphans` · `acervo.broken`, one `acervo::brain_knowledge_graph()` per call). The extension never fetches: facts come from Loro, so a view is testable with a literal facts object and an extension has no filesystem API at all |
+| `ext_action` | `id, action, values, lang, now` | `ExtActionOutcome` | a click inside that screen, delivered to the program over MCP. `outcome ∈ ok\|nothing\|failed` — the loops vocabulary, so the sentence the screen says has one shape in the whole app |
+| `ext_settings_schema` / `_get` / `_set` | `id` / `id` / `id, values` | schema / values / values | the extension's own settings, split by escopo: `<acervo>/.loro/ext/<id>/settings.json` (projeto) and `loro_data_dir()/ext/<id>/settings.json` (maquina). A field whose kind or id names a credential refuses the SCHEMA and writes nothing (BR-9) |
+| `ext_capabilities` / `ext_permit` | `id` / `id, capability, decision` | `[ExtCapability]` / `ExtPolicy` | what it asked for, and the project's answer (`permitir\|recusar\|esquecer`, stored in `AcervoSettings.ext` through read-modify-write). **In R5a a grant enforces nothing**, and the screen says BOTH halves of why: Loro offers no reading API, AND it does not sandbox the program — `mcp::McpClient::spawn` runs the child with no `env_clear`, no sandbox and no network denial, so a started program has the person's own access. The earlier copy said only the first half and therefore asserted a containment the implementation does not provide (DESIGN §1) |
+
+The MCP client (`mcp.rs`) is stdio JSON-RPC 2.0, one line per message, framed by a
+trailing newline; stderr is drained from the moment of spawn (measured on macOS 25.6: an
+undrained stderr pipe blocks the child after **17,408 bytes**), every wait carries a
+deadline, and the `loro/*` method namespace is reserved — a server exposing a `loro/*`
+tool outside R5a's four is refused with `err.ext_reserved_name`. There is deliberately no
+`ext_facts` command: two doors to the same question is two answers to it.
+
 ### 4.2 Events
 
 | Event | Payload | Meaning |
@@ -289,6 +313,8 @@ description or a review comment — the log lines carry counts, review numbers a
 | `model-download-progress` | `{model, downloaded, total}` | model download progress in bytes (ADR-0006) |
 | `model-download-done` | `string` | a model finished downloading and was installed (ADR-0006) |
 | `loop-cycle` | `{slug, phase: "started"\|"ended", outcome?, err?, files[], startedMs}` | a loop's cycle began or ended (ADR-0029). `files` are the acervo-relative paths it created — an address, never content (BR-8) |
+| `ext-state` | `{id, state, reason, lastAnswerMs}` | an extension's program changed state (ADR-0031). `reason` is a stable `err.*` code only for `no_answer\|crashed\|blocked`, and `lastAnswerMs` is when it last actually replied — so «sem resposta» can say since when instead of guessing |
+| `ext-view-invalidated` | `{id}` | the extension says its own screen is stale and the host should re-ask. Kebab-case with no scheme, like every other emit in the backend (measured: zero emit names contain `://`) |
 | `loop-tool` / `loop-tool-result` | same shape as `chat-tool` / `chat-tool-result`, plus `loop` | the steps of a cycle, on the SAME reader the chat uses (`chat.rs::handle_stream_line`, one parser for both channels). The `loop` field is what keeps a parallel cycle from painting into another's list; it is absent — and the payload byte-identical — for the chat |
 
 Path resolution: `LORO_HOME` (exported by `loro.sh`) or a sensible default;
@@ -443,6 +469,53 @@ model presence and permissions. Logging rules: ADR-0001 §3 (BR-8).
   argument tokens (never a shell), branch slugs are sanitized to `[a-z0-9-]`, and
   the environment doctor reads only booleans/versions/public login — tokens are
   never captured or logged (ADR-0001 §5).
+- **The trust boundary of an extension is STATED, never simulated (ADR-0031 R5a;
+  ADR-0029 §11 stands).** An extension's program is a **peer process, not a
+  sandboxed one**: `mcp::McpClient::spawn` runs it through `proc::command`, which
+  removes the 8 `CLAUDE_*` session markers and nothing else — no `env_clear`, no
+  jail, no network denial — so a started program reaches whatever the person
+  reaches on that machine. Loro's guarantee is therefore not containment; it is
+  the **absence of an API plus a validated boundary**, and every half of it is
+  mechanical:
+  - **Nothing is granted by declaring it.** There is no filesystem, exec or
+    network primitive an extension can call. The four `loro/*` methods are the
+    whole vocabulary, the namespace is reserved (`err.ext_reserved_name`), and
+    the facts a surface reads are computed HOST-side and pushed into the
+    `ext_view` reply — the extension never asks the disk a question.
+  - **The program is named, then approved, then re-validated.** The command is a
+    bare NAME resolved through the hydrated PATH (ADR-0030) — a `/` or `\` in it
+    is `err.ext_program_path` — every argv token is validated at manifest read
+    **and again on the way out of the record** before the spawn (the record is
+    versioned, so it is untrusted input in both directions), and no program runs
+    until somebody on THIS machine approved exactly this command
+    (`loro_data_dir()/ext/<id>/trust.json`, program stored verbatim, an edited
+    command asks again, `err.ext_untrusted` otherwise).
+  - **The record's `id` is a name, not a path.** `.loro/ext.json` travels in a
+    commit, and its `id` reaches path constructors whose other end is
+    `remove_dir_all`; an id outside the shape `slugify` produces is dropped at
+    the door (`valid_ext_id`), and the two constructors that build outside the
+    project return `Result` for that reason.
+  - **BR-1 has no consent path here.** A point that holds audio declared together
+    with any `net.*` capability is refused before anything is installed
+    (`err.ext_audio_network`); R5a implements no audio point at all.
+  - **BR-9 refuses the shape, not the value.** A settings field whose kind or id
+    names a secret/token/password/key/credential refuses the whole schema and
+    writes nothing.
+  - **BR-8 does not print what the peer chose.** A method name arriving off the
+    wire is logged only when it is one of Loro's own reserved names; anything else
+    is logged as a byte count, and one stdout frame is bounded
+    (`MAX_FRAME_BYTES`) so an unterminated flood cannot grow the host.
+  - **A surface is data, not code.** The view document is validated against a
+    closed alphabet and rendered by Loro's own components: no JS, no CSS, no
+    remote asset, no `style`, no reach into the focus order — the CSP stays
+    load-bearing, and a `doc` node has every image and every external address
+    stripped from the MARKDOWN SOURCE before Loro's reader sees it.
+  - **What is NOT enforced, said out loud:** a capability the person refused
+    blocks nothing in R5a (`ext_permit` records the answer; no decision site reads
+    it), because enforcement needs a sandbox this project has not written. The
+    three screens that ask now say both halves — no reading API, and no box
+    around the program — instead of implying a containment that does not exist
+    (DESIGN §1).
 
 ## 8. Registered decisions
 
@@ -470,6 +543,7 @@ All technical decisions are consolidated in the single **`docs/adr/0001-baseline
 | Terminal launch/status | `active_agent()` used for auto-launch (not hardcoded); `justLaunched` grace window avoids retyping into a live session | ADR-0005 |
 | Distribution | Homebrew Cask (`brew install --cask loro`) with `whisper-cpp`+`ffmpeg` as formula deps; tap `aipi/homebrew-loro` bumped by release CI | ADR-0006 |
 | First-run models | not bundled; downloaded on demand over HTTPS, verified by pinned SHA-256, atomic install into `~/.loro/models`; a model is only used when whole | ADR-0006 |
+| Executable extension | an extension may declare a **surface** and bring a **program** (MCP over stdio) that Loro is the client of. R5a: source = a local directory only (nothing downloaded, nothing built), `surface` at v1 only, every other point reported unsupported by name. The screen is composed from a **closed primitive alphabet** rendered by `desktop/src/extview.js` — the author asks for a ROLE, never a measurement, so both themes and both languages keep working and no third-party byte reaches `style`, the focus order or the network. The program never runs by itself: iniciar/parar are the person's, and exit takes the whole process tree | ADR-0031 |
 | Update notice | the app checks GitHub's latest release at most once a day, tells the user, and shows the update command for the route they installed by (Homebrew cask / `.dmg`); it never downloads or installs | ADR-0032 |
 | Design system | anatomy, tokens, vocabulary, components and the principles behind them live in `docs/DESIGN.md` — values there are taken from `style.css`, so the code wins when they disagree | ADR-0020/0021/0022 |
 | UI anatomy | one shell everywhere: header 54px (project · nav pill · Record · ✦ AI) → sidebar 250/60px │ document tabs │ right panel 330px (Documento·Chat·Terminal); three destinations replace the numbered flow, no Home tab, no `ⓘ` tooltips | ADR-0020 |

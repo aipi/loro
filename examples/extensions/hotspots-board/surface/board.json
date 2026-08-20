@@ -1,0 +1,120 @@
+{
+  "loroView": 1,
+
+  "components": {
+    "cartao": {
+      "params": ["id", "titulo", "tema", "rel", "comentarios"],
+      "body": { "kind": "stack", "surface": true, "gap": 6, "pad": 10, "children": [
+        { "kind": "text", "text": { "$": "param.titulo" }, "size": "body", "family": "mono", "wrap": true },
+        { "kind": "row", "gap": 6, "wrap": true, "children": [
+          { "kind": "badge", "text": { "$": "param.tema" }, "tone": "muted" },
+          { "kind": "when", "value": { "$": "settings.mostrar_comentarios" }, "is": true, "then": [
+            { "kind": "when", "value": { "$": "param.comentarios" }, "gt": 0, "then": [
+              { "kind": "row", "gap": 2, "children": [
+                { "kind": "icon", "name": "note", "tone": "teal" },
+                { "kind": "badge", "text": { "$": "param.comentarios" }, "tone": "teal" }
+              ] }
+            ] }
+          ] }
+        ] },
+        { "kind": "link", "label": { "pt": "abrir o tema", "en": "open the topic" },
+          "rel": { "$": "param.rel" } },
+        { "kind": "row", "gap": 6, "wrap": true, "children": [
+          { "kind": "button",
+            "ask": { "skill": "loro-kanban-move", "target": { "$": "param.id" },
+              "hint": { "pt": "diga o novo estado (em-pauta, em-resolucao ou concluido) e por quê. Vira um documento versionado em kanban/ — e concluir também rascunha a edição do conhecimento, para a revisão do time",
+                        "en": "say the new state (em-pauta, em-resolucao or concluido) and why. Becomes a versioned document under kanban/ — and concluding also drafts the knowledge edit, for the team's review" },
+              "placeholder": { "pt": "ex.: em-pauta — decidir na reunião de quinta",
+                               "en": "e.g.: em-pauta — decide in Thursday's meeting" } },
+            "label": { "pt": "mover", "en": "move" } },
+          { "kind": "button",
+            "ask": { "skill": "loro-kanban-ask", "target": { "$": "param.id" },
+              "hint": { "pt": "a resposta chega no chat, lendo o documento do tema e os comentários deste ponto",
+                        "en": "the answer lands in the chat, reading the topic's document and this point's comments" },
+              "placeholder": { "pt": "o que você quer saber sobre este ponto?",
+                               "en": "what do you want to know about this point?" } },
+            "label": { "pt": "perguntar", "en": "ask" } },
+          { "kind": "button",
+            "ask": { "skill": "loro-kanban-comment", "target": { "$": "param.id" },
+              "hint": { "pt": "vira um arquivo versionado em kanban/ — o time lê e revisa como qualquer mudança",
+                        "en": "becomes a versioned file under kanban/ — the team reads and reviews it like any change" },
+              "placeholder": { "pt": "seu comentário sobre este ponto",
+                               "en": "your comment on this point" } },
+            "label": { "pt": "comentar", "en": "comment" } }
+        ] }
+      ] }
+    },
+
+    "coluna": {
+      "params": ["nome", "chave"],
+      "body": { "kind": "stack", "w": "md", "gap": 8, "pad": 4, "children": [
+        { "kind": "text", "text": { "$": "param.nome" }, "size": "label", "tone": "ink3" },
+        { "kind": "divider" },
+        { "kind": "scroll", "max": "lg", "gap": 8, "children": [
+          { "kind": "each", "of": "acervo.hotspots", "as": "hs",
+            "where": { "status": { "eq": { "$": "param.chave" } },
+                       "area": { "has": { "$": "settings.filtro" } } },
+            "body": { "kind": "use", "component": "cartao",
+              "args": { "id": { "$": "hs.id" }, "titulo": { "$": "hs.hotspot" },
+                        "tema": { "$": "hs.context" }, "rel": { "$": "hs.rel" },
+                        "comentarios": { "$": "hs.comments" } } } }
+        ] }
+      ] }
+    }
+  },
+
+  "view": [
+    { "kind": "row", "gap": 10, "align": "between", "wrap": true, "children": [
+      { "kind": "stack", "gap": 4, "children": [
+        { "kind": "text", "text": { "$": "settings.rotulo" }, "size": "title" },
+        { "kind": "row", "gap": 6, "children": [
+          { "kind": "badge", "text": { "$": "facts.acervo.hotspots.count" }, "tone": "teal" },
+          { "kind": "text", "text": { "pt": "pontos no conhecimento deste projeto", "en": "points in this project's knowledge" }, "size": "meta", "tone": "muted" }
+        ] }
+      ] },
+      { "kind": "row", "gap": 10, "wrap": true, "align": "end", "children": [
+        { "kind": "field", "id": "filtro", "field": "enum",
+          "label": { "pt": "área", "en": "area" },
+          "value": { "$": "settings.filtro" },
+          "optionsFrom": { "of": "acervo.areas", "value": "area", "label": "area" },
+          "empty": { "pt": "todas as áreas", "en": "all areas" } },
+        { "kind": "button", "primary": true,
+          "ask": { "skill": "loro-kanban-pauta",
+            "hint": { "pt": "monta a pauta da próxima reunião a partir dos pontos EM PAUTA (e do que você acrescentar) e grava como material do projeto — de lá, entra pela fila como tudo",
+                      "en": "drafts the next meeting's agenda from the EM PAUTA points (plus whatever you add) and saves it as project material — from there it enters through the queue like everything else" },
+            "placeholder": { "pt": "algo a acrescentar na pauta? (opcional)",
+                             "en": "anything to add to the agenda? (optional)" } },
+          "label": { "pt": "Gerar pauta da reunião", "en": "Draft the meeting agenda" } }
+      ] }
+    ] },
+
+    { "kind": "when", "value": { "$": "settings.dica_de_uso" }, "is": true, "then": [
+      { "kind": "text", "size": "meta", "tone": "muted", "wrap": true,
+        "text": { "pt": "as colunas são o estado de trabalho de cada ponto, lido de kanban/<tema>/<id>/ponto.md — um documento versionado que o time revisa. Nada se arrasta: mover passa pelo chat e deixa rastro. (esta dica sai nos ajustes)",
+                  "en": "columns are each point's working state, read from kanban/<topic>/<id>/ponto.md — a versioned document the team reviews. Nothing is dragged: moving goes through the chat and leaves a trail. (turn this hint off in settings)" } }
+    ] },
+
+    { "kind": "divider" },
+
+    { "kind": "when", "value": { "$": "facts.acervo.hotspots.count" }, "gt": 0,
+      "then": [
+        { "kind": "scroll", "axis": "x", "max": "lg", "gap": 10, "children": [
+          { "kind": "row", "gap": 10, "children": [
+            { "kind": "use", "component": "coluna",
+              "args": { "nome": { "pt": "aberto", "en": "open" }, "chave": { "pt": "aberto", "en": "aberto" } } },
+            { "kind": "use", "component": "coluna",
+              "args": { "nome": { "pt": "em pauta", "en": "on the agenda" }, "chave": { "pt": "em-pauta", "en": "em-pauta" } } },
+            { "kind": "use", "component": "coluna",
+              "args": { "nome": { "pt": "em resolução", "en": "in progress" }, "chave": { "pt": "em-resolucao", "en": "em-resolucao" } } },
+            { "kind": "use", "component": "coluna",
+              "args": { "nome": { "pt": "concluído", "en": "done" }, "chave": { "pt": "concluido", "en": "concluido" } } }
+          ] }
+        ] }
+      ],
+      "else": [
+        { "kind": "text", "tone": "muted",
+          "text": { "pt": "nenhum ponto em aberto no conhecimento deste projeto",
+                    "en": "no open points in this project's knowledge" } }
+      ] }
+  ]
+}

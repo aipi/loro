@@ -66,7 +66,8 @@ SIDEBAR 250/60px │ TABS (only when a document is open) │ PANEL 330px
 Inviolable rules — encoded in `shell.js` and the `.bshell` grid, not just here:
 
 1. The tab strip starts **to the right of** the sidebar; the sidebar reaches the header.
-2. **There is no "Home" tab.** Tabs are open documents only; Início/Organizar/Conhecimento/Revisão are destinations of the header nav. A destination cannot be dismissed — that is why the review half of the product is one (ADR-0027) and not the sheet it used to be, reachable from a toast that expires and a banner with an ×.
+2. **There is no "Home" tab.** Início/Organizar/Conhecimento/Revisão are destinations of the header nav, never tabs. A destination cannot be dismissed — that is why the review half of the product is one (ADR-0027) and not the sheet it used to be, reachable from a toast that expires and a banner with an ×.
+   **A tab is an open document OR a screen; it is never a destination.** This clause used to read "tabs are open documents only", and the code had already outgrown that wording before ADR-0031 — corrected here rather than left for the next reader to trip over. MEASURED (`grep -o 'loro://[a-z-]*' desktop/src/*.js | sort -u`): the strip carries **five** `loro://` sentinel rels that are not files — `loro://indice` (ADR-0026), `loro://manual`, `loro://loop-novo` (ADR-0029), `loro://nova-nota`, and `loro://ext/<id>` (ADR-0031 R5a, the fifth and newest). Add the model's own pinned `__home__` rel (`app.js:2280`, non-closable at `app.js:5005`, and filtered OUT of the strip at `app.js:4912`) and the workspace holds six non-file rels while painting five: "there is no Home tab" is a statement about what is **painted**, and it is still true. What makes a screen a legitimate tab is the rest of this rule: it opens by an act, it can be closed, it never replaces a destination, and — the reason a screen exists at all instead of a sixth nav pill — an extension's surface is per-extension and therefore countable, so it cannot be a fixed place in the chrome (rule 13).
 3. The sidebar collapse control sits **at the bottom**, beside ⚙ Configurações.
 4. **One primary action per screen.**
 5. **No explanatory `ⓘ` tooltips**, no numbered labels in navigation.
@@ -102,9 +103,9 @@ Inviolable rules — encoded in `shell.js` and the `.bshell` grid, not just here
    list); what is unified is the axis, and it is the axis the eye reads as a pattern.
    Measured, not asserted: `tools/smoke-ui.js` walks the three destinations and fails
    when a column's left and right gaps differ by more than 24px.
-12. The sidebar's sections are **five** (ADR-0029): IDEIAS · PARA ORGANIZAR ·
-   CONHECIMENTO ─ LOOPS · HABILIDADES DE IA, and the hairline (`.secsep`) before
-   LOOPS is the whole separation — a loop can belong to the project, so it does not
+12. The sidebar's sections are **six** (ADR-0029, then ADR-0031): IDEIAS · PARA
+   ORGANIZAR · CONHECIMENTO ─ LOOPS ─ EXTENSÕES · HABILIDADES DE IA, and a hairline
+   (`.secsep`) before LOOPS and before EXTENSÕES is the whole separation — a loop can belong to the project, so it does not
    live inside an idea, and it is **not** a sixth destination in the nav pill. The
    panel's strip gained a fourth tab (⟳ Loops); it already scrolls inside its own
    container (§7), which is why the 300px floor is only a floor. The header gained
@@ -112,6 +113,35 @@ Inviolable rules — encoded in `shell.js` and the `.bshell` grid, not just here
    header is measured against is now *recording AND a cycle running*, in both
    languages — `tools/measure-header.js` carries those two cases, and 6×16
    measurements show no overlap and no sideways scroll down to the 860px floor.
+13. **EXTENSÕES is the sixth section, and it is not a destination either** (ADR-0031
+   R5a). An installed extension opens a SCREEN (`loro://ext/<id>`), the fifth
+   sentinel tab beside the index, a loop, the manual and a new note — so it lives in
+   the sidebar with its own `.secsep`, not in the nav pill. The placement was
+   MEASURED before it was chosen, not deduced from the ADR: the app's only hairline
+   sat before LOOPS, and `#toolsSection` is born `hidden`, so ADR-0031 §4(a)'s
+   "after HABILIDADES DE IA" would have hung a line under a collapsed void.
+   `tools/smoke-ui.js` step `sidebar-ext` fails when the new hairline's previous
+   sibling has no height. The layout of the screen an extension draws comes from the
+   closed `.extv*` alphabet (58 class names, `LoroExtView.CLASSES`): a third party's
+   document asks for a ROLE (`tone: "amber"`, `size: "meta"`, `gap: 8`) and never
+   for a measurement, and that is what keeps both themes working without the
+   extension knowing themes exist. It is **not** the whole class list on the page,
+   and saying "only" was wrong: MEASURED against the renderer, four names outside
+   `CLASSES` are also emitted — `mono badge` for a badge, `btn` / `btn solid` for a
+   button, and `<code class="mono">` inside a refusal. That is deliberate reuse
+   (DESIGN §5 — the same thing must not have two appearances) and those four are
+   Loro's own components, but an auditor reading this file has to know they are
+   there. A `doc` node adds the reader's own prose classes (`.xref`, `.xref--file`,
+   …) for the same reason: the prose is rendered by Loro's reader, not by the
+   alphabet. Two roles the alphabet honours only because the sheet raises their
+   specificity: `.extv .extv-text` / `.extv .extv-div` — inside `#brainDoc` (class
+   `doc reader`) `.doc p` and `.doc hr` are class+type and beat a single class, so a
+   declared `gap: 0` measured 9px and a declared 4px rule measured 16px until the
+   selector had two names. Nothing an extension can write reaches `style`, the focus
+   order, or a remote byte — the guarantee is the absence of the API, not a check
+   inside it. What the alphabet has NO primitive for is named in ADR-0031 §14: an
+   image or any geometry, so a map, a chart or a QR code cannot be drawn by a third
+   party without changing Loro.
 
 ### Fixed measurements
 
@@ -706,6 +736,40 @@ wider (240–260px, clamped to the viewport) and the path wraps — at the picke
 width its content needed 302px inside 194px and the copy that says what is about
 to be destroyed was the part that got cut.
 
+**A third party's screen is drawn by Loro, and the renderer's guarantees are a
+short, checkable list** (ADR-0031 R5a, `desktop/src/extview.js`). An extension
+sends a **document**, never markup: it asks for a ROLE and Loro decides the
+pixels. What that buys is stated as what is imposed and what is deliberately not,
+because a harness that refuses on taste is a fork with extra steps (ADR-0031
+§4.4) — and because the two lists were measured against the code, not copied from
+the ADR.
+
+**Imposed, mechanically, with no way around it:**
+
+| What | How |
+|---|---|
+| **Both languages** | every label is `{pt, en}` and both halves are required — `err.ext_i18n_missing:<pointer>` otherwise. The person chose a language; an extension is not an exception to it |
+| **Both themes** | colour is one of **9 tone roles** (`ink · ink2 · ink3 · muted · teal · amber · red · green · accent`), each mapping to a token defined in BOTH `:root` blocks. There is no hex, no `rgb()`, no `style` attribute anywhere in the alphabet, so the surface follows `data-theme` without ever learning a theme exists |
+| **The rhythm** | spacing is one of the 8 steps of the 2px scale, type one of 4 size roles, alignment one of 4, family `sans\|mono`, an icon one of the **14 names Loro owns** (`ICONS_ALLOWED`) — a name outside it resolves to nothing |
+| **The class list is closed** | `LoroExtView.CLASSES`, 58 names, plus the four Loro components named in rule 13. A modifier that is not in the list becomes a `data-` attribute, never a new class |
+| **Ceilings** | 2000 nodes after expansion · component depth 8 · 64 children per layout node · 32 components · 200 rows per `each` · 120 (max 400) lines per `doc` · nesting 128. MEASURED: with the ceilings removed, a component whose body is a `use` of itself throws `RangeError` inside the painter and the screen goes blank saying nothing |
+| **A refusal is visible and named** | an unknown primitive is `err.ext_view_node:<kind>` **painted in the screen**, translated, next to what did render. A node dropped in silence is a screen lying about what it showed (ADR-0029 §3.7) |
+| **Attribution is the first child** | `.extv-attr` says «esta tela é da extensão «X» — o Loro só desenha o que ela pediu» ABOVE everything, so nothing below it reads as Loro's own claim |
+| **One primary action** | rule 4, and the count is taken at **paint** time, not validation — one component used twice paints two buttons from one declaration. The second `primary: true` is refused by name (`err.ext_view_value:button.primary`) and painted as an ordinary `.btn`. MEASURED before the fix: two filled buttons, zero refusals. This one is a deliberate *narrowing* of ADR-0031 §13, which had listed the single primary as Loro's taste and therefore not imposed — see ADR-0031 §17 |
+| **The reading column** | the surface renders inside `#brainDoc`, the same 700px `.doccard` every document uses, so §7's density and containment rules apply to it whether the author wanted them or not — the second narrowing of §13, and the reason `min-width: 0` is on every layout node |
+| **Nothing reaches out** | no JS, no CSS, no font, no remote asset, no `style`, no reach into the focus order or the tab sequence. The guarantee is the **absence of the API**, not a check inside it — and the facts a view reads are computed by the host and handed to it, so a surface never asks the disk anything |
+| **Prose is Loro's reader** | a `doc` node goes through `mdRender`, and every image and every external address is stripped **from the markdown source** before that. A link to a file in the project survives and is wired through the same guarded door as any other reference (`brain_resolve_ref`) |
+
+**Deliberately NOT imposed** — and the shipped example proves each one is
+reachable: `examples/extensions/hotspots-board` paints a horizontally scrolling
+kanban of columns and cards, with counters, from a 53-line document and no code.
+What a card, a column or a status *means* is the author's decision; a board, a
+timeline or a counter is expressible; a dense layout is expressible. Loro's answer
+to a surface it disagrees with is **origem** and **uninstall**, never a schema that
+makes it unexpressible. What the alphabet has **no primitive for at all** is named
+in ADR-0031 §14 and §17: an image or any geometry — so a map, a chart or a QR code
+cannot be drawn by a third party without a change inside Loro.
+
 ## 6. Motion
 
 Motion exists to explain a state change, never to decorate. Blink for recording
@@ -771,6 +835,18 @@ Kept from ADR-0020 §5, plus what the later rounds removed:
   left it: one question, no statistics.
 - **A rich-text WYSIWYG editor.** Declined deliberately: git-diff churn, ADR-0007
   anchors, front matter. The markdown bar is markdown-aware, not WYSIWYG.
+- **Anything an extension might paint that is not a primitive** (ADR-0031 R5a).
+  Five refusals, each enforced by the absence of a way to express it rather than
+  by a check: **no markup** — an extension sends a document, so no JS, no CSS, no
+  HTML, no font and no remote asset ever reaches the page (the CSP is
+  load-bearing); **no chrome** — the surface renders inside the reading card and
+  cannot paint the header, the sidebar, the panel or another extension's screen;
+  **no execution API** — `loro/exec` is a reserved name that is refused, not a
+  method that is missing; **no image and no external address inside prose** — both
+  are stripped from a `doc` node's markdown source, which is also why there is no
+  chart, map or QR code (ADR-0031 §14); **no second filled button** — the second
+  `primary: true` is refused by name and painted flat (§5). What an extension's
+  screen *means* is not on this list, on purpose (§5, ADR-0031 §4.4).
 
 ## 9. Checklist before drawing new UI
 

@@ -30,6 +30,12 @@ let loopWatch = "";        // qual ciclo a aba ⟳ Loops está mostrando
 let loopPolicy = { maxArquivos: 3, maxCiclosDia: 8, expiraDias: 30, paralelo: 1 };
 let pluginList = [];       // pacotes instalados (para a origem na linha e Configurações)
 let loopTicking = false;
+// ADR-0031 R5a — a sexta aba-sentinela. O `const` mora AQUI, no topo, pela mesma
+// razão medida logo acima: declarado junto dos pintores ele caía na zona morta do
+// `const` e a primeira leitura no boot derrubava o carregamento inteiro.
+const EXT_PREFIX = "loro://ext/";   // sentinela: a TELA de uma extensão
+let extList = [];                   // extensões instaladas (lateral + Configurações)
+let extSig = "";                    // assinatura do repintar (mesma cura de loopsSig)
 
 
 // log de diagnóstico (vai para loro-client.log via backend) + console
@@ -126,6 +132,11 @@ function rerenderForLang() {
   // ADR-0029 · a árvore dos loops, a marca do cabeçalho e a aba ⟳ Loops são
   // innerHTML atrás de uma assinatura, pela mesma razão e com a mesma cura.
   try { loopsSig = ""; loopChromeWasOn = true; renderLoops(); paintLoopChrome(); renderLoopPanel(); } catch (_) {}
+  // ADR-0031 · a árvore das extensões e a tela de uma extensão são innerHTML
+  // atrás de `extSig`, e o idioma não faz parte do estado que a monta: sem esta
+  // linha a seção ficava no idioma anterior até um tique mudar a assinatura por
+  // outro motivo. A TELA é repintada pelo renderActive() logo acima, que já roda.
+  try { extSig = ""; renderExt(); renderExtCfgList(); } catch (_) {}
   // os nós data-i18n-dyn: quem escreve em tempo de execução também traduz
   try { updatePrivacy(); } catch (_) {}
   try { paintRecControl(); } catch (_) {}
@@ -1916,6 +1927,7 @@ async function openCfg() {
   enterOverlay(cfgWrap, cfgClose, closeCfg);
   cfgEnvSeen = false; // os checks de rede rodam de novo nesta visita, quando a seção aparecer
   cfgPluginsSeen = false; cfgLoopsSeen = false;
+  cfgExtSeen = false;
   document.querySelectorAll(".cfgsec").forEach((s) => (s.hidden = false));
   $("cfgPop").scrollTop = 0;
   markCfgNav("proj");
@@ -1948,13 +1960,16 @@ async function openCfg() {
   refreshModelManager();
   // ADR-0029: leitura de arquivo local — a tela abre já com a verdade nos campos
   cfgPluginsSeen = true; cfgLoopsSeen = true;
+  cfgExtSeen = true;
   refreshPlugins();
   loadLoopPolicy();
+  refreshExt(true);
 }
 // Configurações são UMA página com rolagem (pedido do dono, 2026-08-11): tudo
 // visível, e a nav navega — clicar rola até a seção; rolar realça a seção na nav.
 let cfgEnvSeen = false; // os checks de ambiente vão à rede (gh auth): uma vez por visita
 let cfgPluginsSeen = false, cfgLoopsSeen = false; // ADR-0029: idem, por visita
+let cfgExtSeen = false;                            // ADR-0031: idem, por visita
 function markCfgNav(sec) {
   document.querySelectorAll("#cfgNav .cfgnavbtn").forEach((b) => b.classList.toggle("on", b.dataset.sec === sec));
   if (sec === "git" && !cfgEnvSeen) { cfgEnvSeen = true; refreshEnv(true); }
@@ -1965,6 +1980,7 @@ function markCfgNav(sec) {
   // vazio afirma «sem limite».
   if (sec === "plugins" && !cfgPluginsSeen) { cfgPluginsSeen = true; refreshPlugins(); }
   if (sec === "loops" && !cfgLoopsSeen) { cfgLoopsSeen = true; loadLoopPolicy(); }
+  if (sec === "ext" && !cfgExtSeen) { cfgExtSeen = true; refreshExt(true); }
 }
 function showCfgSection(sec) {
   document.querySelectorAll(".cfgsec").forEach((s) => (s.hidden = false));
@@ -2808,6 +2824,8 @@ async function brainRefresh() {
   markSel();
   // ADR-0029 — a mesma passada traz os loops: uma leitura, uma autoridade.
   refreshLoops(false);
+  // ADR-0031 — e as extensões, pela mesma razão e no mesmo tique.
+  refreshExt(false);
 }
 
 // ---- os três destinos: Início · Organizar · Conhecimento --------------------
@@ -4973,6 +4991,7 @@ function markSel() {
 // palavra sem acento, que se lê como erro de digitação e não como nome.
 const tabTitle = (tab) => (tab.rel === INDEX_REL ? t("índice remissivo")
   : tab.rel === LOOP_NEW_REL ? t("novo loop")
+  : extIdOf(tab.rel) ? extTitle(extIdOf(tab.rel))
   : LP.slugOfRel(tab.rel) ? `${t("loop")} · ${LP.slugOfRel(tab.rel)}`
   : tab.title);
 
@@ -5172,6 +5191,15 @@ function docBadge(p, isGuide) {
   // ADR-0029 — a definição de um loop É um documento do projeto (versionada, vai
   // para a revisão); o que muda é que ela também MANDA em algo que roda.
   if (p === LOOP_NEW_REL) return [t("novo — ainda desligado"), "warn2"];
+  // ADR-0031 — a tela de uma extensão não é arquivo nenhum, e o selo padrão
+  // ("documento do projeto") prometeria um arquivo que ninguém pode abrir.
+  // MEDIDO a 880px (o piso da janela é 860): a frase inteira dentro de `.badge`
+  // — que é `flex: none` e não encolhe — media 373px numa faixa de 355px e
+  // empurrava o #bDocWrap 72px para fora, com a barra horizontal caindo no
+  // #wsBody (WCAG 1.4.10). Um selo é UMA ou DUAS palavras em toda a tela; a
+  // explicação de que a tela não é arquivo já é dada pela linha de atribuição
+  // dentro da própria tela («esta tela é da extensão …»).
+  if (extIdOf(p)) return [t("tela de extensão"), "ro"];
   if (LP.slugOfRel(p)) return [t("definição do loop — versionada"), "ok"];
   if (p.startsWith("inbox/")) return [t("pendente — será processado pelo loop"), "ok"];
   if (p.endsWith("guia.md")) return [t("formato antigo — migre para context.md"), "warn2"];
@@ -6382,6 +6410,10 @@ async function renderActive() {
   B.home.hidden = true;
   el.surface.hidden = true;   // abrir um documento sai da vista de gravação
   B.docWrap.hidden = false;
+  // ADR-0031 r2 — a classe do cartão largo é POR ABA: sai antes de toda pintura
+  // e só o ramo da extensão a devolve, senão o documento aberto em seguida
+  // herda a largura do quadro (medido: um context.md com 1080px de linha).
+  B.docWrap.classList.remove("extwide");
   $("bDraftNote").hidden = true;   // the first-edit note is one-time; reset per render
   paintEditFoot(null, false);      // o rodapé de edição é reaberto abaixo, se for o caso
   closeFind();
@@ -6389,7 +6421,8 @@ async function renderActive() {
     : tab.rel === MANUAL_REL ? t("manual de uso")
     : tab.rel === INDEX_REL ? t("índice remissivo")
     : tab.rel === SCRATCH_REL ? t("nota nova — ainda não salva")
-    : tab.rel === LOOP_NEW_REL ? t("loops/novo loop") : tab.rel;
+    : tab.rel === LOOP_NEW_REL ? t("loops/novo loop")
+    : extIdOf(tab.rel) ? `${t("extensões")}/${extTitle(extIdOf(tab.rel))}` : tab.rel;
   // permanent world badge (versionado / rascunho), else document-specific badge
   const world = LoroWorld.crumbBadge(tab.kind, settings.uiLang);
   const [label, cls] = world && !isGuide ? [world.label, world.cls] : docBadge(tab.rel, isGuide);
@@ -6440,6 +6473,26 @@ async function renderActive() {
     // tela que não é arquivo nenhum, e ofereceria habilidades sem sujeito.
     clearPanelDoc();
     await renderIndexSurface(tab, stale);
+    if (stale()) return;
+    B.wsBody.scrollTop = 0;
+    markSel();
+    return;
+  }
+  // ADR-0031 R5a — a TELA de uma extensão. O braço PRECISA retornar: sem ele um
+  // `loro://ext/<id>` cai no fluxo de arquivo mais abaixo, `textFile` dá false e
+  // `readDoc` chama `brain_read` com o sentinela, que lança.
+  if (extIdOf(tab.rel)) {
+    B.modes.hidden = true;
+    $("bPromoted").hidden = true;
+    $("bDocActs").hidden = true;
+    clearPanelDoc();
+    // «pode ocupar a tela toda interna e ter rolagem» (dono, 2026-08-20): a
+    // extensão que declarou layout "wide" larga a coluna de leitura de 700px.
+    // A decisão vem da ROW (registro), não do payload, para o cartão nascer na
+    // largura certa em vez de saltar quando o ext_view responde.
+    const rowW = extRowOf(extIdOf(tab.rel));
+    B.docWrap.classList.toggle("extwide", !!(rowW && rowW.surfaceLayout === "wide"));
+    await renderExtSurface(tab, stale);
     if (stale()) return;
     B.wsBody.scrollTop = 0;
     markSel();
@@ -10791,6 +10844,15 @@ document.querySelectorAll("#sideMini .minibtn").forEach((b) => b.addEventListene
     if (body) body.scrollIntoView({ block: "nearest" });
     return;
   }
+  // MEDIDO (shell.js:42): `goDest` reescreve para "home" todo nome que não está
+  // em DESTS, e "ext" não é um destino — sem este braço o botão levaria a Início
+  // enquanto o ícone promete Extensões.
+  if (what === "ext") {
+    toggleSidebar(false);
+    const body = document.querySelector('[data-sectbody="ext"]');
+    if (body) body.scrollIntoView({ block: "nearest" });
+    return;
+  }
   toggleSidebar(false);
   goDest(what === "ideas" ? "home" : what);
 }));
@@ -12992,6 +13054,663 @@ listen("loop-cycle", (e) => {
   }
   refreshLoops(true);
 });
+
+
+// ============================ extensões (ADR-0031 R5a) ============================
+// A SEXTA SUPERFÍCIE. Uma extensão instalada acrescenta uma TELA ao Loro:
+// `loro://ext/<id>` é uma aba-sentinela como `loro://indice` e `loro://loop-novo`
+// — não é arquivo, então nada aqui passa por `readDoc`. O documento que ela
+// desenha é dado de terceiro: quem o transforma em HTML é `extview.js`, puro,
+// sem idioma e sem DOM, e este arquivo só liga os ganchos que ele emite.
+//
+// Três regras que valem para tudo abaixo:
+// 1. Todo `err.*` que o backend ou o renderizador devolve passa por `tErr`: o
+//    código cru na tela é a doença que i18n.test.js:135 existe para pegar.
+// 2. Toda frase passa por `t` com a string LITERAL no lugar. Um msgid montado
+//    por concatenação é invisível para os dois varredores e embarca sem
+//    tradução com a suíte verde.
+// 3. Um controle só aparece quando pode agir: sem programa não há iniciar/parar
+//    (o backend reporta `state:"running"` com `hasProgram:false`, e é isso que
+//    significa «isto funciona» numa extensão de nível 1).
+function extIdOf(rel) {
+  if (typeof rel !== "string" || rel.indexOf(EXT_PREFIX) !== 0) return "";
+  const id = rel.slice(EXT_PREFIX.length);
+  return /^[a-z0-9][a-z0-9._-]{0,63}$/.test(id) ? id : "";
+}
+function extRowOf(id) { return (extList || []).find((r) => r.id === id) || null; }
+function extTitle(id) { const r = extRowOf(id); return (r && r.name) || id; }
+function extLang() { return settings.uiLang === "en" ? "en" : "pt"; }
+function extI18n(v) { return v && typeof v === "object" ? String(extLang() === "en" ? (v.en || v.pt || "") : (v.pt || v.en || "")) : ""; }
+// Os seis estados de §5.1 viram frase AQUI, um `t()` literal por estado: um
+// `t(MAPA[estado])` seria invisível para os varredores de msgid.
+function extStateLabel(st) {
+  return st === "running" ? t("rodando")
+    : st === "starting" ? t("iniciando")
+    : st === "no_answer" ? t("sem resposta")
+    : st === "crashed" ? t("caiu")
+    : st === "blocked" ? t("impedida")
+    : t("parada");
+}
+function extStateCls(st) {
+  return st === "running" ? "teal" : st === "starting" ? "teal"
+    : st === "stopped" ? "muted" : "amber";
+}
+// O ponto some quando não há programa: um selo «rodando» ao lado de uma extensão
+// que não tem processo nenhum prometeria um processo (DESIGN §1 — o estado não
+// mente). Uma extensão de nível 1 simplesmente funciona, e a linha fica calada.
+function extRowHtml(r) {
+  const st = r.hasProgram
+    ? `<span class="lstate ${extStateCls(r.state)}">${esc(extStateLabel(r.state))}</span>` +
+      (r.state === "stopped" ? "" : `<span class="ldot ${extStateCls(r.state) === "teal" ? "teal" : "amber"}"></span>`)
+    : "";
+  const why = r.reason ? ` — ${tErr(r.reason)}` : "";
+  return `<div class="bitem" data-ext="${esc(r.id)}" title="${esc((r.name || r.id) + (r.version ? " " + r.version : "") + why)}">` +
+    ico("builtinskill") +
+    `<span class="bn">${esc(r.name || r.id)}</span>` + st +
+    rowMenuHtml(`data-extmenu="${esc(r.id)}"`, r.name || r.id, t("ações da extensão")) +
+    `</div>`;
+}
+
+function renderExt() {
+  const nav = $("navExt");
+  if (!nav) return;
+  const list = extList || [];
+  nav.innerHTML = list.length
+    ? list.map(extRowHtml).join("")
+    : `<div class="bempty">${t("nenhuma extensão ainda — uma extensão acrescenta uma tela ao Loro, montada com o que já existe neste projeto. Instale uma pasta no ＋.")}</div>`;
+  nav.querySelectorAll("[data-ext]").forEach((el2) => (el2.onclick = (e) => {
+    if (e.target.closest("[data-extmenu]")) return;
+    openExt(el2.dataset.ext);
+  }));
+  nav.querySelectorAll("[data-extmenu]").forEach((el2) => (el2.onclick = (e) => {
+    e.stopPropagation();
+    openExtMenu(el2, el2.dataset.extmenu);
+  }));
+  wireTreeKeyboard(nav.parentElement || nav);
+  markSel();
+}
+
+// Uma leitura, uma autoridade: `ext_list` é a única porta do estado, e o
+// repintar é gatilhado por assinatura (o mesmo desenho de refreshLoops).
+async function refreshExt(force) {
+  if (!brainTab) return;
+  let list;
+  try { list = await invoke("ext_list"); }
+  catch (e) { clog("ext_list error: " + e); return; }
+  extList = list || [];
+  // `canStop` e `trusted` entram na assinatura porque são o que os CONTROLES leem:
+  // sem eles um handle que morreu (ou uma aprovação que acabou de ser dada) não
+  // repintava o botão, e a linha continuava oferecendo o controle errado.
+  const sig = JSON.stringify(extList.map((r) =>
+    [r.id, r.name, r.version, r.state, r.reason, r.hasProgram, r.hasSurface, r.canStop, r.trusted]));
+  if (force || sig !== extSig) {
+    extSig = sig;
+    renderExt();
+    renderExtCfgList();
+    const tab = activeTab();
+    // A MESMA cura que refreshLoops precisou (app.js:11919-11922): a tela é
+    // innerHTML, e repintá-la enquanto alguém digita num `field` apagava o que
+    // a pessoa escreveu. Quem está com o cursor lá dentro manda; o repintar
+    // espera a próxima passada.
+    const typing = document.activeElement && B.doc.contains(document.activeElement);
+    if (tab && extIdOf(tab.rel) && !typing) renderActive();
+  }
+}
+
+function openExt(id) { return openDoc(EXT_PREFIX + id, { preview: false }); }
+
+// ---- a tela ----
+// `ext_view` devolve o documento JÁ validado no backend; `extview.js` valida de
+// novo do lado de cá e devolve os códigos do que recusou. As duas camadas
+// recusam POR NOME (contrato §6).
+// A EXCEÇÃO, dita porque existe: dentro de um nó `doc` a imagem e o localizador
+// não são recusados, são TIRADOS do markdown — é conteúdo, e o contrato §1.3
+// decidiu isso de propósito (o teste `um doc é conteúdo` fixa `errors: []` nesse
+// caso). Então o parágrafo perde a figura sem dizer nada. É o buraco nomeado no
+// ADR-0031 §14: não existe primitiva de imagem nem de geometria neste alfabeto.
+async function renderExtSurface(tab, stale) {
+  const id = extIdOf(tab.rel);
+  B.editHost.hidden = true;
+  B.editBar.hidden = true;
+  B.doc.hidden = false;
+  B.wsBody.classList.remove("editing");
+  fmById.set(tab.id, null);
+  const row = extRowOf(id);
+  let payload = null, erro = "";
+  try { payload = await invoke("ext_view", { id, lang: extLang() }); }
+  catch (e) { erro = String(e); }
+  if (stale && stale()) return;
+  // O layout também vem RELIDO da origem no payload (ext.rs live re-read):
+  // um registro anterior ao `layout: "wide"` do manifesto pintava o quadro
+  // preso na coluna de 700px — medido no acervo do dono (layout: None no
+  // ext.json, wide no loro.json). A row continua valendo para a primeira
+  // pintura; o payload corrige quando o registro ficou para trás.
+  if (payload && payload.surfaceLayout === "wide") B.docWrap.classList.add("extwide");
+  B.doc.innerHTML = extSurfaceHtml(id, row, payload, erro);
+  wireExtSurface(id, payload);
+}
+
+function extSurfaceHtml(id, row, payload, erro) {
+  const nome = (row && row.name) || (payload && payload.id) || id;
+  const st = (payload && payload.state) || (row && row.state) || "stopped";
+  const temPrograma = row ? !!row.hasProgram : false;
+  const podeParar = row ? !!row.canStop : false;
+  const head =
+    `<div class="modelrow"><div class="modelinfo">` +
+    `<div class="modelhead"><b class="modelname">${esc(nome)}</b>` +
+    (row && row.version ? `<span class="mono pluginmeta">${esc(row.version)}</span>` : "") +
+    (temPrograma ? `<span class="lstate ${extStateCls(st)}">${esc(extStateLabel(st))}</span>` : "") +
+    `</div>` +
+    `<span class="pluginmeta">${esc(temPrograma
+      ? t("esta extensão traz um programa: ele roda no seu computador enquanto você o mantiver iniciado")
+      : t("esta extensão não traz programa — a tela vem do que ela declarou, e nada roda"))}</span>` +
+    `</div>` +
+    // UM PROGRAMA QUE PAROU DE RESPONDER PODE SER PARADO. O portão era
+    // `st === "running" || st === "starting"`, e num estado `no_answer` a única
+    // oferta restante era «iniciar» — que subia um SEGUNDO filho e derrubava o
+    // primeiro (vivo) para fora do registro, fora do alcance de «parar» e do
+    // encerramento do app. Quem responde se há o que parar é o backend, em
+    // `canStop`: ele lê se existe um handle vivo, em vez de deduzir isso do
+    // estado (`sweep` mantém o handle justamente quando o filho está vivo e mudo).
+    (temPrograma
+      ? (podeParar
+        ? `<button class="btn sm" type="button" data-extstop>${t("parar")}</button>`
+        : `<button class="btn sm solid" type="button" data-extstart>${t("iniciar")}</button>`)
+      : "") +
+    `</div>`;
+  if (erro) {
+    return head + `<div class="pmerr" role="alert"><span>${esc(tErr(erro))}</span></div>`;
+  }
+  const doc = payload ? payload.view : null;
+  if (!doc) {
+    return head + `<p class="hint">${t("nada para mostrar agora — inicie o programa desta extensão para ela desenhar a tela.")}</p>`;
+  }
+  const out = LoroExtView.render(doc, {
+    lang: extLang(),
+    facts: (payload && payload.facts) || {},
+    // a cópia EFETIVA do host (padrões + o que a pessoa salvou): é isto que um
+    // `{"$":"settings.<id>"}` da view lê — nível 1 e nível 2 pela mesma porta
+    settings: (payload && payload.settings) || {},
+    icons: ICONS,
+    extId: id,
+    strings: {
+      attribution: t("esta tela é da extensão «%1» — o Loro só desenha o que ela pediu", [nome]),
+      more: t("… e mais %1"),
+      refused: t("não desenhei isto:"),
+      empty: t("esta extensão não mostrou nada"),
+    },
+    md: (src) => mdRender(src),
+  });
+  // As recusas do renderizador viram FRASE, uma por código: o `err.ext_view_*`
+  // cru na tela é exatamente o que a tabela de tradução existe para evitar.
+  const recusas = (out.errors || []).length
+    ? `<div class="pmerr" role="alert">` +
+      out.errors.map((c) => `<span>${esc(tErr(c))}</span>`).join("") + `</div>`
+    : "";
+  return head + recusas + out.html;
+}
+
+function wireExtSurface(id, payload) {
+  const start = B.doc.querySelector("[data-extstart]");
+  if (start) start.onclick = () => startExt(id);
+  const stop = B.doc.querySelector("[data-extstop]");
+  if (stop) stop.onclick = () => stopExt(id);
+  // MEDIDO (app.js:6687-6688): `a[data-path]` é resolvido contra o rel do
+  // documento aberto, e o documento aberto aqui é o sentinela `loro://ext/<id>`
+  // — reusar aquele gancho mandaria o caminho por um resolvedor com a base
+  // errada. Daí o gancho próprio, resolvido contra a RAIZ do projeto pela mesma
+  // porta guardada de sempre (`brain_resolve_ref`, via onRefClick).
+  B.doc.querySelectorAll("a[data-extv-rel]").forEach((a) => (a.onclick = (e) => {
+    e.preventDefault();
+    onRefClick("", null, a.dataset.extvRel, a);
+  }));
+  B.doc.querySelectorAll("[data-extv-action]").forEach((b) => (b.onclick = () => askExtAction(id, b)));
+  // ADR-0031 r2 · `ask` — a porta do CHAT, e ela é da pessoa: o clique abre um
+  // modal do Loro, a pessoa escreve com as próprias palavras e o envio roda a
+  // habilidade no chat com o modo de permissão de sempre (ADR-0021). A extensão
+  // (nível 1 ou nível 2 — MCP, mesmos limites) só escolheu a habilidade e o
+  // alvo; sem o clique e a frase, nada dispara.
+  B.doc.querySelectorAll("[data-extv-ask]").forEach((b) => (b.onclick = () => askExtChat(b)));
+  // Um campo da view cujo id é um AJUSTE declarado persiste na mudança — a
+  // mesma porta de Configurações (`ext_settings_set` mescla por escopo), então
+  // a tela da extensão e a folha de ajustes nunca dizem valores diferentes.
+  // Um id fora do schema continua transiente: é entrada de botão, não ajuste.
+  const declared = (payload && payload.settings) || {};
+  B.doc.querySelectorAll("[data-extv-field]").forEach((n) => {
+    const fid = n.dataset.extvField;
+    if (!Object.prototype.hasOwnProperty.call(declared, fid)) return;
+    n.onchange = async () => {
+      const v = n.type === "checkbox" ? n.checked
+        : n.type === "number" ? Number(n.value) : n.value;
+      try {
+        await invoke("ext_settings_set", { id, values: { [fid]: v } });
+        toast(t("ajustes salvos"), 3000);
+        await renderActive();   // a view lê settings.<id>: a tela acompanha já
+      } catch (e) { toast(tErr(String(e)), 6000); }
+    };
+  });
+  // MEDIDO: um link relativo dentro de um nó `doc` sai do leitor do próprio Loro
+  // como `<a class="xref xref--file" href="#" data-path="…">` (rodado com os
+  // módulos reais: `[o contrato](docs/adr/0031-…md)` → esse anchor, `errors: []`),
+  // e nenhum dos dois ganchos acima o pegava — o Tab chegava nele, o leitor de
+  // tela anunciava «link», e o clique navegava para `#`: nada abria e a tela
+  // voltava ao topo. O alvo já passou por `relOk` no renderizador (nada com
+  // esquema, absoluto ou `..` sobrevive ao `stripDoc`), e a resolução é a MESMA
+  // porta guardada do gancho de cima: a raiz do projeto, via `brain_resolve_ref`.
+  B.doc.querySelectorAll("a[data-path]").forEach((a) => (a.onclick = (e) => {
+    e.preventDefault();
+    onRefClick("", null, a.dataset.path, a);
+  }));
+  B.doc.querySelectorAll("a[data-ref]").forEach((a) => (a.onclick = (e) => {
+    e.preventDefault();
+    // sem frontmatter não há apelido para resolver: a tela DIZ isso em vez de
+    // engolir o clique (o `toast` de onRefClick)
+    onRefClick("", null, "ref:" + a.dataset.ref, a);
+  }));
+}
+
+// O modal do `ask`: título é o rótulo do próprio botão (já no idioma da
+// pessoa), a dica é da extensão, e a frase fixa diz O QUE VAI ACONTECER —
+// usabilidade é premissa (dono, 2026-08-20): nenhum controle age sem dizer.
+function askExtChat(btn) {
+  const skill = btn.dataset.extvAsk || "";
+  if (!skill) return;
+  const target = btn.dataset.extvAskTarget || "";
+  const hint = btn.dataset.extvAskHint || "";
+  const ph = btn.dataset.extvAskPh || t("escreva com suas palavras");
+  openModal(
+    btn.textContent.trim(),
+    (hint ? `<p class="pmnote">${esc(hint)}</p>` : "") +
+      (target ? `<div class="wfield"><span class="mono">${t("ponto")}</span><span class="lockval mono" title="${esc(target)}">${esc(target)}</span></div>` : "") +
+      `<label class="wfield"><span class="mono">${t("escrever")}</span>` +
+      `<input id="extAskInput" type="text" placeholder="${esc(ph)}" spellcheck="false"></label>` +
+      `<p class="hint">${t("ao enviar, o chat roda a habilidade %1 com este ponto", ["/" + skill])}</p>`,
+    t("enviar"),
+    () => {
+      const texto = (($("extAskInput") && $("extAskInput").value) || "").trim();
+      if (!texto) { toast(t("descreva o pedido")); return; }
+      return dispatchAiFromSheet(
+        "/" + skill + (target ? " " + target : "") + " " + texto,
+        null, btn.textContent.trim());
+    }
+  );
+  const inp = $("extAskInput"); if (inp) inp.focus();
+}
+
+function askExtAction(id, btn) {
+  const frase = btn.dataset.extvConfirm || "";
+  if (!frase) return runExtAction(id, btn);
+  openModal(t("confirmar a ação"), `<p class="hint">${esc(frase)}</p>`, t("confirmar"),
+    () => runExtAction(id, btn));
+}
+
+// Os `values` são montados na LINHA em que o botão está: `data-extv-args` já vem
+// com o escopo da linha resolvido pelo renderizador, então a ação recebe o item
+// em que se clicou e não o último da lista.
+async function runExtAction(id, btn) {
+  const action = btn.dataset.extvAction || "";
+  if (!action) return;
+  const values = {};
+  try {
+    const args = JSON.parse(btn.dataset.extvArgs || "{}");
+    for (const k of Object.keys(args)) values[k] = args[k];
+  } catch (_) { /* um args ilegível é ausência de args, não uma tela quebrada */ }
+  for (const fid of String(btn.dataset.extvValues || "").split(",").filter(Boolean)) {
+    const campo = [...B.doc.querySelectorAll("[data-extv-field]")].find((n) => n.dataset.extvField === fid);
+    if (!campo) continue;
+    values[fid] = campo.type === "checkbox" ? campo.checked : campo.value;
+  }
+  btn.disabled = true;
+  btn.setAttribute("aria-busy", "true");
+  try {
+    const r = await invoke("ext_action", { id, action, values, lang: extLang(), now: loopNow() });
+    const msg = extI18n(r && r.message);
+    toast(msg || ((r && r.outcome === "nothing") ? t("nada mudou") : t("feito")), 5000);
+    if (r && r.invalidate) await renderActive();
+    else { btn.disabled = false; btn.removeAttribute("aria-busy"); }
+  } catch (e) {
+    toast(tErr(String(e)), 6000);
+    btn.disabled = false;
+    btn.removeAttribute("aria-busy");
+  }
+}
+
+// A SEGUNDA CONFIRMAÇÃO, E ELA NOMEIA O QUE VAI RODAR (ADR-0029 R5). O registro
+// `.loro/ext.json` é guardado junto com o projeto: ele chega na alteração de outra
+// pessoa trazendo `program.command` e `program.args`, e a única tela que jamais
+// nomeou o comando era a folha de instalar — que um registro que chegou por
+// alteração nunca atravessa. O backend responde `err.ext_untrusted` enquanto
+// ninguém NESTA máquina tiver lido este comando e dito sim.
+async function startExt(id, aprovar) {
+  try { await invoke("ext_start", { id, approve: !!aprovar }); }
+  catch (e) {
+    const codigo = String(e);
+    if (codigo.startsWith("err.ext_untrusted")) { askExtTrust(id); return; }
+    toast(tErr(codigo), 6000);
+  }
+  await refreshExt(true);
+  const tab = activeTab();
+  if (tab && extIdOf(tab.rel) === id) await renderActive();
+}
+
+function askExtTrust(id) {
+  const r = extRowOf(id);
+  const p = (r && r.program) || {};
+  const linha = [p.command || ""].concat(p.args || []).join(" ");
+  const body =
+    `<p class="hint">${t("isto vai rodar um programa no SEU computador, com o seu acesso: ele pode ler e escrever o que você pode. O Loro não põe o programa de uma extensão numa caixa.")}</p>` +
+    `<div class="pmpreview"><div class="modelhead"><b class="modelname">${esc(r ? (r.name || id) : id)}</b></div>` +
+    `<div class="plugbrings"><span class="mono">${esc(linha)}</span>` +
+    (r && r.origin ? `<span class="loopwhen mono">${esc(r.origin)}</span>` : "") +
+    `</div></div>` +
+    `<p class="hint">${t("você só é perguntado de novo se este comando mudar.")}</p>`;
+  openModal(t("Rodar o programa desta extensão?"), body, t("iniciar"), () => startExt(id, true));
+}
+
+async function stopExt(id) {
+  try { await invoke("ext_stop", { id }); toast(t("programa parado")); }
+  catch (e) { toast(tErr(String(e)), 6000); }
+  await refreshExt(true);
+  const tab = activeTab();
+  if (tab && extIdOf(tab.rel) === id) await renderActive();
+}
+
+// ---- o menu de uma linha ----
+function openExtMenu(anchor, id) {
+  const r = extRowOf(id);
+  if (!r) return;
+  B.acervoMenu.hidden = true;
+  B.bMenu.innerHTML =
+    `<div class="fhead">${esc(r.name || id)}</div>` +
+    (r.hasSurface ? `<div class="fitem2" data-a="open"><span class="fn">${t("abrir")}</span></div>` : "") +
+    (r.hasProgram
+      ? (r.canStop
+        ? `<div class="fitem2" data-a="stop"><span class="fn">${t("parar")}</span></div>`
+        : `<div class="fitem2" data-a="start"><span class="fn">${t("iniciar")}</span></div>`)
+      : "") +
+    `<div class="fitem2" data-a="set"><span class="fn">${t("ajustes…")}</span></div>` +
+    `<div class="fitem2" data-a="cap"><span class="fn">${t("o que ela pediu…")}</span></div>` +
+    `<div class="fsep"></div>` +
+    `<div class="fitem2 ditem" data-a="rm"><span class="fn">${t("remover…")}</span></div>`;
+  const on = (a, fn) => { const n = B.bMenu.querySelector(`[data-a="${a}"]`); if (n) n.onclick = fn; };
+  on("open", () => { closeFloat(); openExt(id); });
+  on("start", () => { closeFloat(); startExt(id); });
+  on("stop", () => { closeFloat(); stopExt(id); });
+  on("set", () => { closeFloat(); openExtSettings(id); });
+  on("cap", () => { closeFloat(); openExtCapabilities(id); });
+  on("rm", () => openConfirmRemoveExt(anchor, r));
+  placeMenu(anchor);
+}
+
+// ---- ajustes ----
+function extFieldHtml(f, valor) {
+  const rot = esc(extI18n(f.label) || f.id);
+  const dica = f.hint ? esc(extI18n(f.hint)) : "";
+  const domId = "extset-" + String(f.id).replace(/[^a-zA-Z0-9_-]/g, "");
+  const attrs = `id="${domId}" data-extset="${esc(f.id)}"`;
+  let ctrl;
+  if (f.kind === "enum") {
+    ctrl = `<select ${attrs}>` + (f.options || []).map((o) =>
+      `<option value="${esc(o)}"${String(o) === String(valor) ? " selected" : ""}>${esc(o)}</option>`).join("") + `</select>`;
+  } else if (f.kind === "bool") {
+    ctrl = `<input type="checkbox" ${attrs}${valor ? " checked" : ""} />`;
+  } else if (f.kind === "number") {
+    ctrl = `<input type="number" ${attrs} value="${esc(valor === undefined || valor === null ? "" : valor)}" />`;
+  } else {
+    ctrl = `<input type="text" ${attrs} spellcheck="false" value="${esc(valor === undefined || valor === null ? "" : valor)}" />`;
+  }
+  return `<label class="wfield"><span>${rot}</span>${ctrl}</label>` +
+    (dica ? `<p class="hint">${dica}</p>` : "");
+}
+
+async function openExtSettings(id) {
+  let schema = [], valores = {};
+  try {
+    schema = (await invoke("ext_settings_schema", { id })) || [];
+    valores = (await invoke("ext_settings_get", { id })) || {};
+  } catch (e) { toast(tErr(String(e)), 6000); return; }
+  if (!schema.length) { toast(t("esta extensão não tem ajustes")); return; }
+  const body = `<p class="hint">${t("o que você ajusta aqui fica guardado com este projeto (ou com este computador, quando a extensão pede assim).")}</p>` +
+    schema.map((f) => extFieldHtml(f, valores[f.id] === undefined ? f.default : valores[f.id])).join("");
+  const host = openModal(t("Ajustes da extensão"), body, t("salvar"), async () => {
+    const out = {};
+    for (const f of schema) {
+      const n = [...host.querySelectorAll("[data-extset]")].find((x) => x.dataset.extset === f.id);
+      if (!n) continue;
+      out[f.id] = f.kind === "bool" ? n.checked
+        : f.kind === "number" ? Number(n.value)
+          : n.value;
+    }
+    await invoke("ext_settings_set", { id, values: out });
+    toast(t("ajustes salvos"));
+  });
+}
+
+// ---- o que a extensão pediu ----
+// §5.8 — nesta versão a resposta é REGISTRADA e não impede nada. A folha diz isso,
+// e diz a metade que a primeira versão desta cópia escondia: o Loro não oferece
+// nenhuma API de leitura do projeto, MAS também não põe o programa numa caixa —
+// `mcp::McpClient::spawn` chama `proc::command(&exe).current_dir(&cfg.cwd)`, sem
+// `env_clear`, sem sandbox e sem negação de rede (medido em mcp.rs:444-460 e
+// proc.rs:64-77, que remove 8 variáveis CLAUDE_* e nada mais). A cópia anterior
+// afirmava a contenção que a segunda metade desmente, ao lado de um botão
+// «recusar» que não impõe nada: duas afirmações falsas na mesma folha
+// (DESIGN §1 — o estado não mente).
+async function openExtCapabilities(id) {
+  let caps = [];
+  try { caps = (await invoke("ext_capabilities", { id })) || []; }
+  catch (e) { toast(tErr(String(e)), 6000); return; }
+  // A linha é a MESMA das permissões dos ciclos (`.cfgperm` · `.permstate` ·
+  // `.abtn`, style.css:3447+): a mesma coisa não pode ter duas aparências
+  // (DESIGN §5), e não há classe nova para isto.
+  const linha = (c) => `<div class="cfgperm"><span class="mono">${esc(c.id)}</span>` +
+    `<span class="permstate ${c.decision === "granted" ? "teal" : c.decision === "refused" ? "amber" : "muted"}">` +
+    esc(c.decision === "granted" ? t("liberado") : c.decision === "refused" ? t("recusado") : t("sem resposta ainda")) + `</span>` +
+    `<button class="abtn" type="button" data-extcap="${esc(c.id)}" data-extdec="permitir">${esc(t("liberar"))}</button>` +
+    `<button class="abtn" type="button" data-extcap="${esc(c.id)}" data-extdec="recusar">${esc(t("recusar"))}</button>` +
+    (c.decision ? `<button class="abtn" type="button" data-extcap="${esc(c.id)}" data-extdec="esquecer">${esc(t("esquecer"))}</button>` : "") +
+    `</div>` +
+    `<p class="hint">${esc(extI18n(c.why) || c.label || c.id)}</p>`;
+  const body = `<p class="hint">${t("o Loro não dá a uma extensão nenhuma porta para ler o seu projeto — e não põe o programa dela numa caixa: um programa iniciado roda com o seu acesso e alcança o que você alcança. A sua resposta aqui fica registrada; nesta versão ela não bloqueia nada.")}</p>` +
+    (caps.length ? caps.map(linha).join("") : `<p class="hint">${t("esta extensão não pediu nada.")}</p>`);
+  const host = openModal(t("O que esta extensão pediu"), body, null, null);
+  host.querySelectorAll("[data-extcap]").forEach((b) => (b.onclick = async () => {
+    try {
+      await invoke("ext_permit", { id, capability: b.dataset.extcap, decision: b.dataset.extdec });
+      closeModal();
+      await openExtCapabilities(id);
+    } catch (e) { toast(tErr(String(e)), 6000); }
+  }));
+}
+
+// ---- remover ----
+function openConfirmRemoveExt(anchor, r) {
+  B.acervoMenu.hidden = true;
+  B.bMenu.innerHTML =
+    `<div class="fhead">${t("remover extensão")}</div>` +
+    `<div class="fitem2 muted fstatic">${t("remover “%1”? a tela dela sai do Loro e o que ela trouxe sai do projeto. Um arquivo que você editou depois FICA, e a tela diz qual.", [esc(r.name || r.id)])}</div>` +
+    `<label class="fitem2"><input type="checkbox" data-extdata /> <span class="fn">${t("apagar também os dados que ela guardou neste computador")}</span></label>` +
+    `<div class="confirm-actions">` +
+    `<button class="btn-danger" data-yes>${t("remover")}</button>` +
+    `<button class="link mono muted" data-no>${t("cancelar")}</button></div>`;
+  const box = B.bMenu.querySelector("[data-extdata]");
+  B.bMenu.querySelector("[data-yes]").onclick = async () => {
+    const alsoData = !!(box && box.checked);
+    closeFloat();
+    try {
+      const out = await invoke("ext_remove", { id: r.id, alsoData });
+      for (const rel of (out && out.removed) || []) closeTabsUnder(rel, true);
+      closeTabsUnder(EXT_PREFIX + r.id, true);
+      toast((out && (out.kept || []).length)
+        ? t("extensão removida — %1 arquivo(s) ficaram porque você os editou", [String((out.kept || []).length)])
+        : t("extensão removida"), 6000);
+      await refreshExt(true);
+      sideSig = ""; brainRefresh();
+    } catch (e) { toast(tErr(String(e)), 6000); }
+  };
+  B.bMenu.querySelector("[data-no]").onclick = () => closeFloat();
+  placeMenu(anchor);
+}
+
+// ---- instalar ----
+function openInstallExt() {
+  const body =
+    `<p class="hint">${t("uma extensão acrescenta uma tela ao Loro, montada com o que já existe neste projeto.")}</p>` +
+    `<p class="hint">${t("aponte para a pasta da extensão — a que tem loro.json e .claude-plugin/plugin.json dentro. O Loro não baixa nada e não compila nada.")}</p>` +
+    `<div class="wfield"><span>${t("do computador")}</span>` +
+    `<span class="dirpick"><input id="extDir" type="text" spellcheck="false" autocapitalize="off" autocorrect="off" />` +
+    `<button id="extPick" class="btn sm" type="button">${t("escolher pasta…")}</button></span></div>` +
+    `<div id="extPrev"></div>`;
+  openModal(t("Instalar extensão"), body, t("Instalar extensão"), async () => {
+    const dir = ($("extDir") && $("extDir").value || "").trim();
+    if (!dir) throw t("escolha a pasta da extensão");
+    const out = await invoke("ext_install", { source: dir, hoje: loopNow().date });
+    toast(out && out.trust
+      ? t("extensão instalada — ela traz um programa, e ele só roda quando você iniciar")
+      : t("extensão instalada"), 6000);
+    await refreshExt(true);
+    sideSig = ""; brainRefresh();
+    if (out && out.id) await openExt(out.id);
+  });
+  const pick = $("extPick");
+  const input = $("extDir");
+  const preview = async () => {
+    const host = $("extPrev");
+    if (!host) return;
+    const dir = (input && input.value || "").trim();
+    if (!dir) { host.innerHTML = ""; return; }
+    host.innerHTML = `<p class="hint">${t("lendo…")}</p>`;
+    try {
+      const pv = await invoke("ext_preview", { source: dir });
+      host.innerHTML = extPreviewHtml(pv);
+    } catch (e) {
+      host.innerHTML = "";
+      const code = String(e);
+      pmError(code);
+      if (code.indexOf("err.ext_manifest_invalid") === 0 || code.indexOf("err.ext_source_unsupported") === 0) {
+        host.innerHTML = `<p class="hint">${t("uma pasta de extensão tem um loro.json (que diz qual tela ela desenha) e um .claude-plugin/plugin.json com o nome dela.")}</p>`;
+      }
+    }
+  };
+  if (pick) pick.onclick = async () => {
+    try {
+      const d = await invoke("pick_folder");
+      if (d && input) { input.value = d; await preview(); }
+    } catch (e) { clog("pick_folder error: " + e); }
+  };
+  if (input) input.onchange = preview;
+}
+
+// A folha de instalação diz TUDO o que a extensão declarou, inclusive o que o
+// Loro não implementa (`unsupported`): um ponto declarado e descartado em
+// silêncio é a superfície que mente.
+function extPreviewHtml(pv) {
+  const bloco = (rot, itens) => (itens || []).length
+    ? `<span>· ${esc(rot)} — <span class="mono">${esc(itens.join(" · "))}</span></span>` : "";
+  const trust = pv.trust
+    ? `<div class="pmerr" role="alert"><span>${t("esta extensão traz um programa que roda no SEU computador (%1), com o seu acesso: ele alcança o que você alcança, porque o Loro não o põe numa caixa. Ele não roda sozinho: você inicia e para quando quiser, e ele para quando o Loro fecha.", [esc((pv.program && pv.program.command) || "")])}</span></div>`
+    : "";
+  const naoFaz = (pv.unsupported || []).length
+    ? `<p class="hint">${t("declarado e ainda NÃO implementado pelo Loro — a extensão instala sem isso: %1", [esc((pv.unsupported || []).join(" · "))])}</p>`
+    : "";
+  const conflitos = (pv.conflicts || []).length
+    ? `<div class="pmerr" role="alert"><span>${t("já existe algo com este nome neste projeto: %1", [esc((pv.conflicts || []).join(" · "))])}</span></div>`
+    : "";
+  const jaTem = pv.installed
+    ? `<div class="pmerr" role="alert"><span>${t("esta extensão já está instalada (versão %1) — remova antes de reinstalar", [esc(pv.installed)])}</span></div>`
+    : "";
+  const pediu = (pv.capabilities || []).length
+    ? `<p class="hint">${t("ela pede: %1 — a resposta fica registrada e, nesta versão, não libera nada.", [esc(pv.capabilities.map((c) => c.id).join(" · "))])}</p>`
+    : "";
+  const triagem = (pv.findings || []).length
+    ? `<p class="intakehead ${pv.blocked ? "block" : "warn"}">${pv.blocked
+      ? t("um arquivo não vai entrar — o projeto é guardado junto com o histórico")
+      : t("confira antes de instalar")}</p>` +
+    pv.findings.map((f) => `<div class="intakerow ${f.findings.some((x) => x.severity === "block") ? "block" : "warn"}">` +
+      `<b>${esc(f.rel.split("/").pop())}</b>` +
+      f.findings.map((x) => `<span>${esc(INTAKE_LABEL[x.rule] ? INTAKE_LABEL[x.rule](x) : x.rule)}</span>`).join("") +
+      `<i class="mono">${esc(f.rel)}</i></div>`).join("")
+    : "";
+  return jaTem + conflitos + trust +
+    `<div class="pmpreview"><div class="modelhead"><b class="modelname">${esc(pv.name || pv.id)}</b>` +
+    (pv.version ? `<span class="mono pluginmeta">${esc(pv.version)}</span>` : "") + `</div>` +
+    bloco(t("telas"), pv.points) +
+    bloco(t("arquivos"), (pv.writes || []).map((w) => w.rel)) +
+    `</div>` + naoFaz + pediu + triagem;
+}
+
+// ---- Configurações → Extensões ----
+function renderExtCfgList() {
+  const host = $("extCfgList");
+  if (!host) return;
+  if (!(extList || []).length) {
+    host.innerHTML = `<p class="hint">${t("nenhuma extensão instalada. Uma extensão acrescenta uma tela ao Loro — e você vê o que ela traz antes de instalar.")}</p>`;
+    return;
+  }
+  host.innerHTML = extList.map((r) => {
+    const st = r.hasProgram
+      ? `<span class="lstate ${extStateCls(r.state)}">${esc(extStateLabel(r.state))}</span>`
+      : `<span class="lstate muted">${esc(t("sem programa"))}</span>`;
+    const why = r.reason ? ` · ${tErr(r.reason)}` : "";
+    return `<div class="modelrow"><div class="modelinfo">` +
+      `<div class="modelhead"><b class="modelname">${esc(r.name || r.id)}</b>` +
+      (r.version ? `<span class="mono pluginmeta">${esc(r.version)}</span>` : "") + st + `</div>` +
+      `<span class="pluginmeta">${esc(r.origin || "")}${esc(why)}</span>` +
+      `</div>` +
+      rowMenuHtml(`data-extcfgmenu="${esc(r.id)}"`, r.name || r.id, t("ações da extensão")) +
+      `</div>`;
+  }).join("");
+  host.querySelectorAll("[data-extcfgmenu]").forEach((b) => (b.onclick = (e) => {
+    e.stopPropagation();
+    openExtMenu(b, b.dataset.extcfgmenu);
+  }));
+}
+
+// ---- o estado chega por evento, não por adivinhação ----
+listen("ext-state", (e) => {
+  const p = (e && e.payload) || {};
+  const r = extRowOf(p.id);
+  if (r) {
+    r.state = p.state || r.state;
+    r.reason = p.reason || "";
+    r.lastAnswerMs = p.lastAnswerMs || r.lastAnswerMs;
+  }
+  extSig = "";
+  refreshExt(false);
+});
+// A MESMA CURA DE `refreshExt`, e aqui ela pesa mais: este repintar é disparado
+// pelo PROGRAMA de terceiro (a nota `loro/view_invalidated`, colhida no laço de
+// 500ms), não por um gesto da pessoa. Sem o portão, um `field` sendo digitado era
+// apagado no meio da tecla e a tela pulava para o topo. O aviso não é perdido:
+// fica pendente e pinta assim que o foco sai da tela.
+let extViewPendente = "";
+function extRepaintPendente() {
+  if (!extViewPendente) return;
+  if (document.activeElement && B.doc.contains(document.activeElement)) return;
+  const id = extViewPendente;
+  extViewPendente = "";
+  const tab = activeTab();
+  if (tab && extIdOf(tab.rel) === id) renderActive();
+}
+listen("ext-view-invalidated", (e) => {
+  const p = (e && e.payload) || {};
+  const tab = activeTab();
+  if (!tab || extIdOf(tab.rel) !== p.id) return;
+  const digitando = document.activeElement && B.doc.contains(document.activeElement);
+  if (digitando) { extViewPendente = p.id; return; }
+  renderActive();
+});
+// `focusout` no documento, uma vez: o `B.doc` sobrevive ao innerHTML, então um
+// ligador por pintura empilharia ouvintes. O `setTimeout` existe porque no
+// `focusout` o `activeElement` ainda não é o novo.
+document.addEventListener("focusout", () => setTimeout(extRepaintPendente, 0));
+
+{
+  const add = $("addExtBtn");
+  if (add) add.addEventListener("click", () => openInstallExt());
+  const inst = $("cfgInstallExt");
+  if (inst) inst.addEventListener("click", () => openInstallExt());
+}
 
 
 invoke("selftest_enabled").then((on) => {

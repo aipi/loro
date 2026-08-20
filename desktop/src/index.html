@@ -202,6 +202,17 @@
               <div class="bgroup teal"><button class="secttl" data-sect="loops" aria-expanded="true"><span class="seccaret">▾</span><span data-i18n>loops</span></button><button id="addLoopBtn" class="gadd" aria-label="Novo loop" title="Novo loop" data-i18n-attrs="aria-label,title">＋</button></div>
               <div data-sectbody="loops"><div id="navLoops" class="btree"></div></div>
 
+              <!-- EXTENSÕES (ADR-0031 R5a) — a sexta seção. MEDIDO antes de
+                   escolher o lugar: a única `.secsep` do app fica ANTES de LOOPS
+                   (style.css:3206) e `#toolsSection` nasce `hidden`
+                   (index.html:212), então a colocação que a ADR-0031 §4(a) pede
+                   («depois de HABILIDADES DE IA, atrás da linha») penduraria uma
+                   linha sob um vazio recolhido. Aqui a linha separa duas seções
+                   que estão sempre na tela. -->
+              <div class="secsep" aria-hidden="true"></div>
+              <div class="bgroup"><button class="secttl" data-sect="ext" aria-expanded="true"><span class="seccaret">▾</span><span data-i18n>extensões</span></button><button id="addExtBtn" class="gadd" aria-label="Instalar extensão" title="Instalar extensão" data-i18n-attrs="aria-label,title">＋</button></div>
+              <div data-sectbody="ext"><div id="navExt" class="btree"></div></div>
+
               <!-- habilidades customizadas: acessíveis, mas fora do caminho -->
               <div id="toolsSection" class="toolsec" hidden>
                 <div class="bgroup"><button class="bgtoggle" id="toolsToggle" title="Recolher/expandir habilidades de IA" data-i18n-attrs="title" aria-expanded="true" aria-controls="navTools"><span class="seccaret">▾</span> <span data-i18n>Habilidades de IA</span></button><button id="addToolBtn" class="gadd" aria-label="Nova habilidade de IA" title="Nova habilidade de IA" data-i18n-attrs="aria-label,title">＋</button></div>
@@ -264,6 +275,9 @@
             <button class="minibtn teal" data-mini="loops" title="loops" data-i18n-attrs="title">
               <svg class="ic" viewBox="0 0 24 24"><path d="M12 6v3l4-4-4-4v3c-4.42 0-8 3.58-8 8 0 1.57.46 3.03 1.24 4.26L6.7 14.8c-.45-.83-.7-1.79-.7-2.8 0-3.31 2.69-6 6-6zm6.76 1.74L17.3 9.2c.44.84.7 1.79.7 2.8 0 3.31-2.69 6-6 6v-3l-4 4 4 4v-3c4.42 0 8-3.58 8-8 0-1.57-.46-3.03-1.24-4.26z"/></svg>
               <span id="miniLoopsBadge" class="minibadge" hidden>0</span>
+            </button>
+            <button class="minibtn" data-mini="ext" title="extensões" data-i18n-attrs="title">
+              <svg class="ic" viewBox="0 0 24 24"><path d="M20.5 11H19V7c0-1.1-.9-2-2-2h-4V3.5C13 2.12 11.88 1 10.5 1S8 2.12 8 3.5V5H4c-1.1 0-1.99.9-1.99 2v3.8H3.5c1.49 0 2.7 1.21 2.7 2.7s-1.21 2.7-2.7 2.7H2V20c0 1.1.9 2 2 2h3.8v-1.5c0-1.49 1.21-2.7 2.7-2.7 1.49 0 2.7 1.21 2.7 2.7V22H17c1.1 0 2-.9 2-2v-4h1.5c1.38 0 2.5-1.12 2.5-2.5S21.88 11 20.5 11z"/></svg>
             </button>
             <button class="minibtn" data-mini="skills" title="Habilidades de IA" data-i18n-attrs="title">
               <svg class="ic" viewBox="0 0 24 24"><path d="M18 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 4h5v8l-2.5-1.5L6 12V4z"/></svg>
@@ -831,6 +845,7 @@
             <button class="cfgnavbtn" data-sec="ai" data-i18n>IA e terminal</button>
             <button class="cfgnavbtn" data-sec="plugins" data-i18n>Plugins</button>
             <button class="cfgnavbtn" data-sec="loops" data-i18n>Loops</button>
+            <button class="cfgnavbtn" data-sec="ext" data-i18n>Extensões</button>
             <button class="cfgnavbtn" data-sec="look" data-i18n>Aparência</button>
             <button class="cfgnavbtn" data-sec="git" data-i18n>Versões e GitHub</button>
             <!-- ADR-0032 · seção própria: "Versões e GitHub" é o versionamento do
@@ -1009,6 +1024,22 @@
                 <p class="hint" data-i18n>ler e editar o projeto os ciclos já podem. Isto é o que foi liberado ALÉM disso — cada linha veio de um pedido seu. «tudo, sem perguntar» e comandos livres nunca são liberados a um ciclo.</p>
               </div>
             </section>
+            <!-- ADR-0031 R5a §5.8 — a lista é a verdade do que ESTÁ instalado.
+                 O que a extensão pediu se lê e se responde por linha; nesta
+                 rodada nada é imposto por uma permissão, e a cópia diz isso em
+                 vez de prometer uma barreira que não existe. -->
+            <section class="cfgsec" data-sec="ext">
+              <h3 data-i18n>Extensões</h3>
+              <p class="hint secnote" data-i18n>uma extensão acrescenta uma tela ao Loro, e o que ela mostra vem deste projeto. Se ela trouxer um programa, ele roda no seu computador — e só depois de você iniciar.</p>
+              <div class="cfgcard">
+                <div id="extCfgList" class="modelmgr"></div>
+                <div class="field"><span class="mono" data-i18n>do computador</span>
+                  <button id="cfgInstallExt" class="btn sm" type="button" data-i18n>instalar extensão…</button>
+                </div>
+                <p class="hint" data-i18n>o registro fica em .loro/ext.json, guardado junto com o projeto. Remover subtrai só o que a extensão trouxe — um arquivo que você editou depois fica, e a tela diz qual.</p>
+                <p class="hint" data-i18n>o que uma extensão pede fica registrado por escrito. O Loro não abre nenhuma porta de leitura para ela — e também não põe o programa dela numa caixa: um programa iniciado roda com o seu acesso. A sua resposta fica guardada; nesta versão ela não bloqueia nada.</p>
+              </div>
+            </section>
             <section class="cfgsec" data-sec="look">
               <h3 data-i18n>Aparência</h3>
               <div class="cfgcard">
@@ -1130,6 +1161,7 @@
     <script src="modelui.js"></script>
     <script src="loops.js"></script>
     <script src="update.js"></script>
+    <script src="extview.js"></script>
     <script src="audio.js"></script>
     <script src="shell.js"></script>
     <script src="app.js"></script>

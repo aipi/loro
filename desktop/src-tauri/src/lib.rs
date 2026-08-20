@@ -43,6 +43,12 @@ use acervo::*;
 mod loops;
 mod meeting;
 mod plugins;
+// ADR-0031 R5a — a extensão executável. `mcp` é o cliente stdio do programa de
+// uma extensão; `ext` é o manifesto, o supervisor e as três superfícies. Bare
+// `mod`, sem glob: os comandos ficam com nome de módulo e nada existente muda de
+// resolução (contrato R5a §7.2).
+mod ext;
+mod mcp;
 use meeting::*;
 mod models;
 // ADR-0032 — o aviso de versão nova. Módulo próprio: a checagem é uma
@@ -4588,7 +4594,7 @@ fn process_name_matches(comm: &str, name: &str) -> bool {
 // cheaper than a subprocess, and term_status is polled every 300ms while a
 // habilidade waits for its agent (ADR-0014).
 #[cfg(not(windows))]
-fn process_table() -> Vec<(u32, u32, String)> {
+pub(crate) fn process_table() -> Vec<(u32, u32, String)> {
     proc::command("ps")
         .args(["-axo", "pid=,ppid=,comm="])
         .output()
@@ -4598,7 +4604,7 @@ fn process_table() -> Vec<(u32, u32, String)> {
 }
 
 #[cfg(windows)]
-fn process_table() -> Vec<(u32, u32, String)> {
+pub(crate) fn process_table() -> Vec<(u32, u32, String)> {
     use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
     use windows_sys::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
@@ -4955,12 +4961,32 @@ pub fn run() {
             brain_meeting_transcribe_segment,
             brain_meeting_transcribe_tail,
             brain_meeting_audit,
+            ext::ext_list,
+            ext::ext_preview,
+            ext::ext_install,
+            ext::ext_remove,
+            ext::ext_start,
+            ext::ext_stop,
+            ext::ext_view,
+            ext::ext_action,
+            ext::ext_settings_schema,
+            ext::ext_settings_get,
+            ext::ext_settings_set,
+            ext::ext_capabilities,
+            ext::ext_permit,
             ai_doctor
         ])
         .build(tauri::generate_context!())
         .expect("failed to start the Loro app");
 
     app.run(|app_handle, event| {
+        // ADR-0031 §4.7 — ao sair, os programas das extensões param com a árvore
+        // inteira. Hoje NADA trata ExitRequested (medido: `grep RunEvent::` neste
+        // arquivo dava só o braço Reopen), então este é um braço novo, não a troca
+        // de um comportamento.
+        if let tauri::RunEvent::ExitRequested { .. } = event {
+            ext::stop_all();
+        }
         // clicking the Dock icon reopens the window (macOS)
         #[cfg(target_os = "macos")]
         if let tauri::RunEvent::Reopen { .. } = event {
@@ -5323,6 +5349,9 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn whisper_setup_script_is_written_as_bom_prefixed_utf8() {
+        let _env = crate::proc::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         // Windows PowerShell 5.1 decodes a BOM-less .ps1 as CP1252, where the
         // UTF-8 em dash (E2 80 94) becomes "â€”" — and that trailing U+201D is a
         // smart quote the parser accepts as a string delimiter, which unbalances
@@ -6486,6 +6515,9 @@ mod tests {
 
     #[test]
     fn models_dir_honors_env_override() {
+        let _env = crate::proc::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         std::env::set_var("LORO_MODELS_DIR", "/tmp/loro-test/models");
         assert_eq!(models_dir(), PathBuf::from("/tmp/loro-test/models"));
         assert_eq!(
@@ -6499,6 +6531,9 @@ mod tests {
     // an installed app has CWD `/` (read-only) and would fail with os error 30.
     #[test]
     fn recordings_dir_lives_under_data_dir() {
+        let _env = crate::proc::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         std::env::set_var("LORO_HOME", "/tmp/loro-test-home");
         assert_eq!(
             recordings_dir(),
@@ -6559,6 +6594,9 @@ mod tests {
 
     #[test]
     fn whisper_bin_uses_env_override() {
+        let _env = crate::proc::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         std::env::set_var("WHISPER_STREAM_BIN", "/opt/x/whisper-stream");
         assert_eq!(whisper_bin(), PathBuf::from("/opt/x/whisper-stream"));
         std::env::remove_var("WHISPER_STREAM_BIN");

@@ -402,7 +402,8 @@ mod tests {
     use std::sync::Mutex;
 
     // LORO_HOME is process-global; serialize the tests that touch it.
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    // crate-wide: a per-module env lock serializes nothing (proc.rs)
+    use crate::proc::TEST_ENV_LOCK as ENV_LOCK;
 
     fn with_temp_home<T>(f: impl FnOnce() -> T) -> T {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());

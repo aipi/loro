@@ -625,7 +625,7 @@ premise.
 |---|---|---|
 | 4.1 | the UI word for the extension unit | **pacote** — short, natural pt-BR, no store connotation. `plugin` stays the internal identifier |
 | 4.2 | where pacotes are managed | **Configurações**, as a new section of the one scrolling page (ADR-0022 §22) |
-| 4.3 | the executable class | **refused by name in R1**; the door opens later, in its own ADR (R5) |
+| 4.3 | the executable class | **refused by name in R1**; the door opens later, in its own ADR (R5) — **that ADR is ADR-0031, and its R5a is in the code.** It does not relax this door: `brain_install_plugin` still refuses an executable pacote by name, `EXECUTABLE_MARKERS` is untouched, and an extension installs through the SEPARATE `ext_install` door. One door per protocol; a v2 manifest handed to this one still refuses with `err.plugin_schema_unsupported`, and a v1 pacote handed to that one refuses with `err.ext_protocol_unsupported` |
 | 4.4 | scope of an installed pacote | **versioned inside the acervo** — it is the project's policy and travels with the project |
 | 4.5 | a catálogo of *knowledge* (filled contexts) | **not now** — recorded as a hotspot in H-6 for a future RFC. It is a different product: curation, content liability, LGPD |
 | 4.6 | **BR-1 and the clock** | **armed once, runs only while the app is open.** A visible state says it is armed and what comes next. **No BR-1 amendment is needed** — the arming is the user's explicit act and the work only happens in front of a running app |
@@ -847,7 +847,7 @@ one; a local install does not.
 | **R2** | `brain_export_plugin` — the acervo's custom habilidades become a pacote; scaffold a team catálogo (`.claude-plugin/marketplace.json`). The round that makes adoption two-way |
 | **R3** | install from `owner/repo` / git URL with `ref`/`sha` pin, private repo via ambient credential, `brain_catalog_list`, *atualizar* |
 | **R4** | **the loop**, after §4.11–§4.14 are settled and §9 is delivered: definition, the five surfaces, the state machine, the artifact, the history. Loops become a `kind`, disarmed on install |
-| **R5** | open the executable door deliberately, if the owner decides to: explicit second confirmation, contents named, never in the wizard, recorded in `.loro/plugins.json`. Its own ADR |
+| **R5** ◐ | open the executable door deliberately, if the owner decides to: explicit second confirmation, contents named, never in the wizard, recorded in `.loro/plugins.json`. Its own ADR — **ADR-0031**, whose R5a shipped: MCP over stdio, the supervisor, the three surfaces, source = a local directory only. It is a NEW door (`ext_install`, `.loro/ext.json`), not this one relaxed |
 | **R6** | optional: submit Loro's own habilidades to `claude-community`, so Loro appears in the catálogo that already exists instead of asking for a visit to its own |
 
 ---
@@ -986,6 +986,16 @@ rail ~222) · `desktop/src/app.js` (`renderTools`/`toolRow` ~3785, `brainPoll` ~
 - **No sandbox.** Loro will not sandbox an executable pacote. Refusing by name is honest;
   a sandbox we did not write and cannot verify would be a claim the app does not enforce
   (DESIGN.md §1 — state must never lie).
+  - **Still literally true after ADR-0031 R5a, and now it is said on the screen.**
+    An extension's program is a peer process: `mcp::McpClient::spawn` runs it through
+    `proc::command`, which removes 8 `CLAUDE_*` markers and nothing else — no
+    `env_clear`, no jail, no network denial. What R5a added instead of a sandbox is a
+    **named trust decision**: the command is a bare name resolved through the hydrated
+    PATH, the argv is validated at manifest read AND again out of the versioned record
+    before the spawn, and nothing runs until somebody on THAT machine approved exactly
+    that command (`~/.loro/ext/<id>/trust.json`, the program stored verbatim). The
+    install sheet and Configurações both say the second half out loud — a started
+    program runs with the person's own access (ADR-0031 §14, §17).
 - **No auto-update.** An update is a change and passes the same door; *atualizar* is a
   user action.
 - **No extension point into the app itself** — no JS injected into the webview, no new
@@ -995,6 +1005,21 @@ rail ~222) · `desktop/src/app.js` (`renderTools`/`toolRow` ~3785, `brainPoll` ~
 - **Nothing pluggable in the kernel:** audio capture, the whisper spawn, the path guards,
   the triage blocks and the git/`gh` writes stay fixed. A pluggable kernel turns
   BR-1/BR-8/BR-9 from guarantees into defaults.
+  - **AMENDED on one line by ADR-0031 §12 (2026-08-19): the transcription ENGINE
+    opens; the GUARD does not.** The reason above is kept verbatim and is what does
+    the narrowing — what turns a guarantee into a default is a **replaceable guard**,
+    not a replaceable engine. A `transcriber` point is therefore admissible in
+    principle: spawned by Loro, local, and **network-denied for its whole life**, which
+    is a refusal enforced at spawn instead of by the absence of a feature. Audio
+    capture itself, the path guards, the triage blocks and the git/`gh` writes stay
+    exactly as this line left them — an extension never sits between the microphone and
+    the disk and never decides whether a recording happens.
+    **Not in the code, as of ADR-0031 R5a** (measured, `ext.rs`): `SUPPORTED_POINTS`
+    is `["surface"]`; `transcriber` exists only as a name in `KNOWN_POINTS` — reported
+    as unsupported instead of silently dropped — and in `AUDIO_POINTS`, whose only job
+    today is to refuse an audio-holding point declared together with any `net.*`
+    capability at the door (`err.ext_audio_network`, BR-1's absolute half, no consent
+    path). So the door is open in the decision and closed in the code.
 - **No second scheduler.** The clock of §4.6 is a single owner in the Rust
   core — not a timer per feature and not a frontend clock pretending to be one.
 - **No loop writing official knowledge on its own** (§3.8.6).

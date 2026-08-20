@@ -203,6 +203,16 @@ pub fn hydrate_path() {
     );
 }
 
+/// Env vars are PROCESS-GLOBAL and `cargo test` runs threads in parallel, so
+/// every test that touches one must hold THIS lock — one lock for the whole
+/// crate, because two per-module locks cannot see each other. MEASURED
+/// (2026-08-20): `chat::the_agent_is_found_where_it_is_installed_not_only_on_path`
+/// failed 1 run in 3 while an `ext::with_home` test rewrote LORO_HOME under it;
+/// ext.rs and presets.rs each had a private ENV_LOCK, which serialized nothing
+/// across modules.
+#[cfg(test)]
+pub(crate) static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[cfg(test)]
 mod tests {
     use super::*;
