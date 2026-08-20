@@ -832,6 +832,30 @@ revisões do time**), a seção **TIME** do painel ✦ IA e o aviso no topo de
 - Ao lado de **↗ Enviar para revisão do time** há um **ⓘ** explicando o fluxo:
   publica o rascunho de trabalho e abre a revisão para os donos do tema.
 
+## Quando sai uma versão nova
+
+O Loro olha uma vez por dia se saiu uma versão nova e avisa em três lugares: a
+etiqueta da versão no topo fica destacada (**v0.13.1 disponível**), o **⚙
+Configurações** na lateral ganha um pontinho, e **Configurações →
+Atualizações** conta a história inteira.
+
+Lá você vê a versão instalada, a última publicada, e **como atualizar pelo
+caminho que você usou para instalar**:
+
+- instalou pelo **Homebrew**: o app mostra o comando `brew upgrade --cask loro`
+  com um botão de copiar. Rode-o no seu terminal, com o Loro fechado.
+- instalou pelo **.dmg**: o app leva para a página da versão, de onde você baixa
+  o novo `.dmg` e arrasta o Loro para Aplicativos por cima do antigo.
+
+O Loro **não baixa e não instala** a atualização por você — ele mostra o
+caminho, e quem decide a hora é você.
+
+**E a privacidade?** A consulta é anônima: um pedido à página pública de versões
+do GitHub, no máximo uma vez por dia, sem nada sobre você, sobre o projeto ou
+sobre o que você grava — nem a versão que você tem instalada. Se preferir, o
+interruptor em **Configurações → Atualizações** desliga a consulta automática de
+vez; o botão **verificar agora** continua ali para quando você quiser perguntar.
+
 ## FAQ
 
 **Onde ficam meus dados?** Na pasta do projeto que você escolheu, e só nela.
