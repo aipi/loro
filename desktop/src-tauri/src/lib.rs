@@ -6863,7 +6863,10 @@ mod tests {
     // invoke rejection — nothing else in the suite catches it.
     #[test]
     fn the_review_commands_are_reachable_from_the_screen() {
-        let src = include_str!("lib.rs");
+        // A Windows checkout writes this very file back with CRLF (core.autocrlf),
+        // so a literal "...,\n" needle would miss every line and fail the test on
+        // that platform alone — normalize before matching, not the checkout.
+        let src = include_str!("lib.rs").replace("\r\n", "\n");
         for cmd in [
             "brain_git_diff",
             "gh_pr_detail",
@@ -6890,7 +6893,9 @@ mod tests {
     // open review. This wiring is the single place that decides it.
     #[test]
     fn sending_a_draft_already_under_review_updates_it_instead_of_asking_for_a_second() {
-        let src = include_str!("lib.rs");
+        // Same CRLF hazard as `the_review_commands_are_reachable_from_the_screen`:
+        // a Windows checkout of this file breaks a literal "\n}\n" needle.
+        let src = include_str!("lib.rs").replace("\r\n", "\n");
         let from = src
             .find("fn brain_propose_change")
             .expect("the send-for-review command");

@@ -1,0 +1,8 @@
+# Normalize every text file to LF on checkout, on every platform. Without
+# this, a Windows checkout (this repo's own default `core.autocrlf=true`
+# included) rewrites the working tree with CRLF, and several tests read
+# source files back with `include_str!`/`readFileSync` and match literal
+# "\n" — first caught in `lib.rs`'s `the_review_commands_are_reachable_from_the_screen`
+# and three `desktop/tests/*.test.js` cases, all green on Linux/macOS and red
+# on a real Windows checkout for no reason but the line ending.
+* text=auto eol=lf
