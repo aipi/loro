@@ -9554,7 +9554,17 @@ function migrationBodyHtml(rep) {
   // `moves`/`planned`/`movimentos` — nenhuma existe — então a simulação dizia
   // sempre "nada a migrar" e o usuário confirmava no escuro uma operação que
   // renomeia a árvore inteira (DESIGN.md §1: a interface não pode esconder o que sabe).
-  const lines = ["renamedWorld", "incubated", "renamed", "conflicts", "legacyIdeas", "scaffolding"]
+  // orphanAttachments: added when the acervo has an attachment no context.md
+  // links to (report-only — there is no safe auto-fix for a missing link).
+  const lines = [
+    "renamedWorld",
+    "incubated",
+    "renamed",
+    "conflicts",
+    "legacyIdeas",
+    "scaffolding",
+    "orphanAttachments",
+  ]
     .flatMap((k) => (Array.isArray(rep && rep[k]) ? rep[k] : []))
     .map((m) => (typeof m === "string" ? m : `${m.from || "?"} → ${m.to || "?"}`));
   const preview = lines.length ? lines.map((l) => "• " + esc(l)).join("<br>") : t("nada a migrar");

@@ -1684,7 +1684,10 @@ pub fn codeowners_template(contexts: &[String], lang: &str) -> String {
 // already shows in full.
 //
 // A section with no `<!-- … -->` line is a blank box with a title: the hint is
-// what says what to write, so every section here has one.
+// what says what to write, so every section here has one. A bare comment is
+// enough here because Loro's default carries no other tool's own annotation to
+// disambiguate from; a `<!-- {{ … }} -->` hint is only needed on a template
+// that also carries a foreign comment convention (ADR-0027 round 12).
 pub const PR_TEMPLATE: &str = r#"## Resumo
 <!-- o que muda e por quê -->
 
