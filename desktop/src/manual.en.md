@@ -833,6 +833,30 @@ at the top of **Knowledge**. None of those doors expires.
 - Next to **↗ Send for team review** there is an **ⓘ** explaining the flow: it
   publishes the working draft and opens the review for the topic owners.
 
+## When a new version is out
+
+Loro checks once a day whether a new version has been published and says so in
+three places: the version tag at the top stands out (**v0.13.1 available**), the
+**⚙ Settings** row in the sidebar gets a dot, and **Settings → Updates** tells
+the whole story.
+
+There you see the installed version, the latest published one, and **how to
+update by the route you installed with**:
+
+- installed with **Homebrew**: the app shows the `brew upgrade --cask loro`
+  command with a copy button. Run it in your terminal, with Loro closed.
+- installed from the **.dmg**: the app takes you to the release page, where you
+  download the new `.dmg` and drag Loro into Applications over the old one.
+
+Loro **does not download and does not install** the update for you — it shows
+the way, and you decide when.
+
+**What about privacy?** The query is anonymous: one request to GitHub's public
+releases page, at most once a day, carrying nothing about you, your project or
+what you record — not even the version you have installed. If you prefer, the
+switch in **Settings → Updates** turns the automatic check off for good; the
+**check now** button stays there for whenever you want to ask.
+
 ## FAQ
 
 **Where is my data?** In the project folder you chose, and only there. Config
