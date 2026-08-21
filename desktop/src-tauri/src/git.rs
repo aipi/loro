@@ -1554,13 +1554,9 @@ fn strip_html_comments(s: &str) -> String {
     out
 }
 
-// The FIRST guidance comment of a block, as one line: the sentence that sits
-// under the heading is what the field's placeholder says. Only the first, because
-// a template can carry a note of its own further down (a team's link to its
-// review checklist), and joining them printed that note inside the placeholder of
-// the field above it. A placeholder with newlines is not a placeholder either, so
-// the whitespace is collapsed here — once — instead of on the screen.
-fn html_comment_text(s: &str) -> String {
+// Every HTML comment's text in a block, collapsed to one line each, in order.
+fn html_comments(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
     let mut rest = s;
     while let Some(i) = rest.find("<!--") {
         let after = &rest[i + 4..];
@@ -1570,11 +1566,33 @@ fn html_comment_text(s: &str) -> String {
         };
         let one = inner.split_whitespace().collect::<Vec<_>>().join(" ");
         if !one.is_empty() {
-            return one;
+            out.push(one);
         }
         rest = tail;
     }
-    String::new()
+    out
+}
+
+// The guidance comment of a block: the sentence that says what the field's
+// placeholder shows. A `{{ … }}` comment is Loro's OWN marker for it — chosen
+// because it cannot collide with a foreign tool's own HTML comments in the same
+// file (a company pipeline's `<!-- field:init:required -->`/`<!-- field:end -->`,
+// which are never brace-wrapped) — so it wins whenever one is present. With no
+// braced comment, the FIRST bare one is the hint, same as before this marker
+// existed: a template can carry a note of its own further down (a team's link
+// to its review checklist), and joining every comment would print that note
+// inside the placeholder of the field above it.
+fn html_comment_text(s: &str) -> String {
+    let comments = html_comments(s);
+    for c in &comments {
+        if let Some(braced) = c.strip_prefix("{{").and_then(|r| r.strip_suffix("}}")) {
+            let unwrapped = braced.trim();
+            if !unwrapped.is_empty() {
+                return unwrapped.to_string();
+            }
+        }
+    }
+    comments.into_iter().next().unwrap_or_default()
 }
 
 // The template as the TEAM wrote it: the block before the first `## ` heading
@@ -1584,6 +1602,10 @@ fn html_comment_text(s: &str) -> String {
 // what a section is — and the writer can put back what it was never shown.
 struct RawSection {
     label: String,
+    // A foreign tool's own comment living ON the heading line (a company
+    // pipeline's `<!-- field:init:required -->`) — never part of the label
+    // (ADR-0027), but the writer still owes it back to the file on save.
+    heading_note: String,
     body: String,
 }
 
@@ -1591,7 +1613,7 @@ fn split_raw_sections(md: &str) -> (String, Vec<RawSection>) {
     let mut preamble: Vec<String> = Vec::new();
     let mut out: Vec<RawSection> = Vec::new();
     let mut buf: Vec<String> = Vec::new();
-    let mut label: Option<String> = None;
+    let mut current: Option<(String, String)> = None;
     let mut fenced = false;
     for line in md.lines() {
         let t = line.trim_start();
@@ -1599,23 +1621,28 @@ fn split_raw_sections(md: &str) -> (String, Vec<RawSection>) {
             fenced = !fenced;
         } else if !fenced {
             if let Some(h) = t.strip_prefix("## ") {
-                match label.take() {
-                    Some(l) => out.push(RawSection {
-                        label: l,
+                match current.take() {
+                    Some((label, heading_note)) => out.push(RawSection {
+                        label,
+                        heading_note,
                         body: buf.join("\n"),
                     }),
                     None => preamble = std::mem::take(&mut buf),
                 }
                 buf = Vec::new();
-                label = Some(h.trim().to_string());
+                let raw = h.trim().to_string();
+                let label = strip_html_comments(&raw).trim().to_string();
+                let heading_note = html_comments(&raw).into_iter().next().unwrap_or_default();
+                current = Some((label, heading_note));
                 continue;
             }
         }
         buf.push(line.to_string());
     }
-    match label {
-        Some(l) => out.push(RawSection {
-            label: l,
+    match current {
+        Some((label, heading_note)) => out.push(RawSection {
+            label,
+            heading_note,
             body: buf.join("\n"),
         }),
         None => preamble = buf,
@@ -1678,12 +1705,14 @@ pub fn render_pr_body_template(labels: &[String], previous: &str) -> String {
     }
     for l in labels {
         let label = l.trim();
-        let body = kept
-            .iter()
-            .find(|s| s.label == label)
+        let existing = kept.iter().find(|s| s.label == label);
+        let body = existing
             .map(|s| trim_trailing_blank_lines(&s.body))
             .unwrap_or_default();
-        out.push_str(&format!("## {label}\n"));
+        match existing.map(|s| s.heading_note.as_str()).unwrap_or("") {
+            "" => out.push_str(&format!("## {label}\n")),
+            note => out.push_str(&format!("## {label} <!-- {note} -->\n")),
+        }
         if !body.is_empty() {
             out.push_str(&body);
             out.push('\n');
@@ -4362,6 +4391,65 @@ mod tests {
             render_pr_body_template(&["Resumo".into(), "Como conferir".into()], ""),
             "## Resumo\n\n## Como conferir\n\n"
         );
+    }
+
+    // A team's own pipeline can annotate the same file with its own HTML
+    // comment, right on the heading line (`## Por que? <!-- why:init:required
+    // -->`) — that annotation is not the question, and must never reach the
+    // field's label.
+    #[test]
+    fn a_heading_line_comment_never_reaches_the_label() {
+        let (labels, _) =
+            pr_template_fields("## Por que? <!-- why:init:required -->\n\n<!-- why:end -->\n");
+        assert_eq!(labels, vec!["Por que?"]);
+    }
+
+    // Loro's own hint is a `{{ … }}` comment: unambiguous even when the section
+    // also carries a foreign tool's own plain HTML comments (a company
+    // pipeline's `field:init`/`field:end` markers), because those never look
+    // like `{{ … }}`. With no braced comment, a bare one is still the hint —
+    // every template written before this marker existed keeps working.
+    #[test]
+    fn a_braced_comment_is_the_hint_even_beside_other_comments() {
+        let (_, hints) = pr_template_fields(
+            "## Por que?\n<!-- why:init:required -->\n\n<!-- {{ o que motiva a mudança }} -->\n\n<!-- why:end -->\n",
+        );
+        assert_eq!(hints[0], "o que motiva a mudança");
+
+        let (_, legacy_hints) = pr_template_fields("## Resumo\n<!-- o que muda -->\n");
+        assert_eq!(legacy_hints[0], "o que muda");
+    }
+
+    // "A control must not destroy what it never showed" (DESIGN.md §1) cuts the
+    // other way too: the label hid a foreign tool's own annotation, so saving
+    // the team's chosen sections still owes that annotation back to the file —
+    // dropping it would silently break whatever reads it outside Loro.
+    #[test]
+    fn saving_the_template_keeps_a_heading_line_annotation_it_never_showed() {
+        let theirs = "## Por que? <!-- why:init:required -->\n\n<!-- why:end -->\n";
+        let (labels, _) = pr_template_fields(theirs);
+        assert_eq!(labels, vec!["Por que?"]);
+        let saved = render_pr_body_template(&labels, theirs);
+        assert!(
+            saved.contains("<!-- why:init:required -->"),
+            "a foreign tool's own heading-line marker was dropped on save: {saved}"
+        );
+    }
+
+    // The `{{ … }}` marker is a SHAPE, not a fixed sentence — whatever question
+    // sits inside the braces becomes the hint, so a team can reword a field
+    // (or add a brand-new one) with no code change and no new case to cover.
+    #[test]
+    fn any_text_inside_the_braces_becomes_the_hint() {
+        let (_, hints) = pr_template_fields(
+            "## Comentários (opcional)\n<!-- comments:init -->\n\n<!-- {{ Comentarios (opcional): }} -->\n\n<!-- comments:end -->\n",
+        );
+        assert_eq!(hints[0], "Comentarios (opcional):");
+
+        let (_, hints2) = pr_template_fields(
+            "## Comentários (opcional)\n<!-- comments:init -->\n\n<!-- {{ O que? }} -->\n\n<!-- comments:end -->\n",
+        );
+        assert_eq!(hints2[0], "O que?");
     }
 
     // The sheet asked for six sections and explained none of them: the sentence
