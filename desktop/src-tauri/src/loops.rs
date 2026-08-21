@@ -469,13 +469,12 @@ pub fn from_markdown(slug: &str, text: &str) -> LoopDef {
         destino: DEST_FOLDER.into(),
         ..Default::default()
     };
-    let body_start;
     // `split_inclusive` mantém o terminador de linha: contar `len() + 1` sobre
     // `lines()` (que come o `\r`) desalinhava o corpo em 1 byte por linha num
     // arquivo salvo por um editor do Windows, e a instrução voltava com pedaços do
     // front matter dentro dela.
     let mut lines = text.split_inclusive('\n');
-    if text.starts_with("---") {
+    let body_start = if text.starts_with("---") {
         let first = lines.next().unwrap_or_default();
         let mut consumed = first.len();
         for raw in lines.by_ref() {
@@ -510,10 +509,10 @@ pub fn from_markdown(slug: &str, text: &str) -> LoopDef {
                 _ => {}
             }
         }
-        body_start = consumed.min(text.len());
+        consumed.min(text.len())
     } else {
-        body_start = 0;
-    }
+        0
+    };
     def.instrucao = text[body_start..].trim().to_string();
     if def.titulo.is_empty() {
         def.titulo = def.slug.clone();

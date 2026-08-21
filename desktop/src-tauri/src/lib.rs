@@ -1386,11 +1386,21 @@ pub(crate) fn seed_context(
 
 // utility subfolders that belong to a context, not contexts themselves. Includes
 // legacy idea/reference folders so a pre-migration acervo never lists them as
-// contexts.
-fn is_ctx_util(name: &str) -> bool {
+// contexts, and `attachments/` (AGENTS.md: supporting material linked FROM
+// context.md, never itself the source of truth) — a folder that starts with
+// only files (no subdirectories) otherwise falls through the leaf-context
+// bucket in `ctx_child_dirs`/`context_stamps` below and gets scaffolded with
+// its own context.md + CHANGELOG.md, which is a defect, not a second context.
+pub(crate) fn is_ctx_util(name: &str) -> bool {
     matches!(
         name,
-        "brainstorming" | "referencias" | "incubadora" | "references" | "ideas" | "changes"
+        "brainstorming"
+            | "referencias"
+            | "incubadora"
+            | "references"
+            | "ideas"
+            | "changes"
+            | "attachments"
     )
 }
 
@@ -2842,6 +2852,12 @@ struct MigrationReport {
     // a "conflito:" entry when both worlds coexist (nothing moved).
     #[serde(default)]
     renamed_world: Vec<String>,
+    // An attachment no context.md links to — report-only, never auto-fixed: the
+    // right place to add the missing link is a call the author makes, not a
+    // guess this pass could get wrong. `rel` path per entry, e.g.
+    // "contexts/frota/attachments/plano.md".
+    #[serde(default)]
+    orphan_attachments: Vec<String>,
 }
 
 // Rename preserving git history when possible; falls back to a plain move.
@@ -2888,6 +2904,9 @@ fn migrate_acervo(base: &Path, apply: bool, lang: &str) -> Result<MigrationRepor
         scaffolding: vec![],
         incubated: vec![],
         renamed_world: vec![],
+        // Report-only in every call, dry-run or applied: there is no safe
+        // auto-fix for a missing link (ADR-0013 note above the field).
+        orphan_attachments: crate::acervo::orphan_attachments(base),
     };
 
     report.renamed_world.extend(folder_moves);
@@ -5866,6 +5885,38 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    // brain_migrate is the acervo's health-check surface (scaffolding, legacy
+    // ideas, conflicts...), so an attachment nobody linked to is reported there
+    // too — report-only, in dry-run and apply alike, since a missing link is not
+    // a file-structure defect this pass can safely invent a fix for.
+    #[test]
+    fn migration_reports_attachments_no_context_md_links_to() {
+        let root = std::env::temp_dir().join(format!("loro-mig-orphan-att-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let ctx = root.join("contexts/frota");
+        std::fs::create_dir_all(ctx.join("attachments")).unwrap();
+        std::fs::write(ctx.join("context.md"), "# Frota\n\nSem links ainda.\n").unwrap();
+        std::fs::write(ctx.join("attachments/plano.md"), "x").unwrap();
+
+        let r = migrate_acervo(&root, false, "pt").unwrap();
+        assert_eq!(
+            r.orphan_attachments,
+            vec!["contexts/frota/attachments/plano.md".to_string()]
+        );
+
+        std::fs::write(
+            ctx.join("context.md"),
+            "# Frota\n\nVer [o plano](attachments/plano.md).\n",
+        )
+        .unwrap();
+        let r = migrate_acervo(&root, false, "pt").unwrap();
+        assert!(
+            r.orphan_attachments.is_empty(),
+            "linking it from context.md clears the report"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     // ADR-0027: the refresh of the review template is the one place the migration
     // WRITES over a file that already exists, and the promise the caller has to
     // keep — "a file still byte-identical to what Loro wrote may be refreshed; one
@@ -6527,6 +6578,12 @@ mod tests {
         std::fs::create_dir_all(root.join("contexts/vendas")).unwrap();
         // a utility subfolder does NOT become a context
         std::fs::create_dir_all(root.join("contexts/frota/brainstorming")).unwrap();
+        // attachments/ holds supporting material linked FROM context.md — it is
+        // never itself a context, even once it has files (AGENTS.md §"materiais
+        // de apoio").
+        let att = root.join("contexts/frota/attachments");
+        std::fs::create_dir_all(&att).unwrap();
+        std::fs::write(att.join("plano.md"), "x").unwrap();
         // hidden/reserved folder is ignored
         let arch = root.join("contexts/_arquivados/velho");
         std::fs::create_dir_all(&arch).unwrap();
@@ -6545,6 +6602,10 @@ mod tests {
         );
         assert!(!ctxs.iter().any(|c| c.contains("brainstorming")));
         assert!(!ctxs.iter().any(|c| c.contains("arquivados")));
+        assert!(
+            !ctxs.iter().any(|c| c.contains("attachments")),
+            "attachments/ is supporting material, not a context, even with files in it"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 

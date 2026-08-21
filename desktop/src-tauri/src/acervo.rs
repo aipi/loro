@@ -2733,6 +2733,13 @@ fn context_stamps(base: &Path) -> Vec<DocStamp> {
             if !valid_context(&full) {
                 continue;
             }
+            // attachments/ (and other util subfolders) are never a context, even
+            // once a stray context.md sits inside them — same rule `ctx_child_dirs`
+            // applies when listing contexts, kept in sync here so a document that
+            // never should have existed cannot join the knowledge graph.
+            if crate::is_ctx_util(&name) {
+                continue;
+            }
             if let Some((rel, md)) = context_doc_of(base, &full) {
                 out.push(DocStamp {
                     rel,
@@ -2751,6 +2758,78 @@ fn context_stamps(base: &Path) -> Vec<DocStamp> {
     }
     let mut out = Vec::new();
     walk(base, &crate::paths::contexts_dir(base), "", &mut out);
+    out
+}
+
+// Attachment files no context.md in the acervo links to (AGENTS.md: an
+// attachment is supporting material meant to be cited FROM the knowledge, never
+// itself a second source of truth). The efficient-reading protocol (ADR-0004)
+// only ever reaches a document by following a link out of a `context.md` — a
+// file sitting unlinked in `attachments/` is invisible to that protocol even
+// though `ls` would find it, which makes it effectively lost knowledge. This
+// walks every `attachments/` folder under `contexts/` and reports the files
+// whose path never appears as an `Internal` link target in any scanned doc.
+pub(crate) fn orphan_attachments(base: &Path) -> Vec<String> {
+    let docs = scan_contexts(base);
+    let mut referenced: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for d in docs.iter() {
+        for l in &d.links {
+            if let LinkTarget::Internal(rel) = &l.target {
+                referenced.insert(rel.clone());
+            }
+        }
+    }
+
+    let raiz = crate::paths::contexts_dir(base);
+    let pasta = raiz
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("contexts")
+        .to_string();
+
+    fn walk(
+        dir: &Path,
+        prefix: &str,
+        referenced: &std::collections::HashSet<String>,
+        out: &mut Vec<String>,
+    ) {
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
+        let mut entries: Vec<_> = rd.flatten().collect();
+        entries.sort_by_key(|e| e.file_name());
+        for e in entries {
+            let name = e.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') {
+                continue;
+            }
+            let path = e.path();
+            let rel = format!("{prefix}/{name}");
+            if !path.is_dir() {
+                continue;
+            }
+            if name == "attachments" {
+                let Ok(files) = std::fs::read_dir(&path) else {
+                    continue;
+                };
+                let mut kids: Vec<_> = files.flatten().collect();
+                kids.sort_by_key(|f| f.file_name());
+                for f in kids {
+                    if !f.path().is_file() {
+                        continue;
+                    }
+                    let frel = format!("{rel}/{}", f.file_name().to_string_lossy());
+                    if !referenced.contains(&frel) {
+                        out.push(frel);
+                    }
+                }
+            } else {
+                walk(&path, &rel, referenced, out);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(&raiz, &pasta, &referenced, &mut out);
     out
 }
 
@@ -3459,6 +3538,28 @@ Telemetria bruta do veículo.
         assert_eq!(g.orphans, vec![doc_rel("frota/rastreamento")]);
     }
 
+    // An attachment exists to be cited FROM the knowledge (AGENTS.md — "materiais
+    // de apoio... apenas referenciados"); one nobody links to is as good as lost,
+    // since the efficient-reading protocol only ever follows a link, never lists
+    // a folder. Linked files are silent; only the orphan is named.
+    #[test]
+    fn orphan_attachments_lists_files_no_context_md_links_to() {
+        let base = graph_acervo("orphan-attachments");
+        let att = crate::paths::contexts_dir(&base).join("frota/attachments");
+        std::fs::create_dir_all(&att).unwrap();
+        std::fs::write(att.join("linked.md"), "x").unwrap();
+        std::fs::write(att.join("forgotten.md"), "x").unwrap();
+        write_ctx(
+            &base,
+            "frota",
+            &format!("{FROTA}\nGuia: [linked](attachments/linked.md).\n"),
+        );
+
+        let out = orphan_attachments(&base);
+
+        assert_eq!(out, vec!["contexts/frota/attachments/forgotten.md"]);
+    }
+
     // ADR-0026 §1 — an internal link whose target is missing is a dead end
     // (DESIGN.md §1: never show a control that does nothing). The lint names the
     // target exactly as the author wrote it, because that is the string to fix.
@@ -3832,6 +3933,23 @@ Telemetria bruta do veículo.
             node(&graph_of(&base), "assinatura").decisions.len(),
             2,
             "a rewritten context.md is re-read"
+        );
+    }
+
+    // attachments/ is supporting material linked FROM context.md (AGENTS.md), never
+    // itself a context — a stray context.md dropped in there (e.g. by an older,
+    // buggy scaffolder) must not surface as a 5th node in the knowledge graph.
+    #[test]
+    fn the_scan_skips_a_context_md_inside_attachments() {
+        let base = graph_acervo("skip-attachments");
+        assert_eq!(scan_contexts(&base).len(), 4);
+
+        write_ctx(&base, "frota/attachments", "# Not a context\n");
+
+        assert_eq!(
+            scan_contexts(&base).len(),
+            4,
+            "attachments/ never becomes a 5th context, even with a context.md inside"
         );
     }
 

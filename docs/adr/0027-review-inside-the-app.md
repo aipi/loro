@@ -1397,3 +1397,46 @@ refuses to pass when it finds fewer than two readers, because a scanner that goe
 blind is the same disease as an assertion that cannot fail. Proved by adding a
 `gh_pr_peek` command that reads the cache inline: red, naming the command.
 
+## Round 12 — a `{{ … }}` hint, so Loro's own marker never collides with another tool's
+
+A real acervo's `.github/pull_request_template.md` carried a second automated
+reader: an org-level pipeline annotating each section with its own HTML comments
+(`<!-- why:init:required -->` on the heading line, `<!-- why:end -->` closing the
+section — required, kept exactly as that pipeline expects, never Loro's to change).
+Measured on the send-for-review sheet: the field's **label** rendered as `Por que?
+<!-- why:init:required -->` — the annotation, verbatim — and its **hint** rendered
+as `why:end`, because `split_raw_sections` took the whole heading line as the label
+and `html_comment_text` returned whichever HTML comment came first in the body,
+with no way to tell the pipeline's own comment from Loro's guidance sentence. Both
+conventions were plain `<!-- … -->`, so they were indistinguishable by construction.
+
+**Decided:**
+
+1. The heading `label` is always `strip_html_comments` of the heading line — a
+   comment sitting on the `## ` line (anyone's) never reaches the field's name.
+2. Loro's own hint marker is a comment shaped `<!-- {{ … }} -->`. `html_comment_text`
+   prefers the FIRST such braced comment in the section; with none present, it falls
+   back to the first bare comment exactly as before — every template written before
+   this marker existed keeps working with no migration. The shape is generic: the
+   sentence inside the braces is never inspected beyond unwrapping and trimming it,
+   so rewording a field's hint (or adding a brand-new one) is a template edit, not a
+   code change.
+3. `render_pr_body_template` (the "salvar modelo do time" write path) must not
+   destroy what the label hid: a heading-line comment found on read (`RawSection.
+   heading_note`) is written back on save, so a foreign tool's own annotation
+   survives a team editing which sections the sheet asks for. Only Loro's braced
+   hint moved off the heading line in the fixed acervo — the pipeline's markers
+   stayed exactly where and as they were, since the label fix alone already made
+   them safe to leave in place.
+
+`is_shipped_pr_template`/`PR_TEMPLATE` are unchanged: Loro's own default template has
+no foreign comment to disambiguate from, so the plain `<!-- … -->` hint stays the
+shipped shape; `{{ … }}` is the tool for a template that carries someone else's
+comments too, not the new baseline everywhere.
+
+Pinned by `git.rs`'s `a_heading_line_comment_never_reaches_the_label`,
+`a_braced_comment_is_the_hint_even_beside_other_comments`,
+`saving_the_template_keeps_a_heading_line_annotation_it_never_showed` and
+`any_text_inside_the_braces_becomes_the_hint` (the last one only asserting the
+shape — braces in, trimmed text out — never a fixed sentence).
+
