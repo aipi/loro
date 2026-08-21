@@ -186,9 +186,14 @@ quando quiser pela paleta: `Cmd/Ctrl+K` → "apresentação do Loro".
 - Cada comando da paleta (`Cmd/Ctrl+K`) tem um atalho
   `Cmd/Ctrl+Alt+<tecla>`, exibido ao lado do comando na própria paleta.
 - **Fontes** (Configurações → Transcrição → *fonte*): **microfone**, **áudio do
-  sistema** (requer BlackHole — o app guia a instalação) ou **minha voz + áudio
-  do sistema** (a reunião: as duas trilhas juntas; a transcrição acontece ao
-  final, com mais fidelidade).
+  sistema** (requer BlackHole no macOS, Mixagem estéreo ou VB-Cable no Windows —
+  o app guia a instalação) ou **minha voz + áudio do sistema** (a reunião: as
+  duas trilhas juntas; a transcrição acontece ao final, com mais fidelidade).
+  A reunião funciona no **macOS e no Windows**, e não precisa de driver nenhum:
+  ela pega o áudio direto do sistema. No macOS ele pede uma permissão de
+  Gravação de Tela na primeira vez; no Windows não pede nada, mas grava o que
+  sai pelo dispositivo de áudio **padrão**, então deixe a chamada tocando nele.
+  No Linux a opção não aparece.
 - O áudio é **transitório**: usado para transcrever e descartado. O indicador
   de privacidade na barra mostra o estado ("sem gravar" / "grava áudio").
 

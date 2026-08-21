@@ -72,5 +72,14 @@
     return { audio: deviceId ? { ...base, deviceId: { exact: deviceId } } : base };
   }
 
-  return { pickCaptureDevice, loopbackPattern, micConstraints, RAW_AUDIO };
+  // Onde o modo reunião existe. Cada sistema captura o áudio do sistema pelo
+  // caminho que tem: macOS pelo sidecar do ScreenCaptureKit (ADR-0005), Windows
+  // pelo loopback do WASAPI dentro do processo (ADR-0031). Linux não tem nenhum
+  // dos dois. Função pura porque a trava aparece em dois lugares (o seletor de
+  // fonte e o início da sessão) e as duas tinham que discordar juntas.
+  function meetingSupported(os) {
+    return os === "macos" || os === "windows";
+  }
+
+  return { pickCaptureDevice, loopbackPattern, micConstraints, meetingSupported, RAW_AUDIO };
 });

@@ -564,6 +564,7 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+ "windows",
  "windows-sys 0.60.2",
 ]
 

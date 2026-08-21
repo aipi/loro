@@ -49,9 +49,12 @@ separate, user-chosen folder and is **not** part of the codebase.
   lines, emitting them to the UI, saving/auto-saving sessions. **mic** and
   **system** resolve to a single `whisper-stream` capture index (`-c`): the system
   default, or the BlackHole loopback. **meeting** (ADR-0001 §2) is a separate,
-  driver-free flow: a ScreenCaptureKit sidecar (`loro-syscap`) records the
-  computer's audio while the frontend records the mic; on stop the two are mixed
-  (ffmpeg) and transcribed whole with `whisper-cli` (reusing file mode).
+  driver-free flow: the computer's own audio is recorded while the frontend
+  records the mic; on stop the two are mixed (ffmpeg) and transcribed whole with
+  `whisper-cli` (reusing file mode). The capturer is per platform (ADR-0031):
+  a ScreenCaptureKit sidecar (`loro-syscap`) on macOS, an in-process WASAPI
+  loopback thread on Windows. Both write a WAV in `recordings_dir` and report
+  the ADR-0025 anchor into the same map, so nothing downstream knows which ran.
 - **Knowledge base (brain)** — setup and layout of the acervo, per-context guide
   + change log, inbox/processed queue, import of files, status for the UI. The
   actual distillation is performed by the external Claude loop, not the app.
@@ -139,7 +142,7 @@ that is already under review updates it (see `brain_propose_change`).
 | `start` | `cfg {model, lang, translate, threads, capture?}` | `()` / err | spawn the streaming engine (live mode) |
 | `stop` | — | `()` | terminate the engine process (live mode) |
 | `transcribe_file` | `path, cfg {model, lang, translate, threads}` | `()` / err | file mode: converts `path` to 16kHz mono WAV (ffmpeg) and transcribes it whole with `whisper-cli` (no VAD); runs off the main thread, streams results via `transcript-line`/`transcribe-state`/`transcribe-error` |
-| `start_system_capture` | — | wavPath / err | meeting mode (ADR-0001 §2): spawn the ScreenCaptureKit sidecar recording system audio to a WAV; errors fast on a denied Screen Recording permission. The sidecar reports the epoch of its first written sample on **stdout** (`first-sample-epoch-ms <n>`) — the WAV's own t=0, kept per segment and handed to the frontend by the tail (ADR-0025) |
+| `start_system_capture` | — | wavPath / err | meeting mode (ADR-0001 §2): start recording system audio to a WAV and return its path. macOS spawns the ScreenCaptureKit sidecar and errors fast on a denied Screen Recording permission; the sidecar reports the epoch of its first written sample on **stdout** (`first-sample-epoch-ms <n>`). Windows starts an in-process WASAPI loopback thread and knows that epoch at `Start()`, so it is recorded before the call returns (ADR-0031). Either way it is the WAV's own t=0, kept per segment and handed to the frontend by the tail (ADR-0025) |
 | `stop_system_capture` | — | `()` | stop the sidecar cleanly (close its stdin → it finalizes the WAV) |
 | `transcribe_meeting` | `micPath?, sysPath?, cfg` | `()` / err | mix the mic and system-audio tracks (ffmpeg `amix`) into one 16kHz mono WAV and transcribe whole with `whisper-cli`; same events as `transcribe_file` |
 | `save_recording` | `data, filename` | path | write a recorded buffer (e.g. file-mode audio or diarization capture) to `transcripts/` |
@@ -454,7 +457,7 @@ All technical decisions are consolidated in the single **`docs/adr/0001-baseline
 | Desktop framework | Tauri v2 | ADR-0001 §1 |
 | Engine sourcing | whisper.cpp as a system dependency, not vendored | ADR-0001 §1 |
 | Transcription | live (`whisper-stream` VAD) + file (`whisper-cli`, whole recording, off-main-thread) | ADR-0001 §2 |
-| Meeting capture | mic + system audio via ScreenCaptureKit sidecar, mixed late | ADR-0001 §2 |
+| Meeting capture | mic + system audio, mixed late — ScreenCaptureKit sidecar (macOS), in-process WASAPI loopback (Windows) | ADR-0001 §2, ADR-0031 |
 | Privacy | BR-1 local inference · BR-8 structural logs · BR-9 no credentials | ADR-0001 §3 |
 | Product per context | single `context.md` (source of truth) + CHANGELOG; inline hotspots | ADR-0001 §4 |
 | Change proposal | RFC = branch + Pull Request; opt-in remote via `gh` + CODEOWNERS | ADR-0001 §5 |
