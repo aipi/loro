@@ -107,17 +107,27 @@ pub fn engine_search_dirs() -> Vec<PathBuf> {
 }
 
 // Executable candidates for a base name in a dir. On Windows an extensionless
-// name also matches its `.exe` form (whisper-stream -> whisper-stream.exe), so
-// engine discovery works the same as on Unix.
+// name also matches `.exe`, `.cmd` and `.bat` forms — compiled engines
+// (whisper-stream -> whisper-stream.exe) as well as the npm-style global
+// shims the agent CLI installs there (`claude` + `claude.cmd`, no `.exe` at
+// all). The extension forms are tried BEFORE the bare name: npm always drops
+// the bare file too (a node-shebang script, inert on native Windows), so
+// `is_file()` on the bare name alone would resolve to a file that exists but
+// cannot execute — found, but does not run.
 fn exe_candidates(dir: &Path, name: &str) -> Vec<PathBuf> {
-    let mut cands = vec![dir.join(name)];
+    let bare = dir.join(name);
     // cfg!() rather than #[cfg]: the body then compiles on every platform, so
-    // `cands` is always seen as mutated (an attribute would strip the only push
-    // off-Windows and trip clippy's unused_mut). The branch is folded away.
+    // `cands` is always seen as used (an attribute would strip it off-Windows
+    // and trip clippy's unused). The branch is folded away.
     if cfg!(windows) && Path::new(name).extension().is_none() {
-        cands.push(dir.join(format!("{name}.exe")));
+        let mut cands: Vec<PathBuf> = ["exe", "cmd", "bat"]
+            .iter()
+            .map(|ext| dir.join(format!("{name}.{ext}")))
+            .collect();
+        cands.push(bare);
+        return cands;
     }
-    cands
+    vec![bare]
 }
 
 // Resolve an engine binary: env override, then PATH + known locations,
