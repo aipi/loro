@@ -4295,9 +4295,23 @@ fn save_recording(data: Vec<u8>, filename: String) -> Result<String, String> {
     Ok(path.display().to_string())
 }
 
+// loro.sh is a POSIX script and diarization needs WhisperX (Python); Windows
+// has neither by default, and the only bash.exe a stock install has is WSL's,
+// which resolves paths against a different filesystem than the one the audio
+// was saved to. Refuse early with a dedicated message instead of letting the
+// spawn fail with a raw OS error the user cannot act on — same shape as
+// `system_capture_start`'s macOS guard.
+fn diarize_supported(is_windows: bool) -> Result<(), String> {
+    if is_windows {
+        return Err("err.diarize_windows_unsupported".into());
+    }
+    Ok(())
+}
+
 // runs the loro.sh diarize (WhisperX) handoff and returns the speaker Markdown
 #[tauri::command]
 async fn diarize(audio_path: String) -> Result<String, String> {
+    diarize_supported(cfg!(target_os = "windows"))?;
     tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
         let script = project_dir().join("loro.sh");
         let output = proc::command("bash")
@@ -7094,6 +7108,47 @@ mod tests {
             checked >= 2,
             "o varredor não achou nenhum leitor do cache ({checked}) — ele cegou, \
              e uma asserção que não pode reprovar é a doença que ela existe para pegar"
+        );
+    }
+
+    // Diarization runs loro.sh through `bash`, and depends on WhisperX (Python).
+    // Neither exists on a stock Windows box the way the code assumed: loro.sh is
+    // POSIX, and the only bash.exe a typical install has is WSL's, which resolves
+    // paths against a different filesystem than the one the audio was saved to.
+    // Refuse early with a dedicated message instead of letting the spawn fail with
+    // a raw OS error the user cannot act on (same shape as `system_capture_start`'s
+    // macOS guard).
+    #[test]
+    fn diarize_refuses_on_windows_with_a_dedicated_error() {
+        assert_eq!(
+            diarize_supported(true),
+            Err("err.diarize_windows_unsupported".into())
+        );
+        assert_eq!(diarize_supported(false), Ok(()));
+    }
+    // O teste acima prova a função pura, e nada provava que o COMANDO a chama.
+    // Medido nesta branch: apagando a única linha `diarize_supported(...)` de
+    // `diarize`, os 455 testes seguiam VERDES e o Windows voltava calado ao erro
+    // cru do spawn de `bash`. A ligação é a parte que quebra, então é ela que
+    // precisa de trava (CLAUDE.md §7.1: um teste que não podia ficar vermelho é
+    // uma afirmação, não uma garantia).
+    #[test]
+    fn the_diarize_command_asks_the_guard_before_spawning() {
+        let src = include_str!("lib.rs");
+        let start = src
+            .find("async fn diarize(audio_path: String)")
+            .expect("the diarize command must exist");
+        let body = &src[start..];
+        let guard = body
+            .find("diarize_supported(")
+            .expect("diarize must consult diarize_supported before spawning bash");
+        let spawn = body
+            .find("spawn_blocking")
+            .expect("diarize hands the work off with spawn_blocking");
+        assert!(
+            guard < spawn,
+            "diarize_supported has to be consulted BEFORE the bash spawn, or Windows \
+             still pays the raw OS error the guard exists to replace"
         );
     }
 }

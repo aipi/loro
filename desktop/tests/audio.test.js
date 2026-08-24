@@ -104,6 +104,17 @@ test("nenhum getUserMedia do app pede `{ audio: true }` cru", () => {
 // #53 — quem ouve por alto-falante precisa poder religar o cancelamento de eco:
 // sem ele o microfone escuta os outros de volta. É escolha, não padrão, porque
 // ligá-lo entrega o áudio da máquina ao processamento de voz do sistema.
+// Diarização (WhisperX) roda via loro.sh/bash, que o Windows não tem por
+// padrão — o único bash.exe de uma instalação comum é o do WSL, que enxerga
+// outro sistema de arquivos e não acha o áudio salvo.
+test("diarizeSupported: só recusa no Windows", () => {
+  const { diarizeSupported } = require("../src/audio.js");
+  assert.strictEqual(diarizeSupported("windows"), false);
+  assert.strictEqual(diarizeSupported("macos"), true);
+  assert.strictEqual(diarizeSupported("linux"), true);
+  assert.strictEqual(diarizeSupported(undefined), true);
+});
+
 test("micConstraints religa SÓ o cancelamento de eco quando pedido", () => {
   const { micConstraints } = require("../src/audio.js");
   const { audio } = micConstraints(null, true);
