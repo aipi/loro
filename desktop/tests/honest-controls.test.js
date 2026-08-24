@@ -13,8 +13,11 @@ const fs = require("fs");
 const path = require("path");
 
 const SRC = path.join(__dirname, "..", "src");
-const APP = fs.readFileSync(path.join(SRC, "app.js"), "utf8");
-const HTML = fs.readFileSync(path.join(SRC, "index.html"), "utf8");
+// A Windows checkout writes this file back with CRLF (core.autocrlf), and a
+// couple of assertions below match a literal "\n" against it — normalize
+// once here instead of at every call site.
+const APP = fs.readFileSync(path.join(SRC, "app.js"), "utf8").replace(/\r\n/g, "\n");
+const HTML = fs.readFileSync(path.join(SRC, "index.html"), "utf8").replace(/\r\n/g, "\n");
 const { EN } = require("../src/i18n.js");
 
 // body of a top-level `function name(...) { … }` / `async function name(...) { … }`

@@ -671,11 +671,21 @@ mod tests {
         let bin = tmp.join("bin");
         std::fs::create_dir_all(&bin).unwrap();
         let fake = bin.join("loro-fake-agent");
-        std::fs::write(&fake, "#!/bin/sh\nexit 0\n").unwrap();
         #[cfg(unix)]
         {
+            std::fs::write(&fake, "#!/bin/sh\nexit 0\n").unwrap();
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        #[cfg(windows)]
+        {
+            // npm's global installer drops exactly this pair for a CLI agent:
+            // a bare node-shebang shim (inert on native Windows — found, but
+            // does not run) sitting right next to the real `.cmd`. Writing
+            // only the bare file, as this test used to, could never have
+            // caught paths::exe_candidates picking the wrong one first.
+            std::fs::write(&fake, "#!/usr/bin/env node\nprocess.exit(0)\n").unwrap();
+            std::fs::write(bin.join("loro-fake-agent.cmd"), "@exit /b 0\r\n").unwrap();
         }
         let saved_home = std::env::var("LORO_HOME").ok();
         let saved_path = std::env::var("PATH").unwrap_or_default();

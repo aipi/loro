@@ -215,7 +215,10 @@ test("C10 — a habilidade de perguntar tem UM nome, não três", () => {
 const TAURI = path.join(__dirname, "..", "src-tauri");
 function seededContextDocs() {
   const docs = [];
-  const rs = fs.readFileSync(path.join(TAURI, "src", "templates.rs"), "utf8");
+  // A Windows checkout writes templates.rs back with CRLF (core.autocrlf),
+  // breaking the literal "\n" the regex below expects right after the
+  // closing quote — normalize before matching, not the checkout.
+  const rs = fs.readFileSync(path.join(TAURI, "src", "templates.rs"), "utf8").replace(/\r\n/g, "\n");
   for (const m of rs.matchAll(/pub const CONTEXT_TEMPLATE(?:_EN)?: &str = "([\s\S]*?)";\n/g)) {
     docs.push(["templates.rs:CONTEXT_TEMPLATE", m[1]]);
   }

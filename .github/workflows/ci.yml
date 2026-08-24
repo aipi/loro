@@ -4,6 +4,14 @@
 #   - Rust backend  (desktop/src-tauri, crate `desktop`)
 #   - Vanilla JS frontend tests (desktop/tests, run with the Node test runner)
 #
+# `test` covers all three desktop platforms Loro ships on. Windows was added
+# after four tests went red there unnoticed for a while (sha256_of/
+# verify_and_install using shasum/sha256sum, pty_opens_spawns_and_exits using
+# /bin/sh) — CI had no runner to catch it. Every step below either already
+# runs the same cargo/node commands on every OS, or is explicitly scoped with
+# `if: matrix.os == '…'` to the one platform it needs; there is no Makefile
+# recipe here to begin with (make requires a POSIX shell Windows does not have).
+#
 # The GUI bundle is NOT built here (that is a release concern). `build-check`
 # only compiles the backend to guarantee it still builds.
 name: CI
@@ -13,12 +21,12 @@ on:
   pull_request:
 
 jobs:
-  # Test + lint + format across Linux and macOS.
+  # Test + lint + format across Linux, macOS and Windows.
   test:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
@@ -60,8 +68,19 @@ jobs:
         working-directory: desktop/src-tauri
         run: cargo test
 
+      # A bare glob arg here relies on the SHELL to expand it. bash (Linux/macOS
+      # runners) does; pwsh (the default shell on windows-latest) does not, and
+      # passes the literal string through — MEASURED in CI: "Could not find
+      # 'D:\a\loro\loro\desktop\tests\*.test.js'", exit 1 for the wrong reason
+      # (the step never ran a single test). A directory as the CLI arg is not
+      # a fix either — MEASURED locally: `node --test desktop/tests` throws
+      # "Cannot find module …\desktop\tests" (this Node CLI resolves a bare
+      # positional path as a module to require, not a dir to scan). Dropping
+      # the argument and running from inside the dir lets Node's own default
+      # test-file discovery do the walk — no glob, no shell involved either way.
       - name: JS frontend tests
-        run: node --test desktop/tests/*.test.js
+        working-directory: desktop/tests
+        run: node --test
 
       - name: Clippy (deny warnings)
         run: cargo clippy --manifest-path desktop/src-tauri/Cargo.toml -- -D warnings

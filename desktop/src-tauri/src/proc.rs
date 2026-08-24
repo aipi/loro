@@ -263,15 +263,37 @@ mod tests {
 
     #[test]
     fn the_gui_path_is_told_apart_from_a_shell_path() {
-        let home = Path::new("/Users/x");
-        // the string measured on the installed Loro.app
-        assert!(path_lacks_user_dirs("/usr/bin:/bin:/usr/sbin:/sbin", home));
+        // split_paths/join_paths use the HOST separator (':' on macOS/Linux,
+        // ';' on Windows) — a literal written with ':' silently stops splitting
+        // at all on a Windows host, so every fixture here is assembled through
+        // join_paths instead of hardcoded as a macOS-shaped string.
+        let join = |dirs: &[PathBuf]| {
+            std::env::join_paths(dirs.iter().cloned())
+                .unwrap()
+                .to_string_lossy()
+                .into_owned()
+        };
+        let home = std::env::temp_dir().join("loro-test-home");
+        let sysbin1 = PathBuf::from("sysbin1");
+        let sysbin2 = PathBuf::from("sysbin2");
+        let brew = PathBuf::from("homebrew-bin");
+        let user_bin = home.join(".local").join("bin");
+
+        // the shape measured on the installed Loro.app: launchd's PATH, four
+        // system directories and nothing else (ADR-0030)
+        assert!(path_lacks_user_dirs(
+            &join(&[sysbin1.clone(), sysbin2]),
+            &home
+        ));
         // homebrew alone is still not a user profile talking
-        assert!(path_lacks_user_dirs("/opt/homebrew/bin:/usr/bin", home));
+        assert!(path_lacks_user_dirs(
+            &join(&[brew.clone(), sysbin1.clone()]),
+            &home
+        ));
         // a profile essentially always puts something under $HOME on it
         assert!(!path_lacks_user_dirs(
-            "/opt/homebrew/bin:/Users/x/.local/bin:/usr/bin",
-            home
+            &join(&[brew, user_bin, sysbin1]),
+            &home
         ));
     }
 
@@ -290,13 +312,21 @@ mod tests {
 
     #[test]
     fn merging_keeps_order_drops_repeats_and_appends_the_known_dirs_last() {
+        // Same host-separator hazard as `the_gui_path_is_told_apart_from_a_shell_path`:
+        // fixtures are assembled through join_paths, not hardcoded with ':'.
+        let join = |dirs: &[&str]| {
+            std::env::join_paths(dirs.iter().map(PathBuf::from))
+                .unwrap()
+                .to_string_lossy()
+                .into_owned()
+        };
         let merged = merge_path_dirs(
-            &["/opt/homebrew/bin:/usr/bin", "/usr/bin:/bin"],
-            &[PathBuf::from("/x/bin"), PathBuf::from("/usr/bin")],
+            &[&join(&["a", "b"]), &join(&["b", "c"])],
+            &[PathBuf::from("d"), PathBuf::from("b")],
         );
         // the shell's ordering first, nothing dropped, nothing duplicated, and
         // the known dir last — it may never shadow the user's own resolution
-        assert_eq!(merged, "/opt/homebrew/bin:/usr/bin:/bin:/x/bin");
+        assert_eq!(merged, join(&["a", "b", "c", "d"]));
     }
 
     #[test]

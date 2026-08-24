@@ -27,7 +27,9 @@ const fs = require("fs");
 const path = require("path");
 
 const SRC = path.join(__dirname, "..", "src");
-const APP = fs.readFileSync(path.join(SRC, "app.js"), "utf8");
+// A Windows checkout writes this file back with CRLF (core.autocrlf), and
+// N26 below matches a literal "\n" against it — normalize once here.
+const APP = fs.readFileSync(path.join(SRC, "app.js"), "utf8").replace(/\r\n/g, "\n");
 const HTML = fs.readFileSync(path.join(SRC, "index.html"), "utf8");
 const { EN, tErr, setLang } = require("../src/i18n.js");
 const LM = require("../src/meeting.js");
