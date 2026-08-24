@@ -7126,4 +7126,29 @@ mod tests {
         );
         assert_eq!(diarize_supported(false), Ok(()));
     }
+    // O teste acima prova a função pura, e nada provava que o COMANDO a chama.
+    // Medido nesta branch: apagando a única linha `diarize_supported(...)` de
+    // `diarize`, os 455 testes seguiam VERDES e o Windows voltava calado ao erro
+    // cru do spawn de `bash`. A ligação é a parte que quebra, então é ela que
+    // precisa de trava (CLAUDE.md §7.1: um teste que não podia ficar vermelho é
+    // uma afirmação, não uma garantia).
+    #[test]
+    fn the_diarize_command_asks_the_guard_before_spawning() {
+        let src = include_str!("lib.rs");
+        let start = src
+            .find("async fn diarize(audio_path: String)")
+            .expect("the diarize command must exist");
+        let body = &src[start..];
+        let guard = body
+            .find("diarize_supported(")
+            .expect("diarize must consult diarize_supported before spawning bash");
+        let spawn = body
+            .find("spawn_blocking")
+            .expect("diarize hands the work off with spawn_blocking");
+        assert!(
+            guard < spawn,
+            "diarize_supported has to be consulted BEFORE the bash spawn, or Windows \
+             still pays the raw OS error the guard exists to replace"
+        );
+    }
 }
