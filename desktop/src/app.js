@@ -2301,8 +2301,9 @@ function applySourceAvailability() {
   }
 }
 // Diarização depende de bash + WhisperX (Python), que o Windows não tem por
-// padrão (ADR pendente): a caixa sai da tela em vez de deixar marcar uma opção
-// que só descobre no fim da gravação que não funciona.
+// padrão: a caixa sai da tela em vez de deixar marcar uma opção que só
+// descobre no fim da gravação que não funciona. Mesma forma do
+// applySourceAvailability, e a recusa do backend fica em diarize_supported.
 function applyDiarizeAvailability() {
   if (!el.optDiar) return;
   const label = el.optDiar.closest(".opt");

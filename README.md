@@ -152,7 +152,7 @@ git clone https://github.com/aipi/loro.git && cd loro
 | **whisper-cpp** (`whisper-cli` + `whisper-stream`) | transcription engine (system dependency, never vendored) | `./loro.sh setup` (macOS: `brew install whisper-cpp`) · Windows: the in-app setup button builds it (ADR-0012) |
 | **ffmpeg** | audio conversion/mixing | `./loro.sh setup` (Windows: `winget install Gyan.FFmpeg`) |
 | **Node.js ≥ 18** + **Rust (rustup)** | desktop app (Tauri) | https://nodejs.org · https://rustup.rs |
-| **Python ≥ 3.12** | diarization (optional) | — |
+| **Python ≥ 3.12** | diarization (optional; macOS/Linux only — it runs `loro.sh` through `bash` and needs WhisperX, so the Windows build hides the option) | — |
 | **git** + **gh** | optional: knowledge versioning / remote collaboration | opt-in, validated by an in-app doctor |
 | **AI agent CLI** (`claude` by default) | optional: the agent loop and meeting AI skills | runs in the embedded terminal, user's own account; configurable per acervo (any CLI, including local models — ADR-0003) |
 
