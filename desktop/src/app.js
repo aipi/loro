@@ -892,7 +892,7 @@ async function startMeetingSession(presetTema) {
   // reunião" and the brainstorming sidebar row. The palette path ignores the
   // source selector by design, so hiding the option there is not enough. Fail
   // here, before asking which brainstorming to record into.
-  if (hostOs !== "macos") { toast(tErr("err.meeting_macos_only"), 6000); return; }
+  if (!LoroAudio.meetingSupported(hostOs)) { toast(tErr("err.meeting_unsupported_os"), 6000); return; }
   let temas = [];
   try { temas = (await invoke("brain_list_brainstorms")) || []; } catch (_) {}
   const choice = await pickMeeting(temas, presetTema);
@@ -2303,7 +2303,7 @@ function applySourceAvailability() {
   if (!el.source) return;
   const meeting = el.source.querySelector('option[value="meeting"]');
   if (!meeting) return;
-  const supported = hostOs === "macos";
+  const supported = LoroAudio.meetingSupported(hostOs);
   meeting.hidden = !supported;
   meeting.disabled = !supported;
   if (!supported && settings.source === "meeting") {

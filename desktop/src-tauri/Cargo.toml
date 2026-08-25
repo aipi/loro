@@ -28,6 +28,14 @@ portable-pty = "0.9.0"
 # decision drafted as 0013). Already
 # in the tree as a transitive Tauri dependency, so this adds no build cost.
 [target.'cfg(windows)'.dependencies]
+# Meeting mode on Windows captures the system audio through WASAPI loopback
+# (ADR-0033). The full `windows` crate is already in the tree via Tauri, so the
+# COM interfaces cost feature flags and no new download.
+windows = { version = "0.61", features = [
+  "Win32_Media_Audio",
+  "Win32_System_Com",
+  "Win32_System_Com_StructuredStorage",
+] }
 windows-sys = { version = "0.60", features = [
   "Win32_Foundation",
   "Win32_System_Diagnostics_ToolHelp",

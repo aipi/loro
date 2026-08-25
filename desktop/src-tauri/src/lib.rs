@@ -23,6 +23,13 @@ use paths::*;
 // Windows — see proc.rs
 mod config;
 mod proc;
+// Meeting mode’s system-audio track (ADR-0033): macOS spawns the Swift/
+// ScreenCaptureKit sidecar, Windows captures WASAPI loopback in-process.
+// Windows-only modules, so off Windows they do not exist and cannot go dead.
+#[cfg(windows)]
+mod syscap_win;
+#[cfg(windows)]
+mod wav;
 use config::*;
 mod templates;
 use templates::*;
@@ -63,6 +70,9 @@ pub(crate) struct AppState {
     child: Mutex<Option<Child>>,
     // system-audio capturer (ScreenCaptureKit sidecar) for meeting mode, ADR-0005
     syscap: Mutex<Option<Child>>,
+    // the Windows counterpart is a thread, not a process (ADR-0033)
+    #[cfg(windows)]
+    syscap_win: Mutex<Option<syscap_win::Capture>>,
     tray: Mutex<Option<tauri::tray::TrayIcon>>,
     tray_menu: Mutex<Option<TrayMenuItems>>,
     recording: AtomicBool,
@@ -1051,15 +1061,62 @@ pub(crate) fn syscap_anchor_forget(path: &Path) {
     }
 }
 
+// The in-process capture path (ADR-0033). `Some` means this platform captures
+// system audio itself and the sidecar is not involved; `None` means fall through
+// to the sidecar. A bool would not carry the started path back.
+#[cfg(windows)]
+fn syscap_start_inprocess(state: &AppState) -> Option<Result<String, String>> {
+    Some(syscap_start_wasapi(state))
+}
+
+#[cfg(not(windows))]
+fn syscap_start_inprocess(_state: &AppState) -> Option<Result<String, String>> {
+    None
+}
+
+// WASAPI loopback capture of the default output device. Same output contract as
+// the macOS sidecar: a WAV in recordings_dir whose path the frontend hands to
+// transcribe_meeting, plus an ADR-0025 anchor in the shared map so meeting.rs
+// aligns the two tracks without knowing which platform produced them.
+#[cfg(windows)]
+fn syscap_start_wasapi(state: &AppState) -> Result<String, String> {
+    if let Some(previous) = state.syscap_win.lock().unwrap().take() {
+        previous.stop();
+    }
+    let dir = recordings_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let out = dir.join(format!("loro-sys-{}.wav", epoch_millis()));
+    let (capture, anchor_rx) = syscap_win::start(&out)?;
+    // The WASAPI path knows t=0 the moment the stream starts, so the anchor is
+    // in the map before this returns. The sidecar has to poll up to 1.2s for it
+    // (ADR-0025), and every millisecond of that was skew between the tracks.
+    if let Ok(epoch) = anchor_rx.recv_timeout(std::time::Duration::from_millis(500)) {
+        syscap_anchors().lock().unwrap().insert(out.clone(), epoch);
+    } else {
+        warn!("wasapi capture reported no anchor; meeting tracks fall back to estimation");
+    }
+    info!(out = %out.display(), "system audio capture started");
+    *state.syscap_win.lock().unwrap() = Some(capture);
+    Ok(out.to_string_lossy().into_owned())
+}
+
 // Core of the sidecar start, callable from meeting.rs (ADR-0010) as a plain
 // pub(crate) fn — the #[tauri::command] wrapper cannot be reused directly.
 pub(crate) fn system_capture_start(app: &AppHandle, state: &AppState) -> Result<String, String> {
-    // The sidecar is Swift + ScreenCaptureKit, so meeting mode exists on macOS
-    // only. Say that instead of letting the spawn fail and surfacing an internal
-    // binary name ("loro-syscap (program not found)"), which tells the user
-    // nothing about what to do next.
+    // Windows captures in-process (ADR-0033). Returning through a shim instead
+    // of a #[cfg] block around the sidecar body below keeps that body compiled
+    // on every platform — cfg-ing it out would turn resolve_syscap and
+    // parse_anchor_line into dead code on Windows, and this repo builds with
+    // -D warnings in CI.
+    if let Some(started) = syscap_start_inprocess(state) {
+        return started;
+    }
+    // The sidecar is Swift + ScreenCaptureKit, so the sidecar path is macOS
+    // only. Say which systems do work instead of letting the spawn fail and
+    // surfacing an internal binary name ("loro-syscap (program not found)"),
+    // which tells the user nothing about what to do next.
     if !cfg!(target_os = "macos") {
-        return Err("err.meeting_macos_only".into());
+        return Err("err.meeting_unsupported_os".into());
     }
     {
         let mut guard = state.syscap.lock().unwrap();
@@ -1162,6 +1219,10 @@ fn stop_system_capture(state: State<AppState>) -> Result<(), String> {
 
 // Core of the sidecar stop, callable from meeting.rs (ADR-0010).
 pub(crate) fn system_capture_stop(state: &AppState) {
+    #[cfg(windows)]
+    if let Some(capture) = state.syscap_win.lock().unwrap().take() {
+        capture.stop(); // blocks until the WAV header is patched
+    }
     if let Some(mut child) = state.syscap.lock().unwrap().take() {
         drop(child.stdin.take());
         let _ = child.wait();

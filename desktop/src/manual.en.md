@@ -185,9 +185,13 @@ palette: `Cmd/Ctrl+K` → "Loro tour".
 - Every palette command (`Cmd/Ctrl+K`) has a `Cmd/Ctrl+Alt+<key>`
   shortcut, shown next to the command in the palette itself.
 - **Sources** (Settings → Transcription → *source*): **microphone**, **system
-  audio** (requires BlackHole — the app guides the install) or **my voice +
-  system audio** (the meeting: both tracks together; transcription happens at
-  the end, with better fidelity).
+  audio** (requires BlackHole on macOS, Stereo Mix or VB-Cable on Windows — the
+  app guides the install) or **my voice + system audio** (the meeting: both
+  tracks together; transcription happens at the end, with better fidelity).
+  The meeting works on **macOS and Windows** and needs no driver at all: it taps
+  the system audio directly. macOS asks for a Screen Recording permission the
+  first time; Windows asks for nothing, but records what leaves the **default**
+  audio device, so keep the call playing there. On Linux the option is hidden.
 - Audio is **transient**: used to transcribe, then discarded. The privacy
   indicator in the bar shows the state ("not recording" / "records audio").
 
