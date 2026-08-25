@@ -132,9 +132,19 @@ The unsigned `.dmg` is also attached to each
 
 ### Windows (10/11, x64)
 
-There is no prebuilt installer yet — you build from source once (about four
-commands), and the app itself installs the transcription engine from a banner
-on first run. Follow the **[Windows install guide](docs/install-windows.md)**.
+Download the installer from the
+**[latest release](https://github.com/aipi/loro/releases/latest)** — `.msi`, or
+`-setup.exe` if you prefer the NSIS installer (same app) — and run it. Then the
+app itself builds the transcription engine from a banner on first run, and you
+pick a model in **Settings (⚙) → model**. The
+**[Windows install guide](docs/install-windows.md)** walks through both steps.
+
+> **SmartScreen:** the app is not code-signed (there is no certificate), so on
+> the first run Windows says *"Windows protected your PC"* — **More info → Run
+> anyway**.
+
+Building from source is still supported (and is the path for working on the
+code); the guide above keeps those commands.
 
 ### From source (macOS/Linux)
 

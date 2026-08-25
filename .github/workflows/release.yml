@@ -1,17 +1,21 @@
 # Loro — Release
 #
-# Two ways in, one builder (ADR-0015):
+# Two ways in, two builders (ADR-0015):
 #   1. Merge a `release/*` PR into main — the release PR only bumps the version
 #      (open it with `make release VERSION=x.y.z`). Merging it ships automatically.
 #   2. Push a tag `v*` on main — the manual escape hatch.
-# Either way this job builds the macOS .dmg and publishes a GitHub Release; the
-# tag is `v<version>` and is created by `gh release create` when it doesn't exist.
+# Either way `release` (macOS) builds the .dmg and publishes the GitHub Release;
+# the tag is `v<version>` and is created by `gh release create`. Then
+# `release-windows` builds the .msi + NSIS setup and UPLOADS them to that same
+# Release. Only one job ever creates it — see the comment on `release-windows`.
 #
-# The bundle is NOT signed with an Apple Developer ID (owner decision,
-# 2026-07-28). On macOS 15+ Gatekeeper blocks unsigned quarantined apps
-# outright — misreporting them as "damaged" — and right-click → Open no
-# longer bypasses it; the only reliable path is removing the quarantine
-# attribute. The release notes carry that instruction.
+# The bundle is signed on NEITHER platform (owner decision, 2026-07-28: no
+# Apple Developer ID, no Windows code-signing certificate). On macOS 15+
+# Gatekeeper blocks unsigned quarantined apps outright — misreporting them as
+# "damaged" — and right-click → Open no longer bypasses it; the only reliable
+# path is removing the quarantine attribute. On Windows SmartScreen shows
+# "Windows protected your PC" on the installer's first run. The release notes
+# carry both instructions.
 #
 # Gates (loro-release-checklist §1): tests, clippy and fmt must pass, and on the
 # tag path the tag must match tauri.conf.json — no drift between git and app.
@@ -37,6 +41,10 @@ jobs:
       (github.event.pull_request.merged == true &&
        startsWith(github.event.pull_request.head.ref, 'release/'))
     runs-on: macos-latest
+    # The tag is resolved ONCE, here, and handed to the Windows job — see the
+    # comment on `release-windows`.
+    outputs:
+      tag: ${{ steps.ver.outputs.tag }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -106,7 +114,7 @@ jobs:
             --target "${{ github.event.pull_request.merge_commit_sha || github.sha }}" \
             --title "Loro ${{ steps.ver.outputs.tag }}" \
             --generate-notes \
-            --notes "**Instalação recomendada (macOS, Apple Silicon):** \`brew tap aipi/loro && brew install --cask loro\` — instala o app + o motor (whisper-cpp, ffmpeg). Os modelos de transcrição são baixados sob demanda no primeiro uso (Configurações → modelo), verificados por SHA-256. **Alternativa manual:** baixe o \`.dmg\` e arraste o Loro para Aplicativos; o app não é assinado com Developer ID, então no macOS 15+ pode ser preciso liberar com \`xattr -d com.apple.quarantine /Applications/Loro.app\`."
+            --notes "**Instalação recomendada (macOS, Apple Silicon):** \`brew tap aipi/loro && brew install --cask loro\` — instala o app + o motor (whisper-cpp, ffmpeg). Os modelos de transcrição são baixados sob demanda no primeiro uso (Configurações → modelo), verificados por SHA-256. **Alternativa manual:** baixe o \`.dmg\` e arraste o Loro para Aplicativos; o app não é assinado com Developer ID, então no macOS 15+ pode ser preciso liberar com \`xattr -d com.apple.quarantine /Applications/Loro.app\`. **Windows 10/11 (x64):** baixe o \`.msi\` (ou o \`-setup.exe\`, o mesmo app com instalador NSIS) e execute — não é preciso mais compilar nada. O app também não é assinado no Windows (não há certificado), então o SmartScreen mostra *«O Windows protegeu seu PC»* na primeira execução: **Mais informações → Executar assim mesmo**. Depois de instalar, o motor de transcrição é compilado pelo próprio app pelo botão do banner de dependências, e o modelo é baixado em Configurações → modelo. Os arquivos de Windows são anexados alguns minutos depois do \`.dmg\`, quando o build de Windows termina."
 
       # Opção A (ADR-0006): after the release exists, render the cask from the
       # in-repo template (single source of truth) and push it to the tap repo so
@@ -138,3 +146,58 @@ jobs:
           git add Casks/loro.rb
           git commit -m "loro ${VERSION}"
           git push
+
+  # The Windows installers ride the SAME Release as the .dmg, so exactly one job
+  # may create it: `release` does, and this one only uploads. `needs` is what
+  # makes that an order instead of a race — two jobs calling
+  # `gh release create v0.13.1` in parallel means the loser fails on a tag that
+  # already exists. `needs` also skips this job whenever `release` is skipped, so
+  # the `if:` guard up there governs both paths.
+  #
+  # The tag comes from that job's output rather than being resolved again: the
+  # version gate reads tauri.conf.json with `python3` (absent on
+  # windows-latest), and a version read twice is a version that can disagree
+  # with itself. For the same reason no macOS step is repeated here —
+  # `make syscap` compiles Swift and the cask bump shells out to `shasum`.
+  #
+  # No signing: there is no Windows certificate, so SmartScreen warns on the
+  # first run (same posture ADR-0006 records for macOS without a Developer ID).
+  # The release notes say so instead of letting the user find out.
+  release-windows:
+    needs: release
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install frontend dependencies
+        working-directory: desktop
+        run: npm ci
+
+      # `bundle.targets` is "all" = every target valid for the HOST, so the same
+      # command that yields app+dmg on macOS yields msi+nsis here. The quality
+      # gates already ran in `release`; this job only packages.
+      - name: Build app bundle (.msi + NSIS setup)
+        working-directory: desktop
+        run: npm run tauri build
+
+      # `--clobber` so a rerun of a failed upload replaces the asset instead of
+      # failing on a name that is already attached.
+      - name: Upload Windows installers to the Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $msi = (Get-ChildItem desktop/src-tauri/target/release/bundle/msi/*.msi).FullName
+          $exe = (Get-ChildItem desktop/src-tauri/target/release/bundle/nsis/*-setup.exe).FullName
+          gh release upload "${{ needs.release.outputs.tag }}" $msi $exe --clobber
