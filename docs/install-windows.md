@@ -1,8 +1,22 @@
 # Installing Loro on Windows (10/11, x64)
 
-There is no prebuilt installer yet, so on Windows you build Loro from source
-once. Everything runs in **PowerShell** — `loro.sh` and the `Makefile` need a
-POSIX shell and are not the Windows path.
+Every `v*` release ships Windows installers, so the normal path is a download —
+no toolchain, no C++ to compile. Everything below runs in **PowerShell**;
+`loro.sh` and the `Makefile` need a POSIX shell and are not the Windows path.
+
+## Install from the release (recommended)
+
+1. Open the [latest release](https://github.com/aipi/loro/releases/latest) and
+   download `Loro_<version>_x64_en-US.msi` (or `Loro_<version>_x64-setup.exe`,
+   the NSIS installer — same app, either is fine).
+2. Run it. SmartScreen says *"Windows protected your PC"* because the app is not
+   code-signed — **More info → Run anyway**. See the notes at the bottom.
+3. Launch **Loro** from the Start menu, then jump to
+   [§4 install the transcription engine](#4-install-the-transcription-engine)
+   and [§5 download a model](#5-download-a-model) — the app needs both once.
+
+The rest of this page is the **build from source** path: use it to work on the
+code, or when you'd rather compile than download a binary.
 
 ## 1. Install the toolchain
 
