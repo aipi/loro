@@ -24,10 +24,16 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const { execFileSync } = require("child_process");
-// `file://` + caminho cru só é URL válida quando o caminho começa com "/". No
-// Windows vira "file://C:\Users\…", que o Chrome não resolve (barra invertida e
-// uma barra a menos), e o app carregava sem app.js — o driver então parava sem
-// resultado e lia-se como defeito do app. pathToFileURL faz os dois lados.
+// pathToFileURL é a API correta para virar caminho em URL: ela cuida da letra de
+// unidade, das barras invertidas, dos espaços e do unicode. `file://` + caminho
+// cru só é URL bem formada quando o caminho começa com "/", e no Windows sai
+// "file://C:\Users\…", que é malformado.
+//
+// Medido em 2026-08-21 nesta máquina: com a forma crua o smoke AINDA passa, o
+// Chrome/Edge daqui tolera. Ou seja, isto não conserta uma falha observada, é
+// robustez — não conte com essa tolerância em outro navegador ou num caminho com
+// espaço ou acento. Quem realmente destravava o smoke no Windows é a lista de
+// CHROMES abaixo.
 const { pathToFileURL } = require("url");
 
 const REAL_SRC = path.join(__dirname, "..", "desktop", "src");
