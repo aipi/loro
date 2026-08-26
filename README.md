@@ -140,6 +140,12 @@ app itself builds the transcription engine from a banner on first run, and you
 pick a model in **Settings (⚙) → model**. The
 **[Windows install guide](docs/install-windows.md)** walks through both steps.
 
+> **Not there yet?** The Windows installers are built by the release pipeline
+> that landed *after* **v0.14.1**, so that release and every earlier one carry
+> the macOS `.dmg` only. Until the next `v*` is cut, Windows is a build from
+> source: the guide linked above has those commands, and the app compiles the
+> transcription engine itself afterwards either way.
+
 > **SmartScreen:** the app is not code-signed (there is no certificate), so on
 > the first run Windows says *"Windows protected your PC"* — **More info → Run
 > anyway**.

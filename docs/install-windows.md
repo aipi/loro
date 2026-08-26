@@ -1,10 +1,12 @@
 # Installing Loro on Windows (10/11, x64)
 
-Every `v*` release ships Windows installers, so the normal path is a download —
-no toolchain, no C++ to compile. Everything below runs in **PowerShell**;
-`loro.sh` and the `Makefile` need a POSIX shell and are not the Windows path.
+From the first `v*` cut after 2026-08-24, every release ships Windows
+installers, so the normal path is a download — no toolchain, no C++ to compile.
+**v0.14.1 and earlier carry the macOS `.dmg` only**: on those, use the build
+from source path below. Everything here runs in **PowerShell**; `loro.sh` and
+the `Makefile` need a POSIX shell and are not the Windows path.
 
-## Install from the release (recommended)
+## Install from the release (recommended, once one exists)
 
 1. Open the [latest release](https://github.com/aipi/loro/releases/latest) and
    download `Loro_<version>_x64_en-US.msi` (or `Loro_<version>_x64-setup.exe`,
