@@ -155,7 +155,11 @@ const ANSWERS = {
   brain_knowledge_graph: { nodes: [], edges: [], broken: [], orphans: [] },
   brain_index_terms: [],
   brain_pii_scan: [],
-  list_models: [],
+  list_models: [
+    { id: "large-v3-turbo", label: "Large v3 Turbo", sizeBytes: 1624555275, installed: true, default: true },
+    { id: "small", label: "Small", sizeBytes: 487601967, installed: false, default: false },
+    { id: "silero-v5.1.2", label: "Detector de fala (VAD)", sizeBytes: 885098, installed: false, default: false },
+  ],
   list_capture_devices: [],
   default_save_dir: "/tmp/acervo/inbox",
   term_status: { open: false, agentRunning: false, justLaunched: false },
@@ -837,6 +841,33 @@ const DRIVER = `
     if (!list.includes("juridico-br")) throw new Error("a lista não tem o plugin");
     if (!list.includes("1 loop(s)")) throw new Error("não diz o que trouxe: " + list);
     if (!q("#pluginList [data-pluginmenu]")) throw new Error("sem o ⋯ da linha");
+  });
+  // ADR-0034 — o detector de fala tem de estar OFERECIDO na MESMA lista dos
+  // outros modelos. Ele já esteve numa linha separada logo abaixo, e o dono do
+  // repo, com o app aberto e a instrução na mão, não o baixou (2026-08-26): uma
+  // linha à parte é uma linha que ninguém acha. E ao mesmo tempo ele NÃO pode
+  // virar opção de transcrição — escolhê-lo para transcrever não quer dizer nada.
+  await step("cfg-vad", async () => {
+    window.showCfgSection("mod");
+    await new Promise((r) => setTimeout(r, 250));
+    const mm = q("#modelManager");
+    if (!mm) throw new Error("Configurações → modelo não tem a lista de modelos");
+    const row = mm.querySelector('[data-model="silero-v5.1.2"]');
+    if (!row) throw new Error("o detector de fala não está na lista: " + mm.textContent.trim());
+    if (!/Detector de fala/.test(row.textContent))
+      throw new Error("a linha não se nomeia: " + row.textContent.trim());
+    const dl = row.querySelector("[data-dl]");
+    if (!dl) throw new Error("sem o botão de baixar — a pessoa não tem como obtê-lo");
+    if (!/864 KB/.test(dl.textContent))
+      throw new Error("o botão não declara o tamanho certo: " + dl.textContent);
+    // e NÃO pode virar opção de transcrever
+    const sel = q("#model");
+    if (sel && /silero|VAD/i.test(sel.textContent))
+      throw new Error("o modelo VAD vazou para o seletor de transcrição");
+    // o modelo instalado continua se declarando instalado (a lista não regrediu)
+    const turbo = mm.querySelector('[data-model="large-v3-turbo"]');
+    if (!turbo || !/instalado/i.test(turbo.textContent))
+      throw new Error("a lista de modelos regrediu: " + mm.textContent.trim());
   });
   // ADR-0022 §24b — o interruptor do microfone nas reuniões existe, nasce LIGADO e o
   // empurrão do eco escreve nele. O que resolve o eco é uma escolha da pessoa, e ela tem

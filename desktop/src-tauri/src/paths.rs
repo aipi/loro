@@ -148,8 +148,9 @@ pub fn whisper_bin() -> PathBuf {
     resolve_engine("WHISPER_STREAM_BIN", "whisper-stream")
 }
 
-// file/offline transcription uses whisper-cli (no VAD/streaming), see
-// ADR-0003 "two transcription modes".
+// file/offline transcription uses whisper-cli (no streaming), see ADR-0003
+// "two transcription modes". It DOES use VAD since ADR-0034 — whisper-cli grew
+// its own, and silence without it makes the model invent captions.
 pub fn whisper_cli_bin() -> PathBuf {
     resolve_engine("WHISPER_CLI_BIN", "whisper-cli")
 }

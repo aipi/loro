@@ -171,6 +171,15 @@ quando quiser pela paleta: `Cmd/Ctrl+K` → "apresentação do Loro".
    Um download interrompido não vira modelo: o arquivo só entra em uso inteiro e
    verificado. Se um modelo antigo tiver ficado pela metade, ele volta a aparecer
    como *não instalado* — basta baixar de novo.
+
+   Na mesma lista aparece o **Detector de fala (VAD)** (864 KB) — **baixe junto**.
+   Sem ele, um trecho em que ninguém fala faz o whisper *inventar* legendas —
+   coisas como "Legenda por…", "E aí" ou o endereço de um site que não existe,
+   que então entram na transcrição da reunião como se alguém tivesse dito. O
+   detector corta o silêncio antes de transcrever, e nada é inventado. Ele não
+   come palavras: fala baixa continua sendo transcrita igual. Ele não é um modelo
+   de transcrição — por isso não aparece no seletor *modelo* acima, só na lista
+   de download. Sem ele o Loro funciona, mas com as legendas inventadas de volta.
 5. **Idioma** — na engrenagem (⚙), "idioma da interface" alterna pt-BR/inglês.
    Tudo que o app **gera** (análises, documentos de reunião, conhecimento)
    nasce no idioma ativo da interface.
