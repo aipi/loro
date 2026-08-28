@@ -552,7 +552,7 @@ dependencies = [
 
 [[package]]
 name = "desktop"
-version = "0.14.1"
+version = "0.15.0"
 dependencies = [
  "portable-pty",
  "serde",
