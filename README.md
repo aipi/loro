@@ -25,7 +25,9 @@ people and AI agents can use as context.
 
 - **100% local transcription** — speech is transcribed on your machine with
   whisper.cpp. Raw audio never leaves the device; meeting audio is deleted as
-  soon as it is transcribed.
+  soon as it is transcribed. Silence stays silent: an optional 864 KB speech
+  detector (VAD) keeps whisper from inventing caption text over a quiet stretch,
+  measured to cost no words — not even quiet ones (ADR-0034).
 - **Zero credentials** — Loro never asks for, stores, or logs a credential.
   Optional integrations (`git`, `gh`, your AI agent CLI) use your own ambient
   accounts.

@@ -2131,6 +2131,9 @@ const modelDownloading = new Set();
 const MODEL_NOTES = {
   "large-v3-turbo": "mais preciso — melhor com sotaques e ruído (download maior)",
   "small": "mais rápido e leve — bom para notas rápidas do dia a dia",
+  // ADR-0034 — não é um modelo de transcrição: não está no seletor acima, só
+  // aqui, porque é aqui que se baixa um modelo.
+  "silero-v5.1.2": "evita que trechos mudos virem legendas inventadas — baixe junto",
 };
 async function refreshModelManager() {
   if (!el.modelManager) return;
@@ -2149,7 +2152,7 @@ async function refreshModelManager() {
       action = `<button class="abtn modeldl" data-dl="${esc(m.id)}">+ ${t("baixar")} · ${size}</button>`;
     }
     return `<div class="modelrow" data-model="${esc(m.id)}">
-      <div class="modelinfo"><span class="modelhead"><span class="mono modelname">${esc(m.label)}</span>${rec}</span>
+      <div class="modelinfo"><span class="modelhead"><span class="mono modelname">${esc(t(m.label))}</span>${rec}</span>
       <span class="modelnote">${esc(note)}</span></div>
       <div class="modelaction">${action}</div></div>`;
   }).join("");

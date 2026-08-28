@@ -170,6 +170,16 @@ palette: `Cmd/Ctrl+K` → "Loro tour".
    An interrupted download never becomes a model: a file is only used once it is
    whole and verified. If an older model was left half-downloaded, it shows as
    *not installed* again — just download it once more.
+
+   The same list also offers the **Speech detector (VAD)** (864 KB) — **download
+   it too**. Without it, a stretch where nobody speaks makes whisper *invent*
+   captions — things like "Legenda por…", "E aí", or the address of a website
+   that does not exist, which then land in the meeting transcript as if someone
+   had said them. The detector cuts the silence before transcribing, so there is
+   nothing to invent. It does not eat words: quiet speech is still transcribed
+   the same. It is not a transcription model — that is why it is absent from the
+   *model* selector above and present only in the download list. Without it Loro
+   still works, but the invented captions come back.
 5. **Language** — in the gear (⚙), "interface language" switches pt-BR/English.
    Everything the app **generates** (analyses, meeting documents, knowledge) is
    born in the active interface language.

@@ -1312,6 +1312,8 @@
     "baixar": "download",
     "modelo baixado": "model downloaded",
     "mais preciso — melhor com sotaques e ruído (download maior)": "more accurate — better with accents and noise (larger download)",
+    "Detector de fala (VAD)": "Speech detector (VAD)",
+    "evita que trechos mudos virem legendas inventadas — baixe junto": "keeps silent stretches from turning into invented captions — download it too",
     "mais rápido e leve — bom para notas rápidas do dia a dia": "faster and lighter — good for quick day-to-day notes",
     "a transcrição roda 100% no seu computador — os modelos ficam em ~/.loro/models e são baixados sob demanda, verificados por SHA-256": "transcription runs 100% on your computer — models live in ~/.loro/models and are downloaded on demand, verified by SHA-256",
     // ADR-0016: tooltips da barra de formatação markdown
