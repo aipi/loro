@@ -218,7 +218,7 @@ fn doctor() -> Doctor {
             rd.flatten()
                 .filter_map(|e| {
                     let n = e.file_name().to_string_lossy().to_string();
-                    n.starts_with("ggml-").then_some(n)
+                    models::is_transcription_model_file(&n).then_some(n)
                 })
                 .collect()
         })
@@ -247,7 +247,7 @@ fn doctor() -> Doctor {
 // the first-run model manager (ADR-0006). Pure catalog + filesystem check.
 #[tauri::command]
 fn list_models() -> Vec<models::ModelInfo> {
-    models::catalog_status()
+    models::download_list()
 }
 
 // Download a catalog model into ~/.loro/models with a verified, atomic install
@@ -379,13 +379,34 @@ fn stream_args(
     a
 }
 
-// builds the whisper-cli arguments (file transcription, no streaming/VAD)
+// builds the whisper-cli arguments (file transcription).
+//
+// `vad_model`: Some(path) turns on Silero VAD, None keeps the pre-VAD behaviour
+// (ADR-0034 — the feature degrades, it never blocks a transcription).
+//
+// WHY VAD (measured 2026-08-26, large-v3-turbo, pt, 18s windows — the meeting
+// window size): on a window with no speech whisper INVENTS caption-style text.
+// Digital silence produced "Legenda por Sônia Ruberti"; room noise at -50 dBFS
+// produced "E aí". Both landed in a real meeting transcript.
+//
+// What does NOT fix it, all measured on the same two files with byte-identical
+// output to the baseline: `-nf` (the text comes out on the first pass at
+// temperature 0, so there is no fallback to suppress), `-et 2.4` (already the
+// default), `-sns`, `-nth 0.4`. `--suppress-blank` does not exist in whisper-cli
+// 1.9.1. Only VAD works, because it drops the silence BEFORE the decoder — with
+// it both files transcribe to nothing.
+//
+// It does not cost speech: the control files (a spoken sentence at -3.9 dB and
+// the same at -27.9 dB, each padded with 6s of silence) transcribe identically
+// with and without VAD. And a silent window gets ~2x faster (1.18s -> 0.56s),
+// which is the same 18s tick ADR-0022 §28 froze on.
 fn cli_args(
     model_path: &str,
     lang: &str,
     translate: bool,
     threads: &str,
     wav_path: &str,
+    vad_model: Option<&str>,
 ) -> Vec<String> {
     let mut a = vec![
         "-m".into(),
@@ -397,10 +418,27 @@ fn cli_args(
         "-f".into(),
         wav_path.into(),
     ];
+    if let Some(vad) = vad_model {
+        a.push("--vad".into());
+        a.push("-vm".into());
+        a.push(vad.into());
+        // Speech padding 200ms, not the 30ms default. Measured 2026-08-26 on a
+        // sentence attenuated to -48.9 dBFS (a meeting echo bleeding into the
+        // mic): at 30ms the first word was eaten — "Bom dia pessoal" came back
+        // as "Dia pessoal". 200ms restores it, and silence stays silent (the
+        // silence and low-noise files still transcribe to nothing at 400ms).
+        a.push("-vp".into());
+        a.push("200".into());
+    }
     if translate {
         a.push("-tr".into());
     }
     a
+}
+
+// The VAD model path to hand cli_args, as an owned String the caller can borrow.
+fn vad_model_arg() -> Option<String> {
+    models::vad_model_path().map(|p| p.to_string_lossy().into_owned())
 }
 
 // name of the converted 16kHz WAV: same directory as the source file, suffix
@@ -763,12 +801,14 @@ fn transcribe_wav(
     threads: &str,
     app: &AppHandle,
 ) -> Result<(), String> {
+    let vad = vad_model_arg();
     let args = cli_args(
         &model.to_string_lossy(),
         lang,
         translate,
         threads,
         &wav.to_string_lossy(),
+        vad.as_deref(),
     );
     let mut child = proc::command(cli)
         .args(&args)
@@ -936,12 +976,14 @@ pub(crate) fn transcribe_wav_window(
         let _ = std::fs::remove_file(&dst);
         return Err(String::from_utf8_lossy(&carve.stderr).to_string());
     }
+    let vad = vad_model_arg();
     let args = cli_args(
         &model.to_string_lossy(),
         lang,
         translate,
         threads,
         &dst.to_string_lossy(),
+        vad.as_deref(),
     );
     let out = proc::command(cli)
         .args(&args)
@@ -6711,7 +6753,7 @@ mod tests {
 
     #[test]
     fn cli_args_includes_translation_when_enabled() {
-        let a = cli_args("/m.bin", "pt", true, "8", "/tmp/x.16k.wav");
+        let a = cli_args("/m.bin", "pt", true, "8", "/tmp/x.16k.wav", None);
         assert!(a.contains(&"-tr".to_string()));
         assert!(a.windows(2).any(|w| w[0] == "-l" && w[1] == "pt"));
         assert!(a.windows(2).any(|w| w[0] == "-m" && w[1] == "/m.bin"));
@@ -6722,7 +6764,7 @@ mod tests {
 
     #[test]
     fn cli_args_has_no_translation_by_default() {
-        let a = cli_args("/m.bin", "pt", false, "4", "/tmp/x.16k.wav");
+        let a = cli_args("/m.bin", "pt", false, "4", "/tmp/x.16k.wav", None);
         assert!(!a.contains(&"-tr".to_string()));
         assert!(a.windows(2).any(|w| w[0] == "-t" && w[1] == "4"));
     }
@@ -6730,11 +6772,71 @@ mod tests {
     #[test]
     fn cli_args_uses_no_streaming_flags() {
         // whisper-cli is not whisper-stream: no --step/--length/-vth/-c
-        let a = cli_args("/m.bin", "pt", false, "8", "/tmp/x.16k.wav");
+        let a = cli_args("/m.bin", "pt", false, "8", "/tmp/x.16k.wav", None);
         assert!(!a.contains(&"--step".to_string()));
         assert!(!a.contains(&"--length".to_string()));
         assert!(!a.contains(&"-vth".to_string()));
         assert!(!a.contains(&"-c".to_string()));
+    }
+
+    // ---- silence hallucination: VAD (ADR-0034) ---------------------------
+    //
+    // Regression for a defect that reached a real transcript: on a window with
+    // no speech, whisper-cli emitted "Legenda por Sônia Ruberti" (digital
+    // silence) and "E aí" (room noise at -50 dBFS). Only `--vad` suppressed
+    // both; `-nf`, `-et`, `-sns` and `-nth` all left the output byte-identical
+    // (measured 2026-08-26, large-v3-turbo, pt, 18s windows).
+
+    #[test]
+    fn cli_args_enables_vad_when_the_model_is_installed() {
+        let a = cli_args(
+            "/m.bin",
+            "pt",
+            false,
+            "8",
+            "/tmp/x.16k.wav",
+            Some("/models/ggml-silero-v5.1.2.bin"),
+        );
+        assert!(a.contains(&"--vad".to_string()), "missing --vad: {a:?}");
+        assert!(
+            a.windows(2)
+                .any(|w| w[0] == "-vm" && w[1] == "/models/ggml-silero-v5.1.2.bin"),
+            "VAD model path not passed: {a:?}"
+        );
+        // the 30ms default ate the first word of quiet speech (see cli_args)
+        assert!(
+            a.windows(2).any(|w| w[0] == "-vp" && w[1] == "200"),
+            "speech padding not raised off the default: {a:?}"
+        );
+    }
+
+    // Degrade, never block: without the model whisper must run exactly as it did
+    // before VAD existed — an un-downloaded 864 KB file cannot break transcription.
+    #[test]
+    fn cli_args_omits_vad_when_the_model_is_absent() {
+        let a = cli_args("/m.bin", "pt", false, "8", "/tmp/x.16k.wav", None);
+        assert!(!a.contains(&"--vad".to_string()));
+        assert!(!a.contains(&"-vm".to_string()));
+    }
+
+    // VAD is additive: it must not disturb the args the engine already depends
+    // on, and -tr must survive alongside it.
+    #[test]
+    fn vad_does_not_displace_the_existing_args() {
+        let a = cli_args("/m.bin", "pt", true, "8", "/tmp/x.16k.wav", Some("/v.bin"));
+        for (k, v) in [
+            ("-m", "/m.bin"),
+            ("-l", "pt"),
+            ("-t", "8"),
+            ("-f", "/tmp/x.16k.wav"),
+        ] {
+            assert!(
+                a.windows(2).any(|w| w[0] == k && w[1] == v),
+                "{k} {v} lost: {a:?}"
+            );
+        }
+        assert!(a.contains(&"-tr".to_string()));
+        assert!(a.contains(&"--vad".to_string()), "VAD dropped: {a:?}");
     }
 
     #[test]

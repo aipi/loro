@@ -42,6 +42,22 @@ pub const CATALOG: &[ModelSpec] = &[
     },
 ];
 
+// The Silero VAD model (ADR-0034). Not a transcription model, so it is NOT in
+// CATALOG — it never becomes something to transcribe *with*. It IS offered for
+// download next to the models (`download_list`), because a separate row is a row
+// nobody finds. It is a ModelSpec so the whole verified-download path (pinned
+// SHA-256, atomic install, completeness check) is reused verbatim rather than
+// re-implemented for one extra file.
+pub const VAD_MODEL_ID: &str = "silero-v5.1.2";
+
+pub const VAD_SPEC: ModelSpec = ModelSpec {
+    id: VAD_MODEL_ID,
+    sha256: "29940d98d42b91fbd05ce489f3ecf7c72f0a42f027e4875919a28fb4c04ea2cf",
+    size: 885_098,
+    label: "Detector de fala (VAD)",
+    default: false,
+};
+
 // Info sent to the UI (camelCase for JS): what to show and whether it is ready.
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -53,8 +69,15 @@ pub struct ModelInfo {
     pub default: bool,
 }
 
+// Catalog lookup, plus the out-of-catalog VAD model: every consumer of a spec
+// (download, completeness, install destination) must treat it exactly like a
+// catalog entry — a truncated VAD model makes whisper abort the same way a
+// truncated transcription model does.
 pub fn spec(id: &str) -> Option<&'static ModelSpec> {
-    CATALOG.iter().find(|m| m.id == id)
+    CATALOG
+        .iter()
+        .chain(std::iter::once(&VAD_SPEC))
+        .find(|m| m.id == id)
 }
 
 // A model counts as installed only when the whole file is there. Mere existence
@@ -84,10 +107,24 @@ pub fn is_installed(id: &str) -> bool {
     is_installed_in(&models_dir(), id)
 }
 
-// The catalog with per-model installed state, for the model manager UI.
-pub fn catalog_status() -> Vec<ModelInfo> {
+// Is this file in models_dir a TRANSCRIPTION model? `doctor` answers "does the
+// user have a model at all" by listing `ggml-*`, and since ADR-0034 that
+// directory also holds the VAD model — which cannot transcribe anything. Without
+// this filter a user whose only file is the 864 KB VAD reads as "model present",
+// the setup banner stops naming the missing voice model, and "Instalar agora"
+// skips fetching it.
+pub fn is_transcription_model_file(name: &str) -> bool {
+    name.starts_with("ggml-") && name != model_file_name(VAD_MODEL_ID)
+}
+
+// Everything the model manager offers for download: the transcription catalog
+// plus the VAD model. It belongs in the SAME list — a user who has to discover a
+// separate row does not discover it (measured the hard way on 2026-08-26) — but
+// deliberately NOT in `CATALOG`, so it never becomes a transcription choice.
+pub fn download_list() -> Vec<ModelInfo> {
     CATALOG
         .iter()
+        .chain(std::iter::once(&VAD_SPEC))
         .map(|m| ModelInfo {
             id: m.id.into(),
             label: m.label.into(),
@@ -105,8 +142,28 @@ fn hf_base() -> String {
         .unwrap_or_else(|_| "https://huggingface.co/ggerganov/whisper.cpp/resolve/main".into())
 }
 
+// The VAD model is NOT in ggerganov/whisper.cpp (measured 2026-08-26: that path
+// 404s); ggml-org/whisper-vad is where whisper.cpp publishes it. Hence a second
+// base, overridable like the first for mirrors and air-gapped installs.
+fn hf_vad_base() -> String {
+    std::env::var("LORO_HF_VAD_BASE")
+        .unwrap_or_else(|_| "https://huggingface.co/ggml-org/whisper-vad/resolve/main".into())
+}
+
 pub fn model_url(id: &str) -> String {
-    format!("{}/ggml-{}.bin", hf_base(), id)
+    let base = if id == VAD_MODEL_ID {
+        hf_vad_base()
+    } else {
+        hf_base()
+    };
+    format!("{base}/ggml-{id}.bin")
+}
+
+// The VAD model's path when it is fully installed, else None. `None` is not an
+// error: whisper then runs exactly as it did before VAD existed (ADR-0034
+// "degrade, never block").
+pub fn vad_model_path() -> Option<std::path::PathBuf> {
+    is_installed(VAD_MODEL_ID).then(|| model_path(VAD_MODEL_ID))
 }
 
 // The temp file a download streams into, next to the final path so the rename
@@ -308,6 +365,92 @@ mod tests {
             "https://mirror.example/x/ggml-small.bin"
         );
         std::env::remove_var("LORO_HF_BASE");
+    }
+
+    // ---- the VAD model (ADR-0034) ----------------------------------------
+
+    #[test]
+    fn vad_spec_is_pinned_like_any_other_model() {
+        assert_eq!(VAD_SPEC.sha256.len(), 64);
+        assert!(VAD_SPEC.sha256.chars().all(|c| c.is_ascii_hexdigit()));
+        assert!(VAD_SPEC.size > 0);
+        assert!(!VAD_SPEC.default, "the VAD model is never a default model");
+    }
+
+    // It must NOT reach the model picker: it is not something to transcribe with.
+    #[test]
+    fn vad_model_is_not_in_the_transcription_catalog() {
+        assert!(
+            !CATALOG.iter().any(|m| m.id == VAD_MODEL_ID),
+            "the VAD model must stay out of CATALOG"
+        );
+    }
+
+    // ...but every spec consumer (download, completeness, install dest) must
+    // still resolve it, so the verified-download path is reused verbatim.
+    #[test]
+    fn vad_model_resolves_through_spec() {
+        let s = spec(VAD_MODEL_ID).expect("VAD spec must resolve");
+        assert_eq!(s.sha256, VAD_SPEC.sha256);
+        assert_eq!(s.size, VAD_SPEC.size);
+    }
+
+    // Measured 2026-08-26: ggerganov/whisper.cpp does NOT host the VAD model
+    // (404). It must be fetched from the whisper-vad repo instead.
+    // The defect this guards: `doctor` answers "does the user have a model?" by
+    // listing ggml-* in models_dir, and the VAD model lives there too. Counting
+    // it would make a machine with ONLY the 864 KB VAD read as ready to
+    // transcribe — the setup banner would stop naming the missing voice model.
+    #[test]
+    fn the_vad_file_does_not_count_as_a_transcription_model() {
+        assert!(is_transcription_model_file("ggml-large-v3-turbo.bin"));
+        assert!(is_transcription_model_file("ggml-small.bin"));
+        assert!(!is_transcription_model_file("ggml-silero-v5.1.2.bin"));
+        assert!(!is_transcription_model_file("notes.txt"));
+    }
+
+    // "Download it along with the others" — it must be in the SAME list the model
+    // manager paints, because a separate row is a row nobody finds.
+    #[test]
+    fn the_download_list_offers_the_vad_next_to_the_models() {
+        let l = download_list();
+        assert!(
+            l.iter().any(|m| m.id == VAD_MODEL_ID),
+            "the VAD is missing from the download list"
+        );
+        for m in CATALOG {
+            assert!(l.iter().any(|x| x.id == m.id), "{} dropped", m.id);
+        }
+        assert_eq!(l.len(), CATALOG.len() + 1);
+        // ...and it is never the recommended one
+        assert!(!l.iter().any(|m| m.id == VAD_MODEL_ID && m.default));
+    }
+
+    #[test]
+    fn vad_url_points_at_the_vad_repo_not_the_model_repo() {
+        std::env::remove_var("LORO_HF_VAD_BASE");
+        std::env::remove_var("LORO_HF_BASE");
+        let u = model_url(VAD_MODEL_ID);
+        assert!(u.starts_with("https://"), "must be https: {u}");
+        assert!(u.contains("whisper-vad"), "wrong host repo: {u}");
+        assert!(u.ends_with("/ggml-silero-v5.1.2.bin"), "wrong file: {u}");
+    }
+
+    #[test]
+    fn vad_url_is_overridable_for_mirrors() {
+        std::env::set_var("LORO_HF_VAD_BASE", "https://mirror.example/vad");
+        assert_eq!(
+            model_url(VAD_MODEL_ID),
+            "https://mirror.example/vad/ggml-silero-v5.1.2.bin"
+        );
+        std::env::remove_var("LORO_HF_VAD_BASE");
+    }
+
+    // A transcription model must never be routed to the VAD repo.
+    #[test]
+    fn a_transcription_model_still_uses_the_model_repo() {
+        std::env::remove_var("LORO_HF_BASE");
+        assert!(!model_url("small").contains("whisper-vad"));
     }
 
     #[test]

@@ -14,6 +14,11 @@
     const GiB = 1024 * 1024 * 1024;
     const MiB = 1024 * 1024;
     if (n >= GiB) return (n / GiB).toFixed(1) + " GB";
+    // Sub-megabyte assets exist since ADR-0034 (the 885.098-byte VAD model).
+    // Without
+    // this branch the button offered "1 MB" for 864 KB — the button is the
+    // price tag, so it rounds to a unit that can carry the number.
+    if (n < MiB) return Math.round(n / 1024) + " KB";
     return Math.round(n / MiB) + " MB";
   }
 

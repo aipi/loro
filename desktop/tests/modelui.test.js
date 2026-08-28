@@ -3,10 +3,14 @@ const test = require("node:test");
 const assert = require("node:assert");
 const { formatSize, progressPercent, sortModels } = require("../src/modelui.js");
 
-test("formatSize shows MB under a gigabyte and GB above", () => {
+test("formatSize scales KB / MB / GB", () => {
   assert.strictEqual(formatSize(487601967), "465 MB"); // small
   assert.strictEqual(formatSize(1624555275), "1.5 GB"); // large-v3-turbo
-  assert.strictEqual(formatSize(0), "0 MB");
+  // ADR-0034 — the VAD model is the first sub-megabyte asset. Rounding it to
+  // "1 MB" overstated 885 KB by ~15%, and the download button IS the price tag
+  // (DESIGN.md §1: the state does not lie).
+  assert.strictEqual(formatSize(885098), "864 KB");
+  assert.strictEqual(formatSize(0), "0 KB");
 });
 
 test("progressPercent clamps and guards a zero total", () => {

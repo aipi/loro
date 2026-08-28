@@ -82,8 +82,11 @@ The transcription engine is **not vendored** (ADR-0001 §1). Loro resolves the
 system binaries `whisper-cli` and `whisper-stream` from `PATH` or from
 `WHISPER_STREAM_BIN` / `WHISPER_CLI_BIN`. On macOS these come from
 `brew install whisper-cpp` (1.9.1 ships both, incl. the SDL2 live streamer).
-Models are ggml files under `~/.loro/models` (configurable). If the engine is
-missing the app fails with an explicit, actionable message.
+Models are ggml files under `~/.loro/models` (configurable). The Silero VAD
+model lives there too (ADR-0034) but is not a transcription model: it is out of
+`CATALOG`, never appears in the model picker, and comes from a second mirror
+(`LORO_HF_VAD_BASE`) because `ggerganov/whisper.cpp` does not host it. If the
+engine is missing the app fails with an explicit, actionable message.
 
 **Which PATH does "from PATH" mean?** An app opened from the Dock/Finder inherits
 launchd's PATH (`/usr/bin:/bin:/usr/sbin:/sbin` — measured), so nothing a user
@@ -96,12 +99,14 @@ PATH, so a probe and its own spawn can no longer disagree (ADR-0030). Windows is
 excluded: a GUI process there inherits the machine+user PATH from the registry.
 
 Live transcription uses `whisper-stream` in VAD mode; file/diarization flows use
-`whisper-cli`.
+`whisper-cli`, which since ADR-0034 also runs Silero VAD whenever its model is
+installed — without it, a silent window makes whisper invent caption text
+("Legenda por…", "E aí") that lands in the transcript as if it had been said.
 
 The app exposes **two transcription modes** (ADR-0001 §2): **live** (`start`/`stop`,
 `whisper-stream`, VAD, streamed lines) and **file** (`transcribe_file`,
-`whisper-cli`, no VAD — the whole recording is transcribed at once, which tends
-to be more faithful than streaming with VAD). Both land in the same
+`whisper-cli`, the whole recording transcribed at once, which tends to be more
+faithful than streaming). Both land in the same
 `transcript-line` stream and the same save/auto-save destination, so the rest of
 the UI (buffer, savebar, acervo inbox) does not need to know which mode produced
 the text.
@@ -141,7 +146,7 @@ that is already under review updates it (see `brain_propose_change`).
 |---|---|---|---|
 | `start` | `cfg {model, lang, translate, threads, capture?}` | `()` / err | spawn the streaming engine (live mode) |
 | `stop` | — | `()` | terminate the engine process (live mode) |
-| `transcribe_file` | `path, cfg {model, lang, translate, threads}` | `()` / err | file mode: converts `path` to 16kHz mono WAV (ffmpeg) and transcribes it whole with `whisper-cli` (no VAD); runs off the main thread, streams results via `transcript-line`/`transcribe-state`/`transcribe-error` |
+| `transcribe_file` | `path, cfg {model, lang, translate, threads}` | `()` / err | file mode: converts `path` to 16kHz mono WAV (ffmpeg) and transcribes it whole with `whisper-cli` (with VAD when its model is installed, ADR-0034); runs off the main thread, streams results via `transcript-line`/`transcribe-state`/`transcribe-error` |
 | `start_system_capture` | — | wavPath / err | meeting mode (ADR-0001 §2): start recording system audio to a WAV and return its path. macOS spawns the ScreenCaptureKit sidecar and errors fast on a denied Screen Recording permission; the sidecar reports the epoch of its first written sample on **stdout** (`first-sample-epoch-ms <n>`). Windows starts an in-process WASAPI loopback thread and knows that epoch at `Start()`, so it is recorded before the call returns (ADR-0033). Either way it is the WAV's own t=0, kept per segment and handed to the frontend by the tail (ADR-0025) |
 | `stop_system_capture` | — | `()` | stop the sidecar cleanly (close its stdin → it finalizes the WAV) |
 | `transcribe_meeting` | `micPath?, sysPath?, cfg` | `()` / err | mix the mic and system-audio tracks (ffmpeg `amix`) into one 16kHz mono WAV and transcribe whole with `whisper-cli`; same events as `transcribe_file` |
@@ -149,7 +154,7 @@ that is already under review updates it (see `brain_propose_change`).
 | `save_transcript` | `content` | path or `null` | native save dialog + write |
 | `auto_save` | `content, dir, filename` | path | silent save to the configured folder |
 | `list_capture_devices` | — | `[{index,name}]` | enumerate capture devices (for `-c`) |
-| `list_models` | — | `[{id,label,sizeBytes,installed,default}]` | the transcription models Loro uses, each flagged installed or missing, for the first-run model manager (ADR-0006). `installed` means the file is *whole* — its size matches the pinned `spec.size`, so a truncated download reads as missing |
+| `list_models` | — | `[{id,label,sizeBytes,installed,default}]` | everything the model manager offers for download — the transcription catalog **plus the Silero VAD model** (ADR-0034), each flagged installed or missing. What you can transcribe *with* is a different list: the `<select id="model">`, which the VAD never enters. `installed` means the file is *whole* — its size matches the pinned `spec.size`, so a truncated download reads as missing |
 | `download_model` | `model` | `()` / err | download a catalog model into `~/.loro/models` over HTTPS (system `curl`), verify its pinned SHA-256, install atomically; emits `model-download-progress` (ADR-0006). Idempotent |
 | `update_check` | `force: bool` | `UpdateStatus` / err | ADR-0032: is a newer release published? Compares the compiled version with GitHub's latest published release over HTTPS (system `curl`, anonymous GET, fixed User-Agent), at most once a day unless `force`. Runs off the main thread (`spawn_blocking`); a check the user did not ask for never surfaces an error. `UpdateStatus = {current, latest, available, checked, enabled, lastCheck, route, command, url}`, `route = "brew" \| "download"` — the update instruction matches the install this user actually has |
 | `update_set_enabled` | `enabled: bool` | `UpdateStatus` / err | turn the automatic check on/off; persisted in `~/.loro/update.json` (ADR-0032) |
