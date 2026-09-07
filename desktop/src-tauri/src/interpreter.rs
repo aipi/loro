@@ -17,6 +17,20 @@
 // se a voz saísse pela caixa numa reunião, ela voltaria pelo microfone e
 // entraria na própria transcrição.
 
+// FORA DO macOS o caminho de FALA deste módulo não tem implementação: `say` e
+// `audiotoolbox` são do macOS, e o ffmpeg não tem saída WASAPI (ADR-0036 §6.5).
+// As metades PURAS — os parsers, a montagem de argumentos, a resolução de
+// dispositivo por nome — continuam compiladas em toda plataforma, porque são
+// elas que a implementação de Windows/Linux vai reusar e porque os testes as
+// exercitam em todo alvo. Sem chamador, o clippy as vê como mortas: 17 erros nos
+// CIs de ubuntu e windows (medido 2026-09-07), invisíveis num `make lint` que só
+// checa o host — foi assim que a PR #99 quebrou.
+//
+// O allow é ESCOPADO a não-macOS de propósito: no macOS, código morto continua
+// sendo erro. Ele desaparece quando o caminho de fala existir nas outras
+// plataformas, que é o momento em que essas funções ganham chamador.
+#![cfg_attr(not(target_os = "macos"), allow(dead_code))]
+
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
