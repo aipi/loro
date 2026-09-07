@@ -51,6 +51,16 @@ const el = {
   autosave: $("autosave"), pickDir: $("pickDir"), source: $("source"), mode: $("mode"),
   liveCollapse: $("liveCollapse"), uiLang: $("uiLang"),
   modelManager: $("modelManager"),
+  interpBtn: $("interpBtn"), interpLabel: $("interpLabel"), interpDevice: $("interpDevice"),
+  interpSetup: $("interpSetup"), interpSetupMsg: $("interpSetupMsg"),
+  interpSetupCmd: $("interpSetupCmd"), interpSetupCopy: $("interpSetupCopy"),
+  interpSetupRecheck: $("interpSetupRecheck"),
+  voiceSampleList: $("voiceSampleList"), voiceSampleProgress: $("voiceSampleProgress"),
+  voiceSampleClear: $("voiceSampleClear"),
+  interpEngine: $("interpEngine"), interpVoiceField: $("interpVoiceField"),
+  interpEngineNote: $("interpEngineNote"), interpEngineLicense: $("interpEngineLicense"),
+  interpVoice: $("interpVoice"), interpPreview: $("interpPreview"),
+  interpStatus: $("interpStatus"),
 };
 
 // ---- i18n da interface (pt/en) ----
@@ -212,6 +222,12 @@ const meeting = {
 const SETTINGS_KEY = "loro-settings";
 const DEFAULTS = {
   model: "large-v3-turbo", lang: "pt", translate: false,
+  // ADR-0035 — modo intérprete. Desligado por decisão do dono: uma voz
+  // traduzida numa reunião real não pode ser descoberta por acidente.
+  // O dispositivo e a voz são guardados por NOME, nunca pelo id do `say`:
+  // medido em 2026-09-06, um `killall coreaudiod` moveu "Alto-falantes"
+  // de 71 para 74, e um id guardado faria o app falar no aparelho errado.
+  interpEnabled: false, interpDevice: "", interpVoice: "", interpEngine: "system",
   autoscroll: true, autosave: false, saveDir: "", source: "mic", mode: "live", uiLang: "pt", termSide: true,
   sideW: 0, // sidebar width in px; 0 = the default CSS clamp (ADR-0002 §6)
   welcomeSeen: false, // first-launch feature tour (reopen via palette)
@@ -256,6 +272,10 @@ function applySettings() {
   el.model.value = settings.model;
   el.lang.value = settings.lang;
   el.translate.checked = settings.translate;
+  // ADR-0035 §5.1 — o modo é POR SESSÃO: nunca volta ligado sozinho no boot.
+  settings.interpEnabled = false;
+  paintInterpControl();
+  if (el.interpEngine) el.interpEngine.value = settings.interpEngine;
   el.optScroll.checked = settings.autoscroll;
   paintCaptureSettings();   // eco + microfone nas reuniões, de um lugar só
   el.autosave.checked = settings.autosave;
@@ -1981,6 +2001,13 @@ function markCfgNav(sec) {
   if (sec === "loops" && !cfgLoopsSeen) { cfgLoopsSeen = true; loadLoopPolicy(); }
 }
 function showCfgSection(sec) {
+  // Relê dispositivos e vozes ao abrir: o BlackHole pode ter sido instalado (ou
+  // o coreaudiod reiniciado) DEPOIS do boot, e uma lista carregada uma única vez
+  // no boot deixaria o seletor mentindo até o app reiniciar.
+  interpLoadChoices();
+  interpRefreshSetup();
+  vsRefresh();
+  interpPaintEngine();
   document.querySelectorAll(".cfgsec").forEach((s) => (s.hidden = false));
   markCfgNav(sec);
   const target = document.querySelector(`.cfgsec[data-sec="${sec}"]`);
@@ -2134,11 +2161,22 @@ const MODEL_NOTES = {
   // ADR-0034 — não é um modelo de transcrição: não está no seletor acima, só
   // aqui, porque é aqui que se baixa um modelo.
   "silero-v5.1.2": "evita que trechos mudos virem legendas inventadas — baixe junto",
+  // ADR-0036 — as peças da voz clonada. Ficam AQUI, junto dos modelos, porque é
+  // aqui que se baixa algo grande; as três faltam separadamente e cada uma tem
+  // a sua linha.
+  "voice:engine": "motor da voz clonada — precisa das três peças para falar",
+  "voice:model": "a voz que imita a sua · treinado num conjunto de gravações de uso NÃO comercial",
+  "voice:vocoder": "converte o resultado em som — download separado do modelo",
 };
 async function refreshModelManager() {
   if (!el.modelManager) return;
   let list = [];
   try { list = (await invoke("list_models")) || []; } catch (_) { return; }
+  // As peças da voz clonada entram como linhas do mesmo gerenciador: mesma
+  // natureza, mesma superfície. Se a plataforma não as suporta, voiceRows
+  // devolve vazio e nada é oferecido.
+  try { list = list.concat(MU.voiceRows(await invoke("voice_install_status"))); }
+  catch (_) { /* sem voz clonada nesta plataforma: só os modelos */ }
   el.modelManager.innerHTML = MU.sortModels(list).map((m) => {
     const note = t(MODEL_NOTES[m.id] || "");
     const size = MU.formatSize(m.sizeBytes);
@@ -2165,7 +2203,14 @@ async function downloadModel(id) {
   modelDownloading.add(id);
   refreshModelManager();
   try {
-    await invoke("download_model", { model: id });
+    // Duas origens, um botão: o catálogo do whisper e o instalador do motor de
+    // voz. Quem atende sai do prefixo do id, não de um segundo botão na tela.
+    if (MU.isVoicePart(id)) {
+      await invoke("voice_install_part", { input: { part: MU.voicePartOf(id) } });
+      interpPaintEngine();   // o aviso do motor volta a dizer o que falta
+    } else {
+      await invoke("download_model", { model: id });
+    }
     toast(t("modelo baixado"));
   } catch (e) {
     toast(tErr(String(e)));
@@ -2177,6 +2222,14 @@ async function downloadModel(id) {
 listen("model-download-progress", (e) => {
   const p = e.payload || {};
   const bar = el.modelManager && el.modelManager.querySelector(`[data-bar="${p.model}"]`);
+  if (bar) bar.style.width = MU.progressPercent(p.downloaded, p.total) + "%";
+});
+// A mesma barra, para a outra origem: o instalador emite por PEÇA, e a linha
+// dela no gerenciador é a peça prefixada.
+listen("voice-install-progress", (e) => {
+  const p = e.payload || {};
+  const id = MU.voiceRowId(p.part);
+  const bar = el.modelManager && el.modelManager.querySelector(`[data-bar="${id}"]`);
   if (bar) bar.style.width = MU.progressPercent(p.downloaded, p.total) + "%";
 });
 // C29 · a dica embaixo do interruptor explicava o comportamento DESLIGADO
@@ -2337,6 +2390,446 @@ el.mode.addEventListener("change", () => { settings.mode = el.mode.value; persis
 el.model.addEventListener("change", () => { settings.model = el.model.value; persistSettings(); updateCfgLabel(); });
 el.lang.addEventListener("change", () => { settings.lang = el.lang.value; persistSettings(); updateCfgLabel(); });
 el.translate.addEventListener("change", () => { settings.translate = el.translate.checked; persistSettings(); });
+
+// ---- modo intérprete (ADR-0035) --------------------------------------------
+// A sua fala sai como voz em inglês pelo dispositivo escolhido. NÃO é
+// simultâneo: é consecutivo. O ciclo é falar -> pausa -> tradução -> voz, e a
+// voz dura ~87% do tempo da fala original (medido 2026-09-06 na máquina do
+// dono: 8s de pt-BR traduzidos em 439ms). Por isso a fila NUNCA corta uma
+// frase no meio — a seguinte espera a anterior terminar de falar.
+//
+// O recorte é por SILÊNCIO (LoroInterpreter.feed), não por relógio: entregar
+// meia frase ao whisper é o que produz tradução ruim, não a latência.
+const interp = {
+  on: false, stream: null, ctx: null, analyser: null, buf: null,
+  rec: null, chunks: [], chunker: null, queue: null, meter: null, devices: [], lastFrame: 0,
+};
+
+// R4 (mesma razão do controle de gravar): um rótulo fixo nomearia duas ações
+// opostas. O botão diz o que ELE faz agora, e o nome acessível vem daqui também.
+function paintInterpControl() {
+  if (!el.interpBtn) return;
+  const on = !!interp.on;
+  el.interpBtn.setAttribute("aria-pressed", on ? "true" : "false");
+  el.interpBtn.classList.toggle("on", on);
+  el.interpLabel.textContent = t(on ? "Parar intérprete" : "Intérprete");
+  el.interpBtn.title = t(on
+    ? "parar de enviar sua voz traduzida"
+    : "enviar sua voz em inglês pelo dispositivo escolhido");
+}
+
+function interpSay(msg) {
+  if (el.interpStatus) el.interpStatus.textContent = msg || "";
+}
+
+// Preenche os dois seletores. Guarda por NOME (ADR-0035): o id do `say` muda
+// quando o coreaudiod reinicia.
+// DEFEITO CORRIGIDO (2026-09-06): a guarda era `TAURI.invoke`, e o app expõe
+// `TAURI.core.invoke` (app.js:6) — a condição era SEMPRE verdadeira, a função
+// saía na primeira linha e os dois seletores nasciam vazios, sem como ligar o
+// modo. A guarda certa é a mesma que o resto do arquivo usa.
+async function interpLoadChoices() {
+  if (!TAURI.core) return;
+  try {
+    const devs = (await invoke("interpreter_devices")) || [];
+    interp.devices = devs;
+    const names = devs.map((d) => d.name);
+    el.interpDevice.innerHTML = "";
+    for (const n of names) {
+      const o = document.createElement("option");
+      o.value = n; o.textContent = n;
+      el.interpDevice.appendChild(o);
+    }
+    // Escolhe sozinho: o driver virtual é o ponto do modo, então ele é o padrão
+    // quando está instalado. Um seletor vazio não é uma pergunta, é um bloqueio.
+    const dev = LoroInterpreter.pickPreferred(names, settings.interpDevice, LoroInterpreter.PREFER_DEVICE);
+    if (dev) {
+      el.interpDevice.value = dev;
+      if (settings.interpDevice !== dev) { settings.interpDevice = dev; persistSettings(); }
+    }
+  } catch (e) { clog("interpreter_devices unavailable"); }
+  try {
+    const voices = (await invoke("interpreter_voices")) || [];
+    const names = voices.map((v) => v.name);
+    el.interpVoice.innerHTML = "";
+    for (const v of voices) {
+      const o = document.createElement("option");
+      o.value = v.name; o.textContent = v.name + " · " + v.locale;
+      el.interpVoice.appendChild(o);
+    }
+    const voice = LoroInterpreter.pickPreferred(names, settings.interpVoice, LoroInterpreter.PREFER_VOICE);
+    if (voice) {
+      el.interpVoice.value = voice;
+      if (settings.interpVoice !== voice) { settings.interpVoice = voice; persistSettings(); }
+    }
+  } catch (e) { clog("interpreter_voices unavailable"); }
+}
+
+// O preparo do driver virtual, em três estados (interpreter.rs::audio_setup_from).
+// NÃO executa nada: instalar o driver e reiniciar o coreaudiod pedem senha de
+// administrador, e um app que roda sudo escondido é o que ninguém deve
+// construir. Mostra o passo do estado ATUAL e entrega o comando; quem roda é a
+// pessoa, à vista.
+const INTERP_SETUP_MSG = {
+  missing: "o driver de áudio virtual não está instalado — sem ele a outra pessoa não te ouve",
+  installed_not_loaded: "o driver está instalado mas o macOS ainda não o carregou — reinicie o serviço de áudio",
+  unsupported: "o preparo automático existe só no macOS por enquanto",
+};
+
+// O custo de cada motor, MEDIDO (2026-09-07, a mesma frase): a voz do sistema
+// sai em 0,6s; a voz clonada em 1,4s. A escolha é do usuário, e o preço tem de
+// estar na tela — não é atualização silenciosa (ADR-0036 §4).
+async function interpPaintEngine() {
+  if (!el.interpEngine) return;
+  const neural = el.interpEngine.value === "neural";
+  // A licença aparece SÓ na voz clonada, e sempre que ela está escolhida — não
+  // só na hora do download. Quem liga isso numa reunião precisa saber sob que
+  // termos, e um aviso que aparece uma vez é um aviso que ninguém leu.
+  if (el.interpEngineLicense) el.interpEngineLicense.hidden = !neural;
+  // O botão de teste tem de dizer O QUE vai testar: ao lado de um seletor de
+  // voz escondido, "ouvir esta voz" não informa qual voz sai.
+  if (el.interpPreview) {
+    el.interpPreview.textContent = t(neural ? "ouvir a minha voz" : "ouvir esta voz");
+  }
+  // A voz do `say` só existe no motor do sistema: no clonado a voz é a SUA, e
+  // um seletor de voz ali seria um controle que não controla nada.
+  if (el.interpVoiceField) el.interpVoiceField.hidden = neural;
+  if (!neural) { el.interpEngineNote.textContent = t("~0,6s por frase"); return; }
+  let st;
+  try { st = await invoke("interpreter_neural_status"); }
+  catch (e) { el.interpEngineNote.textContent = t("a voz clonada não está disponível nesta plataforma"); return; }
+  // Binário, modelo e amostra faltam SEPARADAMENTE — dizer qual falta é a
+  // diferença entre uma instrução e um "indisponível" mudo.
+  const falta = [];
+  if (!st.binary) falta.push(t("o motor sherpa-onnx"));
+  if (!st.model) falta.push(t("o modelo de voz"));
+  if (!st.sample) falta.push(t("a gravação da sua voz"));
+  // Aponta ONDE resolver: as peças se baixam em Modelos, junto dos modelos de
+  // transcrição, porque é a mesma natureza de coisa.
+  el.interpEngineNote.textContent = falta.length
+    ? t("falta") + ": " + falta.join(", ") + " — " + t("baixe em Modelos, abaixo")
+    : t("~1,4s por frase · usa a sua voz gravada");
+  refreshModelManager();
+}
+
+async function interpRefreshSetup() {
+  if (!TAURI.core || !el.interpSetup) return;
+  let out;
+  try { out = await invoke("interpreter_audio_setup"); }
+  catch (e) { clog("interpreter_audio_setup unavailable"); return; }
+  const msg = INTERP_SETUP_MSG[out.state];
+  // "ready" não tem cartão: um aviso que aparece quando está tudo bem é ruído, e
+  // ruído é o que faz ninguém ler o aviso que importa.
+  el.interpSetup.hidden = !msg;
+  if (!msg) return;
+  el.interpSetupMsg.textContent = t(msg);
+  el.interpSetupCmd.textContent = out.command || "";
+  el.interpSetupCmd.hidden = !out.command;
+  el.interpSetupCopy.hidden = !out.command;
+}
+
+// ---- a amostra da voz (ADR-0036 §3) ---------------------------------------
+// FRASES FIXAS, não gravação livre: a clonagem precisa do áudio COM o seu
+// texto, e num áudio livre o texto seria palpite (ou exigiria transcrever, o que
+// põe erro de reconhecimento no dado que ancora a voz). As frases vêm do backend
+// porque elas SÃO o `reference_text` — se a tela mostrar uma e o modelo receber
+// outra, a voz sai errada e ninguém descobre por quê.
+const vsample = { rec: null, chunks: [], index: -1, stream: null };
+
+function vsRow(p) {
+  const row = document.createElement("div");
+  row.className = "opt";
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "btn";
+  b.dataset.vs = String(p.index);
+  b.textContent = t(p.recorded ? "regravar" : "gravar");
+  const txt = document.createElement("span");
+  txt.textContent = p.text;
+  const dur = document.createElement("span");
+  dur.className = "mono";
+  // Segundos com uma casa: a regra de mínimo é em milissegundos, e arredondar
+  // para inteiro faria "1s" parecer aceito quando o piso é 1,2s.
+  dur.textContent = p.recorded ? " " + (p.durationMs / 1000).toFixed(1) + "s" : "";
+  row.append(b, txt, dur);
+  return row;
+}
+
+function vsPaint(st) {
+  if (!el.voiceSampleList) return;
+  el.voiceSampleList.innerHTML = "";
+  for (const p of st.phrases) el.voiceSampleList.appendChild(vsRow(p));
+  const read = st.phrases.filter((p) => p.recorded).length;
+  const secs = (st.total_ms !== undefined ? st.total_ms : st.totalMs) / 1000;
+  const min = (st.min_total_ms !== undefined ? st.min_total_ms : st.minTotalMs) / 1000;
+  // A mensagem de "pronto" dizia "a sua voz já pode ser usada" e NADA a usava:
+  // o motor que consome a amostra não existe ainda (ADR-0036 §3 — os modelos de
+  // clonagem MIT são Python e a instalação não foi definida). Prometer na tela o
+  // que não existe é a mesma tela mentirosa que este modo já teve duas vezes.
+  el.voiceSampleProgress.textContent = st.enough
+    ? t("amostra completa — falta o motor de voz clonada, ainda não está ligado")
+    : read + "/" + st.phrases.length + " · " + secs.toFixed(1) + "s " + t("de") + " " + min + "s";
+}
+
+async function vsRefresh() {
+  if (!TAURI.core || !el.voiceSampleList) return;
+  try { vsPaint(await invoke("voice_sample_status")); }
+  catch (e) { clog("voice_sample_status unavailable"); }
+}
+
+async function vsStop() {
+  const r = vsample.rec; vsample.rec = null;
+  if (r && r.state !== "inactive") { try { r.stop(); } catch (_) {} }
+}
+
+async function vsRecord(index) {
+  if (vsample.rec) { await vsStop(); return; }   // o mesmo botão para e envia
+  try {
+    // Microfone CRU, como todo o resto do app (audio.js RAW_AUDIO): o ganho
+    // automático achataria justamente o que dá identidade à voz.
+    vsample.stream = await navigator.mediaDevices.getUserMedia(LoroAudio.micConstraints(null, false));
+  } catch (e) { toast(t("não consegui abrir o microfone")); return; }
+  let rec;
+  try { rec = new MediaRecorder(vsample.stream); }
+  catch (e) { clog("vs rec error"); return; }
+  vsample.rec = rec; vsample.chunks = []; vsample.index = index;
+  rec.ondataavailable = (e) => { if (e.data && e.data.size) vsample.chunks.push(e.data); };
+  rec.onstop = async () => {
+    const chunks = vsample.chunks; vsample.chunks = [];
+    if (vsample.stream) { for (const tr of vsample.stream.getTracks()) tr.stop(); vsample.stream = null; }
+    const btn = el.voiceSampleList.querySelector('[data-vs="' + index + '"]');
+    if (btn) btn.textContent = t("gravar");
+    if (!chunks.length) return;
+    try {
+      const bytes = Array.from(new Uint8Array(await new Blob(chunks, { type: rec.mimeType || "audio/webm" }).arrayBuffer()));
+      vsPaint(await invoke("voice_sample_save", { input: { index, data: bytes } }));
+    } catch (e) { toast(tErr(String(e))); vsRefresh(); }
+  };
+  try { rec.start(); } catch (e) { clog("vs start error"); return; }
+  const btn = el.voiceSampleList.querySelector('[data-vs="' + index + '"]');
+  if (btn) btn.textContent = t("parar");
+}
+
+// O que impede o modo de rodar, como frase de tela. Devolve "" quando pode.
+function interpBlocker() {
+  if (!el.interpDevice.value) return t("escolha o dispositivo de saída da voz");
+  return "";
+}
+
+async function interpStart() {
+  const why = interpBlocker();
+  if (why) { clog("interp refused: blocked"); interpSay(why); return; }
+  try {
+    // Microfone CRU, pelo mesmo motivo do resto do app (audio.js RAW_AUDIO): o
+    // ganho automático achata a voz e a supressão de ruído come consoante, e as
+    // duas pioram o reconhecimento.
+    interp.stream = await navigator.mediaDevices.getUserMedia(LoroAudio.micConstraints(null, false));
+  } catch (e) {
+    clog("interp mic denied or unavailable");
+    interpSay(t("não consegui abrir o microfone")); return;
+  }
+  // A trilha que REALMENTE veio — não a que pedimos. Se o dispositivo de entrada
+  // padrão for o loopback, o modo estaria traduzindo o áudio do sistema (a voz
+  // da outra pessoa) e, falando de volta no mesmo driver, entraria em laço.
+  const track = (interp.stream.getAudioTracks() || [])[0];
+  const label = (track && track.label) || "";
+  if (LoroInterpreter.isSystemAudioInput(label)) {
+    clog("interp refused: input is a system-audio device");
+    for (const tr of interp.stream.getTracks()) tr.stop();
+    interp.stream = null;
+    interpSay(t("a entrada é áudio do sistema — escolha o microfone nos ajustes do Mac"));
+    return;
+  }
+  interp.ctx = new (window.AudioContext || window.webkitAudioContext)();
+  // DEFEITO CORRIGIDO (2026-09-06, relatado no primeiro teste na UI): sem o
+  // resume o contexto nasce SUSPENSO, o getFloatTimeDomainData devolve zeros, o
+  // RMS é sempre 0, o detector nunca abre uma elocução — e o modo não faz nada,
+  // sem erro nenhum na tela. O resto do app já sabia disso (app.js:1411).
+  try { await interp.ctx.resume(); } catch (_) {}
+  // DEFEITO CORRIGIDO (2026-09-07, MEDIDO): a medição vivia num setInterval de
+  // 100ms, e com a janela em segundo plano — o caso NORMAL, porque quem usa o
+  // modo está olhando o Meet — o WebKit o estrangulou para 1000ms
+  // ("interp tick gap ms=1001" dezenas de vezes no log). A 1s por amostra o
+  // recorte desmonta: HANG_MS é 350ms, então uma amostra de silêncio corta na
+  // hora e uma elocução de uma amostra parece ter 0ms e é descartada. O modo
+  // ficava surdo justamente em uso. Agora a medição roda na thread de ÁUDIO,
+  // movida pelo hardware, que não é estrangulada (interp-worklet.js).
+  try {
+    await interp.ctx.audioWorklet.addModule("interp-worklet.js");
+  } catch (e) {
+    clog("interp worklet unavailable");
+    interpSay(t("não consegui ligar o medidor de áudio"));
+    interpStop();
+    return;
+  }
+  interp.meter = new AudioWorkletNode(interp.ctx, "interp-meter");
+  interp.chunker = LoroInterpreter.newChunker();
+  interp.queue = LoroInterpreter.newQueue();
+  interp.on = true;
+  interp.meter.port.onmessage = (e) => interpFrame(e.data);
+  interp.ctx.createMediaStreamSource(interp.stream).connect(interp.meter);
+  // O worklet só roda se o nó chegar a um destino. O ganho ZERO é o que o mantém
+  // rodando sem tocar nada: o Loro não toca áudio por conta própria (audio.js
+  // RAW_AUDIO), e ligar o microfone na saída seria realimentação.
+  const mute = interp.ctx.createGain();
+  mute.gain.value = 0;
+  interp.meter.connect(mute).connect(interp.ctx.destination);
+  interpSpawnRec();
+  clog("interp started");
+  paintInterpControl();
+  interpSay(t("ouvindo — fale e faça uma pausa"));
+}
+
+function interpStop() {
+  if (interp.on) clog("interp stopped");
+  interp.on = false;
+  paintInterpControl();
+  interp.lastFrame = 0;
+  if (interp.meter) {
+    try { interp.meter.port.onmessage = null; interp.meter.disconnect(); } catch (_) {}
+    interp.meter = null;
+  }
+  if (interp.rec && interp.rec.state !== "inactive") { try { interp.rec.stop(); } catch (_) {} }
+  interp.rec = null; interp.chunks = [];
+  if (interp.stream) { for (const tr of interp.stream.getTracks()) tr.stop(); interp.stream = null; }
+  if (interp.ctx) { try { interp.ctx.close(); } catch (_) {} interp.ctx = null; }
+  interpSay("");
+}
+
+// Um gravador por elocução: começa agora e é parado pelo corte de silêncio.
+function interpSpawnRec() {
+  if (!interp.stream || !interp.on) return;
+  let rec;
+  try { rec = new MediaRecorder(interp.stream); }
+  catch (e) { clog("interp rec: " + e); return; }
+  interp.rec = rec; interp.chunks = [];
+  rec.ondataavailable = (e) => { if (e.data && e.data.size) interp.chunks.push(e.data); };
+  rec.onstop = () => {
+    const chunks = interp.chunks; interp.chunks = [];
+    if (interp.on) interpSpawnRec();       // já volta a ouvir: não perde a próxima frase
+    if (chunks.length) interpUtterance(chunks, rec.mimeType || "audio/webm");
+  };
+  try { rec.start(); } catch (e) { clog("interp start: " + e); }
+}
+
+// Um quadro medido na thread de áudio -> o reducer puro decide se a frase
+// acabou. `t` vem do relógio de ÁUDIO, não do de parede: é isso que mantém a
+// decisão correta mesmo se as mensagens chegarem em rajada numa tela ocupada —
+// os instantes são reais, e só a reação atrasa.
+function interpFrame(frame) {
+  if (!interp.on || !frame) return;
+  const rms = frame.rms;
+  const nowMs = Math.round(frame.t * 1000);
+  // O intervalo real entre quadros, para que o estrangulamento volte a ser um
+  // FATO no log se reaparecer por outro caminho. BR-8: só números.
+  if (interp.lastFrame) {
+    const gap = nowMs - interp.lastFrame;
+    if (gap > 400) clog("interp frame gap ms=" + gap);
+  }
+  interp.lastFrame = nowMs;
+  const was = interp.chunker.speaking;
+  const r = LoroInterpreter.feed(interp.chunker, rms, nowMs);
+  interp.chunker = r.state;
+  // Retorno visível: sem isto o modo ligado e o modo surdo têm a MESMA tela, e
+  // foi assim que o contexto suspenso passou sem ninguém ver.
+  if (!was && r.state.speaking) interpSay(t("captando sua fala"));
+  else if (was && r.cut) interpSay(t("traduzindo"));
+  if (r.cut) {
+    if (interp.rec && interp.rec.state !== "inactive") {
+      try { interp.rec.stop(); } catch (_) {}   // onstop despacha a elocução
+    } else {
+      // O corte chegou sem gravador vivo: a elocução se perde. Antes isto
+      // também deixava a cadeia MORTA, porque só o onstop respawna. Registrar e
+      // ressuscitar é o mínimo — parar de ouvir em silêncio foi o defeito.
+      clog("interp cut with no live recorder — respawning");
+      interpSpawnRec();
+    }
+  }
+  interpDrain();
+}
+
+async function interpUtterance(chunks, mime) {
+  try {
+    const bytes = Array.from(new Uint8Array(await new Blob(chunks, { type: mime }).arrayBuffer()));
+    const t0 = Date.now();
+    const out = await invoke("interpreter_translate", {
+      input: { data: bytes, model: LoroInterpreter.MODEL, lang: settings.lang },
+    });
+    clog("interp translated ms=" + (Date.now() - t0) + " bytes=" + bytes.length +
+         " chars=" + ((out && out.text) || "").length);
+    // BR-8: o texto traduzido é conteúdo de fala e NUNCA vai para log — só para
+    // a tela, onde o usuário já é o dono do que disse.
+    interp.queue = LoroInterpreter.enqueue(interp.queue, out && out.text);
+    interpDrain();
+  } catch (e) { clog("interpreter_translate failed"); interpSay(tErr(String(e))); }
+}
+
+// Despacha a próxima frase se nenhuma estiver falando (a fila é quem garante
+// que uma frase nunca é cortada no meio).
+async function interpDrain() {
+  if (!interp.queue) return;
+  const n = LoroInterpreter.backlog(interp.queue);
+  const d = LoroInterpreter.dequeue(interp.queue);
+  interp.queue = d.queue;
+  if (n) interpSay(t("esperando para falar") + ": " + n);
+  else if (interp.on && !d.text) interpSay(t("ouvindo — fale e faça uma pausa"));
+  if (!d.text) return;
+  try {
+    await invoke("interpreter_speak", {
+      input: {
+        text: d.text, voice: el.interpVoice.value,
+        device: el.interpDevice.value, engine: settings.interpEngine,
+      },
+    });
+  } catch (e) { interpSay(tErr(String(e))); }
+  interp.queue = LoroInterpreter.finishSpeaking(interp.queue);
+  interpDrain();
+}
+
+// O intérprete é FUNÇÃO PRÓPRIA (decisão do dono, 2026-09-06): este botão é o
+// único que o liga e desliga. Não depende do ● nem o afeta — dá para gravar sem
+// intérprete, usar o intérprete sem gravar, ou os dois ao mesmo tempo.
+el.interpBtn.addEventListener("click", async () => {
+  if (interp.on) { clog("interp toggle=false"); interpStop(); interpSay(""); return; }
+  clog("interp toggle=true");
+  await interpStart();
+});
+el.interpDevice.addEventListener("change", () => { settings.interpDevice = el.interpDevice.value; persistSettings(); });
+el.interpVoice.addEventListener("change", () => { settings.interpVoice = el.interpVoice.value; persistSettings(); });
+el.interpEngine.addEventListener("change", () => {
+  settings.interpEngine = el.interpEngine.value;
+  persistSettings();
+  interpPaintEngine();
+});
+el.interpPreview.addEventListener("click", async () => {
+  if (!el.interpDevice.value) { interpSay(t("escolha o dispositivo de saída da voz")); return; }
+  try {
+    await invoke("interpreter_speak", {
+      input: {
+        text: "This is how the other person will hear you.",
+        voice: el.interpVoice.value, device: el.interpDevice.value,
+        engine: settings.interpEngine,
+      },
+    });
+  } catch (e) { interpSay(tErr(String(e))); }
+});
+el.interpSetupCopy.addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText(el.interpSetupCmd.textContent); toast(t("comando copiado")); }
+  catch (e) { clog("clipboard unavailable"); }
+});
+el.interpSetupRecheck.addEventListener("click", () => { interpRefreshSetup(); interpLoadChoices(); });
+el.voiceSampleList.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-vs]");
+  if (b) vsRecord(Number(b.dataset.vs));
+});
+el.voiceSampleClear.addEventListener("click", async () => {
+  try { vsPaint(await invoke("voice_sample_clear")); toast(t("gravação apagada")); }
+  catch (e) { toast(tErr(String(e))); }
+});
+interpLoadChoices();
+interpRefreshSetup();
+vsRefresh();
+interpPaintEngine();
 el.autosave.addEventListener("change", async (e) => {
   settings.autosave = e.target.checked; persistSettings(); updatePrivacy();
   if (settings.autosave && !settings.saveDir) {

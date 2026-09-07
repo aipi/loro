@@ -206,6 +206,64 @@ quando quiser pela paleta: `Cmd/Ctrl+K` → "apresentação do Loro".
 - O áudio é **transitório**: usado para transcrever e descartado. O indicador
   de privacidade na barra mostra o estado ("sem gravar" / "grava áudio").
 
+## Modo intérprete (sua voz sai em inglês)
+
+Faz a sua fala sair como **voz em inglês** por um dispositivo de saída que você
+escolhe. Se esse dispositivo for um driver virtual (BlackHole no macOS) e você o
+selecionar como **microfone** no Zoom, no Meet ou no Teams, a outra pessoa ouve
+inglês. Funciona em qualquer app de chamada, e roda 100% no seu computador.
+
+Está em **Configurações → Transcrição → Modo intérprete**, e vem **desligado**:
+uma voz traduzida numa reunião de verdade não é coisa que se descubra por
+acidente.
+
+Antes de ligar, três coisas que mudam a expectativa:
+
+- **É consecutivo, não simultâneo.** Você fala, faz uma pausa, e a frase sai em
+  inglês. O corte é no silêncio, não no relógio — o tradutor precisa de um
+  pensamento fechado, e meia frase vira tradução ruim. Do lado de quem ouve há
+  alguns segundos de silêncio antes de cada frase.
+- **A voz é sintética, não é a sua.** A tradução é um texto novo, lido por uma
+  voz do sistema. Seu timbre, sua entonação e sua ênfase não atravessam. Escolha
+  a voz em *voz* e use **ouvir esta voz** para decidir de ouvido. Vozes muito
+  melhores que as instaladas saem de graça em *Ajustes do Sistema →
+  Acessibilidade → Conteúdo Falado → Voz do Sistema → Gerenciar Vozes*
+  (variantes *Aprimorada* e *Premium*).
+- **Só traduz para inglês, e não em qualquer modelo.** O motor é o mesmo da
+  transcrição, e ele traduz apenas *para* inglês. O modelo **large-v3-turbo**
+  (o padrão) **não traduz** — devolve o português sem avisar —, então o modo se
+  recusa a ligar com ele e pede o **small**.
+
+Enquanto estiver ligado, a tela diz o que está acontecendo: *ouvindo*, ou
+quantas frases estão *esperando para falar*. Esse número subindo quer dizer que
+você está falando mais rápido do que a voz entrega — o atraso vai acumular até
+você dar uma pausa maior.
+
+Para testar sem reunião nenhuma, escolha os **alto-falantes** como saída: você
+ouve exatamente o que a outra pessoa ouviria. Na reunião de verdade, troque para
+o driver virtual — senão a voz sai pela caixa e volta pelo seu microfone.
+
+### A minha voz, em vez de uma voz sintética
+
+O modo pode falar **com a sua voz** em vez da voz do sistema. Em *motor da voz*
+escolha **a minha voz**; a do sistema continua o padrão porque é mais rápida
+(~0,6s por frase contra ~1,4s).
+
+Para isso o app precisa de três peças que **não vêm instaladas**: o motor de voz,
+o modelo e o vocoder — cerca de 180 MB no total. Elas se baixam em
+*Configurações → Transcrição → **Modelos***, na mesma lista dos modelos de
+transcrição, cada uma com o seu tamanho e o seu botão. Tudo vai para `~/.loro`,
+verificado por SHA-256, e roda no seu computador.
+
+Também é preciso ter lido as frases em *A sua voz* (acima): é a sua gravação que
+o modelo usa como referência. Sem ela o modo diz que falta gravar, em vez de
+inventar uma voz.
+
+Uma coisa a saber antes de decidir: o modelo de voz clonada é treinado num conjunto de
+gravações licenciado **apenas para uso não comercial**. O Loro não distribui esse modelo —
+você o baixa e decide se pode usá-lo no seu caso. O aviso fica na tela sempre que
+a voz clonada está escolhida.
+
 ## Ideias (o mundo sem histórico de versões)
 
 - **Escrever uma nota** (na tela Início) abre um markdown **em branco** na hora:
