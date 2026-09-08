@@ -1063,6 +1063,36 @@ const DRIVER = `
     if (!q("#voiceSampleClear")) throw new Error("não há como apagar a gravação");
   });
 
+  // DEFEITO RELATADO pelo dono (2026-09-08): "add nova nota nao esta
+  // funcionando. ele ate permite escrever, mas some."
+  //
+  // O input de titulo e inserido DENTRO da arvore lateral (anchor.before), e o
+  // relogio de 10s (brainRefresh -> refreshPessoal -> renderPessoal) reescreve
+  // essa arvore. Nenhum refresh checava que ha uma edicao em curso, entao o
+  // redesenho apagava o input com o que a pessoa digitou. Os quatro
+  // sinalizadores de edicao so impediam abrir dois inputs.
+  await step("nova-nota-sobrevive-ao-relogio-da-lateral", async () => {
+    const linhaTema = q('#navPessoal [data-tema]');
+    if (!linhaTema) throw new Error("nao ha ideia na lateral para criar nota");
+    linhaTema.click();                       // abre a ideia: os grupos nascem aqui
+    await new Promise((r) => setTimeout(r, 300));
+    const add = q("#navPessoal [data-addnota]");
+    if (!add) throw new Error("o botao de nova nota nao esta na arvore");
+    add.click();
+    await new Promise((r) => setTimeout(r, 150));
+    const inp = q("#navPessoal input.bnewctx");
+    if (!inp) throw new Error("o campo do titulo da nota nao apareceu");
+    inp.value = "minha nota em progresso";
+    // O tique da lateral, que e o que acontece sozinho a cada 10s.
+    await window.refreshPessoal();
+    await new Promise((r) => setTimeout(r, 200));
+    const ainda = q("#navPessoal input.bnewctx");
+    if (!ainda)
+      throw new Error("o campo do titulo SUMIU com o redesenho da lateral — o que a pessoa digitou foi perdido");
+    if (ainda.value !== "minha nota em progresso")
+      throw new Error("o campo sobreviveu mas perdeu o texto: " + JSON.stringify(ainda.value));
+  });
+
   // ADR-0022 §24b — o interruptor do microfone nas reuniões existe, nasce LIGADO e o
   // empurrão do eco escreve nele. O que resolve o eco é uma escolha da pessoa, e ela tem
   // de aparecer no controle (senão a tela e o ajuste discordam).

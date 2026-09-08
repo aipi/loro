@@ -3316,7 +3316,9 @@ async function brainRefresh() {
   // lateral: só re-renderiza quando os dados mudam (preserva expansões profundas)
   const sig = JSON.stringify([st.inbox.map((f) => f.name), st.contexts, st.meetings.length, st.notes.length,
     (st.entryDocs || []).map((f) => f.name)]);
-  if (sig !== sideSig) { sideSig = sig; renderSidebar(st); }
+  // Mesma razão do inlineNaming em refreshPessoal: promptNewNoteInContext e
+  // promptNewContext inserem o campo de nome NESTA árvore.
+  if (sig !== sideSig && !inlineNaming()) { sideSig = sig; renderSidebar(st); }
   refreshPessoal();   // ADR-0009: produção (mundo pessoal) — self-gated por assinatura
   refreshTools();     // ADR-0005: ferramentas customizadas — self-gated por assinatura
   // ADR-0027 R59 · A REVISÃO ENTRA NO RELÓGIO. Este tique já relia
@@ -3972,8 +3974,25 @@ const pessoalWorld = {
   listMeetings: async (slug) => (await invoke("brain_list_meetings", { slug })) || [],
 };
 
+// Há um campo de nome ABERTO na árvore agora?
+//
+// DEFEITO RELATADO (2026-09-08): "add nova nota não está funcionando. ele até
+// permite escrever, mas some." O campo de título é inserido DENTRO da árvore
+// (anchor.before), e o relógio de 10s (brainRefresh -> refreshPessoal ->
+// renderPessoal) reescreve essa árvore — apagando o campo com o que a pessoa
+// digitou. Os quatro sinalizadores de edição existiam só para impedir abrir dois
+// campos; nenhum protegia o que já estava aberto.
+//
+// Adiar o redesenho é o conserto certo, não preservar o input: quem está no meio
+// de nomear uma coisa não quer a árvore se remexendo embaixo, e como a assinatura
+// não é gravada quando se adia, o tique seguinte pega tudo.
+function inlineNaming() {
+  return notaEditing || ctxEditing || bsEditing;
+}
+
 async function refreshPessoal() {
   if (!brainTab) return;
+  if (inlineNaming()) return;
   let temas = [], avulso = [];
   try { temas = (await invoke("brain_list_brainstorms")) || []; } catch (_) {}
   try { avulso = ((await invoke("brain_list_dir", { rel: "brainstorming/avulso" })) || []).filter((f) => !f.dir); }
