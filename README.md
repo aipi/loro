@@ -35,6 +35,13 @@ people and AI agents can use as context.
   the computer's own audio: ScreenCaptureKit on macOS (one Screen Recording
   permission) and WASAPI loopback on Windows (nothing to grant). No virtual
   audio driver, no admin rights on either.
+- **Speak Portuguese, be heard in English** — optional interpreter mode (macOS)
+  sends your speech out as an English voice through a device you pick; select
+  that device as your microphone and it works in Zoom, Meet, Teams or anything
+  else. It is *consecutive*, not simultaneous — you speak, you pause, the
+  sentence comes out — and the voice is synthetic, not yours. Off by default,
+  translation into English only, and like everything here it runs on-device
+  (ADR-0035).
 - **Knowledge, not piles of transcripts** — an agent loop distills meetings,
   notes, and attached files into one `context.md` source of truth per topic,
   versioned in Git and evolved by pull request — with Git hidden behind two

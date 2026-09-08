@@ -65,6 +65,21 @@
             <span class="rec-glyph" aria-hidden="true"></span>
             <span id="recLabel" data-i18n-dyn>Gravar</span>
           </button>
+          <!-- ADR-0035 · o intérprete é FUNÇÃO PRÓPRIA, não um modo da gravação:
+               botão próprio, ligado e desligado por ele, nunca pelo ●. O nome
+               acessível e o rótulo saem de paintInterpControl(), pela mesma
+               razão do R4 acima: um title fixo nomearia duas ações opostas. -->
+          <button id="interpBtn" class="aibtn" aria-pressed="false">
+            <!-- microfone + duas barras de nível: a sua voz, e a voz saindo.
+                 SVG inline com .ic, como o resto do app (nada de emoji: ele
+                 muda de desenho por plataforma e não herda currentColor). -->
+            <svg class="ic" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M9 13c1.66 0 3-1.34 3-3V4c0-1.66-1.34-3-3-3S6 2.34 6 4v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S3.7 13 3.7 10H2c0 3.41 2.72 6.23 6 6.72V20h2v-3.28c3.28-.49 6-3.31 6-6.72h-1.7z"/>
+              <rect x="17.6" y="7" width="1.7" height="10" rx=".85"/>
+              <rect x="20.7" y="9.5" width="1.7" height="5" rx=".85"/>
+            </svg>
+            <span id="interpLabel" data-i18n-dyn>Intérprete</span>
+          </button>
           <button id="aiPanelBtn" class="aibtn" title="mostrar / recolher painel de IA" data-i18n-attrs="title"
             aria-expanded="false" aria-controls="aiPanel">
             <span aria-hidden="true">✦</span> <span data-i18n>IA</span>
@@ -910,6 +925,42 @@
                 <div id="modelManager" class="modelmgr"></div>
                 <p class="hint" data-i18n>a transcrição roda 100% no seu computador — os modelos ficam em ~/.loro/models e são baixados sob demanda, verificados por SHA-256</p>
               </div>
+              <h3 data-i18n>Modo intérprete</h3>
+              <div class="cfgcard">
+                <p class="hint" data-i18n>liga e desliga pelo botão Intérprete no topo — aqui ficam só os ajustes</p>
+                <div id="interpSetup" class="cfgcard" hidden>
+                  <div id="interpSetupMsg" class="hint"></div>
+                  <code id="interpSetupCmd" class="mono"></code>
+                  <button id="interpSetupCopy" class="btn" type="button" data-i18n>copiar o comando</button>
+                  <button id="interpSetupRecheck" class="btn" type="button" data-i18n>verificar de novo</button>
+                </div>
+                <p class="hint" data-i18n>selecione o mesmo dispositivo abaixo como microfone no Zoom, Meet ou Teams — é assim que a outra pessoa te ouve em inglês</p>
+                <label class="field"><span class="mono" data-i18n>saída da voz</span>
+                  <select id="interpDevice"></select>
+                </label>
+                <label class="field"><span class="mono" data-i18n>motor da voz</span>
+                  <select id="interpEngine">
+                    <option value="system" data-i18n>voz do sistema · rápida</option>
+                    <option value="neural" data-i18n>a minha voz · mais lenta</option>
+                  </select>
+                </label>
+                <label class="field" id="interpVoiceField"><span class="mono" data-i18n>voz</span>
+                  <select id="interpVoice"></select>
+                </label>
+                <div id="interpEngineNote" class="hint"></div>
+                <p class="hint" id="interpEngineLicense" hidden data-i18n>a voz clonada usa o modelo ZipVoice, treinado num acervo licenciado apenas para uso NÃO comercial (CC BY-NC-4.0) — o Loro não distribui esse modelo, você o baixa e decide se pode usá-lo no seu caso</p>
+                <button id="interpPreview" class="btn" type="button" data-i18n>ouvir esta voz</button>
+                <p class="hint" data-i18n>você fala, faz uma pausa, e a frase sai em inglês: a tradução é consecutiva, e quem ouve escuta uma voz sintética, não a sua</p>
+                <div id="interpStatus" class="hint"></div>
+                <h3 data-i18n>A sua voz</h3>
+                <div class="cfgcard">
+                  <p class="hint" data-i18n>leia as frases abaixo em voz alta — elas cobrem os sons do português, e o modelo precisa saber exatamente o que foi dito</p>
+                  <div id="voiceSampleList"></div>
+                  <div id="voiceSampleProgress" class="hint"></div>
+                  <button id="voiceSampleClear" class="btn" type="button" data-i18n>apagar minha voz</button>
+                  <p class="hint" data-i18n>a gravação fica só no seu computador, em ~/.loro/voice-sample, e nunca entra no acervo nem sai da máquina</p>
+                </div>
+              </div>
             </section>
 
             <section class="cfgsec" data-sec="cap">
@@ -1134,6 +1185,7 @@
     <script src="loops.js"></script>
     <script src="update.js"></script>
     <script src="audio.js"></script>
+    <script src="interpreter.js"></script>
     <script src="shell.js"></script>
     <script src="app.js"></script>
   </body>

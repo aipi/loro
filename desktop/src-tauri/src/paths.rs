@@ -60,6 +60,37 @@ pub fn project_dir() -> PathBuf {
 // user's login shell cannot be reached. Measured on the installed Loro.app:
 // PATH=/usr/bin:/bin:/usr/sbin:/sbin, while `claude` and `gh` live only in
 // /opt/homebrew/bin.
+// Move um arquivo OU diretório, caindo para copiar+apagar quando o destino está
+// noutro sistema de arquivos (`rename` falha com EXDEV nesse caso — e é
+// exatamente o que acontece ao mover de um temporário para o disco do usuário).
+//
+// Recursivo porque o pacote do modelo de voz traz um diretório inteiro
+// (`espeak-ng-data`): uma versão só-para-arquivos instalaria o modelo pela
+// metade, e a falha apareceria como "não fala" (voice_install.rs).
+pub fn move_or_copy(from: &Path, to: &Path) -> Result<(), String> {
+    if let Some(parent) = to.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    if std::fs::rename(from, to).is_ok() {
+        return Ok(());
+    }
+    if from.is_dir() {
+        std::fs::create_dir_all(to).map_err(|e| e.to_string())?;
+        for e in std::fs::read_dir(from)
+            .map_err(|e| e.to_string())?
+            .filter_map(|e| e.ok())
+        {
+            let name = e.file_name();
+            move_or_copy(&e.path(), &to.join(name))?;
+        }
+        let _ = std::fs::remove_dir_all(from);
+        return Ok(());
+    }
+    std::fs::copy(from, to).map_err(|e| e.to_string())?;
+    let _ = std::fs::remove_file(from);
+    Ok(())
+}
+
 pub fn known_bin_dirs() -> Vec<PathBuf> {
     // Loro-managed engine install: the guided Windows setup drops the whisper
     // binaries here, so they are found without touching the user's PATH.

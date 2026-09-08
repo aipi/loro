@@ -38,5 +38,46 @@
       .sort((a, b) => (b.default === true ? 1 : 0) - (a.default === true ? 1 : 0));
   }
 
-  return { formatSize, progressPercent, sortModels };
+  // ---- as peças da voz clonada como linhas do MESMO gerenciador (ADR-0036) ----
+  // Elas são da mesma natureza que um modelo — algo grande que se baixa uma vez e
+  // fica em ~/.loro — então vivem na mesma superfície em que se baixa modelo, e
+  // não num painel próprio. O prefixo distingue quem atende o download: o
+  // catálogo do whisper ou o instalador do motor de voz.
+  const VOICE_PREFIX = "voice:";
+
+  function isVoicePart(id) {
+    return String(id || "").startsWith(VOICE_PREFIX);
+  }
+  function voicePartOf(id) {
+    return isVoicePart(id) ? String(id).slice(VOICE_PREFIX.length) : "";
+  }
+  function voiceRowId(part) {
+    return VOICE_PREFIX + part;
+  }
+
+  // Converte o status do instalador para a MESMA forma de uma linha de modelo,
+  // para que a tela tenha um só jeito de desenhar "algo grande para baixar".
+  // Devolve vazio quando a plataforma não suporta: oferecer o que não instala
+  // seria pior que não oferecer.
+  function voiceRows(status) {
+    if (!status || !status.supported || !Array.isArray(status.parts)) return [];
+    return status.parts.map((p) => ({
+      id: voiceRowId(p.id),
+      label: p.label,
+      sizeBytes: p.size,
+      installed: !!p.installed,
+      default: false,
+    }));
+  }
+
+  return {
+    formatSize,
+    progressPercent,
+    sortModels,
+    voiceRows,
+    isVoicePart,
+    voicePartOf,
+    voiceRowId,
+    VOICE_PREFIX,
+  };
 });
