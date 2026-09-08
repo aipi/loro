@@ -31,7 +31,13 @@
 #![cfg_attr(not(target_os = "macos"), allow(dead_code))]
 
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+// `Path` só aparece nos blocos de macOS e no `signal()`, ambos unix — no Windows
+// sobraria sem uso, e `-D warnings` reprova importação morta. O `lint-offmac`
+// NÃO pega isto: ele renomeia só o cfg do macOS, então `unix` segue verdadeiro
+// no host e o import continua usado. Achado pelo CI de windows na PR #102.
+#[cfg(unix)]
+use std::path::Path;
 use std::sync::Mutex;
 
 #[cfg(target_os = "macos")]

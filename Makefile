@@ -68,6 +68,11 @@ lint: ## Lint: clippy (deny warnings) + rustfmt --check + node --check on the JS
 #  2. teste cego de plataforma — a PR #102 quebrou nos dois CIs por um `unwrap()`
 #     num comando que RECUSA fora do macOS.
 #
+# O QUE ELE NÃO PEGA, e é bom saber: renomear só o cfg do macOS deixa `unix`
+# verdadeiro no host, então ele reproduz LINUX, não Windows. Um `use` que sobra
+# apenas no Windows (porque o item que o usava era `#[cfg(unix)]`) passa daqui e
+# reprova lá — foi o último tropeço da #102. Para Windows, o CI é a medida.
+#
 # DUAS LIÇÕES da primeira versão deste alvo, que era pior que não existir:
 #  - copiar uma LISTA de arquivos deixava o `templates/` de fora, e o código o
 #    embute por `include_str!`: 50 erros de compilação, nenhum deles de
