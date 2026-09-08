@@ -166,6 +166,11 @@ const ANSWERS = {
   interpreter_audio_setup: { state: "installed_not_loaded", command: "sudo killall coreaudiod" },
   // ADR-0036 — o motor neural com o modelo e a amostra AUSENTES: o passo exige
   // que a tela diga QUAL peça falta, não um "indisponível" mudo.
+  read_aloud_state: { speaking: false, paused: false, supported: true },
+  read_aloud_voices: [
+    { name: "Luciana", locale: "pt_BR" },
+    { name: "Samantha", locale: "en_US" },
+  ],
   interpreter_neural_status: { binary: false, model: false, missing: ["encoder.int8.onnx"], sample: false },
   // ADR-0036 §5 — instalação limpa: nada instalado. O passo exige que a tela
   // diga QUANTO vai baixar antes de começar.
@@ -934,6 +939,90 @@ const DRIVER = `
     if (!q("#interpBtn")) throw new Error("o botão sumiu ao parar a gravação");
   });
 
+  // DEFEITO RELATADO pelo dono (2026-09-08): "add nova nota nao esta
+  // funcionando. ele ate permite escrever, mas some."
+  //
+  // O input de titulo e inserido DENTRO da arvore lateral (anchor.before), e o
+  // relogio de 10s (brainRefresh -> refreshPessoal -> renderPessoal) reescreve
+  // essa arvore. Nenhum refresh checa que ha uma edicao em curso, entao o
+  // redesenho apaga o input com o que a pessoa digitou. Os quatro sinalizadores
+  // de edicao (notaEditing, ctxEditing, bsEditing e o de tema) so impedem abrir
+  // dois inputs — nao protegem o que esta aberto.
+  await step("nova-nota-sobrevive-ao-relogio-da-lateral", async () => {
+    const linhaTema = q('#navPessoal [data-tema]');
+    if (!linhaTema) throw new Error("nao ha ideia na lateral para criar nota");
+    linhaTema.click();                       // abre a ideia: os grupos nascem aqui
+    await new Promise((r) => setTimeout(r, 300));
+    const add = q("#navPessoal [data-addnota]");
+    if (!add) throw new Error("o botao de nova nota nao esta na arvore");
+    add.click();
+    await new Promise((r) => setTimeout(r, 150));
+    const inp = q("#navPessoal input.bnewctx");
+    if (!inp) throw new Error("o campo do titulo da nota nao apareceu");
+    inp.value = "minha nota em progresso";
+    // O tique da lateral, que e o que acontece sozinho a cada 10s.
+    await window.refreshPessoal();
+    await new Promise((r) => setTimeout(r, 200));
+    const ainda = q("#navPessoal input.bnewctx");
+    if (!ainda)
+      throw new Error("o campo do titulo SUMIU com o redesenho da lateral — o que a pessoa digitou foi perdido");
+    if (ainda.value !== "minha nota em progresso")
+      throw new Error("o campo sobreviveu mas perdeu o texto: " + JSON.stringify(ainda.value));
+  });
+
+  // ADR-0037 — a leitura em voz alta existe na barra do documento, nasce
+  // PARADA, e o botão de parar só aparece quando há o que parar.
+  await step("ler-em-voz-alta", async () => {
+    // Abre um markdown e fica em VISUALIZACAO: ouvir e atividade de leitura, e
+    // exigir modo de edicao para ouvir seria ao contrario. Funcoes de topo do app
+    // ja sao globais, entao nao ha superficie so-para-teste aqui.
+    await window.openDoc("contexts/precificacao/context.md", { preview: false });
+    await new Promise((r) => setTimeout(r, 700));
+    const box = q("#bReadActs");
+    if (!box || box.hidden)
+      throw new Error("o controle de ouvir nao aparece na visualizacao de um markdown");
+    const play = q("[data-read]");
+    if (!play) throw new Error("nao ha controle de leitura na moldura do documento");
+    // MEDE o botao em vez de opinar: relatado como "quebrado" (2026-09-08).
+    const r = play.getBoundingClientRect();
+    const svg = play.querySelector("svg.ic");
+    const rs = svg ? svg.getBoundingClientRect() : { width: 0, height: 0 };
+    const cs = getComputedStyle(play);
+    const M = window.__SMOKE__; M.medidas = M.medidas || {};
+    M.medidas.ouvir = {
+      botao: [Math.round(r.width), Math.round(r.height)],
+      icone: [Math.round(rs.width), Math.round(rs.height)],
+      display: cs.display,
+      align: cs.alignItems,
+      overflow: play.scrollWidth > play.clientWidth + 1,
+    };
+    // O alinhamento é o defeito que foi relatado: sem contexto flex o SVG e o
+    // rótulo não se alinham, e o botão parece quebrado (medido: display block).
+    if (cs.display.indexOf("flex") < 0)
+      throw new Error("o botao ouvir nao esta em flex: display=" + cs.display);
+    if (cs.alignItems !== "center")
+      throw new Error("icone e rotulo nao centralizados: align-items=" + cs.alignItems);
+    if (r.width < 40 || r.height < 16)
+      throw new Error("o botao ouvir mede " + Math.round(r.width) + "x" + Math.round(r.height) + "px");
+    if (rs.width < 8 || rs.height < 8)
+      throw new Error("o icone mede " + Math.round(rs.width) + "x" + Math.round(rs.height) + "px — nao esta pintando");
+    if (play.scrollWidth > play.clientWidth + 1)
+      throw new Error("o conteudo do botao transborda: pede " + play.scrollWidth + "px em " + play.clientWidth + "px");
+    // Um icone de verdade, nao emoji: a mesma regra do botao do interprete.
+    if (!play.querySelector("svg.ic")) throw new Error("o controle de leitura nao usa o SVG .ic");
+    if ([...play.textContent].some((c) => c.codePointAt(0) > 0x2100))
+      throw new Error("voltou emoji para o controle de leitura");
+    // R4: o titulo nomeia a acao de AGORA. Parado, ele oferece LER.
+    if (!/ler|read/i.test(play.title))
+      throw new Error("parado, o controle devia oferecer ler: " + JSON.stringify(play.title));
+    if (/pausar|pause/i.test(play.title))
+      throw new Error("oferece pausar sem nada lendo: " + play.title);
+    // E parar so aparece quando ha o que parar.
+    const stop = q("[data-read-stop]");
+    if (!stop) throw new Error("nao ha controle de parar a leitura");
+    if (!stop.hidden) throw new Error("o parar esta visivel sem nada lendo");
+  });
+
   // ADR-0036 §5 — as peças da voz clonada se baixam no MESMO gerenciador que os
   // modelos: mesma natureza (algo grande, uma vez, em ~/.loro), mesma superfície.
   await step("pecas-da-voz-no-gerenciador-de-modelos", async () => {
@@ -1063,36 +1152,6 @@ const DRIVER = `
     if (!q("#voiceSampleClear")) throw new Error("não há como apagar a gravação");
   });
 
-  // DEFEITO RELATADO pelo dono (2026-09-08): "add nova nota nao esta
-  // funcionando. ele ate permite escrever, mas some."
-  //
-  // O input de titulo e inserido DENTRO da arvore lateral (anchor.before), e o
-  // relogio de 10s (brainRefresh -> refreshPessoal -> renderPessoal) reescreve
-  // essa arvore. Nenhum refresh checava que ha uma edicao em curso, entao o
-  // redesenho apagava o input com o que a pessoa digitou. Os quatro
-  // sinalizadores de edicao so impediam abrir dois inputs.
-  await step("nova-nota-sobrevive-ao-relogio-da-lateral", async () => {
-    const linhaTema = q('#navPessoal [data-tema]');
-    if (!linhaTema) throw new Error("nao ha ideia na lateral para criar nota");
-    linhaTema.click();                       // abre a ideia: os grupos nascem aqui
-    await new Promise((r) => setTimeout(r, 300));
-    const add = q("#navPessoal [data-addnota]");
-    if (!add) throw new Error("o botao de nova nota nao esta na arvore");
-    add.click();
-    await new Promise((r) => setTimeout(r, 150));
-    const inp = q("#navPessoal input.bnewctx");
-    if (!inp) throw new Error("o campo do titulo da nota nao apareceu");
-    inp.value = "minha nota em progresso";
-    // O tique da lateral, que e o que acontece sozinho a cada 10s.
-    await window.refreshPessoal();
-    await new Promise((r) => setTimeout(r, 200));
-    const ainda = q("#navPessoal input.bnewctx");
-    if (!ainda)
-      throw new Error("o campo do titulo SUMIU com o redesenho da lateral — o que a pessoa digitou foi perdido");
-    if (ainda.value !== "minha nota em progresso")
-      throw new Error("o campo sobreviveu mas perdeu o texto: " + JSON.stringify(ainda.value));
-  });
-
   // ADR-0022 §24b — o interruptor do microfone nas reuniões existe, nasce LIGADO e o
   // empurrão do eco escreve nele. O que resolve o eco é uma escolha da pessoa, e ela tem
   // de aparecer no controle (senão a tela e o ajuste discordam).
@@ -1201,7 +1260,7 @@ const DRIVER = `
     await new Promise((r) => setTimeout(r, 200));
   });
 
-  document.title = "RESULT" + JSON.stringify({ steps: seen, errors: S.errors.slice(0, 12), calls: Object.keys(S.calls).length, header: S.header });
+  document.title = "RESULT" + JSON.stringify({ steps: seen, errors: S.errors.slice(0, 12), calls: Object.keys(S.calls).length, header: S.header, medidas: S.medidas });
 })();
 </script>
 `;
@@ -1258,6 +1317,7 @@ for (const [k, v] of Object.entries(out.steps)) {
 }
 console.log("\ncomandos IPC exercitados:", out.calls);
 if (out.header) console.log("cabeçalho:", JSON.stringify(out.header));
+if (out.medidas) console.log("medidas:", JSON.stringify(out.medidas));
 if (out.errors.length) {
   console.log("\nERROS DE JS NO CONSOLE:");
   for (const e of out.errors) console.log("  · " + e);

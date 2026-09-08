@@ -264,6 +264,34 @@ gravações licenciado **apenas para uso não comercial**. O Loro não distribui
 você o baixa e decide se pode usá-lo no seu caso. O aviso fica na tela sempre que
 a voz clonada está escolhida.
 
+## Ouvir um documento (leitura em voz alta)
+
+Qualquer markdown pode ser **lido em voz alta** — um conhecimento, uma nota,
+uma análise, o caderno de uma reunião. O controle **ouvir** fica na moldura do
+documento, ao lado de *visualizar / editar*, e funciona nos dois modos: ouvir é
+leitura, não edição.
+
+- **Com texto selecionado**, lê só a seleção — reler um parágrafo é o caso comum.
+  Sem seleção, lê o documento inteiro.
+- **Um clique** começa; o mesmo botão **pausa** e **retoma**. O quadrado ao lado
+  **para**. A pausa é de verdade: retoma exatamente de onde parou, não do começo.
+- **Sem tocar no mouse**, pela paleta (`Cmd/Ctrl+K`): *Ler em voz alta*,
+  *Pausar/retomar a leitura*, *Parar a leitura*.
+
+A marcação não é falada. Títulos viram frases, links são lidos pelo **texto** (não
+pela URL), blocos de código são **anunciados e pulados**, tabelas viram valores
+separados por vírgula, e o front matter é ignorado.
+
+A voz segue o idioma que você escolheu para transcrever — em português, a
+Luciana; em inglês, a Samantha. Vozes muito melhores que as instaladas saem de
+graça em *Ajustes do Sistema → Acessibilidade → Conteúdo Falado → Gerenciar
+Vozes*.
+
+Fechar a janela do Loro **para a leitura**: a janela some para a bandeja, e uma
+voz lendo um documento que você não vê mais não faria sentido.
+
+Por enquanto existe só no **macOS** — é o `say` do sistema que fala.
+
 ## Ideias (o mundo sem histórico de versões)
 
 - **Escrever uma nota** (na tela Início) abre um markdown **em branco** na hora:
