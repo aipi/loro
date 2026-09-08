@@ -3710,9 +3710,8 @@ Telemetria bruta do veículo.
     // it never decides, and it never edits. A functional mailbox is a role.
     #[test]
     fn the_pii_scan_finds_a_person_and_leaves_a_role_alone() {
-        let achados = scan_pii(
-            "o dono é ana.souza@exemplo.com.br e o autor carlos.pereira abriu o card",
-        );
+        let achados =
+            scan_pii("o dono é ana.souza@exemplo.com.br e o autor carlos.pereira abriu o card");
         assert!(achados
             .iter()
             .any(|(k, v)| k == "email" && v.contains("ana.souza")));
@@ -3725,7 +3724,11 @@ Telemetria bruta do veículo.
         assert!(papel.is_empty(), "uma caixa de papel não é PII: {papel:?}");
 
         // nome de arquivo e domínio não são handle de pessoa
-        for texto in ["veja context.md", "roda em exemplo.com", "o campo mode.type"] {
+        for texto in [
+            "veja context.md",
+            "roda em exemplo.com",
+            "o campo mode.type",
+        ] {
             let h = scan_pii(texto);
             assert!(
                 h.iter().all(|(k, _)| k != "handle") || texto.contains("mode.type"),

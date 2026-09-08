@@ -370,7 +370,7 @@ to the one operation that would otherwise delete a colleague's edits.
 
 - A catálogo is `.claude-plugin/marketplace.json` in a git repository. Loro clones with
   the **ambient credential** (BR-9), so a private repository is a team's internal
-  catálogo — the Exemplo case — with nothing new to authenticate.
+  catálogo — the case that motivated this — with nothing new to authenticate.
 - Sources supported, by round: a local directory (R1), then `owner/repo` and a git URL
   with `ref`/`sha` (R3). `npm`, `archive`, `command` and `url` are **not** supported:
   three of them fetch code and the fourth cannot resolve relative plugin paths. An
