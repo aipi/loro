@@ -505,6 +505,14 @@ mod tests {
     // contra 7 MB (medido, ADR-0036 §1).
     #[test]
     fn the_engine_download_is_the_shared_build_not_the_static_one() {
+        // Numa plataforma SEM artefato (ENGINE vazio) não há URL a checar — e o
+        // que importa ali é que nada seja oferecido, o que `voice_install_status`
+        // já garante por `supported: false`. Assumir plataforma suportada fazia
+        // o teste falhar por motivo falso (achado pelo `make lint-offmac`).
+        if ENGINE.0.is_empty() {
+            assert!(!voice_install_status().unwrap().supported);
+            return;
+        }
         assert!(engine_url().contains("shared"), "{}", engine_url());
         assert!(!engine_url().contains("static"), "{}", engine_url());
     }

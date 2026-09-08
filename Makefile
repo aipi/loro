@@ -60,22 +60,47 @@ lint: ## Lint: clippy (deny warnings) + rustfmt --check + node --check on the JS
 	@for f in $(JS_SRC); do echo "node --check $$f"; node --check $$f; done
 
 # Checa a metade não-macOS do código: copia a árvore, troca o cfg do macOS por um
-# alvo que não existe e roda o clippy. É a reprodução mais próxima possível sem
-# um toolchain cruzado, e pega a classe de defeito que só aparecia no CI.
-lint-offmac: ## Clippy with the macOS path switched off (catches non-macOS dead code)
-	@t=$$(mktemp -d) && mkdir -p "$$t/src-tauri" \
-	  && cp desktop/src-tauri/Cargo.toml desktop/src-tauri/Cargo.lock desktop/src-tauri/build.rs "$$t/src-tauri/" 2>/dev/null ; \
-	  cp -R desktop/src-tauri/src desktop/src-tauri/icons desktop/src-tauri/capabilities "$$t/src-tauri/" 2>/dev/null ; \
-	  cp desktop/src-tauri/tauri.conf.json "$$t/src-tauri/" 2>/dev/null ; \
-	  sed -i.bak 's/target_os = "macos"/target_os = "loro-offmac"/g' "$$t"/src-tauri/src/*.rs ; \
-	  rm -f "$$t"/src-tauri/src/*.bak ; \
-	  out=$$(cd "$$t/src-tauri" && cargo clippy \
-	    --target-dir $(CURDIR)/desktop/src-tauri/target/offmac -- -D warnings -A unexpected_cfgs 2>&1) ; \
-	  rm -rf "$$t" ; \
-	  if echo "$$out" | grep -qE '^error: (constant|function|struct|enum|fields|variant|method|type)' ; then \
-	    echo "$$out" | grep -E '^error: (constant|function|struct|enum|fields|variant|method|type)' ; \
-	    echo "^^ codigo morto fora do macOS — o CI de ubuntu/windows reprova isso"; exit 1 ; \
-	  fi
+# alvo que não existe, e roda o clippy E OS TESTES. É a reprodução mais próxima
+# possível sem um toolchain cruzado, e pega duas classes que só apareciam no CI:
+#
+#  1. código morto — 17 itens de `interpreter.rs` ficam sem chamador fora do
+#     macOS, e `-D warnings` os reprova (a PR #99 quebrou por isso);
+#  2. teste cego de plataforma — a PR #102 quebrou nos dois CIs por um `unwrap()`
+#     num comando que RECUSA fora do macOS.
+#
+# DUAS LIÇÕES da primeira versão deste alvo, que era pior que não existir:
+#  - copiar uma LISTA de arquivos deixava o `templates/` de fora, e o código o
+#    embute por `include_str!`: 50 erros de compilação, nenhum deles de
+#    plataforma. Copia-se a árvore inteira, menos o `target/`.
+#  - filtrar a saída por padrões de erro fazia o alvo PASSAR quando nada
+#    compilava. Vale o código de saída; a filtragem é só para mostrar o que
+#    importa.
+#  - e o `desktop/src` entra na cópia porque `tauri.conf.json` tem
+#    `frontendDist: "../src"`, um caminho que aponta para FORA de `src-tauri`:
+#    sem ele o `generate_context!` estoura antes de qualquer análise. O `loro.sh`
+#    entra pela mesma razão: um teste do catálogo de modelos lê
+#    `CARGO_MANIFEST_DIR/../../loro.sh` para garantir que os SHA-256 não divergem —
+#    e é por isso que a cópia espelha `desktop/src-tauri/`, e não `src-tauri/` na
+#    raiz: os caminhos relativos do código contam a partir dessa profundidade.
+lint-offmac: ## Clippy AND tests with the macOS path off (catches non-macOS dead code and platform-blind tests)
+	@t=$$(mktemp -d) && mkdir -p "$$t/desktop" \
+	  && rsync -a --exclude target/ desktop/src-tauri/ "$$t/desktop/src-tauri/" \
+	  && rsync -a desktop/src/ "$$t/desktop/src/" \
+	  && cp loro.sh "$$t/loro.sh" \
+	  && sed -i.bak 's/target_os = "macos"/target_os = "loro-offmac"/g' "$$t"/desktop/src-tauri/src/*.rs \
+	  && rm -f "$$t"/desktop/src-tauri/src/*.bak \
+	  && cd "$$t/desktop/src-tauri" \
+	  && { out=$$(cargo clippy --target-dir $(CURDIR)/desktop/src-tauri/target/offmac \
+	        -- -D warnings -A unexpected_cfgs 2>&1) ; rc=$$? ; \
+	       if [ $$rc -ne 0 ] ; then echo "$$out" | grep -E "^error" | head -12 ; \
+	         echo "^^ clippy reprova fora do macOS — e o CI de ubuntu/windows tambem"; \
+	         cd - >/dev/null; rm -rf "$$t"; exit 1 ; fi ; \
+	       out=$$(cargo test --target-dir $(CURDIR)/desktop/src-tauri/target/offmac 2>&1) ; rc=$$? ; \
+	       if [ $$rc -ne 0 ] ; then \
+	         echo "$$out" | grep -E "^error|FAILED|panicked at" | head -12 ; \
+	         echo "^^ teste reprova fora do macOS — e o CI de ubuntu/windows tambem"; \
+	         cd - >/dev/null; rm -rf "$$t"; exit 1 ; fi ; } \
+	  && cd - >/dev/null && rm -rf "$$t" && echo "offmac ok"
 
 fmt: ## Format the Rust code (cargo fmt)
 	cargo fmt --manifest-path desktop/src-tauri/Cargo.toml

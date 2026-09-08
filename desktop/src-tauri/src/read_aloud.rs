@@ -19,6 +19,17 @@
 // parou; o que prova que a PAUSA existe é o áudio, e é por isso que a medida foi
 // feita gravando a saída em vez de olhar o `ps`.
 
+// FORA DO macOS este módulo não tem implementação: quem fala é o `say`, que é do
+// macOS. As metades PURAS — o parser de vozes, a escolha da voz preferida, a
+// montagem de argumentos — continuam compiladas porque são elas que uma
+// implementação de Windows/Linux vai reusar, e porque os testes as exercitam em
+// todo alvo. Sem chamador, o clippy as vê como mortas: 10 erros, achados pelo
+// `make lint-offmac` antes de chegarem ao CI (a mesma classe que derrubou a
+// PR #99 em `interpreter.rs`).
+//
+// Escopado a não-macOS de propósito: no macOS, código morto continua sendo erro.
+#![cfg_attr(not(target_os = "macos"), allow(dead_code))]
+
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -508,13 +519,26 @@ mod tests {
     // responder com o estado real é melhor que estourar.
     #[test]
     fn pausing_with_nothing_playing_answers_the_real_state() {
-        let s = read_aloud_stop().unwrap();
-        assert!(!s.speaking);
+        // Fora do macOS parar/pausar RECUSAM por design (`say` é do macOS), então
+        // o `unwrap` estourava nos CIs de ubuntu e windows enquanto o de macOS
+        // passava. O que o teste garante é a mesma promessa nos dois mundos:
+        // apertar a tecla fora de hora não estoura — devolve o estado real onde
+        // existe, e um erro NOMEADO onde não existe.
         #[cfg(target_os = "macos")]
         {
+            let s = read_aloud_stop().unwrap();
+            assert!(!s.speaking);
             let p = read_aloud_pause().unwrap();
             assert!(!p.speaking);
             assert!(!p.paused);
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            assert_eq!(read_aloud_stop().unwrap_err(), "err.read_aloud_unsupported");
+            assert_eq!(
+                read_aloud_pause().unwrap_err(),
+                "err.read_aloud_unsupported"
+            );
         }
     }
 }
