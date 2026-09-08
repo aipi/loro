@@ -205,6 +205,66 @@ palette: `Cmd/Ctrl+K` → "Loro tour".
 - Audio is **transient**: used to transcribe, then discarded. The privacy
   indicator in the bar shows the state ("not recording" / "records audio").
 
+## Interpreter mode (your voice goes out in English)
+
+Makes your speech come out as an **English voice** through an output device you
+choose. If that device is a virtual driver (BlackHole on macOS) and you select
+it as your **microphone** in Zoom, Meet or Teams, the other person hears
+English. It works in any call app, and runs entirely on your computer.
+
+It lives in **Settings → Transcription → Interpreter mode**, and ships **off**:
+a translated voice in a real meeting is not something anyone should discover by
+accident.
+
+Three things to know before turning it on:
+
+- **It is consecutive, not simultaneous.** You speak, you pause, and the
+  sentence comes out in English. The cut is on silence, not on a clock — the
+  translator needs a finished thought, and half a sentence makes a bad
+  translation. On the listener's side there are a few seconds of silence before
+  each sentence.
+- **The voice is synthetic, not yours.** The translation is new text, read by a
+  system voice. Your timbre, intonation and emphasis do not carry over. Pick the
+  voice under *voice* and use **hear this voice** to decide by ear. Much better
+  voices than the installed ones are free under *System Settings →
+  Accessibility → Spoken Content → System Voice → Manage Voices* (the *Enhanced*
+  and *Premium* variants).
+- **English only, and not on every model.** The engine is the same one that
+  transcribes, and it translates only *into* English. The **large-v3-turbo**
+  model (the default) **does not translate** — it silently returns the source
+  language — so the mode refuses to start on it and asks for **small**.
+
+While it is on, the screen says what is happening: *listening*, or how many
+sentences are *waiting to speak*. That number climbing means you are speaking
+faster than the voice delivers — the delay will pile up until you take a longer
+pause.
+
+To try it with no meeting at all, choose your **speakers** as the output: you
+hear exactly what the other person would hear. In a real meeting, switch to the
+virtual driver — otherwise the voice plays out loud and comes back in through
+your microphone.
+
+### My own voice instead of a synthetic one
+
+The mode can speak **in your own voice** instead of a system voice. Under *voice
+engine* pick **my own voice**; the system voice stays the default because it is
+faster (~0.6s per sentence against ~1.4s).
+
+For that the app needs three pieces that **do not ship with it**: the voice
+engine, the model and the vocoder — about 180 MB in total. You download them
+under *Settings → Transcription → **Models***, in the same list as the
+transcription models, each with its own size and its own button. Everything
+lands in `~/.loro`, verified by SHA-256, and runs on your computer.
+
+You also need to have read the phrases under *Your own voice* (above): your
+recording is what the model uses as its reference. Without it the mode says the
+recording is missing instead of inventing a voice.
+
+One thing to know before deciding: the cloned-voice model is trained on a corpus
+licensed for **non-commercial use only**. Loro does not distribute that model —
+you download it and decide whether you may use it in your case. The notice stays
+on screen whenever the cloned voice is selected.
+
 ## Ideas (the world with no version history)
 
 - **Write a note** (on the Home screen) opens a **blank** markdown right away:

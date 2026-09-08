@@ -11,9 +11,9 @@
 export PATH := $(HOME)/.cargo/bin:$(PATH)
 
 # Vanilla JS frontend files that must at least parse (node --check).
-JS_SRC := desktop/src/app.js desktop/src/shell.js desktop/src/overlay.js desktop/src/text.js desktop/src/audio.js desktop/src/mdedit.js desktop/src/review.js desktop/src/workspace.js desktop/src/loops.js desktop/src/update.js
+JS_SRC := desktop/src/app.js desktop/src/shell.js desktop/src/overlay.js desktop/src/text.js desktop/src/audio.js desktop/src/interpreter.js desktop/src/interp-worklet.js desktop/src/mdedit.js desktop/src/review.js desktop/src/workspace.js desktop/src/loops.js desktop/src/update.js
 
-.PHONY: help test test-rust test-js test-cli test-layout test-ui lint fmt build app test-docker syscap vendor-cm6 require-rust release
+.PHONY: help test test-rust test-js test-cli test-layout test-ui lint lint-offmac fmt build app test-docker syscap vendor-cm6 require-rust release
 
 help: ## Show this help menu
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -48,8 +48,34 @@ test-ui: ## Smoke the real UI in headless Chrome (needs Chrome)
 
 lint: ## Lint: clippy (deny warnings) + rustfmt --check + node --check on the JS sources
 	cargo clippy --manifest-path desktop/src-tauri/Cargo.toml -- -D warnings
+	@# O clippy acima só vê o HOST, e é por isso que a PR #99 passou aqui e
+	@# quebrou nos CIs de ubuntu e windows: 17 itens de `interpreter.rs` ficam sem
+	@# chamador fora do macOS (o caminho de fala é macOS-only, ADR-0036 §6.5) e
+	@# `-D warnings` os reprova como código morto. As dependências GTK do Tauri
+	@# não compilam cruzado a partir do macOS, então checar o alvo de verdade não
+	@# é opção — o que dá é DESLIGAR o cfg do macOS e checar o host, que reproduz
+	@# exatamente a condição de "sem chamador" que quebrou.
+	@$(MAKE) --no-print-directory lint-offmac
 	cargo fmt --manifest-path desktop/src-tauri/Cargo.toml --check
 	@for f in $(JS_SRC); do echo "node --check $$f"; node --check $$f; done
+
+# Checa a metade não-macOS do código: copia a árvore, troca o cfg do macOS por um
+# alvo que não existe e roda o clippy. É a reprodução mais próxima possível sem
+# um toolchain cruzado, e pega a classe de defeito que só aparecia no CI.
+lint-offmac: ## Clippy with the macOS path switched off (catches non-macOS dead code)
+	@t=$$(mktemp -d) && mkdir -p "$$t/src-tauri" \
+	  && cp desktop/src-tauri/Cargo.toml desktop/src-tauri/Cargo.lock desktop/src-tauri/build.rs "$$t/src-tauri/" 2>/dev/null ; \
+	  cp -R desktop/src-tauri/src desktop/src-tauri/icons desktop/src-tauri/capabilities "$$t/src-tauri/" 2>/dev/null ; \
+	  cp desktop/src-tauri/tauri.conf.json "$$t/src-tauri/" 2>/dev/null ; \
+	  sed -i.bak 's/target_os = "macos"/target_os = "loro-offmac"/g' "$$t"/src-tauri/src/*.rs ; \
+	  rm -f "$$t"/src-tauri/src/*.bak ; \
+	  out=$$(cd "$$t/src-tauri" && cargo clippy \
+	    --target-dir $(CURDIR)/desktop/src-tauri/target/offmac -- -D warnings -A unexpected_cfgs 2>&1) ; \
+	  rm -rf "$$t" ; \
+	  if echo "$$out" | grep -qE '^error: (constant|function|struct|enum|fields|variant|method|type)' ; then \
+	    echo "$$out" | grep -E '^error: (constant|function|struct|enum|fields|variant|method|type)' ; \
+	    echo "^^ codigo morto fora do macOS — o CI de ubuntu/windows reprova isso"; exit 1 ; \
+	  fi
 
 fmt: ## Format the Rust code (cargo fmt)
 	cargo fmt --manifest-path desktop/src-tauri/Cargo.toml

@@ -161,6 +161,41 @@ const ANSWERS = {
     { id: "silero-v5.1.2", label: "Detector de fala (VAD)", sizeBytes: 885098, installed: false, default: false },
   ],
   list_capture_devices: [],
+  // ADR-0035 — o modo intérprete. Com o driver virtual presente, para que o
+  // passo possa exigir que ele seja o PADRÃO escolhido.
+  interpreter_audio_setup: { state: "installed_not_loaded", command: "sudo killall coreaudiod" },
+  // ADR-0036 — o motor neural com o modelo e a amostra AUSENTES: o passo exige
+  // que a tela diga QUAL peça falta, não um "indisponível" mudo.
+  interpreter_neural_status: { binary: false, model: false, missing: ["encoder.int8.onnx"], sample: false },
+  // ADR-0036 §5 — instalação limpa: nada instalado. O passo exige que a tela
+  // diga QUANTO vai baixar antes de começar.
+  voice_install_status: {
+    supported: true, ready: false, remainingBytes: 183_582_333,
+    parts: [
+      { id: "engine", label: "motor de voz (sherpa-onnx)", url: "https://x", sha256: "a", size: 20262139, installed: true },
+      { id: "model", label: "modelo de voz (ZipVoice)", url: "https://x", sha256: "b", size: 109162785, installed: false },
+      { id: "vocoder", label: "vocoder", url: "https://x", sha256: "c", size: 54157409, installed: false },
+    ],
+  },
+  // ADR-0036 §3 — a amostra da voz: duas frases lidas, uma faltando. O passo
+  // exige que a tela mostre as TRÊS e NÃO diga que está pronto.
+  voice_sample_status: {
+    phrases: [
+      { index: 0, text: "O rápido cão marrom pulou sobre a cerca do jardim.", recorded: true, durationMs: 3200 },
+      { index: 1, text: "Hoje a reunião começa às três e meia da tarde.", recorded: true, durationMs: 2900 },
+      { index: 2, text: "Cinquenta e sete pessoas assinaram o documento em janeiro.", recorded: false, durationMs: 0 },
+    ],
+    totalMs: 6100, enough: false, minTotalMs: 8000,
+  },
+  interpreter_devices: [
+    { id: "74", name: "Alto-falantes (MacBook Pro)" },
+    { id: "86", name: "BlackHole 2ch" },
+  ],
+  interpreter_voices: [
+    { name: "Albert", locale: "en_US" },
+    { name: "Samantha", locale: "en_US" },
+    { name: "Daniel", locale: "en_GB" },
+  ],
   default_save_dir: "/tmp/acervo/inbox",
   term_status: { open: false, agentRunning: false, justLaunched: false },
   term_agent: "claude",
@@ -869,6 +904,165 @@ const DRIVER = `
     if (!turbo || !/instalado/i.test(turbo.textContent))
       throw new Error("a lista de modelos regrediu: " + mm.textContent.trim());
   });
+  // ADR-0035 — o intérprete é FUNÇÃO PRÓPRIA: botão próprio no topo, nasce
+  // DESLIGADO (uma voz traduzida numa reunião real não pode ser descoberta por
+  // acidente) e independente do ●.
+  await step("botao-interprete", async () => {
+    const b = q("#interpBtn");
+    if (!b) throw new Error("o botão do intérprete não está no topo");
+    if (b.getAttribute("aria-pressed") !== "false")
+      throw new Error("o intérprete nasceu LIGADO — tem de ser deliberado, nunca padrão");
+    // R4: o rótulo nomeia a ação de AGORA, não uma ação fixa
+    if (!/int[ée]rprete|interpreter/i.test(q("#interpLabel").textContent))
+      throw new Error("o botão não se nomeia: " + q("#interpLabel").textContent);
+    if (!b.title) throw new Error("o botão não tem nome acessível");
+    // Ícone de verdade, não emoji: o emoji muda de desenho por plataforma, não
+    // herda currentColor e destoa dos outros controles do topo.
+    const svg = b.querySelector("svg.ic");
+    if (!svg) throw new Error("o botão não usa o SVG .ic do app");
+    // Sem regex: o driver vive dentro de um template literal e o escape de
+    // \p{...} se perde no caminho. Ponto de código basta — acentos ficam bem
+    // abaixo de 0x2100, qualquer pictograma fica acima.
+    if ([...b.textContent].some((c) => c.codePointAt(0) > 0x2100))
+      throw new Error("voltou emoji para o botão: " + b.textContent.trim());
+    const r = svg.getBoundingClientRect();
+    if (r.width < 10 || r.height < 10)
+      throw new Error("o ícone mede " + Math.round(r.width) + "x" + Math.round(r.height) + "px");
+    // e o ● não pode mexer nele: são funções separadas
+    await window.stopSession();
+    await new Promise((r) => setTimeout(r, 100));
+    if (!q("#interpBtn")) throw new Error("o botão sumiu ao parar a gravação");
+  });
+
+  // ADR-0036 §5 — as peças da voz clonada se baixam no MESMO gerenciador que os
+  // modelos: mesma natureza (algo grande, uma vez, em ~/.loro), mesma superfície.
+  await step("pecas-da-voz-no-gerenciador-de-modelos", async () => {
+    window.showCfgSection("mod");
+    await new Promise((r) => setTimeout(r, 300));
+    const mm = q("#modelManager");
+    if (!mm) throw new Error("o gerenciador de modelos nao esta na tela");
+    const txt = mm.textContent;
+    for (const w of ["sherpa", "ZipVoice", "vocoder"]) {
+      if (txt.indexOf(w) < 0)
+        throw new Error("a peca " + w + " nao esta no gerenciador: " + txt.trim().slice(0, 160));
+    }
+    // Cada peca que falta tem o seu proprio botao com o proprio tamanho: elas
+    // faltam separadamente, e um botao unico esconderia qual falta.
+    const dl = [...mm.querySelectorAll("[data-dl]")].map((b) => b.getAttribute("data-dl"));
+    if (dl.indexOf("voice:model") < 0)
+      throw new Error("o modelo de voz nao tem botao proprio: " + JSON.stringify(dl));
+    if (dl.indexOf("voice:vocoder") < 0)
+      throw new Error("o vocoder nao tem botao proprio: " + JSON.stringify(dl));
+    // A peca ja instalada NAO oferece download de novo.
+    if (dl.indexOf("voice:engine") >= 0)
+      throw new Error("ofereceu baixar de novo uma peca ja instalada");
+    // e o modelo recomendado do whisper continua no topo: as pecas entraram sem
+    // desarrumar a lista que ja existia.
+    const first = mm.querySelector(".modelrow");
+    if (!first || first.getAttribute("data-model") !== "large-v3-turbo")
+      throw new Error("as pecas da voz empurraram o modelo recomendado do topo");
+  });
+
+  // ADR-0035 — os ajustes ficam nas Configurações, e vêm PREENCHIDOS.
+  await step("cfg-modo-interprete", async () => {
+    window.showCfgSection("mod");
+    await new Promise((r) => setTimeout(r, 250));
+    for (const id of ["#interpDevice", "#interpVoice", "#interpPreview"]) {
+      if (!q(id)) throw new Error("falta o controle " + id);
+    }
+    // A promessa tem de estar escrita: quem liga isso precisa saber que a outra
+    // pessoa ouve uma voz sintética, com atraso — não a dele, e não simultâneo.
+    const card = q("#interpDevice").closest(".cfgcard");
+    const txt = card ? card.textContent : "";
+    if (!/consecutiva/i.test(txt))
+      throw new Error("a tela não avisa que a tradução é consecutiva: " + txt.trim());
+    if (!/sint[ée]tica/i.test(txt))
+      throw new Error("a tela não avisa que a voz é sintética: " + txt.trim());
+    const w = q("#interpVoice").getBoundingClientRect().width;
+    if (w < 80) throw new Error("o seletor de voz mede " + Math.round(w) + "px — não cabe um nome");
+    // REGRESSÃO (2026-09-06): a guarda de carga lia TAURI.invoke, que não existe
+    // (o app expõe TAURI.core.invoke), então os dois seletores nasciam VAZIOS e
+    // não havia como usar o modo. Um seletor vazio é bloqueio, não pergunta.
+    const dev = q("#interpDevice");
+    const voice = q("#interpVoice");
+    if (!dev.options.length) throw new Error("o seletor de saída nasceu VAZIO");
+    if (!voice.options.length) throw new Error("o seletor de voz nasceu VAZIO");
+    if (dev.value !== "BlackHole 2ch")
+      throw new Error("o driver virtual devia ser o padrão, veio: " + JSON.stringify(dev.value));
+    if (voice.value !== "Samantha")
+      throw new Error("a voz padrão devia ser Samantha, veio: " + JSON.stringify(voice.value));
+    // ADR-0036 §4 — o motor é ESCOLHA, o padrão é o rápido, e o custo de cada um
+    // está na tela: uma troca 2,3x mais lenta não pode ser silenciosa.
+    const eng = q("#interpEngine");
+    if (!eng) throw new Error("não há como escolher o motor da voz");
+    if (eng.value !== "system")
+      throw new Error("o motor padrão devia ser o rápido, veio: " + eng.value);
+    if (!/0[.,]6/.test(q("#interpEngineNote").textContent))
+      throw new Error("a tela não diz o custo do motor: " + q("#interpEngineNote").textContent);
+    // e ao escolher a voz clonada sem as peças, ela NOMEIA o que falta
+    eng.value = "neural";
+    eng.dispatchEvent(new Event("change"));
+    await new Promise((r) => setTimeout(r, 200));
+    const note = q("#interpEngineNote").textContent;
+    if (!/falta|missing/i.test(note))
+      throw new Error("não disse o que falta para a voz clonada: " + note);
+    if (!/sherpa|modelo|grava/i.test(note))
+      throw new Error("não nomeou as peças que faltam: " + note);
+    // o seletor de voz do sistema nao faz sentido na voz clonada: ela e a SUA
+    if (!q("#interpVoiceField").hidden)
+      throw new Error("o seletor de voz do sistema ficou visível na voz clonada");
+    // A licença NAO comercial tem de estar visivel sempre que a voz clonada
+    // esta escolhida — nao so na hora do download. Um aviso que aparece uma vez
+    // e um aviso que ninguem leu.
+    const lic = q("#interpEngineLicense");
+    if (!lic || lic.hidden)
+      throw new Error("a licenca do modelo nao aparece na voz clonada");
+    if (!/comercial|commercial/i.test(lic.textContent))
+      throw new Error("a licenca nao diz o que restringe: " + lic.textContent);
+    eng.value = "system";
+    eng.dispatchEvent(new Event("change"));
+    await new Promise((r) => setTimeout(r, 100));
+    // e desaparece na voz do sistema, que nao usa aquele modelo
+    if (!q("#interpEngineLicense").hidden)
+      throw new Error("a licenca do modelo clonado vazou para a voz do sistema");
+    // ADR-0035 §6.2 — "instalado" e "carregado" são estados DIFERENTES. Este é o
+    // do meio, o que travou o dono em 2026-09-06: o driver no disco e o CoreAudio
+    // sem listá-lo. A tela tem de nomear o passo e entregar o comando.
+    const setup = q("#interpSetup");
+    if (!setup || setup.hidden) throw new Error("o cartão de preparo não apareceu");
+    if (!/carreg/i.test(q("#interpSetupMsg").textContent))
+      throw new Error("o cartão não nomeia o estado: " + q("#interpSetupMsg").textContent);
+    if (!/coreaudiod/.test(q("#interpSetupCmd").textContent))
+      throw new Error("o comando do passo não está na tela: " + q("#interpSetupCmd").textContent);
+  });
+
+  // ADR-0036 §3 — a gravação da própria voz existe na tela, mostra as frases
+  // FIXAS (elas são o reference_text do modelo) e não se declara pronta com a
+  // amostra incompleta.
+  await step("gravar-a-minha-voz", async () => {
+    window.showCfgSection("mod");
+    await new Promise((r) => setTimeout(r, 250));
+    const list = q("#voiceSampleList");
+    if (!list) throw new Error("a gravação da voz não está nas Configurações");
+    const btns = list.querySelectorAll("[data-vs]");
+    if (btns.length !== 3)
+      throw new Error("esperava 3 frases para ler, achei " + btns.length);
+    // As frases têm de estar VISÍVEIS: quem lê precisa saber o que ler, e o
+    // texto é o dado que ancora a voz clonada.
+    if (!/rápido cão marrom/.test(list.textContent))
+      throw new Error("as frases não estão na tela: " + list.textContent.trim().slice(0, 80));
+    // Com 6,1s de 8s exigidos, NÃO pode dizer que está pronto.
+    const prog = q("#voiceSampleProgress").textContent;
+    if (/completa/i.test(prog))
+      throw new Error("declarou completa com a amostra incompleta: " + prog);
+    // Sem regex com barra: o driver vive num template literal e o escape se
+    // perde no caminho (mesma armadilha do \p{...} no passo do ícone).
+    if (prog.indexOf("2/3") < 0)
+      throw new Error("o progresso não diz quantas frases faltam: " + prog);
+    // e apagar a própria voz é operação de primeira classe, não pasta escondida
+    if (!q("#voiceSampleClear")) throw new Error("não há como apagar a gravação");
+  });
+
   // ADR-0022 §24b — o interruptor do microfone nas reuniões existe, nasce LIGADO e o
   // empurrão do eco escreve nele. O que resolve o eco é uma escolha da pessoa, e ela tem
   // de aparecer no controle (senão a tela e o ajuste discordam).

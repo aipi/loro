@@ -50,7 +50,22 @@ use acervo::*;
 mod loops;
 mod meeting;
 mod plugins;
+// ADR-0035 — modo intérprete. Módulo próprio porque a preocupação é outra:
+// não é transcrever uma reunião, é devolver a fala como voz em outro idioma
+// por um dispositivo de saída escolhido.
+mod interpreter;
+// ADR-0036 §3 — a amostra da voz do usuário para clonagem. Concern próprio:
+// frases fixas (o modelo precisa do TEXTO da referência), dado de usuário,
+// e a regra do "suficiente" que destrava a voz clonada.
+mod voice_sample;
+// ADR-0036 §5 — a instalação do motor de voz clonada numa máquina que não tem
+// nada. Concern próprio: três peças que faltam separadamente, cada uma com
+// URL, tamanho e SHA-256 fixados, baixadas pelo usuário e nunca embarcadas.
+mod voice_install;
+use interpreter::*;
 use meeting::*;
+use voice_install::*;
+use voice_sample::*;
 mod models;
 // ADR-0032 — o aviso de versão nova. Módulo próprio: a checagem é uma
 // política (intervalo, chave, rota de instalação), não uma linha de wiring.
@@ -4950,6 +4965,17 @@ pub fn run() {
             default_acervo_dir,
             auto_save,
             list_capture_devices,
+            interpreter_audio_setup,
+            interpreter_neural_status,
+            voice_sample_status,
+            voice_sample_save,
+            voice_sample_clear,
+            voice_install_status,
+            voice_install_part,
+            interpreter_devices,
+            interpreter_voices,
+            interpreter_translate,
+            interpreter_speak,
             ui_get_lang,
             app_version,
             update_check,
