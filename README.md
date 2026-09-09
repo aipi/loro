@@ -42,6 +42,11 @@ people and AI agents can use as context.
   sentence comes out — and the voice is synthetic, not yours. Off by default,
   translation into English only, and like everything here it runs on-device
   (ADR-0035).
+- **Listen to any document** — read-aloud for accessibility: markdown is turned
+  into speakable prose first (links read by their text, code blocks announced and
+  skipped, tables read as values) and spoken on your default output device, with
+  a real pause that resumes where it stopped. From the document chrome or entirely
+  by keyboard, through the command palette. macOS for now (ADR-0037).
 - **Knowledge, not piles of transcripts** — an agent loop distills meetings,
   notes, and attached files into one `context.md` source of truth per topic,
   versioned in Git and evolved by pull request — with Git hidden behind two
