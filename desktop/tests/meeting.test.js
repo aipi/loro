@@ -509,7 +509,14 @@ test("o portão libera quando não vem mais janela (pausar/encerrar)", async () 
   // retomar reabre o portão
   g.reopen();
   let liberou = false;
-  g.wait(60000, 99999).then(() => { liberou = true; });
+  // O prazo é INJETADO e nunca dispara: esta espera fica pendente de propósito
+  // (é o que o assert abaixo verifica), e sem a injeção ela criava um setTimeout
+  // REAL de 99.999 ms que ninguém limpava — o `finish` nunca roda numa espera
+  // que não resolve. MEDIDO 2026-09-08: era isto que fazia `meeting.test.js`
+  // levar 100,1s para SAIR com 54 testes passando em microssegundos, e 100
+  // segundos em cada execução de CI nos três sistemas.
+  const nunca = () => {};
+  g.wait(60000, 99999, nunca).then(() => { liberou = true; });
   await Promise.resolve();
   assert.strictEqual(liberou, false);
 });

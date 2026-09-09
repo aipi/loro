@@ -406,6 +406,13 @@ body {
   color: var(--muted); padding: 1px 0;
 }
 .mini:hover { color: var(--accent); }
+/* Um .mini que carrega SVG (.ic) e rótulo precisa de contexto FLEX: a convenção
+   do .mini é glifo dentro do texto, e sem flex o SVG e o rótulo não se alinham —
+   medido em 2026-09-08 como display:block, e é o que fazia o botão de ouvir
+   parecer quebrado. O .footrow e a paleta, que já usam .ic, são flex pelo mesmo
+   motivo. */
+.mini.withic { display: inline-flex; align-items: center; gap: 4px; }
+.mini.withic .ic { width: 12px; height: 12px; }
 .mini.rm:hover { color: var(--red); }
 .card .pill {
   font-family: var(--mono); font-size: 10px; flex: none;

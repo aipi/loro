@@ -62,8 +62,14 @@ mod voice_sample;
 // nada. Concern próprio: três peças que faltam separadamente, cada uma com
 // URL, tamanho e SHA-256 fixados, baixadas pelo usuário e nunca embarcadas.
 mod voice_install;
+// ADR-0037 — leitura em voz alta, para acessibilidade. Concern próprio: dita o
+// documento aberto pelo `say` no dispositivo PADRÃO (o fone da pessoa), com
+// pausa de verdade por sinal — e não força dispositivo, ao contrário do
+// intérprete.
+mod read_aloud;
 use interpreter::*;
 use meeting::*;
+use read_aloud::*;
 use voice_install::*;
 use voice_sample::*;
 mod models;
@@ -4940,6 +4946,11 @@ pub fn run() {
         // closing the window does NOT quit: hide and keep running in the background
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
+                // ADR-0037 — fechar a janela SÓ A ESCONDE (o app segue na
+                // bandeja), e sem cortar a leitura a voz continuava lendo um
+                // documento que a pessoa não vê mais. Relatado pelo dono em
+                // 2026-09-08: "fechei a aplicação e o audio manteve".
+                read_aloud::stop_reading();
                 api.prevent_close();
                 let _ = window.hide();
             }
@@ -4972,6 +4983,11 @@ pub fn run() {
             voice_sample_clear,
             voice_install_status,
             voice_install_part,
+            read_aloud_voices,
+            read_aloud_start,
+            read_aloud_pause,
+            read_aloud_stop,
+            read_aloud_state,
             interpreter_devices,
             interpreter_voices,
             interpreter_translate,
@@ -5123,6 +5139,14 @@ pub fn run() {
         .expect("failed to start the Loro app");
 
     app.run(|app_handle, event| {
+        // E ao sair de verdade: um `say` filho sobrevive ao pai, então sem isto
+        // a voz seguiria falando depois de o app não existir mais.
+        if matches!(
+            event,
+            tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
+        ) {
+            read_aloud::stop_reading();
+        }
         // clicking the Dock icon reopens the window (macOS)
         #[cfg(target_os = "macos")]
         if let tauri::RunEvent::Reopen { .. } = event {

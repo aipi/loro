@@ -537,6 +537,22 @@
                     <button id="bMoveDoc" class="mini act" title="mover para outro tema ou projeto" data-i18n data-i18n-attrs="title">⇢ mover</button>
                     <button id="bDelDoc" class="mini act danger" title="apagar" data-i18n data-i18n-attrs="title">apagar</button>
                   </span>
+                  <!-- ADR-0037 · ouvir o documento é atividade de LEITURA, não de
+                       edição: o controle mora na moldura do documento, visível nos
+                       dois modos, e não na barra de formatação (que só existe
+                       editando). O rótulo acessível sai de paintReadControls. -->
+                  <span id="bReadActs" class="cluster" hidden>
+                    <!-- Fone de ouvido, não alto-falante: a ação é OUVIR, e um
+                         alto-falante com ondas se confunde com controle de volume.
+                         O rótulo em texto ao lado carrega o resto do sentido. -->
+                    <button id="bReadBtn" class="mini act withic" data-read="1" aria-pressed="false">
+                      <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 00-9 9v5a3 3 0 003 3h1a2 2 0 002-2v-4a2 2 0 00-2-2H5v-.2A7 7 0 0119 12v.8h-2a2 2 0 00-2 2v4a2 2 0 002 2h1a3 3 0 003-3v-5a9 9 0 00-9-9z"/></svg>
+                      <span data-i18n>ouvir</span>
+                    </button>
+                    <button id="bReadStopBtn" class="mini act withic" data-read-stop="1" hidden title="parar a leitura" data-i18n-attrs="title">
+                      <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6h12v12H6z"/></svg>
+                    </button>
+                  </span>
                   <nav id="bModes" class="tabs small" hidden>
                     <button id="bViewBtn" class="tab mono on" aria-pressed="true" data-i18n>visualizar</button>
                     <button id="bEditBtn" class="tab mono" aria-pressed="false" data-i18n>editar</button>
@@ -1186,6 +1202,7 @@
     <script src="update.js"></script>
     <script src="audio.js"></script>
     <script src="interpreter.js"></script>
+    <script src="readaloud.js"></script>
     <script src="shell.js"></script>
     <script src="app.js"></script>
   </body>

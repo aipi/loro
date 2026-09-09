@@ -228,6 +228,10 @@ const DEFAULTS = {
   // medido em 2026-09-06, um `killall coreaudiod` moveu "Alto-falantes"
   // de 71 para 74, e um id guardado faria o app falar no aparelho errado.
   interpEnabled: false, interpDevice: "", interpVoice: "", interpEngine: "system",
+  // ADR-0037 — a voz da LEITURA é outra escolha que a do intérprete: lá a
+  // lista é só inglês (o -tr do whisper só produz inglês), e aqui o texto é o
+  // do documento, normalmente português. Vazio = a voz do sistema.
+  readVoice: "",
   autoscroll: true, autosave: false, saveDir: "", source: "mic", mode: "live", uiLang: "pt", termSide: true,
   sideW: 0, // sidebar width in px; 0 = the default CSS clamp (ADR-0002 §6)
   welcomeSeen: false, // first-launch feature tour (reopen via palette)
@@ -2675,7 +2679,15 @@ async function interpStart() {
   mute.gain.value = 0;
   interp.meter.connect(mute).connect(interp.ctx.destination);
   interpSpawnRec();
-  clog("interp started");
+  // O DISPOSITIVO no log, porque é ele que decide se a outra pessoa ouve. Sem
+  // isto, "o BlackHole não funciona" e "a voz está saindo no alto-falante" são
+  // indistinguíveis — e o segundo caso também realimenta o microfone, o que
+  // impede o corte por silêncio de fechar (medido em 2026-09-08: oito elocuções
+  // seguidas no teto de 12s, nenhuma fechada por silêncio). Nome de dispositivo
+  // é dado estrutural, não conteúdo de fala (BR-8).
+  clog("interp started · saida=" + JSON.stringify(el.interpDevice.value) +
+       " motor=" + settings.interpEngine +
+       " entrada=" + JSON.stringify(label || "(padrao)"));
   paintInterpControl();
   interpSay(t("ouvindo — fale e faça uma pausa"));
 }
@@ -2734,6 +2746,14 @@ function interpFrame(frame) {
   // foi assim que o contexto suspenso passou sem ninguém ver.
   if (!was && r.state.speaking) interpSay(t("captando sua fala"));
   else if (was && r.cut) interpSay(t("traduzindo"));
+  // O MOTIVO do corte distingue dois mundos: `silence` é a frase fechando
+  // normalmente; `max` é o teto de 12s, atingido só quando o nível nunca cai — e
+  // oito `max` seguidos foi o que o log mostrou às 18:04. Vai o piso aprendido
+  // junto, porque é ele que decide o limiar (BR-8: só números).
+  if (r.cut) {
+    clog("interp cut=" + r.reason + " rms=" + rms.toFixed(4) +
+         " piso=" + Number(interp.chunker.floor || 0).toFixed(4));
+  }
   if (r.cut) {
     if (interp.rec && interp.rec.state !== "inactive") {
       try { interp.rec.stop(); } catch (_) {}   // onstop despacha a elocução
@@ -2781,7 +2801,17 @@ async function interpDrain() {
         device: el.interpDevice.value, engine: settings.interpEngine,
       },
     });
-  } catch (e) { interpSay(tErr(String(e))); }
+  } catch (e) {
+    // O erro da FALA precisa estar no log, não só na tela.
+    //
+    // DEFEITO DE DIAGNÓSTICO (2026-09-08): o modo traduzia, o log mostrava
+    // `interp translated` sem um único erro, e nada saía no Meet — porque uma
+    // falha aqui ia para `interpSay` e morria na tela. Ficava impossível
+    // distinguir "o driver não funciona" de "o motor neural não conseguiu
+    // falar". BR-8: o código do erro, nunca o texto falado.
+    clog("interp speak FAILED motor=" + settings.interpEngine + " err=" + String(e).slice(0, 120));
+    interpSay(tErr(String(e)));
+  }
   interp.queue = LoroInterpreter.finishSpeaking(interp.queue);
   interpDrain();
 }
@@ -3316,7 +3346,9 @@ async function brainRefresh() {
   // lateral: só re-renderiza quando os dados mudam (preserva expansões profundas)
   const sig = JSON.stringify([st.inbox.map((f) => f.name), st.contexts, st.meetings.length, st.notes.length,
     (st.entryDocs || []).map((f) => f.name)]);
-  if (sig !== sideSig) { sideSig = sig; renderSidebar(st); }
+  // Mesma razão do inlineNaming em refreshPessoal: promptNewNoteInContext e
+  // promptNewContext inserem o campo de nome NESTA árvore.
+  if (sig !== sideSig && !inlineNaming()) { sideSig = sig; renderSidebar(st); }
   refreshPessoal();   // ADR-0009: produção (mundo pessoal) — self-gated por assinatura
   refreshTools();     // ADR-0005: ferramentas customizadas — self-gated por assinatura
   // ADR-0027 R59 · A REVISÃO ENTRA NO RELÓGIO. Este tique já relia
@@ -3972,8 +4004,24 @@ const pessoalWorld = {
   listMeetings: async (slug) => (await invoke("brain_list_meetings", { slug })) || [],
 };
 
+// Há um campo de nome ABERTO na árvore agora?
+//
+// DEFEITO RELATADO (2026-09-08): "add nova nota não está funcionando. ele até
+// permite escrever, mas some." O input de título é inserido DENTRO da árvore
+// (anchor.before), e o relógio de 10s reescreve essa árvore — apagando o campo
+// com o que a pessoa digitou. Os quatro sinalizadores existiam só para impedir
+// abrir dois inputs; nenhum protegia o que já estava aberto.
+//
+// Adiar o redesenho é o conserto certo, não preservar o input: quem está no meio
+// de nomear uma coisa não quer a árvore se remexendo embaixo, e o tique seguinte
+// (a assinatura não é gravada quando se adia) pega tudo.
+function inlineNaming() {
+  return notaEditing || ctxEditing || bsEditing;
+}
+
 async function refreshPessoal() {
   if (!brainTab) return;
+  if (inlineNaming()) return;
   let temas = [], avulso = [];
   try { temas = (await invoke("brain_list_brainstorms")) || []; } catch (_) {}
   try { avulso = ((await invoke("brain_list_dir", { rel: "brainstorming/avulso" })) || []).filter((f) => !f.dir); }
@@ -5769,6 +5817,128 @@ function applyMdAction(h, action) {
   h.focus();
 }
 
+// ---- leitura em voz alta (ADR-0037) ---------------------------------------
+// Dita o documento aberto — ou o trecho selecionado, que é o caso comum de quem
+// relê um parágrafo. O markdown é extraído para prosa ANTES de falar
+// (readaloud.js): ouvir o cru é ouvir "cerquilha cerquilha Título" e URLs lidas
+// caractere por caractere, o que para acessibilidade não é uma versão pior do
+// texto — é inutilizável.
+const RA = window.LoroReadAloud;
+const read = { state: null };
+
+// O texto a ler: a seleção quando há, o documento todo quando não.
+//
+// DEFEITO CORRIGIDO (2026-09-08, relatado como "there is no text to read"): eu
+// buscava o texto no handle do CodeMirror, que só EXISTE em modo de edição —
+// então em visualização, que é justamente onde o controle mora, não havia texto
+// nenhum. O `savedById` guarda o markdown cru nos dois modos (é ele que faz o
+// pontinho de "não salvo" dizer a verdade ao voltar para visualizar), e é a
+// fonte certa.
+async function readSource() {
+  const tab = activeTab();
+  if (!tab) return null;
+  const h = cmById.get(tab.id);
+  if (h) {
+    // Editando: a fonte é o buffer, e a seleção é a do editor.
+    const sel = h.view.state.selection.main;
+    const whole = h.getValue();
+    const selection = sel.empty
+      ? ""
+      : whole.slice(Math.min(sel.anchor, sel.head), Math.max(sel.anchor, sel.head));
+    const src = RA.pickSource(selection, whole);
+    return { ...src, text: RA.toSpeechText(src.text) };
+  }
+  // Visualizando: a seleção vem do DOM e já é PROSA renderizada — não passa
+  // pelo extrator, que espera markdown.
+  const dom = (window.getSelection && String(window.getSelection())) || "";
+  if (dom.trim()) return { text: dom.trim(), scope: "selection" };
+  // O documento inteiro vem do DISCO, não de `savedById`.
+  //
+  // DEFEITO CORRIGIDO (2026-09-08, "there is no text to read" persistindo): eu
+  // lia o cache, e ele só é populado por DOIS caminhos de render — o
+  // mountEditor (edição) e a vista de ideia. Na visualização de um markdown
+  // comum, e na reunião, ninguém o popula: o cache estava vazio justamente onde
+  // o controle mora. O disco é a fonte que existe para toda superfície, sem
+  // depender de qual render passou antes.
+  let raw = "";
+  try { raw = await readDoc(tab.rel); } catch (_) {}
+  if (!raw.trim()) return null;
+  return { text: RA.toSpeechText(raw), scope: "file" };
+}
+
+function paintReadControls() {
+  const st = read.state;
+  const speaking = !!(st && st.speaking);
+  for (const b of document.querySelectorAll("[data-read]")) {
+    // R4: o rótulo nomeia a ação de AGORA, e sai do estado do backend — nunca de
+    // um estado paralelo, que é como uma tela passa a mentir.
+    b.title = t(RA.label(st));
+    b.setAttribute("aria-pressed", speaking && !st.paused ? "true" : "false");
+    b.classList.toggle("on", speaking);
+  }
+  for (const b of document.querySelectorAll("[data-read-stop]")) b.hidden = !speaking;
+}
+
+// Ligados uma vez: os botões vivem no HTML da moldura, não são criados a cada
+// render — assim não há listener duplicado nem gancho perdido num redesenho.
+function wireReadControls() {
+  const play = $("bReadBtn");
+  const stop = $("bReadStopBtn");
+  if (play) play.addEventListener("click", readToggle);
+  if (stop) stop.addEventListener("click", readStop);
+  paintReadControls();
+}
+
+// Mostra o controle onde há markdown para OUVIR: arquivo de texto, guia,
+// rascunho, análise — e a reunião ao vivo, que tem moldura própria e por isso
+// precisa ser dita à parte.
+function showReadFor(readable) {
+  const box = $("bReadActs");
+  if (box) box.hidden = !readable;
+  if (!readable) return;
+  paintReadControls();
+}
+
+async function readRefresh() {
+  if (!TAURI.core) return;
+  try { read.state = await invoke("read_aloud_state"); }
+  catch (e) { read.state = null; }
+  paintReadControls();
+}
+
+// Um clique: começa, pausa ou retoma — o que fizer sentido AGORA.
+async function readToggle() {
+  if (!TAURI.core) return;
+  try {
+    if (read.state && read.state.speaking) {
+      read.state = await invoke("read_aloud_pause");
+    } else {
+      const src = await readSource();
+      if (!src || !src.text.trim()) { toast(t("não há texto para ler")); return; }
+      read.state = await invoke("read_aloud_start", { input: {
+        text: src.text,
+        voice: settings.readVoice || "",
+        // O idioma do documento vem do que a pessoa escolheu para transcrever: é
+        // o sinal mais próximo que o app tem, e é escolha dela.
+        lang: settings.lang === "auto" ? "" : settings.lang,
+      } });
+      toast(t(src.scope === "selection" ? "lendo o trecho selecionado" : "lendo o documento"));
+    }
+  } catch (e) { toast(tErr(String(e))); }
+  paintReadControls();
+}
+
+async function readStop() {
+  if (!TAURI.core) return;
+  try { read.state = await invoke("read_aloud_stop"); } catch (e) { clog("read stop: " + e); }
+  paintReadControls();
+}
+
+// A leitura termina sozinha quando o texto acaba, e o backend só sabe disso
+// quando perguntado — sem esta sondagem o botão ficaria oferecendo "pausar" o
+// que já calou. Só roda ENQUANTO lê: fora disso é I/O por nada.
+setInterval(() => { if (read.state && read.state.speaking) readRefresh(); }, 1500);
+
 // Uma barra, duas superfícies (aba do Studio e editor modal): `getHandle`
 // resolve o CM6 ativo naquela superfície no momento do clique.
 function wireMdBar(bar, getHandle) {
@@ -6932,6 +7102,7 @@ async function renderActive() {
     B.modes.hidden = true;
     $("bPromoted").hidden = true;
     $("bDocActs").hidden = true;
+    showReadFor(false);   // formulário de definição: não é texto para ouvir
     clearPanelDoc();
     await renderLoopForm(tab, stale);
     if (stale()) return;
@@ -6943,6 +7114,7 @@ async function renderActive() {
     B.modes.hidden = false;
     $("bPromoted").hidden = true;
     $("bDocActs").hidden = true;
+    showReadFor(false);
     B.viewBtn.classList.toggle("on", tab.mode !== "edit");
     B.editBtn2.classList.toggle("on", tab.mode === "edit");
     clearPanelDoc();
@@ -6957,6 +7129,7 @@ async function renderActive() {
     B.modes.hidden = true;
     $("bPromoted").hidden = true;
     $("bDocActs").hidden = true;
+    showReadFor(false);
     // não há documento em foco: o painel diria "rascunho — não versionado" de uma
     // tela que não é arquivo nenhum, e ofereceria habilidades sem sujeito.
     clearPanelDoc();
@@ -6971,6 +7144,9 @@ async function renderActive() {
     $("bPromoted").hidden = true;
     $("bDocActs").hidden = true;
     $("bDocRail").hidden = true;
+    // A reunião tem moldura própria e sai por aqui antes do caminho comum: sem
+    // esta linha, o caderno da reunião — que É markdown — não ofereceria ouvir.
+    showReadFor(true);
     await renderMeetingLiving(tab, stale);
     if (stale()) return;
     B.wsBody.scrollTop = 0;
@@ -6982,6 +7158,10 @@ async function renderActive() {
   B.modes.hidden = !textFile;
   B.viewBtn.classList.toggle("on", tab.mode !== "edit");
   B.editBtn2.classList.toggle("on", tab.mode === "edit");
+  // `textFile` já é o predicado de "isto é texto legível" que a moldura usa para
+  // decidir o alternador visualizar/editar — é o mesmo critério de "há o que
+  // ouvir", e reusá-lo evita duas definições que divergem.
+  showReadFor(textFile);
   const editing = textFile && tab.mode === "edit";
   // B5 · uma ideia abre a SUA vista, não o indice.md quase vazio. Editar continua
   // valendo: o arquivo é um documento comum (ADR-0020).
@@ -7518,6 +7698,11 @@ const COMMANDS = [
   { group: "documento", label: "Buscar no documento", combo: IS_MAC ? "⌘F" : "Ctrl+F", when: hasDoc, run: () => openFind() },
   // N10 · sem esta linha, grifar/comentar só existiam para o arrasto do mouse
   { group: "documento", label: "Grifar um trecho…", run: () => promptAnnotateExcerpt() },
+  // ADR-0037 — acessibilidade. Na paleta porque é o que se alcança por teclado,
+  // que é justamente o que importa para quem depende da leitura.
+  { group: "documento", label: "Ler em voz alta", when: hasDoc, run: () => readToggle() },
+  { group: "documento", label: "Pausar/retomar a leitura", when: () => !!(read.state && read.state.speaking), run: () => readToggle() },
+  { group: "documento", label: "Parar a leitura", when: () => !!(read.state && read.state.speaking), run: () => readStop() },
   { group: "documento", label: "Fechar aba", combo: IS_MAC ? "⌘W" : "Ctrl+W", when: hasDoc, run: () => closeActiveTab() },
   { group: "documento", label: "Reabrir aba", combo: IS_MAC ? "⇧⌘T" : "Ctrl+Shift+T", when: hasClosedTab, run: () => reopenClosedTab() },
 
@@ -12149,6 +12334,10 @@ updatePrivacy();
 // casco do redesign: destino inicial, seção de configurações e painel de chat
 LoroShell.setDestination("home");
 showCfgSection("proj");
+// ADR-0037 — no FIM de propósito: `wireReadControls` toca `read`, um `const`
+// declarado bem depois no arquivo. Chamado antes, caía na zona morta e derrubava
+// o boot inteiro (o medidor acusou "Cannot access 'ws' before initialization").
+wireReadControls();
 chatPrefs.model = settings.chatModel; chatPrefs.effort = settings.chatEffort;
 paintChatPrefs();
 // o chat sobrevive a um reload da janela: o turno roda no backend, então a

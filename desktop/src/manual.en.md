@@ -265,6 +265,33 @@ licensed for **non-commercial use only**. Loro does not distribute that model �
 you download it and decide whether you may use it in your case. The notice stays
 on screen whenever the cloned voice is selected.
 
+## Listening to a document (read aloud)
+
+Any markdown can be **read aloud** — a knowledge topic, a note, an analysis, a
+meeting notebook. The **listen** control sits in the document chrome, beside
+*view / edit*, and works in both modes: listening is reading, not editing.
+
+- **With text selected**, it reads just the selection — re-reading a paragraph is
+  the common case. With nothing selected, it reads the whole document.
+- **One click** starts; the same button **pauses** and **resumes**. The square
+  beside it **stops**. The pause is real: it resumes exactly where it stopped,
+  not from the beginning.
+- **Without touching the mouse**, from the palette (`Cmd/Ctrl+K`): *Read aloud*,
+  *Pause/resume reading*, *Stop reading*.
+
+Markup is not spoken. Headings become sentences, links are read by their **text**
+(not their URL), code blocks are **announced and skipped**, tables become
+comma-separated values, and front matter is ignored.
+
+The voice follows the language you picked for transcription. Much better voices
+than the installed ones are free under *System Settings → Accessibility →
+Spoken Content → Manage Voices*.
+
+Closing the Loro window **stops the reading**: the window goes to the tray, and a
+voice reading a document you can no longer see would make no sense.
+
+For now it is **macOS-only** — the system's `say` is what speaks.
+
 ## Ideas (the world with no version history)
 
 - **Write a note** (on the Home screen) opens a **blank** markdown right away:
