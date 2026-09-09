@@ -290,17 +290,28 @@
         if (closed || covered >= untilMs) return Promise.resolve("ready");
         return new Promise(function (resolve) {
           let settled = false;
+          let timer = null;
           const w = { untilMs: untilMs, ready: null };
           function finish(how) {
             if (settled) return;
             settled = true;
+            // LIMPA o próprio timer. Sem isto ele fica pendurado até o prazo
+            // inteiro mesmo quando a espera já terminou por `ready` — e um
+            // timer pendente mantém o laço de eventos vivo.
+            //
+            // MEDIDO 2026-09-08: cinco testes chamam `wait(20000, 99999)` sem
+            // injetar `schedule`, então cada um criava um setTimeout REAL de
+            // 99.999 ms. Os testes passavam em microssegundos e o processo
+            // levava 100,1s para sair — 100 segundos em CADA execução de CI, nos
+            // três sistemas, atribuídos a "os testes JS estão lentos".
+            if (timer !== null) { clearTimeout(timer); timer = null; }
             const i = waiters.indexOf(w);
             if (i >= 0) waiters.splice(i, 1);
             resolve(how);
           }
           w.ready = function () { finish("ready"); };
           waiters.push(w);
-          (schedule || setTimeout)(function () { finish("deadline"); }, deadlineMs);
+          timer = (schedule || setTimeout)(function () { finish("deadline"); }, deadlineMs);
         });
       },
     };
