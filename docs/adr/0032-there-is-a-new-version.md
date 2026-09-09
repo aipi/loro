@@ -47,7 +47,7 @@ install.**
 Two facts, not a preference:
 
 - **The bundle is not signed with a Developer ID** (release.yml states this, and the
-  release notes carry the `xattr -d com.apple.quarantine` instruction). A real
+  release notes carry the `xattr -dr com.apple.quarantine` instruction). A real
   auto-updater would have to answer Gatekeeper and quarantine first. That is its own
   project, not this one.
 - **`brew upgrade --cask loro` replaces the `/Applications/Loro.app` that is running.**

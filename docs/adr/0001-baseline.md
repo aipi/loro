@@ -74,7 +74,7 @@ the repository (2026-07-28). The owner asked for exactly one authoritative ADR.
   `tauri.conf.json`'s version. The bundle is **not** Developer-ID signed
   (owner decision, 2026-07-28 — no Apple Developer account): on macOS 15+
   Gatekeeper blocks the quarantined app (misreporting it as "damaged");
-  installing requires `xattr -d com.apple.quarantine /Applications/Loro.app`,
+  installing requires `xattr -dr com.apple.quarantine /Applications/Loro.app`,
   stated in the release notes. Frictionless install needs Developer ID
   signing + notarization — revisit if distribution widens.
 - Backend split by concern (`paths`, `config`, `templates`, `acervo`, `meeting`,
