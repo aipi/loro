@@ -95,6 +95,45 @@ fn syscap_pending() -> &'static Mutex<HashMap<String, Vec<PathBuf>>> {
     PENDING.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+// ADR-0039: the microphone's own segments when the sidecar records it (macOS).
+// A SEPARATE map from `syscap_pending`, never a second entry in it: the meeting's
+// `você` and `sistema` tracks stay two files, two anchors and two transcriptions
+// end to end. Same list shape, for the same pause/resume reason.
+fn mic_pending() -> &'static Mutex<HashMap<String, Vec<PathBuf>>> {
+    static PENDING: OnceLock<Mutex<HashMap<String, Vec<PathBuf>>>> = OnceLock::new();
+    PENDING.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+// Where a sidecar mic segment lands inside the meeting (mic.wav, mic-2.wav, …).
+// Not `mic.webm`: that name belongs to the webview path, and purge cleans both.
+pub(crate) fn mic_segment_name(i: usize) -> String {
+    if i == 0 {
+        "mic.wav".into()
+    } else {
+        format!("mic-{}.wav", i + 1)
+    }
+}
+
+// Which growing WAV a live tail reads, per track. Pure, and the one place that
+// decides it: `system` reads only the system segments and `mic` only the mic
+// segments, so a window of one track can never be transcribed under the other's
+// label (ADR-0039). The LIVE segment is the last one (see transcribe_tail).
+fn live_tail_source(
+    track: &str,
+    system: Option<&Vec<PathBuf>>,
+    mic: Option<&Vec<PathBuf>>,
+    audio_dir: &Path,
+) -> Result<PathBuf, String> {
+    let (list, finalized) = match track {
+        "system" => (system, "system.wav"),
+        "mic" => (mic, "mic.wav"),
+        _ => return Err("err.invalid_audio_track".into()),
+    };
+    Ok(list
+        .and_then(|v| v.last().cloned())
+        .unwrap_or_else(|| audio_dir.join(finalized)))
+}
+
 // Where a captured system segment lands inside the meeting: the first keeps the
 // historical name, the rest are numbered. Naming is what makes the segments
 // discoverable by purge (BR-8: the audio must be deletable).
@@ -864,6 +903,10 @@ pub struct MeetingStartInput {
     titulo: Option<String>,
     #[serde(default)]
     cfg: Option<crate::StartCfg>,
+    // ADR-0039: record the microphone in the capture sidecar (macOS) instead of
+    // the webview. The frontend decides (LoroAudio.meetingMicPath); absent = no.
+    #[serde(default)]
+    mic_capture: bool,
 }
 
 #[derive(Serialize)]
@@ -878,6 +921,9 @@ pub struct MeetingStart {
     // the first sample can lag arbitrarily, and anchoring the MEETING there would
     // push the mic's own timestamps negative.
     started_epoch_ms: u64,
+    // ADR-0039: the sidecar is recording the microphone into its own track. False
+    // on Windows (the in-process capture has no mic) and whenever it was not asked.
+    mic_capture: bool,
 }
 
 // Create the meeting home + manifest(recording) + reuniao.md and start the
@@ -911,8 +957,8 @@ pub fn brain_meeting_start(
     // ADR-0005 sidecar: fails fast on a Screen Recording denial — clean up the
     // just-scaffolded meeting so a denial leaves no orphan on disk.
     let started_epoch_ms = crate::epoch_millis() as u64;
-    let sys_wav = match crate::system_capture_start(&app, &state) {
-        Ok(p) => p,
+    let capture = match crate::system_capture_start_with(&app, &state, input.mic_capture) {
+        Ok(c) => c,
         Err(e) => {
             let _ = std::fs::remove_dir_all(&created.dir);
             return Err(e);
@@ -922,7 +968,14 @@ pub fn brain_meeting_start(
     syscap_pending()
         .lock()
         .unwrap()
-        .insert(created.id.clone(), vec![PathBuf::from(&sys_wav)]);
+        .insert(created.id.clone(), vec![PathBuf::from(&capture.system)]);
+    let mic_capture = capture.mic.is_some();
+    if let Some(mic_wav) = capture.mic {
+        mic_pending()
+            .lock()
+            .unwrap()
+            .insert(created.id.clone(), vec![PathBuf::from(mic_wav)]);
+    }
     // ADR-0038 §3. Best-effort: the capture is already running, and failing the
     // start here would orphan it — the frontend still has the anchor it needs.
     if let Err(e) = manifest_set_started(&created.dir, started_epoch_ms) {
@@ -943,6 +996,7 @@ pub fn brain_meeting_start(
         dir: dir_rel,
         living_rel: created.living_rel,
         started_epoch_ms,
+        mic_capture,
     })
 }
 
@@ -993,6 +1047,16 @@ pub fn brain_meeting_stop(
                 let _ = move_file(src, &dir.join("audio").join(system_segment_name(i)));
             }
             crate::syscap_anchor_forget(src); // the segment's clock ends with it
+        }
+    }
+    // ADR-0039: the mic segments land under their OWN names, never merged into
+    // the system ones, so purge finds them and nothing mixes the two tracks.
+    if let Some(srcs) = mic_pending().lock().unwrap().remove(&input.id) {
+        for (i, src) in srcs.iter().enumerate() {
+            if src.is_file() {
+                let _ = move_file(src, &dir.join("audio").join(mic_segment_name(i)));
+            }
+            crate::syscap_anchor_forget(src);
         }
     }
     crate::set_tray_recording(&state, false);
@@ -1234,7 +1298,9 @@ pub fn brain_meeting_resume(
     let lock = meeting_lock(&input.id);
     let _guard = lock.lock().map_err(|_| "lock envenenado".to_string())?;
     let dir = resolve_meeting_dir(&base, &input.id)?;
-    let sys_wav = crate::system_capture_start(&app, &state)?;
+    // A meeting that recorded its mic in the sidecar keeps doing so after a pause.
+    let with_mic = mic_pending().lock().unwrap().contains_key(&input.id);
+    let capture = crate::system_capture_start_with(&app, &state, with_mic)?;
     // ADR-0038 §3: the pause just closed joins the manifest's total.
     let paused_at = pause_started().lock().unwrap().remove(&input.id);
     if let Ok(mut m) = manifest_read(&dir) {
@@ -1246,7 +1312,15 @@ pub fn brain_meeting_resume(
         .unwrap()
         .entry(input.id.clone())
         .or_default()
-        .push(PathBuf::from(&sys_wav));
+        .push(PathBuf::from(&capture.system));
+    if let Some(mic_wav) = capture.mic {
+        mic_pending()
+            .lock()
+            .unwrap()
+            .entry(input.id.clone())
+            .or_default()
+            .push(PathBuf::from(mic_wav));
+    }
     crate::set_tray_recording(&state, true);
     Ok(())
 }
@@ -1548,7 +1622,7 @@ pub struct PurgeAudioInput {
 // a means to it. Called after the authoritative stop-transcription. Idempotent.
 fn purge_audio_core(dir: &Path) -> Result<Manifest, String> {
     let audio_dir = dir.join("audio");
-    for file in ["mic.webm", "system.wav", "completo.wav"] {
+    for file in ["mic.webm", "mic.wav", "system.wav", "completo.wav"] {
         let path = audio_dir.join(file);
         if path.starts_with(&audio_dir) && path.is_file() {
             std::fs::remove_file(&path).map_err(|e| e.to_string())?;
@@ -1566,6 +1640,7 @@ fn purge_audio_core(dir: &Path) -> Result<Manifest, String> {
             // acumulam em vez de se sobrescrever, então deixar de limpá-los seria
             // áudio guardado sem ninguém ter pedido.
             let transiente = (name.starts_with("system-") && name.ends_with(".wav"))
+                || (name.starts_with("mic-") && name.ends_with(".wav"))
                 || name.starts_with(".tail.snapshot.")
                 || name.starts_with(".window-")
                 || name.starts_with(".seg.");
@@ -1609,6 +1684,14 @@ pub fn brain_meeting_purge_audio(
 pub struct TranscribeTailInput {
     id: String,
     from_ms: u64,
+    // ADR-0039: which track's growing WAV — "system" (default, the historical
+    // behavior) or "mic" (the sidecar's microphone file).
+    #[serde(default = "default_tail_track")]
+    track: String,
+}
+
+fn default_tail_track() -> String {
+    "system".into()
 }
 
 #[derive(Serialize)]
@@ -1624,6 +1707,10 @@ pub struct TranscribeTail {
     // on the meeting clock instead of estimating. `None` until the sidecar reports
     // it (silent machine) or with an older sidecar binary — the caller degrades.
     anchor_epoch_ms: Option<u64>,
+    // ADR-0039: the sidecar could not open the microphone (permission refused, no
+    // input device). Only ever true on the mic track; the frontend stops asking.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    unavailable: bool,
 }
 
 // BEST-EFFORT live preview of the system-audio tail (ADR-0012 promoted the
@@ -1662,20 +1749,26 @@ fn transcribe_tail_blocking(input: TranscribeTailInput) -> Result<TranscribeTail
     // are already fully transcribed, and the frontend rebases its window offset
     // to the new segment (`tailBase`), so reading anything but the last would
     // replay audio that is already in the transcript.
-    let src = syscap_pending()
-        .lock()
-        .unwrap()
-        .get(&input.id)
-        .and_then(|v| v.last().cloned())
-        .unwrap_or_else(|| dir.join("audio").join("system.wav"));
+    let src = {
+        let sys = syscap_pending().lock().unwrap();
+        let mic = mic_pending().lock().unwrap();
+        live_tail_source(
+            &input.track,
+            sys.get(&input.id),
+            mic.get(&input.id),
+            &dir.join("audio"),
+        )?
+    };
     // The anchor travels with EVERY answer, empty ones included: the frontend needs
     // it to place this segment on the meeting clock, and it may only have been
     // reported after the meeting started.
     let anchor_epoch_ms = crate::syscap_anchor_of(&src);
+    let unavailable = input.track == "mic" && crate::mic_capture_unavailable(&src);
     let unchanged = TranscribeTail {
         segments: Vec::new(),
         next_ms: input.from_ms,
         anchor_epoch_ms,
+        unavailable,
     };
     if !src.is_file() {
         return Ok(unchanged);
@@ -1742,6 +1835,7 @@ fn transcribe_tail_blocking(input: TranscribeTailInput) -> Result<TranscribeTail
         segments,
         next_ms: end_ms,
         anchor_epoch_ms,
+        unavailable,
     })
 }
 
@@ -2620,6 +2714,65 @@ mod tests {
     }
 
     // ---- ADR-0038 §3 · cada fala carrega a hora de relógio --------------------
+
+    // ADR-0039 — owner's hard requirement: the sidecar path keeps `você` and
+    // `sistema` as two tracks, never one stream. The live tail of `mic` reads only
+    // the mic file and the tail of `system` only the system file — and each lands
+    // under its own label, mic speech as `você`, system speech as `sistema`.
+    #[test]
+    fn adr0039_mic_and_system_tails_never_read_each_others_file() {
+        let audio = Path::new("/m/audio");
+        let sys = vec![
+            PathBuf::from("/r/loro-sys-1.wav"),
+            PathBuf::from("/r/loro-sys-2.wav"),
+        ];
+        let mic = vec![
+            PathBuf::from("/r/loro-mic-1.wav"),
+            PathBuf::from("/r/loro-mic-2.wav"),
+        ];
+        assert_eq!(
+            live_tail_source("system", Some(&sys), Some(&mic), audio).unwrap(),
+            PathBuf::from("/r/loro-sys-2.wav")
+        );
+        assert_eq!(
+            live_tail_source("mic", Some(&sys), Some(&mic), audio).unwrap(),
+            PathBuf::from("/r/loro-mic-2.wav")
+        );
+        // a meeting without a sidecar mic never falls back to the system file
+        assert_eq!(
+            live_tail_source("mic", Some(&sys), None, audio).unwrap(),
+            audio.join("mic.wav")
+        );
+        assert_eq!(
+            live_tail_source("system", None, Some(&mic), audio).unwrap(),
+            audio.join("system.wav")
+        );
+        assert!(live_tail_source("completo", Some(&sys), Some(&mic), audio).is_err());
+
+        // the label each track's speech is written under
+        let voce = timed_block(1_000, None, Some("mic"), "fala só do microfone");
+        let sistema = timed_block(2_000, None, Some("system"), "fala só da chamada");
+        assert!(voce.contains("· você]") && !voce.contains("sistema"));
+        assert!(sistema.contains("· sistema]") && !sistema.contains("você"));
+    }
+
+    #[test]
+    fn adr0039_mic_segments_are_named_apart_and_purged() {
+        assert_eq!(mic_segment_name(0), "mic.wav");
+        assert_eq!(mic_segment_name(2), "mic-3.wav");
+        let base = tmp("purge-mic");
+        let c = seed(&base);
+        let audio = c.dir.join("audio");
+        std::fs::create_dir_all(&audio).unwrap();
+        for f in ["mic.wav", "mic-2.wav", "system.wav", "system-2.wav"] {
+            std::fs::write(audio.join(f), b"x").unwrap();
+        }
+        purge_audio_core(&c.dir).unwrap();
+        for f in ["mic.wav", "mic-2.wav", "system.wav", "system-2.wav"] {
+            assert!(!audio.join(f).exists(), "{f} sobreviveu à purga (BR-8)");
+        }
+        let _ = std::fs::remove_dir_all(&base);
+    }
 
     #[test]
     fn adr0038_manifest_keeps_the_start_epoch_and_the_paused_total() {

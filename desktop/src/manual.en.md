@@ -36,9 +36,15 @@ SIDEBAR      │ TABS (only when a document is open) │ PANEL 330px
   the **mic** one: sound leaks from the speaker into the mic and never the other
   way around, so the others' speech is never labelled as yours. To do that it
   waits a few seconds for the system track before writing your speech — that is
-  why your text sometimes shows up slightly later. To kill the leak at the
-  source, turn on **cancel speaker echo** in Settings → Capture, at the cost,
-  stated there, of your voice coming out quieter. With headphones, leave it off.
+  why your text sometimes shows up slightly later. On **Windows**, to kill the
+  leak at the source, turn on **cancel speaker echo** in Settings → Capture, at
+  the cost, stated there, of your voice coming out quieter. On **macOS** Loro
+  records the meeting microphone straight from the device, with no voice
+  processing and on a track of its own, apart from the system audio, so that
+  switch does not exist there: if you listen through speakers and want one track,
+  turn the meeting microphone off. If the microphone does not open (permission
+  denied in System Settings → Privacy & Security → Microphone), the meeting keeps
+  recording system audio only and says so.
 - **The text lands in paragraphs**, one per stretch of continuous speech, stamped
   with the time that speech actually began — and a pause starts a new paragraph.
   The time is counted from the moment recording actually began: in a meeting the
@@ -477,11 +483,12 @@ idea. Create one with the section's **＋**.
 **The two tracks, and the echo.** A meeting captures **your voice** (microphone) and **the
 machine's audio** (the other participants) — what the analysis reads as «you» and «the
 others». If you listen **through speakers**, the mic hears the machine back and the same
-speech arrives on both tracks. Loro detects that and offers both exits on the spot: **record
+speech arrives on both tracks. Loro detects that and offers the exit on the spot: **record
 only the system** (one track, no echo, no microphone permission asked — your voice stays out)
-or **cancel the echo** (both tracks stay, but macOS swaps the machine's audio path and your
-voice comes out quieter). Whatever you pick applies **from the next meetings on**, and both
-switches live in **Settings → Capture**. With **headphones there is no echo** — then keeping
+and, on Windows, also **cancel the echo** (both tracks stay, but your voice comes out quieter).
+On macOS the microphone is recorded raw, on a track of its own, so there is no echo to cancel
+there. Whatever you pick applies **from the next meetings on**, and the switches live in
+**Settings → Capture**. With **headphones there is no echo** — then keeping
 both is best.
 
 **The price, said up front:** a loop runs the AI **while the app is open**. With

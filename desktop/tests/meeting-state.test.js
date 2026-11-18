@@ -178,7 +178,9 @@ test("ADR-0025 — o relógio da reunião começa onde a gravação começou", (
 
 test("ADR-0025 — as duas trilhas convertem pela MESMA linha do tempo", () => {
   assert.match(fnBody("onPreviewSegment"), /LM\.micBlockMs\(segStartEpoch, s\.tMs, meeting\.originEpoch/);
-  assert.match(fnBody("runMeetingTail"), /LM\.sysBlockMs\(meeting\.sysAnchor, s\.tMs, meeting\.originEpoch/);
+  // ADR-0039: a trilha de sistema passa pelo conversor comum das trilhas de tail
+  // (LM.tailUtterances, que é blockMs com a âncora do sidecar)
+  assert.match(fnBody("runMeetingTail"), /LM\.tailUtterances\("system", falas, meeting\.sysAnchor, meeting\.originEpoch/);
   // a estimativa antiga não pode sobreviver em nenhum canto do arquivo
   assert.ok(!APP.includes("tailBase"), "tailBase era a estimativa errada");
   // e a âncora é a do sidecar, recebida a cada resposta (pode chegar atrasada)
@@ -186,6 +188,40 @@ test("ADR-0025 — as duas trilhas convertem pela MESMA linha do tempo", () => {
   // até ela chegar, a âncora é uma ESTIMATIVA do início deste segmento. Com ela
   // em null o offset cru valeria, e num retomar a janela cairia antes da pausa.
   assert.match(fnBody("startMeetingTail"), /meeting\.sysAnchor = Date\.now\(\)/);
+});
+
+// ADR-0039 — exigência do dono: no caminho do sidecar as duas trilhas continuam
+// duas. A fiação é o que se prende aqui (as funções puras estão em meeting.test.js):
+// a trilha do microfone pede ao backend a trilha `mic`, converte pela âncora DO
+// MICROFONE e escreve como `mic` («você»); a de sistema pede `system` (o padrão),
+// converte pela âncora do sistema e escreve como `system` («sistema»).
+test("ADR-0039 — mic e sistema no sidecar: arquivos, âncoras e rótulos separados", () => {
+  const mic = fnBody("runMeetingMicTail");
+  assert.match(mic, /track: "mic"/);
+  assert.match(mic, /LM\.tailUtterances\("mic", falas, meeting\.micAnchor,/);
+  assert.match(mic, /appendMeetingSpeech\(id, utterances, "mic"\)/);
+  assert.ok(!/sysAnchor|"system"/.test(mic), "a trilha do microfone não toca em nada do sistema");
+  // a fala do microfone passa pela MESMA junção que decide o vazamento
+  assert.match(mic, /await awaitAttribution\(id, segEnd\)/);
+  const sys = fnBody("runMeetingTail");
+  assert.ok(!/track: "mic"|micAnchor|"mic"/.test(sys), "a trilha de sistema não toca em nada do microfone");
+  assert.match(sys, /appendMeetingSpeech\(id, utterances, "system"\)/);
+});
+
+test("ADR-0039 — no macOS o webview não abre o microfone da reunião", () => {
+  const body = fnBody("startMeetingWith");
+  assert.match(body, /LoroAudio\.meetingMicPath\(\{ os: hostOs, meetingMic: settings\.meetingMic \}\)/);
+  assert.match(body, /micCapture: micPath === "sidecar"/);
+  // com o sidecar gravando, o getUserMedia nem é chamado
+  assert.match(body, /: sidecarMic\s*\? Promise\.resolve\(true\)\s*: startAudio\(undefined\)/);
+});
+
+test("ADR-0039 — a última janela do microfone sai ANTES do stop e da pausa", () => {
+  const fin = fnBody("finalizeMeeting");
+  assert.ok(fin.indexOf("await micFinal") > fin.indexOf("gate.close()"), "o portão fecha antes, senão a espera dura o teto");
+  assert.ok(fin.indexOf("await micFinal") < fin.indexOf("invoke(\"brain_meeting_stop\""), "o stop move o WAV do microfone");
+  const pause = fnBody("pauseMeeting");
+  assert.ok(pause.indexOf("await micFinal") < pause.indexOf("invoke(\"brain_meeting_pause\""));
 });
 
 // O dono da junção. O portão em si é puro e testado em meeting.test.js; aqui o que

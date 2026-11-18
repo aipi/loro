@@ -1018,12 +1018,25 @@ pub(crate) fn transcribe_wav_window(
     let _ = std::fs::remove_file(&dst);
     let out = out?;
     if !out.status.success() {
+        // The live path calls this every 18s per track. A whisper-cli that cannot
+        // even launch (dyld: a Homebrew ggml bump left it pointing at a library
+        // that is gone, 2026-11-18) fails identically every time, so its reason is
+        // logged ONCE until a window succeeds again. whisper's stderr is the
+        // loader/engine diagnostic, never transcript text (that is stdout) — BR-8.
+        if !WHISPER_FAILURE_LOGGED.swap(true, Ordering::Relaxed) {
+            let why = String::from_utf8_lossy(&out.stderr);
+            let why = why.lines().rev().take(3).collect::<Vec<_>>().join(" | ");
+            error!(code = ?out.status.code(), stderr_tail = %why, "whisper-cli failed");
+        }
         return Err("err.whisper_cli_failed".into());
     }
+    WHISPER_FAILURE_LOGGED.store(false, Ordering::Relaxed);
     Ok(parse_whisper_segments(&String::from_utf8_lossy(
         &out.stdout,
     )))
 }
+
+static WHISPER_FAILURE_LOGGED: AtomicBool = AtomicBool::new(false);
 
 // ffmpeg: mixes the microphone track and the system-audio track into one 16kHz
 // mono WAV. `normalize=0` keeps original levels (amix lowers them by default);
@@ -1104,14 +1117,51 @@ fn syscap_anchors() -> &'static Mutex<std::collections::HashMap<PathBuf, u64>> {
 }
 
 const SYSCAP_ANCHOR_PREFIX: &str = "first-sample-epoch-ms ";
+// ADR-0039: the microphone track's own anchor and its own failure line. Separate
+// prefixes, never a shared one: a mic anchor read as the system's (or the reverse)
+// would put one person's speech on the other track's clock.
+const MIC_ANCHOR_PREFIX: &str = "mic-first-sample-epoch-ms ";
+const MIC_UNAVAILABLE_PREFIX: &str = "mic-unavailable";
 
-// The sidecar's one machine-readable line. Pure so the contract with the Swift
-// side is testable: a silent mismatch here would disable the anchor and the
-// fallback is deliberately quiet, so nothing would look broken.
-fn parse_anchor_line(line: &str) -> Option<u64> {
-    line.trim()
-        .strip_prefix(SYSCAP_ANCHOR_PREFIX)
-        .and_then(|n| n.trim().parse::<u64>().ok())
+// What one machine-readable stdout line of the sidecar says.
+#[derive(Debug, PartialEq)]
+enum SidecarLine {
+    SystemAnchor(u64),
+    MicAnchor(u64),
+    MicUnavailable,
+}
+
+// The sidecar's machine-readable lines. Pure so the contract with the Swift side
+// is testable: a silent mismatch here would disable the anchor and the fallback is
+// deliberately quiet, so nothing would look broken.
+fn parse_sidecar_line(line: &str) -> Option<SidecarLine> {
+    let line = line.trim();
+    let epoch = |rest: &str| rest.trim().parse::<u64>().ok();
+    if let Some(rest) = line.strip_prefix(MIC_ANCHOR_PREFIX) {
+        return epoch(rest).map(SidecarLine::MicAnchor);
+    }
+    if let Some(rest) = line.strip_prefix(SYSCAP_ANCHOR_PREFIX) {
+        return epoch(rest).map(SidecarLine::SystemAnchor);
+    }
+    if line == MIC_UNAVAILABLE_PREFIX || line.starts_with("mic-unavailable ") {
+        return Some(SidecarLine::MicUnavailable);
+    }
+    None
+}
+
+// ADR-0039: mic captures the sidecar reported it could not open (permission
+// refused, no input device, the device changed format mid-meeting). Keyed by the
+// mic WAV path, like the anchors.
+fn mic_unavailable_set() -> &'static Mutex<std::collections::HashSet<PathBuf>> {
+    static SET: OnceLock<Mutex<std::collections::HashSet<PathBuf>>> = OnceLock::new();
+    SET.get_or_init(|| Mutex::new(std::collections::HashSet::new()))
+}
+
+pub(crate) fn mic_capture_unavailable(path: &Path) -> bool {
+    mic_unavailable_set()
+        .lock()
+        .map(|s| s.contains(path))
+        .unwrap_or(false)
 }
 
 // The anchor of a capture segment, or `None` while it has not been reported yet
@@ -1125,6 +1175,9 @@ pub(crate) fn syscap_anchor_of(path: &Path) -> Option<u64> {
 pub(crate) fn syscap_anchor_forget(path: &Path) {
     if let Ok(mut m) = syscap_anchors().lock() {
         m.remove(path);
+    }
+    if let Ok(mut s) = mic_unavailable_set().lock() {
+        s.remove(path);
     }
 }
 
@@ -1170,13 +1223,29 @@ fn syscap_start_wasapi(state: &AppState) -> Result<String, String> {
 // Core of the sidecar start, callable from meeting.rs (ADR-0010) as a plain
 // pub(crate) fn — the #[tauri::command] wrapper cannot be reused directly.
 pub(crate) fn system_capture_start(app: &AppHandle, state: &AppState) -> Result<String, String> {
+    system_capture_start_with(app, state, false).map(|c| c.system)
+}
+
+// What a capture start produced: the system WAV always, and — ADR-0039, macOS
+// sidecar only — the microphone's OWN WAV when it was asked for. Two paths, never
+// one mixed file: the meeting's `você` and `sistema` tracks stay apart end to end.
+pub(crate) struct CaptureStarted {
+    pub system: String,
+    pub mic: Option<String>,
+}
+
+pub(crate) fn system_capture_start_with(
+    app: &AppHandle,
+    state: &AppState,
+    with_mic: bool,
+) -> Result<CaptureStarted, String> {
     // Windows captures in-process (ADR-0033). Returning through a shim instead
     // of a #[cfg] block around the sidecar body below keeps that body compiled
     // on every platform — cfg-ing it out would turn resolve_syscap and
-    // parse_anchor_line into dead code on Windows, and this repo builds with
-    // -D warnings in CI.
+    // parse_sidecar_line into dead code on Windows, and this repo builds with
+    // -D warnings in CI. Windows keeps the microphone in the webview (ADR-0039).
     if let Some(started) = syscap_start_inprocess(state) {
-        return started;
+        return started.map(|system| CaptureStarted { system, mic: None });
     }
     // The sidecar is Swift + ScreenCaptureKit, so the sidecar path is macOS
     // only. Say which systems do work instead of letting the spawn fail and
@@ -1195,10 +1264,16 @@ pub(crate) fn system_capture_start(app: &AppHandle, state: &AppState) -> Result<
     let bin = resolve_syscap(app);
     let dir = recordings_dir();
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let out = dir.join(format!("loro-sys-{}.wav", epoch_millis()));
+    let stamp = epoch_millis();
+    let out = dir.join(format!("loro-sys-{stamp}.wav"));
+    let mic_out = with_mic.then(|| dir.join(format!("loro-mic-{stamp}.wav")));
 
-    let mut child = proc::command(&bin)
-        .arg(&out)
+    let mut cmd = proc::command(&bin);
+    cmd.arg(&out);
+    if let Some(m) = &mic_out {
+        cmd.arg("--mic").arg(m);
+    }
+    let mut child = cmd
         .stdin(Stdio::piped()) // closing this stdin later signals a clean stop
         .stdout(Stdio::piped()) // ADR-0025: the first-sample epoch arrives here
         .stderr(Stdio::piped())
@@ -1232,15 +1307,32 @@ pub(crate) fn system_capture_start(app: &AppHandle, state: &AppState) -> Result<
     // stdout. Read it on its own thread — it may land after this function returns
     // (a silent machine delays the first buffer), and it is still the right anchor
     // whenever it lands.
+    // ADR-0039: the same pipe carries the microphone's anchor and its failure,
+    // each under its own prefix and keyed by its own WAV — the reader keeps going
+    // after the system anchor instead of returning on it.
     let (anchor_tx, anchor_rx) = std::sync::mpsc::channel::<u64>();
     if let Some(outpipe) = child.stdout.take() {
         let key = out.clone();
+        let mic_key = mic_out.clone();
         std::thread::spawn(move || {
             for line in BufReader::new(outpipe).lines().map_while(Result::ok) {
-                if let Some(epoch) = parse_anchor_line(&line) {
-                    syscap_anchors().lock().unwrap().insert(key, epoch);
-                    let _ = anchor_tx.send(epoch);
-                    return;
+                match parse_sidecar_line(&line) {
+                    Some(SidecarLine::SystemAnchor(epoch)) => {
+                        syscap_anchors().lock().unwrap().insert(key.clone(), epoch);
+                        let _ = anchor_tx.send(epoch);
+                    }
+                    Some(SidecarLine::MicAnchor(epoch)) => {
+                        if let Some(m) = &mic_key {
+                            syscap_anchors().lock().unwrap().insert(m.clone(), epoch);
+                        }
+                    }
+                    Some(SidecarLine::MicUnavailable) => {
+                        if let Some(m) = &mic_key {
+                            warn!("meeting microphone unavailable in the capture sidecar");
+                            mic_unavailable_set().lock().unwrap().insert(m.clone());
+                        }
+                    }
+                    None => {}
                 }
             }
         });
@@ -1271,9 +1363,12 @@ pub(crate) fn system_capture_start(app: &AppHandle, state: &AppState) -> Result<
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
 
-    info!(out = %out.display(), "system audio capture started");
+    info!(out = %out.display(), mic = mic_out.is_some(), "system audio capture started");
     *state.syscap.lock().unwrap() = Some(child);
-    Ok(out.to_string_lossy().into_owned())
+    Ok(CaptureStarted {
+        system: out.to_string_lossy().into_owned(),
+        mic: mic_out.map(|m| m.to_string_lossy().into_owned()),
+    })
 }
 
 // Stop the system-audio capturer cleanly: closing its stdin signals EOF, the
@@ -6985,18 +7080,52 @@ mod tests {
         )
         .expect("o sidecar tem de estar no repositório");
         assert!(
-            swift.contains(&format!("print(\"{SYSCAP_ANCHOR_PREFIX}")),
+            swift.contains(&format!("emit(\"{SYSCAP_ANCHOR_PREFIX}")),
             "o sidecar precisa imprimir exatamente o prefixo que o pai lê"
         );
         // and the line it prints is the line we parse
         assert_eq!(
-            parse_anchor_line("first-sample-epoch-ms 1786624147797"),
-            Some(1_786_624_147_797)
+            parse_sidecar_line("first-sample-epoch-ms 1786624147797"),
+            Some(SidecarLine::SystemAnchor(1_786_624_147_797))
         );
         // an older sidecar (or any other chatter on stdout) is simply not an anchor
-        assert_eq!(parse_anchor_line("syscap: capturing system audio"), None);
-        assert_eq!(parse_anchor_line("first-sample-epoch-ms abc"), None);
-        assert_eq!(parse_anchor_line(""), None);
+        assert_eq!(parse_sidecar_line("syscap: capturing system audio"), None);
+        assert_eq!(parse_sidecar_line("first-sample-epoch-ms abc"), None);
+        assert_eq!(parse_sidecar_line(""), None);
+    }
+
+    // ADR-0039 — the microphone moved into the sidecar, and the two tracks must
+    // stay two: the mic anchor has its own prefix and is never read as the
+    // system's (that would put `você` on the `sistema` clock), the failure line is
+    // its own event, and the mic is opened raw — the sidecar never turns voice
+    // processing (VPIO: AGC, ducking) on.
+    #[test]
+    fn adr0039_the_sidecar_reports_the_mic_track_apart_from_the_system_track() {
+        let swift = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("syscap/loro-syscap.swift"),
+        )
+        .expect("o sidecar tem de estar no repositório");
+        assert!(swift.contains(&format!("emit(\"{MIC_ANCHOR_PREFIX}")));
+        assert!(swift.contains(&format!("emit(\"{MIC_UNAVAILABLE_PREFIX} ")));
+        assert!(swift.contains("\"--mic\""));
+        assert!(
+            !swift.contains("setVoiceProcessingEnabled(true)"),
+            "o microfone da reunião é cru: nada de VoiceProcessingIO"
+        );
+        assert_eq!(
+            parse_sidecar_line("mic-first-sample-epoch-ms 1786624147800"),
+            Some(SidecarLine::MicAnchor(1_786_624_147_800))
+        );
+        assert_ne!(
+            parse_sidecar_line("mic-first-sample-epoch-ms 1"),
+            Some(SidecarLine::SystemAnchor(1)),
+            "a âncora do microfone nunca vira a do sistema"
+        );
+        assert_eq!(
+            parse_sidecar_line("mic-unavailable denied"),
+            Some(SidecarLine::MicUnavailable)
+        );
+        assert_eq!(parse_sidecar_line("mic-unavailablex"), None);
     }
 
     // ADR-0025 — the meeting's two tracks could not be put on one timeline while

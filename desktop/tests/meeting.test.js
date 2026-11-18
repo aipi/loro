@@ -626,3 +626,40 @@ test("ADR-0038 — o selo de quem falou reconhece h:mm:ss", () => {
   const hits = (s) => [...s.matchAll(re)].map((x) => x[1]);
   assert.deepStrictEqual(hits("[12:34 · você] a [1:02:03 · sistema] b [10:00:00 · você] c"), ["12:34", "1:02:03", "10:00:00"]);
 });
+
+// ADR-0039 — exigência do dono: no caminho do sidecar o microfone e o sistema
+// continuam DUAS trilhas. Uma janela da trilha `mic` vira fala de «você», uma da
+// trilha `system` vira fala de «sistema»: o rótulo vem da trilha que foi lida,
+// nunca de uma mistura. E o filtro de vazamento continua vendo as duas.
+test("ADR-0039 — tailUtterances rotula pela trilha: mic → você, system → sistema", () => {
+  const seg = [{ tMs: 1000, endMs: 3000, text: "fala de teste" }];
+  const mic = LM.tailUtterances("mic", seg, 10_000, 9_000, 0);
+  const sys = LM.tailUtterances("system", seg, 10_000, 9_000, 0);
+  assert.deepStrictEqual(mic.map((u) => u.source), ["mic"]);
+  assert.deepStrictEqual(sys.map((u) => u.source), ["system"]);
+  assert.strictEqual(LM.trackLabel(mic[0].source), "você");
+  assert.strictEqual(LM.trackLabel(sys[0].source), "sistema");
+  // mesma âncora → mesmo relógio: t na reunião e a hora de relógio da fala
+  assert.strictEqual(mic[0].tMs, 2000);
+  assert.strictEqual(mic[0].endMs, 4000);
+  assert.strictEqual(mic[0].eMs, 11_000);
+  assert.throws(() => LM.tailUtterances("completo", seg, 0, 0, 0));
+});
+
+test("ADR-0039 — o vazamento da caixa continua detectado entre as duas trilhas do sidecar", () => {
+  const texto = "a gente precisa fechar o orçamento da frota até sexta feira sem falta";
+  const comTokens = (u) => ({ ...u, tokens: LM.speechTokens(u.text) });
+  const sys = LM.tailUtterances("system", [{ tMs: 0, endMs: 6000, text: texto }], 10_000, 10_000, 0).map(comTokens);
+  const mic = LM.tailUtterances("mic", [{ tMs: 200, endMs: 6100, text: texto }], 10_000, 10_000, 0).map(comTokens);
+  // a cópia do microfone é a que cai; a do sistema nunca
+  assert.ok(LM.micLeakOfSystem(mic[0], sys), "o eco do microfone tem de ser reconhecido");
+  assert.strictEqual(LM.micLeakOfSystem(sys[0], mic), null);
+});
+
+test("isEngineFailure reconhece o whisper-cli que não roda, e só ele", () => {
+  assert.strictEqual(LM.isEngineFailure("err.whisper_cli_failed"), true);
+  assert.strictEqual(LM.isEngineFailure("Error: err.whisper_cli_failed"), true);
+  assert.strictEqual(LM.isEngineFailure("err.live_model_unavailable"), false);
+  assert.strictEqual(LM.isEngineFailure(""), false);
+  assert.strictEqual(LM.isEngineFailure(null), false);
+});

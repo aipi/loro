@@ -217,6 +217,14 @@ const meeting = {
   // + áudio do computador»: com uma trilha só ele tem de dizer outra coisa (BR-8), e é
   // este fato que ele lê.
   micLive: true,
+  // ADR-0039: de onde vem o microfone DESTA reunião (LoroAudio.meetingMicPath):
+  // "sidecar" (macOS, WAV cru próprio), "webview" (Windows, getUserMedia) ou "off".
+  micPath: "off",
+  // a trilha do microfone no caminho do sidecar: um WAV crescente, lido em janelas
+  // como o do sistema, com a sua própria âncora — nunca o mesmo arquivo nem a
+  // mesma âncora da trilha de sistema
+  micTailTimer: null, micTailFrom: 0, micTailBusy: false, micTailFlush: null,
+  micAnchor: null, micSegPausedMs: 0, micUnavailable: false,
 };
 
 // ADR-0038 — o dia gravado. `meetingId` é a reunião que o DIA abriu (uma reunião
@@ -262,7 +270,8 @@ const DEFAULTS = {
   // Cancelamento de eco do microfone. Desligado por padrão: ligá-lo entrega o
   // microfone ao processamento de voz do macOS, que abafa a saída da máquina
   // inteira e achata a voz (ADR-0022 §24). Só faz sentido para quem ouve por
-  // alto-falante e precisa que o microfone NÃO escute os outros de volta.
+  // alto-falante e precisa que o microfone NÃO escute os outros de volta. No macOS
+  // não vale: lá o microfone da reunião é gravado cru pelo sidecar (ADR-0039).
   micEchoCancel: false,
   // Gravar TAMBÉM o seu microfone numa reunião. Ligado por padrão: com fone não
   // existe eco, e a sua voz (quem operou) é metade do que a análise lê. Quando o som
@@ -910,7 +919,8 @@ async function stopSession() {
 // and calls brain_meeting_start, which scaffolds the meeting home + manifest +
 // reuniao.md AND spawns the ScreenCaptureKit sidecar into audio/system.wav
 // (REUSING ADR-0005 system_capture_start — the frontend does NOT start capture
-// itself). The mic keeps recording via the existing MediaRecorder (the onda +
+// itself). The mic is recorded by the same sidecar on macOS (ADR-0039, own WAV)
+// and by a webview MediaRecorder on Windows (the onda +
 // audio/mic.webm). The reuniao.md tab is opened as THE live surface (the footer
 // live panel is retired for meetings), and the transcript only shows after stop.
 // Uma reunião nasce em DOIS tempos (o backend sobe o sidecar de sistema, o
@@ -955,9 +965,14 @@ async function startMeetingWith(choice) {
   clog("start (meeting ADR-0010): tema=" + choice.tema);
   meetingStarting = true;
   setRecPending("starting"); // nada foi estabelecido ainda: o cromo diz "iniciando…"
+  // ADR-0039: no macOS o microfone é gravado pelo sidecar, no MESMO spawn que o
+  // áudio do sistema, mas em arquivo próprio — então a escolha vai junto do start.
+  const micPath = LoroAudio.meetingMicPath({ os: hostOs, meetingMic: settings.meetingMic });
   let res;
   try {
-    res = await invoke("brain_meeting_start", { input: { tema: choice.tema, titulo: choice.titulo, cfg } });
+    res = await invoke("brain_meeting_start", {
+      input: { tema: choice.tema, titulo: choice.titulo, cfg, micCapture: micPath === "sidecar" },
+    });
   } catch (e) {
     const msg = String(e);
       // R15/R24 · a recusa apontava para "as Configurações", que no vocabulário do
@@ -980,9 +995,15 @@ async function startMeetingWith(choice) {
   // física para o som que sai por alto-falante, e ela é a resposta da própria pessoa ao
   // empurrão do eco. A reunião já sabia rodar assim: era o caminho de quando o microfone
   // falhava, e agora é também uma escolha.
-  const semMic = settings.meetingMic === false;
+  const semMic = micPath === "off";
+  // ADR-0039: o sidecar já está gravando o microfone — o webview NÃO abre o seu.
+  // A permissão do microfone, se faltar, é pedida pelo sistema ao sidecar; uma
+  // recusa chega na primeira janela da trilha (`unavailable`), não aqui.
+  const sidecarMic = micPath === "sidecar" && !!(res && res.micCapture);
   const micReady = semMic
     ? Promise.resolve(false)
+    : sidecarMic
+    ? Promise.resolve(true)
     : startAudio(undefined).then(
       () => true,
       (e) => { clog("startAudio (meeting) error — continuing with system audio only: " + e); return false; }
@@ -999,6 +1020,8 @@ async function startMeetingWith(choice) {
   stopPending = false; // um encerramento que morreu no meio não trava esta
   meeting.appended = []; crossTalkHits = 0; crossTalkNudged = false;
   meeting.micLive = mic === true;   // o selo de privacidade lê este fato (BR-8)
+  meeting.micPath = semMic ? "off" : sidecarMic ? "sidecar" : "webview";
+  meeting.micUnavailable = false;
   meeting.gate = LM.coverageGate(); // ADR-0025: o dono da junção é POR reunião
                            // histórico de eco é POR reunião (antes dependia de o
                            // relógio ler exatamente 0 — um tique de 1ms vazava a
@@ -1007,14 +1030,15 @@ async function startMeetingWith(choice) {
   meetingStarting = false;
   await openDoc(res.livingRel, { preview: false }); // a aba é a superfície ao vivo
   onStarted();
+  if (sidecarMic) paintCaptureMeter(); // sem getUserMedia, ninguém mais pinta o selo
   startMeetingTail(); // ADR-0012: sistema (outros participantes) ao vivo
-  if (mic === true) startMeetingPreview(); // ADR-0012 modelo A: microfone (operador) ao vivo
+  if (mic === true) startMeetingMic(); // ADR-0012 modelo A: microfone (operador) ao vivo
   // permissão concedida DEPOIS do prazo: o microfone entra na reunião em curso
   // em vez de ficar de fora dela até o fim — e se a reunião já acabou, a captura
   // é fechada na hora (BR-1: nada fica com o microfone aberto sem gravação).
   else micReady.then((ok) => {
     if (!ok) return;
-    if (meeting.active && meeting.phase === "recording") startMeetingPreview();
+    if (meeting.active && meeting.phase === "recording") startMeetingMic();
     else stopAudio();
   });
   pessoalSig = ""; refreshPessoal();
@@ -1060,6 +1084,121 @@ function stopMeetingTail() {
 // quando uma pausa falha (o WAV do backend continua o mesmo e continua crescendo).
 function resumeMeetingTailInterval() {
   if (!meeting.tailTimer) meeting.tailTimer = setInterval(tickMeetingTail, MEETING_TAIL_MS);
+}
+// O mesmo para o microfone: no sidecar só rearma (o WAV é o mesmo e segue
+// crescendo); no webview o recorder já foi parado, então recomeça a rotação.
+function resumeMeetingMic() {
+  if (meeting.micPath === "sidecar") {
+    if (!meeting.micUnavailable && !meeting.micTailTimer) meeting.micTailTimer = setInterval(tickMeetingMicTail, MEETING_TAIL_MS);
+  } else startMeetingPreview(); // sem stream, o spawn não faz nada (como antes)
+}
+
+// ADR-0039 · o microfone da reunião, pelo caminho que ela usa. Os dois caminhos
+// produzem a MESMA coisa (falas `source: "mic"`, rótulo «você», pela mesma junção
+// e pelo mesmo filtro de vazamento); só a captura muda.
+function startMeetingMic() {
+  if (meeting.micPath === "sidecar") startMeetingMicTail();
+  else startMeetingPreview();
+}
+function stopMeetingMic() {
+  stopMeetingMicTail();
+  stopMeetingPreview();
+}
+// O último trecho do microfone antes de pausar/encerrar. No sidecar é uma janela
+// a mais do WAV; no webview é o flush do MediaRecorder (o onstop transcreve). A
+// promessa devolvida espera a junção, então quem chama fecha o portão ANTES de
+// esperá-la — senão ela ficaria presa no teto inteiro.
+function flushMeetingMic() {
+  if (meeting.micPath !== "sidecar") { stopMeetingPreview(); return Promise.resolve(); }
+  stopMeetingMicTail();
+  return (async () => {
+    try { await meeting.micTailFlush; } catch (_) {}
+    try { await tickMeetingMicTail(); } catch (e) { clog("final mic tail: " + e); }
+  })();
+}
+
+// ADR-0039 · a trilha do microfone no sidecar: um WAV crescente, lido em janelas
+// de 18s exatamente como o do sistema, mas pela trilha `mic` — o backend lê só o
+// arquivo do microfone, e a âncora é a do microfone. O rótulo sai daqui: o que
+// esta função escreve é `source: "mic"`, e nada mais.
+function startMeetingMicTail() {
+  stopMeetingMicTail();
+  meeting.micTailFrom = 0; meeting.micTailBusy = false;
+  meeting.micSegPausedMs = state.pausedMs;
+  // fallback até a âncora medida chegar na primeira resposta (como o sistema)
+  meeting.micAnchor = Date.now();
+  meeting.micTailTimer = setInterval(tickMeetingMicTail, MEETING_TAIL_MS);
+  // Uma sondagem cedo: uma recusa da permissão do microfone tem de chegar ao selo
+  // de privacidade em segundos, não no primeiro tique de 18s (BR-8).
+  setTimeout(() => { if (meeting.micTailTimer) tickMeetingMicTail(); }, 3000);
+}
+function stopMeetingMicTail() {
+  if (meeting.micTailTimer) { clearInterval(meeting.micTailTimer); meeting.micTailTimer = null; }
+}
+function tickMeetingMicTail() {
+  if (meeting.micTailBusy) return meeting.micTailFlush || Promise.resolve();
+  meeting.micTailFlush = runMeetingMicTail();
+  return meeting.micTailFlush;
+}
+async function runMeetingMicTail() {
+  if (!meeting.active || meeting.phase !== "recording" || !meeting.id || meeting.micUnavailable) return;
+  meeting.micTailBusy = true;
+  const id = meeting.id;
+  try {
+    const res = await invoke("brain_meeting_transcribe_tail", {
+      input: { id, fromMs: meeting.micTailFrom, track: "mic" },
+    });
+    if (!res || meeting.id !== id) return;
+    if (res.unavailable) { onSidecarMicUnavailable(); return; }
+    if (res.anchorEpochMs != null) meeting.micAnchor = res.anchorEpochMs;
+    if (typeof res.nextMs === "number" && res.nextMs > meeting.micTailFrom) meeting.micTailFrom = res.nextMs;
+    const falas = res.segments || [];
+    if (!falas.length) return;
+    noteEngineResult(null); // o whisper rodou e falou: a falha (se houve) passou
+    const utterances = LM.tailUtterances("mic", falas, meeting.micAnchor, meeting.originEpoch, meeting.micSegPausedMs);
+    // o fim desta janela no relógio de parede — o lado do microfone da junção
+    const segEnd = meeting.micAnchor != null ? meeting.micAnchor + res.nextMs : Date.now();
+    await awaitAttribution(id, segEnd);
+    if (meeting.id !== id) return;
+    try {
+      const r = await appendMeetingSpeech(id, utterances, "mic");
+      setTailStatus(id, r.appended || r.dropped
+        ? t("preview ao vivo ativo")
+        : t("preview: microfone sem fala substantiva ainda"));
+    } catch (e) { clog("brain_meeting_append (mic tail) error: " + e); }
+  } catch (e) {
+    clog("brain_meeting_transcribe_tail (mic) error: " + e);
+    noteEngineResult(e);
+    setTailStatus(id, t("preview indisponível") + ": " + tErr(String(e)));
+  } finally {
+    meeting.micTailBusy = false;
+  }
+}
+// O sidecar não conseguiu abrir o microfone (permissão negada, nenhum dispositivo
+// de entrada, o dispositivo trocou de formato no meio). A reunião segue com UMA
+// trilha, e o selo de privacidade passa a dizer isso (BR-8). Sem recair para o
+// getUserMedia no meio da reunião: seria reabrir justamente o caminho que esta
+// mudança tirou do macOS.
+function onSidecarMicUnavailable() {
+  if (meeting.micUnavailable) return;
+  meeting.micUnavailable = true;
+  meeting.micLive = false;
+  stopMeetingMicTail();
+  clog("meeting mic: sidecar reported the microphone unavailable");
+  paintCaptureMeter();
+  toast(t("o microfone não abriu — a reunião está gravando só o áudio do sistema. Libere o Loro em Ajustes do Sistema → Privacidade e Segurança → Microfone."), 0);
+}
+
+// Um whisper-cli que não roda falha igual em TODA janela, a cada 18s, nas duas
+// trilhas — e só aparecia no log (`err.whisper_cli_failed`), com a reunião
+// aparentemente gravando e nada sendo transcrito. Avisa UMA vez; uma janela que
+// volta a transcrever rearma o aviso, para uma quebra nova não passar calada.
+let engineFailWarned = false;
+function noteEngineResult(err) {
+  if (!err) { engineFailWarned = false; return; }
+  if (!LM.isEngineFailure(err) || engineFailWarned) return;
+  engineFailWarned = true;
+  toast(t("a transcrição está falhando: o whisper-cli não roda. Atualize o engine (brew upgrade whisper-cpp) e reinicie o Loro."), 0);
 }
 
 // ADR-0012 model A: rotate a dedicated mic MediaRecorder (separate from the main
@@ -1223,28 +1362,28 @@ let crossTalkHits = 0, crossTalkNudged = false;
 // gravação — o preço de consertar agora seria perder o que está sendo gravado.
 function noteCrossTalk(n) {
   crossTalkHits += n;
-  if (crossTalkHits < 3 || crossTalkNudged || settings.micEchoCancel || settings.meetingMic === false) return;
+  // ADR-0039: o cancelamento de eco só existe no caminho do webview; no sidecar
+  // (macOS) a única saída oferecida é gravar só o sistema.
+  const ecoExiste = LoroAudio.echoCancelApplies(meeting.micPath);
+  if (crossTalkHits < 3 || crossTalkNudged || (ecoExiste && settings.micEchoCancel) || settings.meetingMic === false) return;
   crossTalkNudged = true;
-  toastAction(
-    t("as duas trilhas estão ouvindo a mesma fala (o som sai pela caixa)"),
-    [
-      {
-        label: t("gravar só o sistema"),
-        run: () => {
-          settings.meetingMic = false; persistSettings(); paintCaptureSettings();
-          toast(t("as próximas reuniões gravam só o áudio do sistema — a sua voz fica de fora. Reversível em Configurações → Captura."), 8000);
-        },
+  const actions = [
+    {
+      label: t("gravar só o sistema"),
+      run: () => {
+        settings.meetingMic = false; persistSettings(); paintCaptureSettings();
+        toast(t("as próximas reuniões gravam só o áudio do sistema — a sua voz fica de fora. Reversível em Configurações → Captura."), 8000);
       },
-      {
-        label: t("cancelar o eco"),
-        run: () => {
-          settings.micEchoCancel = true; persistSettings(); paintCaptureSettings();
-          toast(t("cancelamento de eco ligado nas próximas reuniões — com fone, deixe desligado (a sua voz sai mais baixa)."), 8000);
-        },
-      },
-    ],
-    14000
-  );
+    },
+  ];
+  if (ecoExiste) actions.push({
+    label: t("cancelar o eco"),
+    run: () => {
+      settings.micEchoCancel = true; persistSettings(); paintCaptureSettings();
+      toast(t("cancelamento de eco ligado nas próximas reuniões — com fone, deixe desligado (a sua voz sai mais baixa)."), 8000);
+    },
+  });
+  toastAction(t("as duas trilhas estão ouvindo a mesma fala (o som sai pela caixa)"), actions, 14000);
 }
 
 // Os interruptores da Captura repintados a partir do ajuste: a escolha feita pelo
@@ -1252,6 +1391,13 @@ function noteCrossTalk(n) {
 function paintCaptureSettings() {
   const eco = $("optEchoCancel");
   if (eco) eco.checked = !!settings.micEchoCancel;
+  // ADR-0039: no macOS o microfone da reunião é gravado cru pelo sidecar — não há
+  // eco a cancelar no Loro. O ajuste guardado não é apagado; só não vale aqui.
+  const ecoVale = LoroAudio.echoCancelApplies(LoroAudio.meetingMicPath({ os: hostOs, meetingMic: true }));
+  if (eco) eco.disabled = !ecoVale;
+  const ecoHint = $("echoCancelHint"), ecoMac = $("echoCancelMacHint");
+  if (ecoHint) ecoHint.hidden = !ecoVale;
+  if (ecoMac) ecoMac.hidden = ecoVale;
   const mm = $("optMeetingMic");
   if (mm) mm.checked = settings.meetingMic !== false;
 }
@@ -1265,6 +1411,7 @@ async function onPreviewSegment(chunks, mime, segStartEpoch, segPausedMs, segEnd
     if (meeting.id !== id) return;
     const falas = (res && res.segments) || [];
     if (!falas.length) { setTailStatus(id, t("preview: microfone sem fala substantiva ainda")); return; }
+    noteEngineResult(null);
     // ADR-0025: cada fala do segmento no SEU tempo, convertida para a linha do
     // tempo da reunião — a mesma que a trilha de sistema usa.
     const utterances = falas.map((s) => ({
@@ -1287,6 +1434,7 @@ async function onPreviewSegment(chunks, mime, segStartEpoch, segPausedMs, segEnd
     } catch (e) { clog("brain_meeting_append (mic) error: " + e); }
   } catch (e) {
     clog("brain_meeting_transcribe_segment error: " + e);
+    noteEngineResult(e);
     setTailStatus(id, t("preview indisponível") + ": " + tErr(String(e)));
   }
 }
@@ -1327,13 +1475,9 @@ async function runMeetingTail() {
       return;
     }
     if (!meeting.active || meeting.id !== id) return;
+    noteEngineResult(null);
     // os outros participantes (áudio do sistema), cada fala no seu tempo
-    const utterances = falas.map((s) => ({
-      tMs: LM.sysBlockMs(meeting.sysAnchor, s.tMs, meeting.originEpoch, meeting.segPausedMs),
-      endMs: LM.sysBlockMs(meeting.sysAnchor, s.endMs, meeting.originEpoch, meeting.segPausedMs),
-      eMs: LM.blockEpoch(meeting.sysAnchor, s.tMs),
-      text: s.text,
-    }));
+    const utterances = LM.tailUtterances("system", falas, meeting.sysAnchor, meeting.originEpoch, meeting.segPausedMs);
     try {
       const r = await appendMeetingSpeech(id, utterances, "system");
       setTailStatus(id, r.appended || r.dropped
@@ -1344,6 +1488,7 @@ async function runMeetingTail() {
     } catch (e) { clog("brain_meeting_append (tail) error: " + e); }
   } catch (e) {
     clog("brain_meeting_transcribe_tail error: " + e);
+    noteEngineResult(e);
     setTailStatus(id, t("preview indisponível") + ": " + tErr(String(e)));
   } finally {
     meeting.tailBusy = false;
@@ -1380,7 +1525,8 @@ function stopMeeting() {
   setRecPending("stopping");
   if (state.paused) { state.pausedMs += Date.now() - state.pauseStart; state.paused = false; state.pauseStart = 0; }
   stopMeetingTail();     // encerra o preview de sistema
-  stopMeetingPreview();  // encerra o preview de mic (faz o flush do último segmento)
+  stopMeetingPreview();  // encerra o preview de mic do webview (flush do último segmento)
+  stopMeetingMicTail();  // ADR-0039: a última janela do sidecar sai no finalizeMeeting
   const hadRecorder = !!(audio.recorder && audio.recorder.state !== "inactive");
   onStopped();
   if (!hadRecorder) finalizeMeeting();
@@ -1396,7 +1542,7 @@ async function pauseMeeting() {
   pausePending = true;
   paintPauseBtn("pending");
   try {
-    stopMeetingPreview();            // flush do segmento de mic corrente
+    const micFinal = flushMeetingMic(); // flush do trecho de mic corrente
     stopMeetingTail();
     // espera o tick em voo ANTES de pedir o seu: dois carves concorrentes
     // disputam o mesmo snapshot e corrompem os dois lados
@@ -1406,6 +1552,7 @@ async function pauseMeeting() {
     // Não vem mais janela: quem espera pela junção é liberado agora, em vez de
     // ficar preso no teto (o último segmento de microfone está em voo).
     if (meeting.gate) meeting.gate.close();
+    await micFinal; // ADR-0039: a última janela do sidecar já fotografou o WAV
     await invoke("brain_meeting_pause", { input: { id: meeting.id } });
     state.paused = true; state.pauseStart = Date.now();
     if (audio.ctx) { try { audio.ctx.suspend(); } catch (_) {} } // congela a onda
@@ -1420,7 +1567,7 @@ async function pauseMeeting() {
     // acontece antes de parar a captura, então o WAV é o mesmo e segue crescendo.
     // `startMeetingTail()` zeraria o offset e a reunião inteira seria transcrita
     // e appendada de novo, ainda por cima carimbada na hora da falha.
-    resumeMeetingTailInterval(); startMeetingPreview();
+    resumeMeetingTailInterval(); resumeMeetingMic();
   } finally {
     pausePending = false;
     paintPauseBtn();
@@ -1438,7 +1585,10 @@ async function resumeMeeting() {
     paintCaptureMeter();   // volta a dizer o que está sendo captado
     renderTabs();
     startMeetingTail();    // novo segmento: offset em 0, âncora vem do sidecar
-    startMeetingPreview();
+    // ADR-0039: no sidecar o retomar abre um WAV de microfone NOVO (offset 0,
+    // âncora nova); no webview a rotação recomeça como antes
+    if (meeting.micPath !== "sidecar") startMeetingPreview();
+    else if (!meeting.micUnavailable) startMeetingMicTail();
     setTailStatus(meeting.id, t("preview ao vivo ativo"));
     announce(t("gravando"));   // pausar avisa por toast; retomar não avisava nada
   } catch (e) {
@@ -1471,7 +1621,7 @@ function paintPauseBtn(mode) {
 // (fecha a reunião + apaga todo o áudio; áudio é transiente).
 async function finalizeMeeting() {
   stopMeetingTail();
-  stopMeetingPreview(); // faz o flush do último segmento de mic (append assíncrono)
+  const micFinal = flushMeetingMic(); // o último trecho de mic (append assíncrono)
   audio.chunks = []; audio.recorder = null;
   state.meetingMode = false;
   const id = meeting.id;
@@ -1487,6 +1637,8 @@ async function finalizeMeeting() {
   // Não vem mais janela: libera o último segmento de microfone, que está em voo e
   // senão esperaria o teto inteiro antes de entrar.
   if (meeting.gate) meeting.gate.close();
+  // ADR-0039: ANTES do stop, que move o WAV do microfone e deixa a trilha sem fonte
+  await micFinal;
   meeting.phase = "transcribing";
   setRecPending("stopping"); // desabilita o ● E diz por quê ("encerrando…")
   renderIfLiving(id);
@@ -11235,6 +11387,7 @@ async function checkSetup() {
   try {
     const d = await invoke("doctor");
     hostOs = d.os || hostOs; // antes de qualquer early-return: guia o áudio do sistema
+    paintCaptureSettings();  // ADR-0039: o eco só existe fora do macOS
     applySourceAvailability();
     applyDiarizeAvailability();
     const missing = [];

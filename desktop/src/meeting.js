@@ -217,6 +217,37 @@
     return Number(segStartEpoch) + Math.max(0, Number(offsetMs || 0));
   }
 
+  // ADR-0039 · as duas trilhas de uma reunião e o rótulo que cada uma escreve
+  // (o mesmo do backend, `src_label`). Uma trilha desconhecida é recusada em vez
+  // de virar uma terceira — ou, pior, a outra.
+  const TRACK_LABELS = { mic: "você", system: "sistema" };
+  function trackLabel(track) {
+    return TRACK_LABELS[track] || null;
+  }
+  // As falas de UMA janela de UMA trilha, já na linha do tempo da reunião. Desde a
+  // ADR-0039 o microfone do macOS também é um WAV crescente com âncora medida pelo
+  // sidecar, então as duas trilhas convertem do mesmo jeito; o que as separa é o
+  // `source`, que vem da trilha lida e de mais nada.
+  function tailUtterances(track, segments, anchorEpochMs, originEpoch, segPausedMs) {
+    if (!trackLabel(track)) throw new Error("trilha desconhecida: " + track);
+    return (segments || []).map(function (s) {
+      return {
+        tMs: blockMs(anchorEpochMs, s.tMs, originEpoch, segPausedMs),
+        endMs: blockMs(anchorEpochMs, s.endMs, originEpoch, segPausedMs),
+        eMs: blockEpoch(anchorEpochMs, s.tMs),
+        text: s.text,
+        source: track,
+      };
+    });
+  }
+
+  // O whisper-cli que não roda (um dyld quebrado depois de um `brew upgrade`, por
+  // exemplo) falha IGUAL em toda janela, a cada 18s, nas duas trilhas. O app
+  // precisa reconhecer esse caso para avisar uma vez, e não a cada janela.
+  function isEngineFailure(err) {
+    return /err\.whisper_cli_failed/.test(String(err || ""));
+  }
+
   // ---- parágrafos: como as falas são ESCRITAS (ADR-0025 §29) -----------------
   // O timestamp por fala é o que faz a atribuição funcionar — sem ele a decisão de
   // quem falou volta a raciocinar em blocos de 18s. Mas um bloco POR FALA deixa o
@@ -541,6 +572,7 @@
     isHallucination, filterHallucinations,
     speechTokens, tokenContainment, leakCoverage, micLeakOfSystem, partialCrossTalk,
     sysBlockMs, micBlockMs, blockEpoch, coverageGate, speechParagraphs,
+    trackLabel, tailUtterances, isEngineFailure,
     meetingTitleFromManifest, meetingLabel,
   };
 });

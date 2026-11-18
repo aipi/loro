@@ -88,5 +88,29 @@
     return os === "macos" || os === "windows";
   }
 
-  return { pickCaptureDevice, loopbackPattern, micConstraints, diarizeSupported, meetingSupported, RAW_AUDIO };
+  // ADR-0039 · de onde vem o microfone de uma REUNIÃO. Função pura, e o único
+  // lugar que decide:
+  //   "off"     — o microfone está desligado para reuniões (`meetingMic`): nada
+  //               é pedido, em nenhum sistema;
+  //   "sidecar" — macOS: o sidecar de captura grava o microfone CRU (sem o
+  //               processamento de voz do sistema) num arquivo próprio, ao lado
+  //               do áudio do sistema e nunca misturado a ele. O webview não abre
+  //               o microfone: a unidade de captura do WebKit é a que o Loro não
+  //               controla, e foi com ela aberta no meio de uma chamada que a
+  //               pessoa do outro lado passou a ouvir o dono baixo;
+  //   "webview" — Windows: o WASAPI do Loro só grava o loopback, então o
+  //               microfone continua no getUserMedia.
+  function meetingMicPath({ os, meetingMic } = {}) {
+    if (meetingMic === false) return "off";
+    return os === "macos" ? "sidecar" : "webview";
+  }
+
+  // O cancelamento de eco é uma restrição do getUserMedia: só existe onde o
+  // microfone passa pelo webview. No sidecar o microfone é cru por definição, e
+  // o vazamento da caixa fica com o filtro entre trilhas (ADR-0025).
+  function echoCancelApplies(path) {
+    return path === "webview";
+  }
+
+  return { pickCaptureDevice, loopbackPattern, micConstraints, diarizeSupported, meetingSupported, meetingMicPath, echoCancelApplies, RAW_AUDIO };
 });

@@ -36,10 +36,15 @@ BARRA LATERAL │ ABAS (só quando há documento aberto) │ PAINEL 330px
   sozinho, e sempre a do **microfone**: o som vaza da caixa para o microfone, e
   nunca no sentido contrário, então a fala dos outros nunca é rotulada como sua.
   Para isso ele espera alguns segundos a trilha do sistema antes de escrever a
-  sua fala — é por isso que o seu texto às vezes aparece um pouco depois. Se
-  quiser matar o vazamento na origem, ligue **cancelar o eco do alto-falante**
-  em Configurações → Captura, com o custo, declarado ali, de a sua voz sair mais
-  baixa. Com fone, deixe desligado.
+  sua fala — é por isso que o seu texto às vezes aparece um pouco depois. No
+  **Windows**, se quiser matar o vazamento na origem, ligue **cancelar o eco do
+  alto-falante** em Configurações → Captura, com o custo, declarado ali, de a sua
+  voz sair mais baixa. No **macOS** o Loro grava o microfone da reunião direto do
+  dispositivo, sem processamento de voz e em trilha separada do áudio do
+  sistema, então esse controle não existe lá: quem ouve pela caixa e quer uma
+  trilha só desliga o microfone nas reuniões. Se o microfone não abrir (permissão
+  negada em Ajustes do Sistema → Privacidade e Segurança → Microfone), a reunião
+  segue gravando só o áudio do sistema e avisa.
 - **O texto entra em parágrafos**, um por trecho de fala corrida, carimbado com o
   horário em que aquela fala começou de verdade — e uma pausa começa um parágrafo
   novo. O horário é contado desde o instante em que a gravação começou: numa
@@ -485,11 +490,12 @@ dentro de uma ideia. Crie um no **＋** da seção.
 **As duas trilhas, e o eco.** Uma reunião capta **a sua voz** (microfone) e **o áudio da
 máquina** (os outros participantes) — é o que a análise lê como «você» e «os outros». Se você
 ouve **pela caixa de som**, o microfone escuta a máquina de volta e a mesma fala chega pelas
-duas trilhas. O Loro detecta isso e oferece as duas saídas na hora: **gravar só o sistema**
-(uma trilha, sem eco, sem pedir permissão do microfone — a sua voz fica de fora) ou
-**cancelar o eco** (as duas trilhas seguem, mas o macOS troca o caminho de áudio e a sua voz
-sai mais baixa). O que você escolher vale **das próximas reuniões em diante**, e os dois
-interruptores ficam em **Configurações → Captura**. Com **fone de ouvido não existe eco** —
+duas trilhas. O Loro detecta isso e oferece a saída na hora: **gravar só o sistema**
+(uma trilha, sem eco, sem pedir permissão do microfone — a sua voz fica de fora) e, no
+Windows, também **cancelar o eco** (as duas trilhas seguem, mas a sua voz sai mais baixa). No
+macOS o microfone é gravado cru, numa trilha própria, então lá não há eco a cancelar. O que
+você escolher vale **das próximas reuniões em diante**, e os interruptores ficam em
+**Configurações → Captura**. Com **fone de ouvido não existe eco** —
 aí o melhor é deixar as duas.
 
 **O preço, dito antes:** um loop roda a IA **enquanto o app estiver aberto**. Com
