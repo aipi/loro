@@ -1548,7 +1548,11 @@ async function finishMeetingAfterTranscription() {
     }
     pessoalSig = ""; refreshPessoal();
     renderIfLiving(id);
-    if (rel) { openDoc(rel, { preview: false }); offerAnalyse(LM.meetingDir(rel)); }
+    // ADR-0038: uma hora do dia fecha calada — são ~10 por dia, e quem as lê é o
+    // agente que recorta pela agenda; abrir aba e oferecer análise a cada hora
+    // seria uma interrupção por hora.
+    if (rel && LWD.isWorkdayMeeting(rel)) clog("workday hour closed");
+    else if (rel) { openDoc(rel, { preview: false }); offerAnalyse(LM.meetingDir(rel)); }
     else if (id) toast(t("reunião encerrada"));
   } finally { meetingsClosing--; }
 }

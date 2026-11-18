@@ -192,3 +192,14 @@ test("ADR-0038 §4 — o Mac fica acordado enquanto o dia grava, e solta quando 
   assert.match(fnSource("workdayStart"), /invoke\("workday_keep_awake", \{ on: true \}\)/);
   assert.match(APP, /invoke\("workday_keep_awake", \{ on: false \}\)/);
 });
+
+test("ADR-0038 §1 — uma hora do dia fecha calada: sem aba e sem oferta de análise", () => {
+  // ~10 horas por dia; cada uma abrindo aba e oferecendo análise seriam 10 interrupções
+  // para um material que o agente externo recorta depois (ADR-0038 Consequences).
+  assert.strictEqual(WD.isWorkdayMeeting("brainstorming/dia/meetings/2026-11-18-1200-dia-2026-11-18-09-00/meeting.md"), true);
+  assert.strictEqual(WD.isWorkdayMeeting("brainstorming/vendas/meetings/2026-11-18-1200-semanal/meeting.md"), false);
+  assert.strictEqual(WD.isWorkdayMeeting("brainstorming/diario/meetings/x/meeting.md"), false);
+  assert.strictEqual(WD.isWorkdayMeeting(null), false);
+  const src = fs.readFileSync(path.join(__dirname, "../src/app.js"), "utf8");
+  assert.match(src, /LWD\.isWorkdayMeeting\(rel\)/, "o fechamento da reunião precisa consultar isWorkdayMeeting antes de abrir a aba");
+});

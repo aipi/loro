@@ -80,5 +80,11 @@
     return { acao: "iniciar", titulo: titleOf(agora), hora };
   }
 
-  return { decide, parseClock, hourKey, nextHourKey, titleOf, inWindow };
+  // A hora do dia vive sob o tema fixo `dia` (ADR-0038 §1). Comparar o segmento
+  // inteiro: `brainstorming/diario/` é outro tema e não pode fechar calado.
+  function isWorkdayMeeting(rel) {
+    return typeof rel === "string" && rel.startsWith("brainstorming/dia/");
+  }
+
+  return { decide, parseClock, hourKey, nextHourKey, titleOf, inWindow, isWorkdayMeeting };
 });
