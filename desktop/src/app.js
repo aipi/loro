@@ -1150,11 +1150,11 @@ async function runMeetingMicTail() {
     });
     if (!res || meeting.id !== id) return;
     if (res.unavailable) { onSidecarMicUnavailable(); return; }
+    noteEngineOk("mic", !!(res.segments && res.segments.length));
     if (res.anchorEpochMs != null) meeting.micAnchor = res.anchorEpochMs;
     if (typeof res.nextMs === "number" && res.nextMs > meeting.micTailFrom) meeting.micTailFrom = res.nextMs;
     const falas = res.segments || [];
     if (!falas.length) return;
-    noteEngineResult(null); // o whisper rodou e falou: a falha (se houve) passou
     const utterances = LM.tailUtterances("mic", falas, meeting.micAnchor, meeting.originEpoch, meeting.micSegPausedMs);
     // o fim desta janela no relógio de parede — o lado do microfone da junção
     const segEnd = meeting.micAnchor != null ? meeting.micAnchor + res.nextMs : Date.now();
@@ -1168,7 +1168,7 @@ async function runMeetingMicTail() {
     } catch (e) { clog("brain_meeting_append (mic tail) error: " + e); }
   } catch (e) {
     clog("brain_meeting_transcribe_tail (mic) error: " + e);
-    noteEngineResult(e);
+    noteEngineFailure("mic", e);
     setTailStatus(id, t("preview indisponível") + ": " + tErr(String(e)));
   } finally {
     meeting.micTailBusy = false;
@@ -1189,16 +1189,15 @@ function onSidecarMicUnavailable() {
   toast(t("o microfone não abriu — a reunião está gravando só o áudio do sistema. Libere o Loro em Ajustes do Sistema → Privacidade e Segurança → Microfone."), 0);
 }
 
-// Um whisper-cli que não roda falha igual em TODA janela, a cada 18s, nas duas
-// trilhas — e só aparecia no log (`err.whisper_cli_failed`), com a reunião
-// aparentemente gravando e nada sendo transcrito. Avisa UMA vez; uma janela que
-// volta a transcrever rearma o aviso, para uma quebra nova não passar calada.
-let engineFailWarned = false;
-function noteEngineResult(err) {
-  if (!err) { engineFailWarned = false; return; }
-  if (!LM.isEngineFailure(err) || engineFailWarned) return;
-  engineFailWarned = true;
-  toast(t("a transcrição está falhando: o whisper-cli não roda. Atualize o engine (brew upgrade whisper-cpp) e reinicie o Loro."), 0);
+// Um whisper-cli que não sobe falhava em TODA janela e só aparecia no log; e uma
+// janela isolada que o whisper recusa (2 em 13 min, engine bom) não pode mandar
+// reinstalar nada. Quem decide quando e o quê avisar é LM.engineFailures.
+const engineFailures = LM.engineFailures();
+function noteEngineOk(track, spoke) { engineFailures.ok(track, spoke); }
+function noteEngineFailure(track, err) {
+  const kind = engineFailures.fail(track, err);
+  if (kind === "unlaunchable") toast(t("a transcrição está falhando: o whisper-cli não roda. Atualize o engine (brew upgrade whisper-cpp) e reinicie o Loro."), 0);
+  else if (kind === "windows") toast(t("algumas janelas seguidas não foram transcritas — a gravação continua; se persistir, veja o log em ~/.loro/logs."), 8000);
 }
 
 // ADR-0012 model A: rotate a dedicated mic MediaRecorder (separate from the main
@@ -1410,8 +1409,8 @@ async function onPreviewSegment(chunks, mime, segStartEpoch, segPausedMs, segEnd
     const res = await invoke("brain_meeting_transcribe_segment", { input: { id, data } });
     if (meeting.id !== id) return;
     const falas = (res && res.segments) || [];
+    noteEngineOk("mic", falas.length > 0);
     if (!falas.length) { setTailStatus(id, t("preview: microfone sem fala substantiva ainda")); return; }
-    noteEngineResult(null);
     // ADR-0025: cada fala do segmento no SEU tempo, convertida para a linha do
     // tempo da reunião — a mesma que a trilha de sistema usa.
     const utterances = falas.map((s) => ({
@@ -1434,7 +1433,7 @@ async function onPreviewSegment(chunks, mime, segStartEpoch, segPausedMs, segEnd
     } catch (e) { clog("brain_meeting_append (mic) error: " + e); }
   } catch (e) {
     clog("brain_meeting_transcribe_segment error: " + e);
-    noteEngineResult(e);
+    noteEngineFailure("mic", e);
     setTailStatus(id, t("preview indisponível") + ": " + tErr(String(e)));
   }
 }
@@ -1469,13 +1468,13 @@ async function runMeetingTail() {
     if (res.anchorEpochMs != null) meeting.sysAnchor = res.anchorEpochMs;
     if (typeof res.nextMs === "number" && res.nextMs > meeting.tailFrom) meeting.tailFrom = res.nextMs;
     const falas = res.segments || [];
+    noteEngineOk("system", falas.length > 0);
     if (!falas.length) {
       // Nenhum texto do backend: janela vazia ou áudio ainda não legível.
       setTailStatus(id, t("preview: aguardando áudio (sem novo trecho ainda)"));
       return;
     }
     if (!meeting.active || meeting.id !== id) return;
-    noteEngineResult(null);
     // os outros participantes (áudio do sistema), cada fala no seu tempo
     const utterances = LM.tailUtterances("system", falas, meeting.sysAnchor, meeting.originEpoch, meeting.segPausedMs);
     try {
@@ -1488,7 +1487,7 @@ async function runMeetingTail() {
     } catch (e) { clog("brain_meeting_append (tail) error: " + e); }
   } catch (e) {
     clog("brain_meeting_transcribe_tail error: " + e);
-    noteEngineResult(e);
+    noteEngineFailure("system", e);
     setTailStatus(id, t("preview indisponível") + ": " + tErr(String(e)));
   } finally {
     meeting.tailBusy = false;

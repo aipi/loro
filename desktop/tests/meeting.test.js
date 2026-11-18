@@ -656,10 +656,41 @@ test("ADR-0039 — o vazamento da caixa continua detectado entre as duas trilhas
   assert.strictEqual(LM.micLeakOfSystem(sys[0], mic), null);
 });
 
-test("isEngineFailure reconhece o whisper-cli que não roda, e só ele", () => {
-  assert.strictEqual(LM.isEngineFailure("err.whisper_cli_failed"), true);
-  assert.strictEqual(LM.isEngineFailure("Error: err.whisper_cli_failed"), true);
-  assert.strictEqual(LM.isEngineFailure("err.live_model_unavailable"), false);
-  assert.strictEqual(LM.isEngineFailure(""), false);
-  assert.strictEqual(LM.isEngineFailure(null), false);
+// O dono, 2026-11-18: DUAS janelas isoladas falharam em 13 minutos (exit 11) e o
+// app mandou atualizar um whisper-cli que estava bom. Uma janela que falha não é um
+// engine quebrado; um engine que não sobe é.
+test("engineFailures — janelas isoladas que falham não avisam nada", () => {
+  const f = LM.engineFailures();
+  assert.strictEqual(f.fail("mic", "err.whisper_cli_failed"), null);
+  f.ok("mic");
+  assert.strictEqual(f.fail("mic", "err.whisper_cli_failed"), null);
+  assert.strictEqual(f.fail("system", "err.whisper_cli_failed"), null, "a sequência é POR trilha");
+  f.ok("mic");
+  assert.strictEqual(f.fail("mic", "err.whisper_cli_failed"), null);
+});
+
+test("engineFailures — 3 janelas seguidas da mesma trilha avisam uma vez, sem conselho de brew", () => {
+  const f = LM.engineFailures();
+  f.fail("mic", "err.whisper_cli_failed");
+  f.fail("mic", "err.whisper_cli_failed");
+  assert.strictEqual(f.fail("mic", "err.whisper_cli_failed"), "windows");
+  assert.strictEqual(f.fail("mic", "err.whisper_cli_failed"), null, "uma vez só");
+  // uma janela que volta a transcrever rearma o aviso
+  f.ok("mic", true);
+  f.fail("mic", "err.whisper_cli_failed"); f.fail("mic", "err.whisper_cli_failed");
+  assert.strictEqual(f.fail("mic", "err.whisper_cli_failed"), "windows");
+});
+
+test("engineFailures — o engine que não sobe avisa na hora (é ele que pede brew upgrade)", () => {
+  const f = LM.engineFailures();
+  assert.strictEqual(f.fail("system", "err.whisper_cli_unlaunchable"), "unlaunchable");
+  assert.strictEqual(f.fail("mic", "err.whisper_cli_unlaunchable"), null, "uma vez, não por trilha");
+  // uma resposta vazia não prova que o engine voltou
+  f.ok("system", false);
+  assert.strictEqual(f.fail("system", "err.whisper_cli_unlaunchable"), null);
+  f.ok("system", true);
+  assert.strictEqual(f.fail("system", "err.whisper_cli_unlaunchable"), "unlaunchable");
+  // outros erros não são do engine
+  assert.strictEqual(LM.engineFailures().fail("mic", "err.live_model_unavailable"), null);
+  assert.strictEqual(LM.engineFailures().fail("mic", null), null);
 });

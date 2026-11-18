@@ -99,10 +99,30 @@ truth (BR-8) is the privacy seal, which is repainted from the real mic state.
 ## Also in this change: a whisper-cli that cannot run
 
 A Homebrew `ggml` bump on 2026-11-18 left `whisper-cli` failing to launch (dyld), and the app
-only logged `err.whisper_cli_failed` every 18 s per track. Now the reason (stderr tail) is logged
-**once** until a window succeeds again, and the UI shows **one** toast telling the user
-transcription is failing and to update the engine (`brew upgrade whisper-cpp`); a window that
-transcribes again re-arms it.
+only logged `err.whisper_cli_failed` every 18 s per track. Two failures are now told apart
+(`whisper_failure_code`):
+
+- **cannot launch** (`err.whisper_cli_unlaunchable`): spawn error, a dyld / "Library not loaded"
+  abort, or death by signal. It fails every window, so it is logged once and the UI shows one
+  toast at once: update the engine (`brew upgrade whisper-cpp`) and restart.
+- **a window failed** (`err.whisper_cli_failed`): whisper ran and refused the window. The first
+  build of this PR toasted the brew advice for this too, and the owner saw it after 2 isolated
+  failures in 13 min with a healthy engine. Now only **3 consecutive failed windows on the same
+  track** produce a generic toast (no brew advice); a window that transcribes speech re-arms it.
+
+The log line now carries whisper's *error* lines, not the stderr tail (the tail is the timing
+report and hid the cause).
+
+**Why those windows failed (found while fixing the toast).** Reproduced: a WAV carved down to
+zero samples makes whisper-cli exit 11 with `error: failed to read the frames of the audio data
+(Invalid argument)` / `error: 1 input file(s) failed`. The mic and system tails now fire on the
+same 18 s tick, in parallel, and both named their snapshot by the wall clock — which on macOS has
+microsecond resolution (five consecutive `time_ns()` reads were identical). Two tails could share
+one snapshot path, so one track carved the other's file: a window past its end (zero samples), or
+**the other track's audio under this track's label**. The snapshot is now named by track and a
+process counter (`tail_snapshot_path`), and a zero-sample carve returns "no speech" without
+calling whisper. That this race produced the owner's two failures is the most likely
+explanation, not a reproduction of them.
 
 ## Consequences
 

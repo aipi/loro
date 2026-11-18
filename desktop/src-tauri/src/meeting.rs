@@ -134,6 +134,16 @@ fn live_tail_source(
         .unwrap_or_else(|| audio_dir.join(finalized)))
 }
 
+// The stable copy a live tail carves from. Named by track AND a process counter,
+// never by the clock: since ADR-0039 the mic and system tails run on the same
+// tick, in parallel, and macOS's wall clock has microsecond resolution — two
+// clock-named snapshots collided, and one track carved the other's file.
+fn tail_snapshot_path(audio_dir: &Path, track: &str) -> PathBuf {
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    audio_dir.join(format!(".tail.snapshot.{track}.{n}.wav"))
+}
+
 // Where a captured system segment lands inside the meeting: the first keeps the
 // historical name, the rest are numbered. Naming is what makes the segments
 // discoverable by purge (BR-8: the audio must be deletable).
@@ -1779,13 +1789,7 @@ fn transcribe_tail_blocking(input: TranscribeTailInput) -> Result<TranscribeTail
     // Nome ÚNICO por chamada: com um caminho fixo, duas janelas concorrentes
     // (pausar logo depois de um tick, por exemplo) copiavam por cima uma da
     // outra e a primeira a terminar apagava o arquivo debaixo da segunda.
-    let snap = dir.join("audio").join(format!(
-        ".tail.snapshot.{}.wav",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0)
-    ));
+    let snap = tail_snapshot_path(&dir.join("audio"), &input.track);
     std::fs::copy(&src, &snap).map_err(|e| e.to_string())?;
     let end_ms = std::fs::read(&snap)
         .ok()
@@ -2754,6 +2758,30 @@ mod tests {
         let sistema = timed_block(2_000, None, Some("system"), "fala só da chamada");
         assert!(voce.contains("· você]") && !voce.contains("sistema"));
         assert!(sistema.contains("· sistema]") && !sistema.contains("você"));
+    }
+
+    // ADR-0039 — the mic and system tails now fire on the SAME 18s tick, in
+    // parallel. The snapshot was named by the clock, and macOS's clock ticks in
+    // microseconds (measured: five consecutive `time_ns()` reads, all equal), so
+    // both tracks could copy onto ONE snapshot path: one carved the other's audio
+    // (a track mislabelled) or a window shorter than its offset — zero frames, and
+    // whisper-cli exits 11 "1 input file(s) failed" (owner's log, 2026-11-18).
+    #[test]
+    fn adr0039_concurrent_tails_never_share_a_snapshot() {
+        let audio = Path::new("/m/audio");
+        let a = tail_snapshot_path(audio, "mic");
+        let b = tail_snapshot_path(audio, "system");
+        let c = tail_snapshot_path(audio, "mic");
+        assert_ne!(a, b);
+        assert_ne!(a, c, "duas janelas da mesma trilha também não se cruzam");
+        for p in [&a, &b, &c] {
+            assert_eq!(p.parent(), Some(audio));
+            assert!(p
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with(".tail.snapshot."));
+        }
     }
 
     #[test]

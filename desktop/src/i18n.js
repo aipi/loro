@@ -217,6 +217,7 @@
     "err.git_offline": "sem conexão — o rascunho partiu do conhecimento oficial deste computador",
     "err.main_diverged": "o conhecimento oficial mudou no time — o rascunho partiu da cópia deste computador",
     "err.whisper_cli_failed": "whisper-cli terminou com erro",
+    "err.whisper_cli_unlaunchable": "o whisper-cli não consegue rodar — atualize o engine (brew upgrade whisper-cpp)",
     "err.whisper_stream_not_found": "whisper-stream não encontrado em {detail}",
   };
 
@@ -674,6 +675,8 @@
       "the microphone did not open — the meeting is recording system audio only. Allow Loro in System Settings → Privacy & Security → Microphone.",
     "a transcrição está falhando: o whisper-cli não roda. Atualize o engine (brew upgrade whisper-cpp) e reinicie o Loro.":
       "transcription is failing: whisper-cli does not run. Update the engine (brew upgrade whisper-cpp) and restart Loro.",
+    "algumas janelas seguidas não foram transcritas — a gravação continua; se persistir, veja o log em ~/.loro/logs.":
+      "several windows in a row were not transcribed — recording continues; if it persists, check the log in ~/.loro/logs.",
     "vale na próxima gravação": "takes effect on the next recording",
     "pausar": "pause",
     "retomar": "resume",
@@ -727,6 +730,7 @@
     "err.git_offline": "offline — the draft started from this computer's official knowledge",
     "err.main_diverged": "the team's official knowledge moved on — the draft started from this computer's copy",
     "err.whisper_cli_failed": "whisper-cli exited with an error",
+    "err.whisper_cli_unlaunchable": "whisper-cli cannot run — update the engine (brew upgrade whisper-cpp)",
     "err.whisper_stream_not_found": "whisper-stream not found at {detail}",
 
     // ---- UI strings (msgid = pt-BR source string) ----

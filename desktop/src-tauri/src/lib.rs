@@ -1010,33 +1010,81 @@ pub(crate) fn transcribe_wav_window(
         &dst.to_string_lossy(),
         vad.as_deref(),
     );
-    let out = proc::command(cli)
-        .args(&args)
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|e| e.to_string());
-    let _ = std::fs::remove_file(&dst);
-    let out = out?;
-    if !out.status.success() {
-        // The live path calls this every 18s per track. A whisper-cli that cannot
-        // even launch (dyld: a Homebrew ggml bump left it pointing at a library
-        // that is gone, 2026-11-18) fails identically every time, so its reason is
-        // logged ONCE until a window succeeds again. whisper's stderr is the
-        // loader/engine diagnostic, never transcript text (that is stdout) — BR-8.
-        if !WHISPER_FAILURE_LOGGED.swap(true, Ordering::Relaxed) {
-            let why = String::from_utf8_lossy(&out.stderr);
-            let why = why.lines().rev().take(3).collect::<Vec<_>>().join(" | ");
-            error!(code = ?out.status.code(), stderr_tail = %why, "whisper-cli failed");
-        }
-        return Err("err.whisper_cli_failed".into());
+    // A window ffmpeg carved down to ZERO samples is "nothing to hear", not an
+    // engine failure: whisper-cli refuses it with exit 11 "1 input file(s)
+    // failed" (reproduced 2026-11-18: a 78-byte WAV → "failed to read the frames
+    // of the audio data (Invalid argument)").
+    if std::fs::read(&dst)
+        .ok()
+        .and_then(|b| wav_duration_ms_from_bytes(&b))
+        == Some(0)
+    {
+        let _ = std::fs::remove_file(&dst);
+        return Ok(Vec::new());
     }
-    WHISPER_FAILURE_LOGGED.store(false, Ordering::Relaxed);
+    let out = proc::command(cli).args(&args).stdin(Stdio::null()).output();
+    let _ = std::fs::remove_file(&dst);
+    let out = match out {
+        Ok(o) => o,
+        Err(e) => {
+            error!(bin = %cli.display(), error = %e, "whisper-cli could not be spawned");
+            return Err(WHISPER_UNLAUNCHABLE.into());
+        }
+    };
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let code = whisper_failure_code(out.status.code(), &stderr);
+        // whisper's stderr is the loader/engine diagnostic, never transcript text
+        // (that is stdout) — BR-8. The error lines, not the tail: the tail is the
+        // timing report and hid the cause ("total time = 550 ms").
+        let why = whisper_error_lines(&stderr);
+        // A binary that cannot launch fails identically every 18s per track:
+        // logged once until a window succeeds. A failed window is logged each time.
+        if code == WHISPER_FAILED || !WHISPER_UNLAUNCHABLE_LOGGED.swap(true, Ordering::Relaxed) {
+            error!(code = ?out.status.code(), kind = code, stderr = %why, "whisper-cli failed");
+        }
+        return Err(code.into());
+    }
+    WHISPER_UNLAUNCHABLE_LOGGED.store(false, Ordering::Relaxed);
     Ok(parse_whisper_segments(&String::from_utf8_lossy(
         &out.stdout,
     )))
 }
 
-static WHISPER_FAILURE_LOGGED: AtomicBool = AtomicBool::new(false);
+static WHISPER_UNLAUNCHABLE_LOGGED: AtomicBool = AtomicBool::new(false);
+const WHISPER_FAILED: &str = "err.whisper_cli_failed";
+const WHISPER_UNLAUNCHABLE: &str = "err.whisper_cli_unlaunchable";
+
+// Which failure a non-zero whisper-cli exit is. Pure. "Cannot launch" is the
+// binary itself being broken — the dynamic loader aborting before main (a
+// Homebrew ggml bump left a missing library, 2026-11-18), or death by signal —
+// and it fails EVERY window, so the user is told to fix the engine. Anything
+// else is whisper running and refusing one window (exit 11 "input file(s)
+// failed"), which says nothing about the install.
+fn whisper_failure_code(exit_code: Option<i32>, stderr: &str) -> &'static str {
+    let loader = stderr.contains("dyld") || stderr.contains("Library not loaded");
+    if loader || exit_code.is_none() {
+        WHISPER_UNLAUNCHABLE
+    } else {
+        WHISPER_FAILED
+    }
+}
+
+// The lines of whisper's stderr that say what went wrong, at most three.
+fn whisper_error_lines(stderr: &str) -> String {
+    stderr
+        .lines()
+        .filter(|l| {
+            let l = l.to_ascii_lowercase();
+            l.contains("error")
+                || l.contains("fail")
+                || l.contains("dyld")
+                || l.contains("not loaded")
+        })
+        .take(3)
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
 
 // ffmpeg: mixes the microphone track and the system-audio track into one 16kHz
 // mono WAV. `normalize=0` keeps original levels (amix lowers them by default);
@@ -7099,6 +7147,30 @@ mod tests {
     // system's (that would put `você` on the `sistema` clock), the failure line is
     // its own event, and the mic is opened raw — the sidecar never turns voice
     // processing (VPIO: AGC, ducking) on.
+    // Owner's log, 2026-11-18: two isolated windows failed with exit 11 in 13 min
+    // and the app told him to reinstall a whisper-cli that was fine. A window
+    // whisper refuses is not a broken install; a loader abort is.
+    #[test]
+    fn whisper_failure_tells_a_broken_install_from_a_failed_window() {
+        let window = "whisper_init_from_file_with_params_no_state: loading model\n\
+                      error: failed to read the frames of the audio data (Invalid argument)\n\
+                      error: failed to read audio file 'x.wav'\n\
+                      error: 1 input file(s) failed\n\
+                      whisper_print_timings:    total time =   550.74 ms";
+        assert_eq!(whisper_failure_code(Some(11), window), WHISPER_FAILED);
+        let dyld = "dyld[4242]: Library not loaded: /opt/homebrew/opt/ggml/lib/libggml.0.dylib\n  \
+                    Referenced from: /opt/homebrew/bin/whisper-cli";
+        assert_eq!(whisper_failure_code(None, dyld), WHISPER_UNLAUNCHABLE);
+        assert_eq!(whisper_failure_code(Some(1), dyld), WHISPER_UNLAUNCHABLE);
+        // killed by a signal, no message: the binary itself did not run
+        assert_eq!(whisper_failure_code(None, ""), WHISPER_UNLAUNCHABLE);
+        // the log keeps the CAUSE, not the timing report that used to hide it
+        let why = whisper_error_lines(window);
+        assert!(why.starts_with("error: failed to read the frames"));
+        assert!(!why.contains("total time"));
+        assert!(whisper_error_lines(dyld).contains("Library not loaded"));
+    }
+
     #[test]
     fn adr0039_the_sidecar_reports_the_mic_track_apart_from_the_system_track() {
         let swift = std::fs::read_to_string(

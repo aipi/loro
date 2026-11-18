@@ -241,11 +241,40 @@
     });
   }
 
-  // O whisper-cli que não roda (um dyld quebrado depois de um `brew upgrade`, por
-  // exemplo) falha IGUAL em toda janela, a cada 18s, nas duas trilhas. O app
-  // precisa reconhecer esse caso para avisar uma vez, e não a cada janela.
-  function isEngineFailure(err) {
-    return /err\.whisper_cli_failed/.test(String(err || ""));
+  // Quando avisar que a transcrição está falhando. Duas falhas, dois avisos:
+  //  - "unlaunchable": o whisper-cli nem sobe (o dyld aborta depois de um `brew
+  //    upgrade` do ggml). Falha TODA janela, então avisa na hora, uma vez — é o
+  //    único caso em que «atualize o engine» é o conselho certo;
+  //  - "windows": o whisper rodou e recusou a janela. Isolado isso não diz nada
+  //    (o dono viu 2 em 13 min com o engine bom e o app mandou reinstalar); só
+  //    `WINDOW_FAIL_STREAK` seguidas NA MESMA trilha viram aviso.
+  // Uma janela que transcreve zera a sequência da trilha e rearma o aviso.
+  const WINDOW_FAIL_STREAK = 3;
+  function engineFailures() {
+    const streak = {};
+    let warned = null;
+    return {
+      // `spoke`: o whisper devolveu fala — prova de que o engine roda, e só isso
+      // rearma o aviso. Uma resposta vazia (janela sem áudio novo, ou corte de
+      // zero amostras) zera a sequência mas não prova nada sobre o binário.
+      ok: function (track, spoke) {
+        streak[track] = 0;
+        if (spoke) warned = null;
+      },
+      fail: function (track, err) {
+        const s = String(err || "");
+        if (/err\.whisper_cli_unlaunchable/.test(s)) {
+          if (warned === "unlaunchable") return null;
+          warned = "unlaunchable";
+          return warned;
+        }
+        if (!/err\.whisper_cli_failed/.test(s)) return null;
+        streak[track] = (streak[track] || 0) + 1;
+        if (streak[track] < WINDOW_FAIL_STREAK || warned) return null;
+        warned = "windows";
+        return warned;
+      },
+    };
   }
 
   // ---- parágrafos: como as falas são ESCRITAS (ADR-0025 §29) -----------------
@@ -572,7 +601,7 @@
     isHallucination, filterHallucinations,
     speechTokens, tokenContainment, leakCoverage, micLeakOfSystem, partialCrossTalk,
     sysBlockMs, micBlockMs, blockEpoch, coverageGate, speechParagraphs,
-    trackLabel, tailUtterances, isEngineFailure,
+    trackLabel, tailUtterances, engineFailures,
     meetingTitleFromManifest, meetingLabel,
   };
 });
