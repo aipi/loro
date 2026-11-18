@@ -138,3 +138,29 @@ test("meetingSupported cobre macOS e Windows, e só eles", () => {
   assert.strictEqual(meetingSupported("linux"), false);
   assert.strictEqual(meetingSupported(undefined), false);
 });
+
+// ADR-0039 — de onde vem o microfone de uma reunião. No macOS ele saiu do
+// webview: o getUserMedia passa por uma unidade de captura do WebKit que o Loro
+// não controla, e a pessoa do outro lado da chamada passou a ouvir o dono baixo.
+const { meetingMicPath, echoCancelApplies } = require("../src/audio.js");
+
+test("ADR-0039 — macOS grava o microfone da reunião no sidecar, não no webview", () => {
+  assert.strictEqual(meetingMicPath({ os: "macos", meetingMic: true }), "sidecar");
+  // ausente = ligado (o padrão do ajuste)
+  assert.strictEqual(meetingMicPath({ os: "macos" }), "sidecar");
+});
+
+test("ADR-0039 — Windows segue no webview (o WASAPI do Loro não grava microfone)", () => {
+  assert.strictEqual(meetingMicPath({ os: "windows", meetingMic: true }), "webview");
+});
+
+test("ADR-0039 — microfone desligado para reuniões: nenhum caminho, em nenhum sistema", () => {
+  assert.strictEqual(meetingMicPath({ os: "macos", meetingMic: false }), "off");
+  assert.strictEqual(meetingMicPath({ os: "windows", meetingMic: false }), "off");
+});
+
+test("ADR-0039 — o cancelamento de eco só existe no caminho do webview", () => {
+  assert.strictEqual(echoCancelApplies("webview"), true);
+  assert.strictEqual(echoCancelApplies("sidecar"), false);
+  assert.strictEqual(echoCancelApplies("off"), false);
+});

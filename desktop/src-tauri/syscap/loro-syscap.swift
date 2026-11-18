@@ -2,9 +2,23 @@
 // ScreenCaptureKit (macOS 13+). No virtual audio driver, no Audio MIDI setup:
 // the OS shows a single Screen Recording permission prompt on first run.
 //
-// Usage:   loro-syscap <output.wav>
-// Stops cleanly on SIGINT/SIGTERM and finalizes the WAV. Our own process audio
+// Usage:   loro-syscap <system.wav> [--mic <mic.wav>]
+// Stops cleanly on SIGINT/SIGTERM and finalizes the WAV(s). Our own process audio
 // is excluded so the app's own sounds are not recorded.
+//
+// ADR-0039: with `--mic`, the sidecar ALSO records the microphone, into its OWN
+// file. The two tracks never share a buffer, a file or a stdout line: system
+// audio arrives as ScreenCaptureKit `.audio` buffers into <system.wav>, the
+// microphone through an AVAudioEngine input tap into <mic.wav>, and each reports
+// its own first-sample anchor. The microphone is opened RAW: AVAudioEngine's voice
+// processing (the voice-processing I/O unit: echo canceller, AGC, ducking of other
+// audio) is opt-in (`setVoiceProcessingEnabled` with true), and this file never
+// turns it on.
+//
+// ADR-0040: Loro's own copy of the microphone is echo-cancelled IN THIS PROCESS
+// (speexdsp MDF, syscap/aec/loro_aec.c), with the system track as the far-end
+// reference. It is signal processing on samples we already hold: the device and
+// what the meeting app receives from it are untouched.
 //
 // Privacy (BR-1/BR-8): audio never leaves the machine; this tool only writes the
 // local WAV path it was given and prints event-oriented status to stderr — no
@@ -16,6 +30,185 @@ import ScreenCaptureKit
 
 // stderr logging (stdout stays clean for any future machine-readable use)
 func elog(_ s: String) { FileHandle.standardError.write(Data((s + "\n").utf8)) }
+
+// The machine-readable stdout lines. One writer, so the two capture threads can
+// never interleave half lines. Never any audio content (BR-8).
+let stdoutLock = NSLock()
+func emit(_ line: String) {
+    stdoutLock.lock()
+    print(line)
+    fflush(stdout)
+    stdoutLock.unlock()
+}
+func nowEpochMs() -> Int { Int(Date().timeIntervalSince1970 * 1000) }
+
+// The echo canceller the system track feeds, when the mic is recorded (ADR-0040).
+// Set once on the main thread before capture starts; read from the SCK queue.
+var echoCanceller: EchoCanceller?
+var timelineOrigin: Double? // host seconds of the first mic sample
+let timelineLock = NSLock()
+
+// ADR-0039 — the microphone track. Raw input only: no voice processing, so no
+// VPIO unit, no AGC, no ducking. ADR-0040 — what reaches <mic.wav> is that raw
+// input with the speakers' echo removed by our own canceller, at 16 kHz mono
+// (the rate whisper reads anyway). Writes ONLY <mic.wav>.
+final class MicCapturer {
+    private let outputURL: URL
+    private let engine = AVAudioEngine()
+    private var file: AVAudioFile?
+    private let lock = NSLock()
+    private var observer: NSObjectProtocol?
+    private let converter = TimelineConverter()
+    private var originEpochMs: Double?
+
+    init(output: URL) {
+        self.outputURL = output
+        echoCanceller = EchoCanceller { [weak self] cleaned in self?.write(cleaned) }
+        if echoCanceller == nil { elog("syscap: echo canceller unavailable; mic track is raw") }
+    }
+
+    // Asks for the microphone (TCC) if needed and starts the tap. A refusal or a
+    // machine with no input device is NOT fatal: the system track keeps recording
+    // and the parent is told on stdout, so the meeting degrades to one track
+    // instead of failing.
+    func start() {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:
+            begin()
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .audio) { ok in
+                DispatchQueue.main.async {
+                    if ok { self.begin() } else { self.unavailable("denied") }
+                }
+            }
+        default:
+            unavailable("denied")
+        }
+    }
+
+    private func unavailable(_ why: String) {
+        elog("syscap: microphone unavailable (\(why))")
+        emit("mic-unavailable \(why)")
+    }
+
+    private func installTap() -> Bool {
+        let input = engine.inputNode
+        let fmt = input.outputFormat(forBus: 0)
+        guard fmt.sampleRate > 0, fmt.channelCount > 0 else { return false }
+        input.installTap(onBus: 0, bufferSize: 4096, format: fmt) { [weak self] buf, when in
+            self?.captured(buf, when)
+        }
+        return true
+    }
+
+    private func begin() {
+        let input = engine.inputNode
+        // The default is off, and it must stay off (ADR-0039).
+        if input.isVoiceProcessingEnabled {
+            try? input.setVoiceProcessingEnabled(false)
+        }
+        guard installTap() else {
+            unavailable("no-input-device")
+            return
+        }
+        // The default input device changed (headset plugged in, AirPods): the
+        // engine stops itself. The track is written at 16 kHz mono whatever the
+        // device rate, so the tap is simply reinstalled on the new format.
+        observer = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
+        ) { [weak self] _ in self?.reconfigure() }
+        do {
+            try engine.start()
+            elog("syscap: capturing microphone (raw, no voice processing; echo cancelled in-process) -> \(outputURL.path)")
+        } catch {
+            input.removeTap(onBus: 0)
+            unavailable("start-failed")
+        }
+    }
+
+    private func reconfigure() {
+        engine.inputNode.removeTap(onBus: 0)
+        guard installTap() else {
+            unavailable("no-input-device")
+            return
+        }
+        do { try engine.start() } catch { unavailable("restart-failed") }
+    }
+
+    // Tap thread. The tap's AVAudioTime carries the host time of the buffer's
+    // first sample; without it (never seen, but optional) arrival time stands in.
+    private func captured(_ buf: AVAudioPCMBuffer, _ when: AVAudioTime) {
+        let duration = Double(buf.frameLength) / buf.format.sampleRate
+        let host = when.isHostTimeValid ? AVAudioTime.seconds(forHostTime: when.hostTime)
+                                        : hostSecondsNow() - duration
+        timelineLock.lock()
+        if timelineOrigin == nil {
+            timelineOrigin = host
+            // the wall-clock instant of timeline index 0 (BR: e= stays exact)
+            originEpochMs = Date().timeIntervalSince1970 * 1000 - (hostSecondsNow() - host) * 1000
+        }
+        let origin = timelineOrigin!
+        timelineLock.unlock()
+        guard let (samples, start) = converter.convert(buf, hostSeconds: host, origin: origin) else { return }
+        if let aec = echoCanceller { aec.pushMic(samples, at: start) } else { write(samples) }
+    }
+
+    private func write(_ samples: [Float]) {
+        lock.lock()
+        defer { lock.unlock() }
+        do {
+            if file == nil {
+                file = try AVAudioFile(forWriting: outputURL, settings: aecFormat.settings,
+                                       commonFormat: .pcmFormatFloat32, interleaved: false)
+                // ADR-0025, for the mic track: <mic.wav>'s t=0 as an epoch — the
+                // first mic sample's capture instant, minus the canceller's own
+                // delay (its first output sample is that much older).
+                let latency = echoCanceller != nil ? EchoCanceller.latencyMs : 0
+                let anchor = Int(((originEpochMs ?? Double(nowEpochMs())) - latency).rounded())
+                emit("mic-first-sample-epoch-ms \(anchor)")
+            }
+            guard let pcm = AVAudioPCMBuffer(pcmFormat: aecFormat, frameCapacity: AVAudioFrameCount(samples.count))
+            else { return }
+            pcm.frameLength = AVAudioFrameCount(samples.count)
+            samples.withUnsafeBufferPointer { src in
+                pcm.floatChannelData![0].update(from: src.baseAddress!, count: samples.count)
+            }
+            try file?.write(from: pcm)
+        } catch {
+            elog("syscap: mic write error: \(error.localizedDescription)")
+        }
+    }
+
+    func stop() {
+        if let o = observer { NotificationCenter.default.removeObserver(o) }
+        engine.inputNode.removeTap(onBus: 0)
+        engine.stop()
+        echoCanceller?.finish() // the last partial frame reaches the file
+        lock.lock()
+        file = nil // flush/close
+        lock.unlock()
+    }
+}
+
+// The system track's contribution to the canceller: the far-end reference.
+// Called on the SCK queue with a buffer valid only for the call.
+let systemConverter = TimelineConverter()
+func feedReference(_ pcm: AVAudioPCMBuffer, pts: CMTime) {
+    guard let aec = echoCanceller else { return }
+    timelineLock.lock()
+    let origin = timelineOrigin
+    timelineLock.unlock()
+    guard let origin = origin else { return } // no mic sample yet: nothing to cancel
+    let duration = Double(pcm.frameLength) / pcm.format.sampleRate
+    let now = hostSecondsNow()
+    // SCK stamps on the host clock; a PTS that is not near "now" is not one, and
+    // arrival time stands in rather than misplacing the reference by seconds.
+    var host = pts.isValid ? pts.seconds : now - duration
+    if abs(now - host) > 1.0 { host = now - duration }
+    guard let (samples, start) = systemConverter.convert(pcm, hostSeconds: host, origin: origin),
+          start + Int64(samples.count) > 0 else { return }
+    aec.pushReference(samples, at: start)
+}
 
 @available(macOS 13.0, *)
 final class Capturer: NSObject, SCStreamOutput {
@@ -82,10 +275,11 @@ final class Capturer: NSObject, SCStreamOutput {
                     // two tracks ended up on clocks up to seconds apart. One
                     // machine-readable line on stdout, at the only moment it is
                     // true. Never any audio content (BR-8).
-                    print("first-sample-epoch-ms \(Int(Date().timeIntervalSince1970 * 1000))")
-                    fflush(stdout)
+                    emit("first-sample-epoch-ms \(nowEpochMs())")
                 }
                 try file?.write(from: pcm)
+                // ADR-0040: the same buffer is the echo canceller's far end
+                feedReference(pcm, pts: sampleBuffer.presentationTimeStamp)
             }
         } catch {
             elog("syscap: write error: \(error.localizedDescription)")
@@ -95,11 +289,12 @@ final class Capturer: NSObject, SCStreamOutput {
 
 // ---- entrypoint ----
 let args = CommandLine.arguments
-guard args.count >= 2 else {
-    elog("usage: loro-syscap <output.wav>")
+guard args.count == 2 || (args.count == 4 && args[2] == "--mic") else {
+    elog("usage: loro-syscap <system.wav> [--mic <mic.wav>]")
     exit(2)
 }
 let outputURL = URL(fileURLWithPath: args[1])
+let micCapturer: MicCapturer? = args.count == 4 ? MicCapturer(output: URL(fileURLWithPath: args[3])) : nil
 
 guard #available(macOS 13.0, *) else {
     elog("syscap: requires macOS 13 or newer")
@@ -114,6 +309,7 @@ func installSignalHandler(_ sig: Int32) -> DispatchSourceSignal {
     let src = DispatchSource.makeSignalSource(signal: sig, queue: .main)
     src.setEventHandler {
         Task {
+            micCapturer?.stop()
             await capturer.stop()
             exit(0)
         }
@@ -132,7 +328,7 @@ DispatchQueue.global(qos: .utility).async {
         let data = FileHandle.standardInput.availableData
         if data.isEmpty { // EOF: stdin closed
             DispatchQueue.main.async {
-                Task { await capturer.stop(); exit(0) }
+                Task { micCapturer?.stop(); await capturer.stop(); exit(0) }
             }
             return
         }
@@ -142,6 +338,9 @@ DispatchQueue.global(qos: .utility).async {
 Task {
     do {
         try await capturer.start()
+        // Only after the system track is up: a Screen Recording denial must still
+        // exit fast with code 4, and a microphone prompt in front of it would hide it.
+        await MainActor.run { micCapturer?.start() }
     } catch {
         let msg = error.localizedDescription
         elog("syscap: start failed: \(msg)")

@@ -64,6 +64,13 @@ jobs:
         if: matrix.os == 'macos-latest'
         run: make syscap
 
+      # ADR-0040: the meeting-mic echo canceller, measured on a simulated laptop
+      # (ERLE floor + the near end kept). Portable C; on macOS also the Swift
+      # pipeline the sidecar runs. Windows has no make (see the header).
+      - name: Echo canceller offline test
+        if: matrix.os != 'windows-latest'
+        run: make test-aec
+
       - name: Rust backend tests
         working-directory: desktop/src-tauri
         run: cargo test

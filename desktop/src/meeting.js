@@ -217,6 +217,66 @@
     return Number(segStartEpoch) + Math.max(0, Number(offsetMs || 0));
   }
 
+  // ADR-0039 · as duas trilhas de uma reunião e o rótulo que cada uma escreve
+  // (o mesmo do backend, `src_label`). Uma trilha desconhecida é recusada em vez
+  // de virar uma terceira — ou, pior, a outra.
+  const TRACK_LABELS = { mic: "você", system: "sistema" };
+  function trackLabel(track) {
+    return TRACK_LABELS[track] || null;
+  }
+  // As falas de UMA janela de UMA trilha, já na linha do tempo da reunião. Desde a
+  // ADR-0039 o microfone do macOS também é um WAV crescente com âncora medida pelo
+  // sidecar, então as duas trilhas convertem do mesmo jeito; o que as separa é o
+  // `source`, que vem da trilha lida e de mais nada.
+  function tailUtterances(track, segments, anchorEpochMs, originEpoch, segPausedMs) {
+    if (!trackLabel(track)) throw new Error("trilha desconhecida: " + track);
+    return (segments || []).map(function (s) {
+      return {
+        tMs: blockMs(anchorEpochMs, s.tMs, originEpoch, segPausedMs),
+        endMs: blockMs(anchorEpochMs, s.endMs, originEpoch, segPausedMs),
+        eMs: blockEpoch(anchorEpochMs, s.tMs),
+        text: s.text,
+        source: track,
+      };
+    });
+  }
+
+  // Quando avisar que a transcrição está falhando. Duas falhas, dois avisos:
+  //  - "unlaunchable": o whisper-cli nem sobe (o dyld aborta depois de um `brew
+  //    upgrade` do ggml). Falha TODA janela, então avisa na hora, uma vez — é o
+  //    único caso em que «atualize o engine» é o conselho certo;
+  //  - "windows": o whisper rodou e recusou a janela. Isolado isso não diz nada
+  //    (o dono viu 2 em 13 min com o engine bom e o app mandou reinstalar); só
+  //    `WINDOW_FAIL_STREAK` seguidas NA MESMA trilha viram aviso.
+  // Uma janela que transcreve zera a sequência da trilha e rearma o aviso.
+  const WINDOW_FAIL_STREAK = 3;
+  function engineFailures() {
+    const streak = {};
+    let warned = null;
+    return {
+      // `spoke`: o whisper devolveu fala — prova de que o engine roda, e só isso
+      // rearma o aviso. Uma resposta vazia (janela sem áudio novo, ou corte de
+      // zero amostras) zera a sequência mas não prova nada sobre o binário.
+      ok: function (track, spoke) {
+        streak[track] = 0;
+        if (spoke) warned = null;
+      },
+      fail: function (track, err) {
+        const s = String(err || "");
+        if (/err\.whisper_cli_unlaunchable/.test(s)) {
+          if (warned === "unlaunchable") return null;
+          warned = "unlaunchable";
+          return warned;
+        }
+        if (!/err\.whisper_cli_failed/.test(s)) return null;
+        streak[track] = (streak[track] || 0) + 1;
+        if (streak[track] < WINDOW_FAIL_STREAK || warned) return null;
+        warned = "windows";
+        return warned;
+      },
+    };
+  }
+
   // ---- parágrafos: como as falas são ESCRITAS (ADR-0025 §29) -----------------
   // O timestamp por fala é o que faz a atribuição funcionar — sem ele a decisão de
   // quem falou volta a raciocinar em blocos de 18s. Mas um bloco POR FALA deixa o
@@ -458,6 +518,50 @@
       if (leakCoverage(mine, other) >= LEAK_MIN_COVERAGE
         && tokenContainment(mine, other) >= LEAK_MIN_SYMMETRY) return prev;
     }
+    return paraphrasedLeak(c, list);
+  }
+
+  // ADR-0040 §2 · a rede de segurança atrás do cancelador de eco. O teste do dono
+  // num MacBook sem fone (2026-11-18) deixou passar três ecos que o par literal
+  // acima não vê, por dois motivos medidos:
+  //  1. o whisper transcreve as duas trilhas com palavras diferentes para o mesmo
+  //     som — «tô»/«estou», «tá»/«está», «pra»/«para», muleta («né», «aí») de um
+  //     lado só. Corridas de 4 palavras literais caem para 0,39;
+  //  2. as fronteiras dos segmentos não coincidem: uma fala do microfone atravessa
+  //     DUAS falas do sistema, e contra cada uma sozinha a cobertura não chega lá.
+  // Então: as palavras viram a forma canônica (CANON, sem MULETAS) e a fala do
+  // microfone é comparada com a UNIÃO das falas do sistema que a cobrem no tempo
+  // (±PARAPHRASE_SLACK_MS). Os limiares são os mesmos do par literal — o vão
+  // medido não muda; muda só o que é comparado.
+  //
+  //   par (canônico, contra a união)         corridas≥4   mútua
+  //   eco 01:12 (2 falas do sistema)          0,95         0,94
+  //   eco 01:30                               0,93         0,75
+  //   eco 00:54 SEM a fala própria do dono    0,93         0,91
+  //   eco 00:54 COM a fala própria (bloco)    0,72         0,74   → fica (parcial)
+  //   vazamento + fala própria (PARC)         0,66         0,76   → fica
+  //   coincidência                            0,56         0,28   → fica
+  //   resposta sobre o mesmo assunto          0,29         0,53   → fica
+  const CANON = { to: "estou", tou: "estou", ta: "esta", tava: "estava", tao: "estao", tamo: "estamos", pra: "para", pro: "para" };
+  const MULETAS = new Set(["ne", "ai", "aqui", "ali", "la", "tipo", "assim", "e", "o", "a"]);
+  function canonTokens(tokens) {
+    return (tokens || []).map(function (w) { return CANON[w] || w; })
+      .filter(function (w) { return !MULETAS.has(w); });
+  }
+  const PARAPHRASE_SLACK_MS = 2000;
+  function paraphrasedLeak(c, list) {
+    const mine = canonTokens(c.tokens);
+    if (mine.length < LEAK_MIN_RUN) return null;
+    const cover = list.filter(function (p) {
+      return p && p !== c && p.source === "system"
+        && (c.tMs || 0) - PARAPHRASE_SLACK_MS <= spanEnd(p)
+        && (p.tMs || 0) - PARAPHRASE_SLACK_MS <= spanEnd(c);
+    }).sort(function (a, b) { return (a.tMs || 0) - (b.tMs || 0); });
+    if (!cover.length) return null;
+    const union = [];
+    cover.forEach(function (p) { canonTokens(p.tokens).forEach(function (w) { union.push(w); }); });
+    if (leakCoverage(mine, union) >= LEAK_MIN_COVERAGE
+      && tokenContainment(mine, union) >= LEAK_MIN_SYMMETRY) return cover[0];
     return null;
   }
 
@@ -541,6 +645,7 @@
     isHallucination, filterHallucinations,
     speechTokens, tokenContainment, leakCoverage, micLeakOfSystem, partialCrossTalk,
     sysBlockMs, micBlockMs, blockEpoch, coverageGate, speechParagraphs,
+    trackLabel, tailUtterances, engineFailures,
     meetingTitleFromManifest, meetingLabel,
   };
 });

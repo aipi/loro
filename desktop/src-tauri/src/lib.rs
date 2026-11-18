@@ -1010,19 +1010,80 @@ pub(crate) fn transcribe_wav_window(
         &dst.to_string_lossy(),
         vad.as_deref(),
     );
-    let out = proc::command(cli)
-        .args(&args)
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|e| e.to_string());
-    let _ = std::fs::remove_file(&dst);
-    let out = out?;
-    if !out.status.success() {
-        return Err("err.whisper_cli_failed".into());
+    // A window ffmpeg carved down to ZERO samples is "nothing to hear", not an
+    // engine failure: whisper-cli refuses it with exit 11 "1 input file(s)
+    // failed" (reproduced 2026-11-18: a 78-byte WAV → "failed to read the frames
+    // of the audio data (Invalid argument)").
+    if std::fs::read(&dst)
+        .ok()
+        .and_then(|b| wav_duration_ms_from_bytes(&b))
+        == Some(0)
+    {
+        let _ = std::fs::remove_file(&dst);
+        return Ok(Vec::new());
     }
+    let out = proc::command(cli).args(&args).stdin(Stdio::null()).output();
+    let _ = std::fs::remove_file(&dst);
+    let out = match out {
+        Ok(o) => o,
+        Err(e) => {
+            error!(bin = %cli.display(), error = %e, "whisper-cli could not be spawned");
+            return Err(WHISPER_UNLAUNCHABLE.into());
+        }
+    };
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let code = whisper_failure_code(out.status.code(), &stderr);
+        // whisper's stderr is the loader/engine diagnostic, never transcript text
+        // (that is stdout) — BR-8. The error lines, not the tail: the tail is the
+        // timing report and hid the cause ("total time = 550 ms").
+        let why = whisper_error_lines(&stderr);
+        // A binary that cannot launch fails identically every 18s per track:
+        // logged once until a window succeeds. A failed window is logged each time.
+        if code == WHISPER_FAILED || !WHISPER_UNLAUNCHABLE_LOGGED.swap(true, Ordering::Relaxed) {
+            error!(code = ?out.status.code(), kind = code, stderr = %why, "whisper-cli failed");
+        }
+        return Err(code.into());
+    }
+    WHISPER_UNLAUNCHABLE_LOGGED.store(false, Ordering::Relaxed);
     Ok(parse_whisper_segments(&String::from_utf8_lossy(
         &out.stdout,
     )))
+}
+
+static WHISPER_UNLAUNCHABLE_LOGGED: AtomicBool = AtomicBool::new(false);
+const WHISPER_FAILED: &str = "err.whisper_cli_failed";
+const WHISPER_UNLAUNCHABLE: &str = "err.whisper_cli_unlaunchable";
+
+// Which failure a non-zero whisper-cli exit is. Pure. "Cannot launch" is the
+// binary itself being broken — the dynamic loader aborting before main (a
+// Homebrew ggml bump left a missing library, 2026-11-18), or death by signal —
+// and it fails EVERY window, so the user is told to fix the engine. Anything
+// else is whisper running and refusing one window (exit 11 "input file(s)
+// failed"), which says nothing about the install.
+fn whisper_failure_code(exit_code: Option<i32>, stderr: &str) -> &'static str {
+    let loader = stderr.contains("dyld") || stderr.contains("Library not loaded");
+    if loader || exit_code.is_none() {
+        WHISPER_UNLAUNCHABLE
+    } else {
+        WHISPER_FAILED
+    }
+}
+
+// The lines of whisper's stderr that say what went wrong, at most three.
+fn whisper_error_lines(stderr: &str) -> String {
+    stderr
+        .lines()
+        .filter(|l| {
+            let l = l.to_ascii_lowercase();
+            l.contains("error")
+                || l.contains("fail")
+                || l.contains("dyld")
+                || l.contains("not loaded")
+        })
+        .take(3)
+        .collect::<Vec<_>>()
+        .join(" | ")
 }
 
 // ffmpeg: mixes the microphone track and the system-audio track into one 16kHz
@@ -1104,14 +1165,51 @@ fn syscap_anchors() -> &'static Mutex<std::collections::HashMap<PathBuf, u64>> {
 }
 
 const SYSCAP_ANCHOR_PREFIX: &str = "first-sample-epoch-ms ";
+// ADR-0039: the microphone track's own anchor and its own failure line. Separate
+// prefixes, never a shared one: a mic anchor read as the system's (or the reverse)
+// would put one person's speech on the other track's clock.
+const MIC_ANCHOR_PREFIX: &str = "mic-first-sample-epoch-ms ";
+const MIC_UNAVAILABLE_PREFIX: &str = "mic-unavailable";
 
-// The sidecar's one machine-readable line. Pure so the contract with the Swift
-// side is testable: a silent mismatch here would disable the anchor and the
-// fallback is deliberately quiet, so nothing would look broken.
-fn parse_anchor_line(line: &str) -> Option<u64> {
-    line.trim()
-        .strip_prefix(SYSCAP_ANCHOR_PREFIX)
-        .and_then(|n| n.trim().parse::<u64>().ok())
+// What one machine-readable stdout line of the sidecar says.
+#[derive(Debug, PartialEq)]
+enum SidecarLine {
+    SystemAnchor(u64),
+    MicAnchor(u64),
+    MicUnavailable,
+}
+
+// The sidecar's machine-readable lines. Pure so the contract with the Swift side
+// is testable: a silent mismatch here would disable the anchor and the fallback is
+// deliberately quiet, so nothing would look broken.
+fn parse_sidecar_line(line: &str) -> Option<SidecarLine> {
+    let line = line.trim();
+    let epoch = |rest: &str| rest.trim().parse::<u64>().ok();
+    if let Some(rest) = line.strip_prefix(MIC_ANCHOR_PREFIX) {
+        return epoch(rest).map(SidecarLine::MicAnchor);
+    }
+    if let Some(rest) = line.strip_prefix(SYSCAP_ANCHOR_PREFIX) {
+        return epoch(rest).map(SidecarLine::SystemAnchor);
+    }
+    if line == MIC_UNAVAILABLE_PREFIX || line.starts_with("mic-unavailable ") {
+        return Some(SidecarLine::MicUnavailable);
+    }
+    None
+}
+
+// ADR-0039: mic captures the sidecar reported it could not open (permission
+// refused, no input device, the device changed format mid-meeting). Keyed by the
+// mic WAV path, like the anchors.
+fn mic_unavailable_set() -> &'static Mutex<std::collections::HashSet<PathBuf>> {
+    static SET: OnceLock<Mutex<std::collections::HashSet<PathBuf>>> = OnceLock::new();
+    SET.get_or_init(|| Mutex::new(std::collections::HashSet::new()))
+}
+
+pub(crate) fn mic_capture_unavailable(path: &Path) -> bool {
+    mic_unavailable_set()
+        .lock()
+        .map(|s| s.contains(path))
+        .unwrap_or(false)
 }
 
 // The anchor of a capture segment, or `None` while it has not been reported yet
@@ -1125,6 +1223,9 @@ pub(crate) fn syscap_anchor_of(path: &Path) -> Option<u64> {
 pub(crate) fn syscap_anchor_forget(path: &Path) {
     if let Ok(mut m) = syscap_anchors().lock() {
         m.remove(path);
+    }
+    if let Ok(mut s) = mic_unavailable_set().lock() {
+        s.remove(path);
     }
 }
 
@@ -1170,13 +1271,29 @@ fn syscap_start_wasapi(state: &AppState) -> Result<String, String> {
 // Core of the sidecar start, callable from meeting.rs (ADR-0010) as a plain
 // pub(crate) fn — the #[tauri::command] wrapper cannot be reused directly.
 pub(crate) fn system_capture_start(app: &AppHandle, state: &AppState) -> Result<String, String> {
+    system_capture_start_with(app, state, false).map(|c| c.system)
+}
+
+// What a capture start produced: the system WAV always, and — ADR-0039, macOS
+// sidecar only — the microphone's OWN WAV when it was asked for. Two paths, never
+// one mixed file: the meeting's `você` and `sistema` tracks stay apart end to end.
+pub(crate) struct CaptureStarted {
+    pub system: String,
+    pub mic: Option<String>,
+}
+
+pub(crate) fn system_capture_start_with(
+    app: &AppHandle,
+    state: &AppState,
+    with_mic: bool,
+) -> Result<CaptureStarted, String> {
     // Windows captures in-process (ADR-0033). Returning through a shim instead
     // of a #[cfg] block around the sidecar body below keeps that body compiled
     // on every platform — cfg-ing it out would turn resolve_syscap and
-    // parse_anchor_line into dead code on Windows, and this repo builds with
-    // -D warnings in CI.
+    // parse_sidecar_line into dead code on Windows, and this repo builds with
+    // -D warnings in CI. Windows keeps the microphone in the webview (ADR-0039).
     if let Some(started) = syscap_start_inprocess(state) {
-        return started;
+        return started.map(|system| CaptureStarted { system, mic: None });
     }
     // The sidecar is Swift + ScreenCaptureKit, so the sidecar path is macOS
     // only. Say which systems do work instead of letting the spawn fail and
@@ -1195,10 +1312,16 @@ pub(crate) fn system_capture_start(app: &AppHandle, state: &AppState) -> Result<
     let bin = resolve_syscap(app);
     let dir = recordings_dir();
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let out = dir.join(format!("loro-sys-{}.wav", epoch_millis()));
+    let stamp = epoch_millis();
+    let out = dir.join(format!("loro-sys-{stamp}.wav"));
+    let mic_out = with_mic.then(|| dir.join(format!("loro-mic-{stamp}.wav")));
 
-    let mut child = proc::command(&bin)
-        .arg(&out)
+    let mut cmd = proc::command(&bin);
+    cmd.arg(&out);
+    if let Some(m) = &mic_out {
+        cmd.arg("--mic").arg(m);
+    }
+    let mut child = cmd
         .stdin(Stdio::piped()) // closing this stdin later signals a clean stop
         .stdout(Stdio::piped()) // ADR-0025: the first-sample epoch arrives here
         .stderr(Stdio::piped())
@@ -1232,15 +1355,32 @@ pub(crate) fn system_capture_start(app: &AppHandle, state: &AppState) -> Result<
     // stdout. Read it on its own thread — it may land after this function returns
     // (a silent machine delays the first buffer), and it is still the right anchor
     // whenever it lands.
+    // ADR-0039: the same pipe carries the microphone's anchor and its failure,
+    // each under its own prefix and keyed by its own WAV — the reader keeps going
+    // after the system anchor instead of returning on it.
     let (anchor_tx, anchor_rx) = std::sync::mpsc::channel::<u64>();
     if let Some(outpipe) = child.stdout.take() {
         let key = out.clone();
+        let mic_key = mic_out.clone();
         std::thread::spawn(move || {
             for line in BufReader::new(outpipe).lines().map_while(Result::ok) {
-                if let Some(epoch) = parse_anchor_line(&line) {
-                    syscap_anchors().lock().unwrap().insert(key, epoch);
-                    let _ = anchor_tx.send(epoch);
-                    return;
+                match parse_sidecar_line(&line) {
+                    Some(SidecarLine::SystemAnchor(epoch)) => {
+                        syscap_anchors().lock().unwrap().insert(key.clone(), epoch);
+                        let _ = anchor_tx.send(epoch);
+                    }
+                    Some(SidecarLine::MicAnchor(epoch)) => {
+                        if let Some(m) = &mic_key {
+                            syscap_anchors().lock().unwrap().insert(m.clone(), epoch);
+                        }
+                    }
+                    Some(SidecarLine::MicUnavailable) => {
+                        if let Some(m) = &mic_key {
+                            warn!("meeting microphone unavailable in the capture sidecar");
+                            mic_unavailable_set().lock().unwrap().insert(m.clone());
+                        }
+                    }
+                    None => {}
                 }
             }
         });
@@ -1271,9 +1411,12 @@ pub(crate) fn system_capture_start(app: &AppHandle, state: &AppState) -> Result<
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
 
-    info!(out = %out.display(), "system audio capture started");
+    info!(out = %out.display(), mic = mic_out.is_some(), "system audio capture started");
     *state.syscap.lock().unwrap() = Some(child);
-    Ok(out.to_string_lossy().into_owned())
+    Ok(CaptureStarted {
+        system: out.to_string_lossy().into_owned(),
+        mic: mic_out.map(|m| m.to_string_lossy().into_owned()),
+    })
 }
 
 // Stop the system-audio capturer cleanly: closing its stdin signals EOF, the
@@ -6985,18 +7128,110 @@ mod tests {
         )
         .expect("o sidecar tem de estar no repositório");
         assert!(
-            swift.contains(&format!("print(\"{SYSCAP_ANCHOR_PREFIX}")),
+            swift.contains(&format!("emit(\"{SYSCAP_ANCHOR_PREFIX}")),
             "o sidecar precisa imprimir exatamente o prefixo que o pai lê"
         );
         // and the line it prints is the line we parse
         assert_eq!(
-            parse_anchor_line("first-sample-epoch-ms 1786624147797"),
-            Some(1_786_624_147_797)
+            parse_sidecar_line("first-sample-epoch-ms 1786624147797"),
+            Some(SidecarLine::SystemAnchor(1_786_624_147_797))
         );
         // an older sidecar (or any other chatter on stdout) is simply not an anchor
-        assert_eq!(parse_anchor_line("syscap: capturing system audio"), None);
-        assert_eq!(parse_anchor_line("first-sample-epoch-ms abc"), None);
-        assert_eq!(parse_anchor_line(""), None);
+        assert_eq!(parse_sidecar_line("syscap: capturing system audio"), None);
+        assert_eq!(parse_sidecar_line("first-sample-epoch-ms abc"), None);
+        assert_eq!(parse_sidecar_line(""), None);
+    }
+
+    // ADR-0039 — the microphone moved into the sidecar, and the two tracks must
+    // stay two: the mic anchor has its own prefix and is never read as the
+    // system's (that would put `você` on the `sistema` clock), the failure line is
+    // its own event, and the mic is opened raw — the sidecar never turns voice
+    // processing (VPIO: AGC, ducking) on.
+    // Owner's log, 2026-11-18: two isolated windows failed with exit 11 in 13 min
+    // and the app told him to reinstall a whisper-cli that was fine. A window
+    // whisper refuses is not a broken install; a loader abort is.
+    #[test]
+    fn whisper_failure_tells_a_broken_install_from_a_failed_window() {
+        let window = "whisper_init_from_file_with_params_no_state: loading model\n\
+                      error: failed to read the frames of the audio data (Invalid argument)\n\
+                      error: failed to read audio file 'x.wav'\n\
+                      error: 1 input file(s) failed\n\
+                      whisper_print_timings:    total time =   550.74 ms";
+        assert_eq!(whisper_failure_code(Some(11), window), WHISPER_FAILED);
+        let dyld = "dyld[4242]: Library not loaded: /opt/homebrew/opt/ggml/lib/libggml.0.dylib\n  \
+                    Referenced from: /opt/homebrew/bin/whisper-cli";
+        assert_eq!(whisper_failure_code(None, dyld), WHISPER_UNLAUNCHABLE);
+        assert_eq!(whisper_failure_code(Some(1), dyld), WHISPER_UNLAUNCHABLE);
+        // killed by a signal, no message: the binary itself did not run
+        assert_eq!(whisper_failure_code(None, ""), WHISPER_UNLAUNCHABLE);
+        // the log keeps the CAUSE, not the timing report that used to hide it
+        let why = whisper_error_lines(window);
+        assert!(why.starts_with("error: failed to read the frames"));
+        assert!(!why.contains("total time"));
+        assert!(whisper_error_lines(dyld).contains("Library not loaded"));
+    }
+
+    // ADR-0040 — the echo canceller works on Loro's OWN copy of the samples. The
+    // owner's hard line: nothing that changes the device or what the meeting app
+    // receives — no VoiceProcessingIO, no ducking, no input volume. A test that
+    // reads the sources is the only guard that cannot be skipped by a refactor.
+    #[test]
+    fn adr0040_the_echo_canceller_never_touches_the_device() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("syscap");
+        let mut src = String::new();
+        for f in [
+            "loro-syscap.swift",
+            "aec/AecPipeline.swift",
+            "aec/loro_aec.c",
+        ] {
+            src += &std::fs::read_to_string(dir.join(f)).expect("fonte do sidecar");
+        }
+        for forbidden in [
+            "setVoiceProcessingEnabled(true)",
+            "VoiceProcessingIO",
+            "kAUVoiceIOProperty",
+            "OtherAudioDucking",
+            "AudioDeviceDuck",
+            "kAudioDevicePropertyVolumeScalar",
+            "AudioObjectSetPropertyData",
+            "AudioUnitSetProperty",
+        ] {
+            assert!(
+                !src.contains(forbidden),
+                "o sidecar não pode usar {forbidden}"
+            );
+        }
+        // and the system track IS the far-end reference
+        assert!(src.contains("feedReference(pcm, pts: sampleBuffer.presentationTimeStamp)"));
+    }
+
+    #[test]
+    fn adr0039_the_sidecar_reports_the_mic_track_apart_from_the_system_track() {
+        let swift = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("syscap/loro-syscap.swift"),
+        )
+        .expect("o sidecar tem de estar no repositório");
+        assert!(swift.contains(&format!("emit(\"{MIC_ANCHOR_PREFIX}")));
+        assert!(swift.contains(&format!("emit(\"{MIC_UNAVAILABLE_PREFIX} ")));
+        assert!(swift.contains("\"--mic\""));
+        assert!(
+            !swift.contains("setVoiceProcessingEnabled(true)"),
+            "o microfone da reunião é cru: nada de VoiceProcessingIO"
+        );
+        assert_eq!(
+            parse_sidecar_line("mic-first-sample-epoch-ms 1786624147800"),
+            Some(SidecarLine::MicAnchor(1_786_624_147_800))
+        );
+        assert_ne!(
+            parse_sidecar_line("mic-first-sample-epoch-ms 1"),
+            Some(SidecarLine::SystemAnchor(1)),
+            "a âncora do microfone nunca vira a do sistema"
+        );
+        assert_eq!(
+            parse_sidecar_line("mic-unavailable denied"),
+            Some(SidecarLine::MicUnavailable)
+        );
+        assert_eq!(parse_sidecar_line("mic-unavailablex"), None);
     }
 
     // ADR-0025 — the meeting's two tracks could not be put on one timeline while
