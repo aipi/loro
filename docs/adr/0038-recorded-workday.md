@@ -1,6 +1,6 @@
 # ADR-0038 — Dia gravado: o Loro grava o expediente sozinho, em horas emendadas
 
-- **Status:** accepted (decisão do dono, 2026-11-18), macOS primeiro.
+- **Status:** accepted and implemented (decisão do dono, 2026-11-18; implementado na mesma data), macOS primeiro.
 - **Extends:** ADR-0001 §2 (modo reunião), ADR-0022 (pausa/retomada e segmentos),
   ADR-0025 (âncora de época por segmento), ADR-0018 (a transcrição ao vivo é a saída)
 - **Revokes:** nothing.
@@ -108,3 +108,35 @@ também pelo agente.
 - O Loro não lê agenda, não recorta por evento e não sabe quem participa.
 - Sem aviso, contagem ou confirmação antes de gravar (decisão do dono).
 - Windows: o tique e a rotação valem igual, mas a asserção de energia (§4) é só macOS nesta versão.
+
+## What the implementation taught
+
+- **A época de cada fala vem do frontend, não do manifesto.** O §3 sugere que
+  `startedEpochMs + pausedMs` bastam; não bastam para a fala. O `t` desconta o
+  total pausado *quando o segmento começou* (`segPausedMs`, ADR-0025), e a última
+  janela de um segmento anterior a uma pausa pode ser escrita depois do retomar —
+  recalculada no backend com o `pausedMs` corrente, ela sairia deslocada pela
+  própria pausa que a precedeu. O `e=` é a âncora do segmento (a primeira amostra
+  do sidecar, ou o início do segmento de microfone) mais o offset da fala,
+  calculado em `meeting.js::blockEpoch` e enviado como `eMs` em
+  `brain_meeting_append_timed`. Os dois campos do manifesto continuam gravados
+  como o §3 pede (`startedEpochMs` no início, `pausedMs` somado em cada
+  `brain_meeting_resume`, medido entre os comandos de pausa e retomada).
+- **Rotacionar espera o fechamento inteiro.** `meeting.active` cai no primeiro
+  passo do encerramento, mas o flush, o `brain_meeting_finish`, a purga e a aba da
+  reunião concluída ainda rodam; começar a hora seguinte nesse intervalo deixava o
+  cromo e a aba da hora anterior chegarem por cima. A rotação espera um contador
+  de fechamentos em curso zerar (teto de 120 s).
+- **Uma partida que falha também suspende até a próxima hora.** Sem isso, uma
+  permissão de Gravação de Tela negada repetia o aviso a cada 15 s o dia inteiro.
+  «Retomar o dia gravado» tenta de novo antes.
+- **Escolhas onde a ADR era silenciosa:** desligar no meio da janela encerra a
+  gravação do dia; uma reunião manual nunca é encerrada pelo fim da janela; uma
+  janela com início ≥ fim é recusada (`err.workday_invalid_window`) em vez de
+  atravessar a meia-noite, e `24:00` vale como fim do dia; `dias` não aparece na
+  tela (só no arquivo); «Retomar o dia gravado» está na paleta, não na bandeja (os
+  rótulos da bandeja são do backend e o menu tem três itens fixos).
+- **Não verificado sem rodar o app:** que o `setInterval` do WKWebView continue a
+  15 s com a janela escondida por horas (App Nap / throttling de timers de uma
+  webview oculta); a asserção do `caffeinate` em `pmset -g assertions`; uma
+  rotação real com captura de sistema e microfone.

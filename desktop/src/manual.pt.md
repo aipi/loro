@@ -206,6 +206,32 @@ quando quiser pela paleta: `Cmd/Ctrl+K` → "apresentação do Loro".
 - O áudio é **transitório**: usado para transcrever e descartado. O indicador
   de privacidade na barra mostra o estado ("sem gravar" / "grava áudio").
 
+### Gravar o dia de trabalho sozinho
+
+Em **Configurações → Captura**, ligue **gravar o dia de trabalho sozinho** e
+escolha **começa às** e **termina às** (o padrão é 09:00–18:30, todos os
+dias). Dentro desse horário o Loro grava sem você clicar em nada — também com a
+janela fechada, só na bandeja:
+
+- O dia vira **uma reunião por hora**, na ideia `dia`, com o título
+  `Dia AAAA-MM-DD HH:00`. Na virada de cada hora cheia a reunião é encerrada e a
+  próxima começa; entre uma e outra ficam alguns segundos sem gravação. No fim
+  do horário a gravação para.
+- Se você abrir o Loro no meio do horário (às 10:17, por exemplo), ele começa
+  na hora e grava até a próxima virada.
+- **Parar à mão** uma gravação do dia suspende o dia até a próxima hora cheia.
+  Para voltar antes, use **Retomar o dia gravado** na paleta (`Cmd/Ctrl+K`).
+- Se você já estiver numa reunião sua, o dia **espera** ela acabar e começa na
+  verificação seguinte (a cada 15 s).
+- Cada fala é gravada com a **hora de relógio** em que foi dita (escondida no
+  arquivo, ao lado do tempo da reunião), para que um agente externo — o Claude
+  Code com a sua agenda, por exemplo — recorte o dia pelos horários das suas
+  reuniões. O Loro **não lê a agenda**.
+- No macOS, enquanto o dia grava, o Loro impede o Mac de **dormir por
+  inatividade**. Tampa fechada sem monitor externo ainda dorme — isso é do
+  sistema.
+- O carimbo visível passa a ter horas depois da primeira: `[1:02:03 · você]`.
+
 ## Modo intérprete (sua voz sai em inglês)
 
 Faz a sua fala sair como **voz em inglês** por um dispositivo de saída que você

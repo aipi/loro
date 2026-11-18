@@ -205,6 +205,32 @@ palette: `Cmd/Ctrl+K` → "Loro tour".
 - Audio is **transient**: used to transcribe, then discarded. The privacy
   indicator in the bar shows the state ("not recording" / "records audio").
 
+### Record the workday on its own
+
+In **Settings → Capture**, turn on **record the workday on its own** and pick
+**starts at** and **ends at** (the default is 09:00–18:30, every day). Within
+those hours Loro records without a click — also with the window closed, from
+the tray alone:
+
+- The day becomes **one meeting per hour**, in the idea `dia`, titled
+  `Dia AAAA-MM-DD HH:00`. At each whole hour the meeting is closed and the next
+  one starts; a few seconds go unrecorded between them. At the end of the
+  window recording stops.
+- If you open Loro in the middle of the window (at 10:17, say), it starts right
+  away and records until the next whole hour.
+- **Stopping by hand** a meeting of the day pauses the day until the next whole
+  hour. To come back sooner, use **Resume the recorded day** in the palette
+  (`Cmd/Ctrl+K`).
+- If you are already in a meeting of your own, the day **waits** for it to end
+  and starts on the following check (every 15 s).
+- Every utterance is stored with the **wall-clock time** it was said (hidden in
+  the file, next to the meeting time), so an external agent — Claude Code with
+  your calendar, for example — can cut the day by your meetings. Loro **does not
+  read the calendar**.
+- On macOS, while the day records, Loro keeps the Mac from **idle sleep**. A
+  closed lid with no external monitor still sleeps — that is the system's call.
+- The visible stamp gains hours after the first one: `[1:02:03 · você]`.
+
 ## Interpreter mode (your voice goes out in English)
 
 Makes your speech come out as an **English voice** through an output device you
