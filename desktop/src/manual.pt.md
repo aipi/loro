@@ -41,8 +41,12 @@ BARRA LATERAL │ ABAS (só quando há documento aberto) │ PAINEL 330px
   alto-falante** em Configurações → Captura, com o custo, declarado ali, de a sua
   voz sair mais baixa. No **macOS** o Loro grava o microfone da reunião direto do
   dispositivo, sem processamento de voz e em trilha separada do áudio do
-  sistema, então esse controle não existe lá: quem ouve pela caixa e quer uma
-  trilha só desliga o microfone nas reuniões. Se o microfone não abrir (permissão
+  sistema, e **tira o som da caixa da cópia dele** sozinho, usando o próprio
+  áudio do sistema como referência — o que a chamada recebe do seu microfone
+  não muda. Os primeiros segundos de uma reunião (ou depois de mexer no volume
+  ou mudar o notebook de lugar) ainda podem vazar enquanto ele se ajusta; o
+  descarte de ecos acima pega o que sobrar. Por isso esse controle não existe
+  lá; quem quer uma trilha só desliga o microfone nas reuniões. Se o microfone não abrir (permissão
   negada em Ajustes do Sistema → Privacidade e Segurança → Microfone), a reunião
   segue gravando só o áudio do sistema e avisa.
 - **O texto entra em parágrafos**, um por trecho de fala corrida, carimbado com o
@@ -493,7 +497,8 @@ ouve **pela caixa de som**, o microfone escuta a máquina de volta e a mesma fal
 duas trilhas. O Loro detecta isso e oferece a saída na hora: **gravar só o sistema**
 (uma trilha, sem eco, sem pedir permissão do microfone — a sua voz fica de fora) e, no
 Windows, também **cancelar o eco** (as duas trilhas seguem, mas a sua voz sai mais baixa). No
-macOS o microfone é gravado cru, numa trilha própria, então lá não há eco a cancelar. O que
+macOS o Loro já tira o som da caixa da cópia dele do microfone, sem mexer no que a chamada ouve,
+então lá esse controle não existe. O que
 você escolher vale **das próximas reuniões em diante**, e os interruptores ficam em
 **Configurações → Captura**. Com **fone de ouvido não existe eco** —
 aí o melhor é deixar as duas.

@@ -7171,6 +7171,40 @@ mod tests {
         assert!(whisper_error_lines(dyld).contains("Library not loaded"));
     }
 
+    // ADR-0040 — the echo canceller works on Loro's OWN copy of the samples. The
+    // owner's hard line: nothing that changes the device or what the meeting app
+    // receives — no VoiceProcessingIO, no ducking, no input volume. A test that
+    // reads the sources is the only guard that cannot be skipped by a refactor.
+    #[test]
+    fn adr0040_the_echo_canceller_never_touches_the_device() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("syscap");
+        let mut src = String::new();
+        for f in [
+            "loro-syscap.swift",
+            "aec/AecPipeline.swift",
+            "aec/loro_aec.c",
+        ] {
+            src += &std::fs::read_to_string(dir.join(f)).expect("fonte do sidecar");
+        }
+        for forbidden in [
+            "setVoiceProcessingEnabled(true)",
+            "VoiceProcessingIO",
+            "kAUVoiceIOProperty",
+            "OtherAudioDucking",
+            "AudioDeviceDuck",
+            "kAudioDevicePropertyVolumeScalar",
+            "AudioObjectSetPropertyData",
+            "AudioUnitSetProperty",
+        ] {
+            assert!(
+                !src.contains(forbidden),
+                "o sidecar não pode usar {forbidden}"
+            );
+        }
+        // and the system track IS the far-end reference
+        assert!(src.contains("feedReference(pcm, pts: sampleBuffer.presentationTimeStamp)"));
+    }
+
     #[test]
     fn adr0039_the_sidecar_reports_the_mic_track_apart_from_the_system_track() {
         let swift = std::fs::read_to_string(

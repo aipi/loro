@@ -694,3 +694,47 @@ test("engineFailures — o engine que não sobe avisa na hora (é ele que pede b
   assert.strictEqual(LM.engineFailures().fail("mic", "err.live_model_unavailable"), null);
   assert.strictEqual(LM.engineFailures().fail("mic", null), null);
 });
+
+// ADR-0040 §2 — a rede de segurança do cancelador de eco. Pares REAIS do teste do
+// dono (2026-11-18, MacBook sem fone: a caixa vaza para o microfone), com nomes
+// trocados. O whisper transcreve as duas trilhas de jeitos diferentes — «tô» /
+// «estou», «tá» / «está», «Brás tá» / «Basta estar», sem pontuação de um lado — e
+// segmenta em fronteiras diferentes: a fala do microfone pode atravessar DUAS
+// falas do sistema. O filtro antigo comparava fala com fala, literal, e deixou
+// passar os três.
+const SYS_1215A = "o Fulano tá olhando, ainda não começou de fato a migração, tá mais a gente fazendo os levantamentos ali de aplicações, revisando meio que tudo, né?";
+const SYS_1215B = "Até o pessoal do SRE meio que cravar algumas datas ali específicas, né? Tipo, quando é que vai desligar e a gente já meio que tá pronto.";
+const MIC_1215 = "Basta estar olhando Ainda não começou de fato A migração está mais A gente fazendo os levantamentos De aplicações Revisando meio que tudo Até o pessoal do SRE Cravar algumas datas específicas Quando é que vai desligar E a gente já meio que está pronto";
+const SYS_0130 = "Então, essa é uma das camadas também que eu estou fazendo, pegando o contexto de tudo, já peguei a estratégia que eles estão usando, algumas coisas a mais, e agora realmente estou mapeando tudo das aplicações, que também é um outro ponto que eu estou nessa, eu consegui";
+const MIC_0130 = "aí é só uma das camadas também que eu estou fazendo, pegando contexto de tudo, já peguei a estratégia que eles estão usando, algumas coisas vão a mais e agora realmente estou mapeando tudo das";
+const SYS_0054 = "com as coisas que eu estou pegando, até o Beltrano passou uma coisa que eu vou testar um bug de usuários e eu estou vendo se vai funcionar.";
+const MIC_0054 = "com as coisas que eu tô pegando, né? Até o Beltrano passou uma coisa aqui que eu vou tá testando um bug aí de usuários, e eu tô vendo se vai funcionar.";
+// no MESMO bloco do microfone, entre as duas metades do vazamento, o dono falou de
+// verdade — só o microfone tem isto, e isto não pode sumir
+const MIC_0054_PROPRIA = "Boa. Mas vocês ainda não tão na migração do coisa?";
+
+test("ADR-0040 — eco parafraseado que atravessa duas falas do sistema é descartado", () => {
+  const recent = [fala(SYS_1215A, 72_000, 80_000, "system"), fala(SYS_1215B, 80_200, 88_000, "system")];
+  assert.ok(LM.micLeakOfSystem(fala(MIC_1215, 72_300, 88_100, "mic"), recent));
+});
+
+test("ADR-0040 — eco parafraseado de uma fala só é descartado", () => {
+  assert.ok(LM.micLeakOfSystem(fala(MIC_0130, 90_100, 101_000, "mic"), [fala(SYS_0130, 90_000, 104_000, "system")]));
+  assert.ok(LM.micLeakOfSystem(fala(MIC_0054, 54_200, 62_000, "mic"), [fala(SYS_0054, 54_000, 61_500, "system")]));
+});
+
+test("ADR-0040 — a fala própria do dono no meio do vazamento fica", () => {
+  const recent = [fala(SYS_0054, 54_000, 61_500, "system")];
+  assert.strictEqual(LM.micLeakOfSystem(fala(MIC_0054_PROPRIA, 61_600, 64_000, "mic"), recent), null);
+});
+
+test("ADR-0040 — mesma conversa, falas diferentes: resposta não é eco, e longe no tempo também não", () => {
+  const pergunta = "vocês já começaram a migração das aplicações ou ainda estão levantando tudo com o pessoal do SRE";
+  const resposta = "ainda não, a gente está levantando as aplicações com o pessoal do SRE e depois começa a migração";
+  assert.strictEqual(LM.micLeakOfSystem(fala(resposta, 10_000, 15_000, "mic"), [fala(pergunta, 9_000, 14_000, "system")]), null);
+  // o eco de verdade, mas a 10 s de distância: o vazamento é físico, chega em ms
+  assert.strictEqual(LM.micLeakOfSystem(fala(MIC_0130, 120_000, 131_000, "mic"), [fala(SYS_0130, 90_000, 104_000, "system")]), null);
+  // e os casos medidos antes continuam onde estavam
+  assert.strictEqual(LM.micLeakOfSystem(fala(PARC_MIC, 18_000, 30_000, "mic"), [fala(PARC_SYS, 18_000, 30_000, "system")]), null);
+  assert.strictEqual(LM.micLeakOfSystem(fala(CURTO, 18_000, 21_000, "mic"), [fala(JANELA, 10_000, 28_000, "system")]), null);
+});

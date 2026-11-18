@@ -992,9 +992,10 @@
                 <p class="hint" data-i18n>ligado, a reunião capta a sua voz e o áudio da máquina — o que a análise lê como «você» e «os outros». Desligado, ela grava só a máquina: uma trilha, sem eco e sem pedir permissão do microfone. Com fone de ouvido não há eco, então deixe ligado.</p>
                 <label class="opt"><input type="checkbox" id="optEchoCancel" /> <span data-i18n>cancelar o eco do alto-falante</span></label>
                 <p class="hint" id="echoCancelHint" data-i18n>ligue se você ouve pela caixa e a transcrição confunde quem falou. O custo é real: o macOS troca o caminho de áudio da máquina e a sua voz sai mais baixa — com fone, deixe desligado.</p>
-                <!-- ADR-0039 — no macOS o microfone da reunião é gravado cru pelo sidecar,
-                     fora do webview: não há eco a cancelar no Loro, e o controle fica inerte. -->
-                <p class="hint" id="echoCancelMacHint" hidden data-i18n>no macOS o Loro grava o microfone da reunião direto do dispositivo, sem processamento de voz. Não há eco a cancelar aqui: se o som sai pela caixa, a transcrição descarta o eco sozinha — ou desligue o microfone nas reuniões acima.</p>
+                <!-- ADR-0039/0040 — no macOS o microfone da reunião é gravado cru pelo sidecar,
+                     fora do webview, e o eco da caixa sai da cópia do Loro no próprio sidecar:
+                     o controle do getUserMedia fica inerte. -->
+                <p class="hint" id="echoCancelMacHint" hidden data-i18n>no macOS o Loro grava o microfone da reunião direto do dispositivo, sem processamento de voz, e tira o som da caixa da SUA cópia sozinho — o que a chamada recebe do microfone não muda. Este controle não se aplica aqui.</p>
                 <!-- ADR-0038 — o dia gravado: a decisão de quando gravar é do app aberto
                      (src/workday.js); aqui só a janela, guardada no config global. -->
                 <label class="opt"><input type="checkbox" id="optWorkday" /> <span data-i18n>gravar o dia de trabalho sozinho</span></label>

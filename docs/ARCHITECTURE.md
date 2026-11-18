@@ -59,7 +59,10 @@ separate, user-chosen folder and is **not** part of the codebase.
   `--mic`): a raw AVAudioEngine input tap (no voice processing) into its OWN WAV
   with its own anchor, read live by the same tail as the system track
   (`track: "mic"`). The two tracks are never mixed. Windows keeps the meeting
-  microphone in the webview (getUserMedia).
+  microphone in the webview (getUserMedia). ADR-0040: before writing, the
+  sidecar cancels the speakers' echo in its own copy of the mic (speexdsp MDF,
+  vendored C, the system track as far-end reference, both placed on one 16 kHz
+  timeline by host time); `mic.wav` is that cleaned stream, 16 kHz mono.
 - **Knowledge base (brain)** — setup and layout of the acervo, per-context guide
   + change log, inbox/processed queue, import of files, status for the UI. The
   actual distillation is performed by the external Claude loop, not the app.
