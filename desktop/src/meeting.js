@@ -65,11 +65,12 @@
 
   function stripMarker(text) {
     // Drop the transcript marker AND the hidden per-segment sort-key comments
-    // (`<!-- loro:t=NNN -->`, ADR-0013) so neither shows in the rendered surface
-    // (text.js escapes HTML, so a comment would otherwise render as literal text).
+    // (`<!-- loro:t=NNN -->`, ADR-0013, or `<!-- loro:t=NNN e=EPOCH -->`,
+    // ADR-0038) so neither shows in the rendered surface (text.js escapes HTML, so
+    // a comment would otherwise render as literal text).
     return String(text == null ? "" : text)
       .split(MARKER).join("")
-      .replace(/^[ \t]*<!--\s*loro:t=\d+\s*-->[ \t]*\r?\n?/gm, "");
+      .replace(/^[ \t]*<!--\s*loro:t=\d+(?:\s+e=\d+)?\s*-->[ \t]*\r?\n?/gm, "");
   }
 
   // N18 · meeting.rs semeia TODO arquivo de reunião com "# <título>", então
@@ -207,6 +208,14 @@
   function micBlockMs(segStartEpoch, offsetMs, originEpoch, segPausedMs) {
     return blockMs(segStartEpoch, offsetMs, originEpoch, segPausedMs);
   }
+  // ADR-0038 §3 · a hora de RELÓGIO da fala: a âncora do segmento mais o offset
+  // dentro dele. Calculada aqui, e não no backend, porque só este lado sabe a
+  // âncora de cada segmento — a fala de antes de uma pausa pode chegar ao arquivo
+  // depois do retomar. Âncora desconhecida → sem época (null), nunca uma inventada.
+  function blockEpoch(segStartEpoch, offsetMs) {
+    if (segStartEpoch == null) return null;
+    return Number(segStartEpoch) + Math.max(0, Number(offsetMs || 0));
+  }
 
   // ---- parágrafos: como as falas são ESCRITAS (ADR-0025 §29) -----------------
   // O timestamp por fala é o que faz a atribuição funcionar — sem ele a decisão de
@@ -245,7 +254,9 @@
         if (endMs > prev.endMs) prev.endMs = endMs;
       } else {
         // cópia: quem chamou continua usando as falas soltas para o eco
-        out.push({ tMs: tMs, endMs: endMs, text: u.text });
+        const p = { tMs: tMs, endMs: endMs, text: u.text };
+        if (u.eMs != null) p.eMs = u.eMs; // ADR-0038: a época da primeira fala
+        out.push(p);
       }
     }
     return out;
@@ -529,7 +540,7 @@
     stripMarker, transcriptText, acervoJoin, aiStatusLine, MARKER,
     isHallucination, filterHallucinations,
     speechTokens, tokenContainment, leakCoverage, micLeakOfSystem, partialCrossTalk,
-    sysBlockMs, micBlockMs, coverageGate, speechParagraphs,
+    sysBlockMs, micBlockMs, blockEpoch, coverageGate, speechParagraphs,
     meetingTitleFromManifest, meetingLabel,
   };
 });

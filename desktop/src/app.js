@@ -1145,6 +1145,7 @@ async function appendMeetingSpeech(id, utterances, source) {
     const chunk = {
       tMs: u.tMs || 0,
       endMs: u.endMs == null ? (u.tMs || 0) : u.endMs,
+      eMs: u.eMs == null ? null : u.eMs, // ADR-0038 §3: a hora de relógio da fala
       source: source,
       tokens: LM.speechTokens(text),
       text: text,
@@ -1182,7 +1183,7 @@ async function appendMeetingSpeech(id, utterances, source) {
   const blocks = LM.speechParagraphs(fresh);
   try {
     await invoke("brain_meeting_append_timed", {
-      input: { id, blocks: blocks.map((b) => ({ tMs: b.tMs, source: source, chunk: b.text })) },
+      input: { id, blocks: blocks.map((b) => ({ tMs: b.tMs, eMs: b.eMs, source: source, chunk: b.text })) },
     });
   } catch (e) {
     // não ficou no arquivo: sair da lista para não barrar o gêmeo legítimo
@@ -1261,6 +1262,7 @@ async function onPreviewSegment(chunks, mime, segStartEpoch, segPausedMs, segEnd
     const utterances = falas.map((s) => ({
       tMs: LM.micBlockMs(segStartEpoch, s.tMs, meeting.originEpoch, segPausedMs),
       endMs: LM.micBlockMs(segStartEpoch, s.endMs, meeting.originEpoch, segPausedMs),
+      eMs: LM.blockEpoch(segStartEpoch, s.tMs),
       text: s.text,
     }));
     // A JUNÇÃO: espera a trilha de sistema ter sido ouvida até o fim deste segmento
@@ -1321,6 +1323,7 @@ async function runMeetingTail() {
     const utterances = falas.map((s) => ({
       tMs: LM.sysBlockMs(meeting.sysAnchor, s.tMs, meeting.originEpoch, meeting.segPausedMs),
       endMs: LM.sysBlockMs(meeting.sysAnchor, s.endMs, meeting.originEpoch, meeting.segPausedMs),
+      eMs: LM.blockEpoch(meeting.sysAnchor, s.tMs),
       text: s.text,
     }));
     try {
@@ -6469,8 +6472,9 @@ function paintMeetingSurface(id, raw, manifest, status, artefatos, rel, stale) {
 // visualizar isso era texto cinza igual ao resto: quem falou sumia. Aqui o selo
 // ganha a mesma cor que tem ao vivo (você = teal, os demais = âmbar).
 // Roda sobre HTML JÁ escapado por mdRender, então o casamento é seguro.
+// `h:mm:ss` também: um dia gravado (ADR-0038 §3) passa da primeira hora.
 function colorSpeakers(html) {
-  return html.replace(/\[(\d{1,2}:\d{2})\s*·\s*([^\]<]{1,24})\]/g, (m, ts, who) => {
+  return html.replace(/\[(\d{1,2}(?::\d{2}){1,2})\s*·\s*([^\]<]{1,24})\]/g, (m, ts, who) => {
     const me = /^(voc[e\u00ea]|you|eu)$/i.test(who.trim());
     return `<span class="mtg-src${me ? " me" : ""}">${ts} \u00b7 ${who}</span>`;
   });

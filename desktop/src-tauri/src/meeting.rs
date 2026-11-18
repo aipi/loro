@@ -330,6 +330,38 @@ pub struct Manifest {
     // way in — a field that accepts a sentence is a field that will hold one.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     origem: String,
+    // ADR-0038 §3 — the meeting's t=0 in epoch ms (ADR-0025's anchor, until now
+    // only returned to the frontend) and the total paused time, summed at each
+    // resume. With both on disk an external agent can place the meeting on the
+    // wall clock without reading the app's memory. 0 = a manifest written before.
+    #[serde(default)]
+    started_epoch_ms: u64,
+    #[serde(default)]
+    paused_ms: u64,
+}
+
+// ADR-0038 §3 — record the anchor `brain_meeting_start` hands the frontend.
+fn manifest_set_started(dir: &Path, started_epoch_ms: u64) -> Result<(), String> {
+    let mut m = manifest_read(dir)?;
+    m.started_epoch_ms = started_epoch_ms;
+    manifest_write(dir, &m)
+}
+
+// The pause a resume closes, added to the running total. Saturating: a wall
+// clock set back during the pause must not subtract recorded time.
+fn fold_pause(paused_ms: u64, paused_at: Option<u64>, now: u64) -> u64 {
+    match paused_at {
+        Some(at) => paused_ms + now.saturating_sub(at),
+        None => paused_ms,
+    }
+}
+
+// When each meeting's current pause began (epoch ms). In memory on purpose: a
+// pause does not survive an app restart (the capture dies with the app), so a
+// persisted instant would only ever be stale.
+fn pause_started() -> &'static Mutex<HashMap<String, u64>> {
+    static P: OnceLock<Mutex<HashMap<String, u64>>> = OnceLock::new();
+    P.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 // An origin is an ID or it is nothing. Rejecting instead of sanitizing is the
@@ -560,8 +592,10 @@ fn append_below_marker(content: &str, chunk: &str) -> String {
 
 // ADR-0013: each live block carries a hidden timecode comment so the transcript
 // stays CHRONOLOGICAL across devices (mic = "você", system = "sistema" arrive out
-// of order). The human label is [mm:ss · fonte]; the comment `<!-- loro:t=NNN -->`
-// (an HTML comment the renderer hides) is the sort key.
+// of order). The human label is [mm:ss · fonte] ([h:mm:ss · fonte] past the first
+// hour); the comment `<!-- loro:t=NNN -->` (an HTML comment the renderer hides) is
+// the sort key. ADR-0038 §3 adds ` e=<epoch ms>` after it — the wall-clock instant
+// of the utterance, which is what an agent cuts by a calendar with.
 const SEG_PREFIX: &str = "<!-- loro:t=";
 
 fn src_label(src: Option<&str>) -> Option<&'static str> {
@@ -573,18 +607,20 @@ fn src_label(src: Option<&str>) -> Option<&'static str> {
 }
 
 // Build one timed block: the hidden sort-key comment + a [mm:ss · fonte] label line
-// + the text. Pure.
-fn timed_block(t_ms: u64, src: Option<&str>, text: &str) -> String {
+// + the text. Pure. Without an epoch the comment is exactly the pre-ADR-0038 one.
+fn timed_block(t_ms: u64, e_ms: Option<u64>, src: Option<&str>, text: &str) -> String {
     let tc = fmt_timecode(Some(t_ms));
     let head = match src_label(src) {
         Some(l) => format!("[{tc} · {l}]"),
         None => format!("[{tc}]"),
     };
-    format!("{SEG_PREFIX}{t_ms} -->\n{head} {}", text.trim())
+    let e = e_ms.map(|e| format!(" e={e}")).unwrap_or_default();
+    format!("{SEG_PREFIX}{t_ms}{e} -->\n{head} {}", text.trim())
 }
 
-// The sort key of a stored block (its `<!-- loro:t=NNN -->`); untimed blocks sink
-// to the end (u64::MAX) so legacy/skill appends never scramble the timeline.
+// The sort key of a stored block (its `<!-- loro:t=NNN -->`, with or without the
+// ADR-0038 ` e=…` after it); untimed blocks sink to the end (u64::MAX) so
+// legacy/skill appends never scramble the timeline.
 fn block_time(block: &str) -> u64 {
     block
         .lines()
@@ -592,7 +628,8 @@ fn block_time(block: &str) -> u64 {
             l.trim()
                 .strip_prefix(SEG_PREFIX)?
                 .strip_suffix(" -->")?
-                .trim()
+                .split_whitespace()
+                .next()?
                 .parse()
                 .ok()
         })
@@ -604,6 +641,17 @@ fn block_time(block: &str) -> u64 {
 // chronologically sorted, so both the live surface and the built report read in
 // conversation order.
 fn insert_timed_block(content: &str, t_ms: u64, src: Option<&str>, text: &str) -> String {
+    insert_timed_block_e(content, t_ms, None, src, text)
+}
+
+// The same insert, with the utterance's wall-clock epoch (ADR-0038 §3).
+fn insert_timed_block_e(
+    content: &str,
+    t_ms: u64,
+    e_ms: Option<u64>,
+    src: Option<&str>,
+    text: &str,
+) -> String {
     let base = if content.contains(TRANSCRIPT_MARKER) {
         content.trim_end().to_string()
     } else {
@@ -626,7 +674,7 @@ fn insert_timed_block(content: &str, t_ms: u64, src: Option<&str>, text: &str) -
             cur.push_str(line);
         }
     }
-    let new_block = timed_block(t_ms, src, text);
+    let new_block = timed_block(t_ms, e_ms, src, text);
     // stable insert: before the first existing block whose time is greater
     let pos = blocks
         .iter()
@@ -648,11 +696,13 @@ fn insert_timed_block(content: &str, t_ms: u64, src: Option<&str>, text: &str) -
 // ADR-0025 a window carries every utterance whisper timed inside it, so appending
 // them one by one would rewrite reuniao.md ~10 times per 18s and repaint the
 // living surface ~10 times with it.
-fn insert_timed_blocks(content: &str, blocks: &[(u64, Option<&str>, String)]) -> String {
+type TimedBlock<'a> = (u64, Option<u64>, Option<&'a str>, String);
+
+fn insert_timed_blocks(content: &str, blocks: &[TimedBlock]) -> String {
     blocks
         .iter()
-        .fold(content.to_string(), |acc, (t_ms, src, text)| {
-            insert_timed_block(&acc, *t_ms, *src, text)
+        .fold(content.to_string(), |acc, (t_ms, e_ms, src, text)| {
+            insert_timed_block_e(&acc, *t_ms, *e_ms, *src, text)
         })
 }
 
@@ -716,11 +766,18 @@ fn safe_artifact_name(name: &str) -> Result<String, String> {
     }
 }
 
+// mm:ss inside the first hour (every transcript written so far keeps its
+// shape), h:mm:ss after it: a 9h30 recorded day printed `[570:00 · você]`
+// (ADR-0038 §3).
 fn fmt_timecode(t_ms: Option<u64>) -> String {
     match t_ms {
         Some(ms) => {
             let s = ms / 1000;
-            format!("{:02}:{:02}", s / 60, s % 60)
+            if s >= 3600 {
+                format!("{}:{:02}:{:02}", s / 3600, (s / 60) % 60, s % 60)
+            } else {
+                format!("{:02}:{:02}", s / 60, s % 60)
+            }
         }
         None => "--:--".into(),
     }
@@ -866,6 +923,11 @@ pub fn brain_meeting_start(
         .lock()
         .unwrap()
         .insert(created.id.clone(), vec![PathBuf::from(&sys_wav)]);
+    // ADR-0038 §3. Best-effort: the capture is already running, and failing the
+    // start here would orphan it — the frontend still has the anchor it needs.
+    if let Err(e) = manifest_set_started(&created.dir, started_epoch_ms) {
+        tracing::warn!(error = %e, "meeting start: started epoch not persisted");
+    }
 
     // A reunião também é uma gravação: sem isto o ícone da bandeja não piscava
     // durante uma reunião — só a gravação avulsa (que passa por `start`) o fazia.
@@ -1002,6 +1064,13 @@ pub fn brain_meeting_append(app: AppHandle, input: MeetingAppendInput) -> Result
 #[serde(rename_all = "camelCase")]
 pub struct TimedBlockInput {
     t_ms: u64,
+    // ADR-0038 §3 — the utterance's wall-clock epoch. Taken from the FRONTEND
+    // because only it knows each capture segment's own anchor and the pause total
+    // when that segment began: an utterance of the pre-pause segment can be
+    // written after the resume, and recomputing it here as start + t + paused
+    // would shift it by the very pause it preceded.
+    #[serde(default)]
+    e_ms: Option<u64>,
     #[serde(default)]
     source: Option<String>,
     chunk: String,
@@ -1033,10 +1102,10 @@ pub fn brain_meeting_append_timed(
 
     let living = living_path(&dir);
     let content = std::fs::read_to_string(&living).map_err(|e| e.to_string())?;
-    let blocks: Vec<(u64, Option<&str>, String)> = input
+    let blocks: Vec<TimedBlock> = input
         .blocks
         .iter()
-        .map(|b| (b.t_ms, b.source.as_deref(), b.chunk.clone()))
+        .map(|b| (b.t_ms, b.e_ms, b.source.as_deref(), b.chunk.clone()))
         .collect();
     let updated = insert_timed_blocks(&content, &blocks);
     std::fs::write(&living, &updated).map_err(|e| e.to_string())?;
@@ -1144,6 +1213,10 @@ pub fn brain_meeting_pause(state: State<AppState>, input: MeetingPauseInput) -> 
     }
     crate::system_capture_stop(&state);
     crate::set_tray_recording(&state, false);
+    pause_started()
+        .lock()
+        .unwrap()
+        .insert(input.id.clone(), crate::epoch_millis() as u64);
     Ok(())
 }
 
@@ -1160,8 +1233,14 @@ pub fn brain_meeting_resume(
     let base = acervo_base()?;
     let lock = meeting_lock(&input.id);
     let _guard = lock.lock().map_err(|_| "lock envenenado".to_string())?;
-    resolve_meeting_dir(&base, &input.id)?;
+    let dir = resolve_meeting_dir(&base, &input.id)?;
     let sys_wav = crate::system_capture_start(&app, &state)?;
+    // ADR-0038 §3: the pause just closed joins the manifest's total.
+    let paused_at = pause_started().lock().unwrap().remove(&input.id);
+    if let Ok(mut m) = manifest_read(&dir) {
+        m.paused_ms = fold_pause(m.paused_ms, paused_at, crate::epoch_millis() as u64);
+        let _ = manifest_write(&dir, &m);
+    }
     syscap_pending()
         .lock()
         .unwrap()
@@ -1888,9 +1967,24 @@ mod tests {
         let out = insert_timed_blocks(
             &with_mic,
             &[
-                (2_000, Some("system"), "participante pergunta".to_string()),
-                (9_000, Some("system"), "participante conclui".to_string()),
-                (4_500, Some("system"), "participante emenda".to_string()),
+                (
+                    2_000,
+                    None,
+                    Some("system"),
+                    "participante pergunta".to_string(),
+                ),
+                (
+                    9_000,
+                    None,
+                    Some("system"),
+                    "participante conclui".to_string(),
+                ),
+                (
+                    4_500,
+                    None,
+                    Some("system"),
+                    "participante emenda".to_string(),
+                ),
             ],
         );
         let body = out.split(TRANSCRIPT_MARKER).nth(1).unwrap();
@@ -2523,5 +2617,101 @@ mod tests {
             txt.find("\"id\"").unwrap() < txt.find("\"tema\"").unwrap(),
             "field order follows the type, not the alphabet"
         );
+    }
+
+    // ---- ADR-0038 §3 · cada fala carrega a hora de relógio --------------------
+
+    #[test]
+    fn adr0038_manifest_keeps_the_start_epoch_and_the_paused_total() {
+        // a manifest written before ADR-0038 has neither field: it still reads, as 0
+        let old: Manifest = serde_json::from_str(r#"{"id":"x","tema":"t"}"#).unwrap();
+        assert_eq!(old.started_epoch_ms, 0);
+        assert_eq!(old.paused_ms, 0);
+        // and the new fields travel camelCase, which is what the external agent reads
+        let m = Manifest {
+            started_epoch_ms: 1_763_474_000_000,
+            paused_ms: 42_000,
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&m).unwrap();
+        assert!(json.contains(r#""startedEpochMs":1763474000000"#), "{json}");
+        assert!(json.contains(r#""pausedMs":42000"#), "{json}");
+    }
+
+    #[test]
+    fn adr0038_the_start_epoch_is_persisted_in_the_meeting_manifest() {
+        let base = tmp("started");
+        let c = seed(&base);
+        manifest_set_started(&c.dir, 1_763_474_000_000).unwrap();
+        let m = manifest_read(&c.dir).unwrap();
+        assert_eq!(m.started_epoch_ms, 1_763_474_000_000);
+        // nothing else of the manifest is touched
+        assert_eq!(m.status, "recording");
+        assert_eq!(m.titulo, "Semanal de custos");
+    }
+
+    #[test]
+    fn adr0038_each_resume_adds_the_pause_it_closes() {
+        assert_eq!(fold_pause(0, Some(10_000), 25_000), 15_000);
+        assert_eq!(fold_pause(15_000, Some(30_000), 31_000), 16_000);
+        // a resume with no recorded pause (app reloaded mid-pause) adds nothing
+        assert_eq!(fold_pause(16_000, None, 99_000), 16_000);
+        // a wall clock set back during the pause never subtracts
+        assert_eq!(fold_pause(16_000, Some(50_000), 40_000), 16_000);
+    }
+
+    #[test]
+    fn adr0038_the_block_comment_carries_the_absolute_epoch_next_to_t() {
+        let b = timed_block(754_000, Some(1_763_474_054_000), Some("mic"), "fala");
+        assert!(
+            b.starts_with("<!-- loro:t=754000 e=1763474054000 -->\n"),
+            "{b}"
+        );
+        // without an epoch the comment is exactly the pre-ADR-0038 one
+        let old = timed_block(754_000, None, Some("mic"), "fala");
+        assert!(old.starts_with("<!-- loro:t=754000 -->\n"), "{old}");
+    }
+
+    #[test]
+    fn adr0038_the_sort_key_reads_both_comment_shapes() {
+        assert_eq!(
+            block_time("<!-- loro:t=754000 -->\n[12:34 · você] a"),
+            754_000
+        );
+        assert_eq!(
+            block_time("<!-- loro:t=754000 e=1763474054000 -->\n[12:34 · você] a"),
+            754_000
+        );
+        assert_eq!(block_time("nota sem tempo"), u64::MAX);
+        // a file mixing both shapes still orders by t: the new block lands between
+        let header = living_header("i", "t", "T", "2026-11-18T09:00:00Z");
+        let a = insert_timed_block(&header, 2_000, Some("mic"), "antigo cedo");
+        let b = insert_timed_block(&a, 9_000, Some("mic"), "antigo tarde");
+        let c = insert_timed_block_e(
+            &b,
+            5_000,
+            Some(1_763_456_405_000),
+            Some("system"),
+            "novo meio",
+        );
+        let body = c.split(TRANSCRIPT_MARKER).nth(1).unwrap();
+        let i = |s: &str| body.find(s).unwrap();
+        assert!(i("antigo cedo") < i("novo meio") && i("novo meio") < i("antigo tarde"));
+        assert!(body.contains("<!-- loro:t=5000 e=1763456405000 -->"));
+        // and a later block sorts after the new-shape one (its key was read, not MAX)
+        let d = insert_timed_block(&c, 6_000, Some("mic"), "depois do novo");
+        let body = d.split(TRANSCRIPT_MARKER).nth(1).unwrap();
+        assert!(body.find("novo meio").unwrap() < body.find("depois do novo").unwrap());
+    }
+
+    #[test]
+    fn adr0038_the_visible_timecode_gains_hours_after_the_first_one() {
+        assert_eq!(fmt_timecode(Some(0)), "00:00");
+        assert_eq!(fmt_timecode(Some(3_599_999)), "59:59");
+        assert_eq!(fmt_timecode(Some(3_600_000)), "1:00:00");
+        // the bug the ADR names: 9h30 printed as [570:00 · você]
+        assert_eq!(fmt_timecode(Some(570 * 60_000)), "9:30:00");
+        assert_eq!(fmt_timecode(Some(36_000_000 + 61_000)), "10:01:01");
+        assert_eq!(fmt_timecode(None), "--:--");
     }
 }
