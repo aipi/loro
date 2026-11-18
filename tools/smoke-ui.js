@@ -167,6 +167,9 @@ const ANSWERS = {
   // ADR-0036 — o motor neural com o modelo e a amostra AUSENTES: o passo exige
   // que a tela diga QUAL peça falta, não um "indisponível" mudo.
   read_aloud_state: { speaking: false, paused: false, supported: true },
+  // ADR-0038 — o dia gravado desligado, com a janela padrão: o tique roda e não
+  // faz nada, e a tela de Captura mostra os dois horários.
+  workday_get: { ligado: false, inicio: "09:00", fim: "18:30", dias: [0, 1, 2, 3, 4, 5, 6] },
   read_aloud_voices: [
     { name: "Luciana", locale: "pt_BR" },
     { name: "Samantha", locale: "en_US" },
@@ -1173,6 +1176,21 @@ const DRIVER = `
     mm.checked = true;
     mm.dispatchEvent(new Event("change"));
     await new Promise((r) => setTimeout(r, 120));
+  });
+
+  // ADR-0038 — o dia gravado mora em Captura: liga/desliga e os dois horários,
+  // lidos do config global (o mock devolve desligado, 09:00–18:30).
+  await step("cfg-dia-gravado", async () => {
+    window.showCfgSection("cap");
+    await new Promise((r) => setTimeout(r, 200));
+    const on = q("#optWorkday"), ini = q("#workdayInicio"), fim = q("#workdayFim");
+    if (!on || !ini || !fim) throw new Error("Captura não tem o dia gravado");
+    if (on.checked) throw new Error("ausente = desligado (ADR-0038 §5), e o mock diz desligado");
+    if (ini.value !== "09:00" || fim.value !== "18:30") throw new Error("janela pintada errada: " + ini.value + "–" + fim.value);
+    const card = on.closest(".cfgcard");
+    if (card.scrollWidth > card.clientWidth + 1) throw new Error("os horários estouram o cartão: " + card.scrollWidth + " em " + card.clientWidth);
+    if (!/Retomar o dia gravado/.test(card.textContent)) throw new Error("a dica não diz como voltar antes da próxima hora");
+    if (!window.__SMOKE__.calls.workday_get) throw new Error("a tela não leu o config global");
   });
 
   await step("cfg-loops", async () => {

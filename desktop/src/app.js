@@ -15,6 +15,7 @@ const R = window.LoroRefs || {};
 // ADR-0010 — pure meeting-path helpers (id parsing, marker strip, base join).
 const LM = window.LoroMeeting || {};
 const LP = window.LoroLoops || {};   // ADR-0029: ritmo, estado e histórico de um loop
+const LWD = window.LoroWorkday || {}; // ADR-0038: a decisão do dia gravado
 // ADR-0029 — o ESTADO dos loops é declarado aqui, no topo, junto do módulo que o
 // interpreta. Declarado no fim do arquivo (onde vivem os pintores) ele ficava na
 // zona morta do `const`: `brainRefresh()` roda no boot, chama `refreshLoops`, e a
@@ -217,6 +218,13 @@ const meeting = {
   // este fato que ele lê.
   micLive: true,
 };
+
+// ADR-0038 — o dia gravado. `meetingId` é a reunião que o DIA abriu (uma reunião
+// manual nunca entra aqui); `hora` é a chave "AAAA-MM-DD HH" dela; `suspensoAte`
+// é a chave da hora em que uma parada à mão deixa de valer.
+const WORKDAY_TEMA = "dia";
+const WORKDAY_TICK_MS = 15000;
+const workday = { cfg: null, meetingId: null, hora: null, suspensoAte: null, busy: false, selfStop: false };
 
 // ---- configurações persistidas (localStorage) ----
 const SETTINGS_KEY = "loro-settings";
@@ -1145,6 +1153,7 @@ async function appendMeetingSpeech(id, utterances, source) {
     const chunk = {
       tMs: u.tMs || 0,
       endMs: u.endMs == null ? (u.tMs || 0) : u.endMs,
+      eMs: u.eMs == null ? null : u.eMs, // ADR-0038 §3: a hora de relógio da fala
       source: source,
       tokens: LM.speechTokens(text),
       text: text,
@@ -1182,7 +1191,7 @@ async function appendMeetingSpeech(id, utterances, source) {
   const blocks = LM.speechParagraphs(fresh);
   try {
     await invoke("brain_meeting_append_timed", {
-      input: { id, blocks: blocks.map((b) => ({ tMs: b.tMs, source: source, chunk: b.text })) },
+      input: { id, blocks: blocks.map((b) => ({ tMs: b.tMs, eMs: b.eMs, source: source, chunk: b.text })) },
     });
   } catch (e) {
     // não ficou no arquivo: sair da lista para não barrar o gêmeo legítimo
@@ -1261,6 +1270,7 @@ async function onPreviewSegment(chunks, mime, segStartEpoch, segPausedMs, segEnd
     const utterances = falas.map((s) => ({
       tMs: LM.micBlockMs(segStartEpoch, s.tMs, meeting.originEpoch, segPausedMs),
       endMs: LM.micBlockMs(segStartEpoch, s.endMs, meeting.originEpoch, segPausedMs),
+      eMs: LM.blockEpoch(segStartEpoch, s.tMs),
       text: s.text,
     }));
     // A JUNÇÃO: espera a trilha de sistema ter sido ouvida até o fim deste segmento
@@ -1321,6 +1331,7 @@ async function runMeetingTail() {
     const utterances = falas.map((s) => ({
       tMs: LM.sysBlockMs(meeting.sysAnchor, s.tMs, meeting.originEpoch, meeting.segPausedMs),
       endMs: LM.sysBlockMs(meeting.sysAnchor, s.endMs, meeting.originEpoch, meeting.segPausedMs),
+      eMs: LM.blockEpoch(meeting.sysAnchor, s.tMs),
       text: s.text,
     }));
     try {
@@ -1363,6 +1374,7 @@ function setTailStatus(id, msg) {
 let stopPending = false;
 function stopMeeting() {
   if (stopPending) return;
+  workdayNoteManualStop();
   stopPending = true;
   clog("stop (meeting ADR-0010)");
   setRecPending("stopping");
@@ -1507,30 +1519,157 @@ async function flushMeetingLines() {
 // Conclusão: garante o flush final, fecha a reunião (brain_meeting_finish) e abre
 // reuniao.md como aba. ADR-0018: nada é autorado — a análise é OFERECIDA, em um
 // clique e dispensável, e só roda se o usuário pedir. Reentrância por meeting.active.
+// ADR-0038: `meeting.active` cai no PRIMEIRO passo do fechamento, mas o resto
+// (flush, brain_meeting_finish, purga, a aba da reunião concluída) ainda roda. A
+// rotação do dia espera este contador zerar — sem isso o cromo e a aba da hora
+// anterior chegavam por cima da hora que acabou de começar.
+let meetingsClosing = 0;
 async function finishMeetingAfterTranscription() {
   if (!meeting.active) return;
   meeting.active = false; meeting.phase = "done"; // reentrancy guard set synchronously
   stopPending = false;
-  const id = meeting.id;
-  if (meeting.flushTimer) { clearTimeout(meeting.flushTimer); meeting.flushTimer = null; }
-  await flushMeetingLines();
-  // único ponto que sabe que a reunião REALMENTE acabou: é aqui que o cromo sai
-  // de "encerrando…" para o estado real
-  setRecPending(null);
-  el.privacy.classList.remove("warn");
-  updatePrivacy();
-  let rel = null;
-  if (id) {
-    try { const r = await invoke("brain_meeting_finish", { id }); rel = r && r.rel; }
-    catch (e) { toast(t("não encerrei a reunião") + ": " + tErr(String(e))); clog("meeting_finish error: " + e); }
-    // Áudio é transiente (decisão do dono): apaga após a transcrição autoritativa.
-    try { await invoke("brain_meeting_purge_audio", { input: { id } }); }
-    catch (e) { clog("brain_meeting_purge_audio error: " + e); }
+  meetingsClosing++;
+  try {
+    const id = meeting.id;
+    if (meeting.flushTimer) { clearTimeout(meeting.flushTimer); meeting.flushTimer = null; }
+    await flushMeetingLines();
+    // único ponto que sabe que a reunião REALMENTE acabou: é aqui que o cromo sai
+    // de "encerrando…" para o estado real
+    setRecPending(null);
+    el.privacy.classList.remove("warn");
+    updatePrivacy();
+    let rel = null;
+    if (id) {
+      try { const r = await invoke("brain_meeting_finish", { id }); rel = r && r.rel; }
+      catch (e) { toast(t("não encerrei a reunião") + ": " + tErr(String(e))); clog("meeting_finish error: " + e); }
+      // Áudio é transiente (decisão do dono): apaga após a transcrição autoritativa.
+      try { await invoke("brain_meeting_purge_audio", { input: { id } }); }
+      catch (e) { clog("brain_meeting_purge_audio error: " + e); }
+    }
+    pessoalSig = ""; refreshPessoal();
+    renderIfLiving(id);
+    // ADR-0038: uma hora do dia fecha calada — são ~10 por dia, e quem as lê é o
+    // agente que recorta pela agenda; abrir aba e oferecer análise a cada hora
+    // seria uma interrupção por hora.
+    if (rel && LWD.isWorkdayMeeting(rel)) clog("workday hour closed");
+    else if (rel) { openDoc(rel, { preview: false }); offerAnalyse(LM.meetingDir(rel)); }
+    else if (id) toast(t("reunião encerrada"));
+  } finally { meetingsClosing--; }
+}
+
+// ---- ADR-0038 · o dia gravado ---------------------------------------------
+// A decisão é pura (src/workday.js); aqui só se executa o que ela devolve, pelos
+// MESMOS caminhos de uma reunião comum: startMeetingWith (sem modal) e stopMeeting.
+function workdayRecording() {
+  return !!(workday.meetingId && meeting.active && meeting.id === workday.meetingId);
+}
+function workdaySuspended() {
+  return !!(workday.suspensoAte && workday.cfg && workday.cfg.ligado
+    && LWD.hourKey(loopNow()) < workday.suspensoAte);
+}
+// Parar à mão é uma decisão da pessoa: o dia respeita até a próxima hora cheia
+// em vez de reabrir a gravação 15 s depois (ADR-0038 §1).
+function workdayNoteManualStop() {
+  if (workday.selfStop || !workdayRecording()) return;
+  workday.suspensoAte = LWD.nextHourKey(loopNow());
+  workday.meetingId = null; workday.hora = null;
+  invoke("workday_keep_awake", { on: false }).catch((e) => clog("workday_keep_awake off: " + e));
+  toast(t("dia gravado suspenso até a próxima hora — «Retomar o dia gravado» na paleta volta antes"), 8000);
+}
+function resumeWorkday() {
+  workday.suspensoAte = null;
+  toast(t("dia gravado retomado"));
+  workdayTick();
+}
+// Encerrar uma reunião passa pelo flush da última janela e pelo whisper: segundos
+// no macOS. O teto só existe para um encerramento que travou não prender o dia.
+const WORKDAY_IDLE_MAX_MS = 120000;
+async function workdayIdle(maxMs) {
+  const until = Date.now() + maxMs;
+  const busy = () => meetingBusy() || meetingsClosing > 0;
+  while (busy() && Date.now() < until) await new Promise((r) => setTimeout(r, 250));
+  return !busy();
+}
+async function workdayStart(d) {
+  await startMeetingWith({ tema: WORKDAY_TEMA, titulo: d.titulo });
+  if (meeting.active && meeting.phase === "recording") {
+    workday.meetingId = meeting.id; workday.hora = d.hora;
+    invoke("workday_keep_awake", { on: true }).catch((e) => toast(tErr(String(e))));
+    return;
   }
-  pessoalSig = ""; refreshPessoal();
-  renderIfLiving(id);
-  if (rel) { openDoc(rel, { preview: false }); offerAnalyse(LM.meetingDir(rel)); }
-  else if (id) toast(t("reunião encerrada"));
+  // Não subiu (permissão de gravação de tela, projeto ausente): startMeetingWith já
+  // disse por quê. Tentar de novo a cada 15 s repetiria o mesmo aviso o dia inteiro —
+  // a próxima tentativa é na próxima hora, ou antes por «Retomar o dia gravado».
+  workday.suspensoAte = LWD.nextHourKey(loopNow());
+}
+async function workdayStop() {
+  workday.selfStop = true;
+  try {
+    if (workdayRecording()) stopMeeting();
+    await workdayIdle(WORKDAY_IDLE_MAX_MS);
+  } finally {
+    workday.selfStop = false;
+    workday.meetingId = null; workday.hora = null;
+  }
+}
+// Rotacionar é parar e começar (ADR-0038 §1): o buraco entre as duas é o flush do
+// último segmento. Se a anterior ainda não fechou, a próxima verificação tenta.
+async function workdayRotate(d) {
+  await workdayStop();
+  if (meetingBusy() || meetingsClosing > 0) return;
+  await workdayStart(d);
+}
+async function workdayEnd() {
+  await workdayStop();
+  invoke("workday_keep_awake", { on: false }).catch((e) => clog("workday_keep_awake off: " + e));
+}
+// O tique do dia. SEM a trava de `document.hidden` do loopTick: o dia grava com o
+// Loro só na bandeja (fechar a janela só a esconde). A configuração é relida a cada
+// tique porque o arquivo também é escrito pelo agente (ADR-0038 §5).
+async function workdayTick() {
+  if (workday.busy) return;
+  workday.busy = true;
+  try {
+    try { workday.cfg = await invoke("workday_get"); }
+    catch (e) { clog("workday_get error: " + e); return; }
+    if (!brainTab || !LoroAudio.meetingSupported(hostOs)) return;
+    const d = LWD.decide({
+      agora: loopNow(),
+      cfg: workday.cfg,
+      estado: {
+        gravandoDia: workdayRecording(),
+        horaDaGravacao: workday.hora,
+        suspensoAteHora: workday.suspensoAte,
+        gravandoManual: meetingBusy() && !workdayRecording(),
+      },
+    });
+    if (d.acao === "iniciar") await workdayStart(d);
+    else if (d.acao === "rotacionar") await workdayRotate(d);
+    else if (d.acao === "encerrar") await workdayEnd();
+  } catch (e) { clog("workday tick error: " + e); }
+  finally { workday.busy = false; }
+}
+// Configurações → Captura: liga/desliga e os dois horários (ADR-0038 §5).
+async function paintWorkdaySettings() {
+  try { workday.cfg = (await invoke("workday_get")) || {}; } catch (_) { return; }
+  const on = $("optWorkday"), ini = $("workdayInicio"), fim = $("workdayFim");
+  if (on) on.checked = !!workday.cfg.ligado;
+  if (ini && workday.cfg.inicio) ini.value = workday.cfg.inicio;
+  if (fim && workday.cfg.fim) fim.value = workday.cfg.fim;
+}
+async function saveWorkdaySettings() {
+  const cfg = Object.assign({}, workday.cfg || {}, {
+    ligado: !!($("optWorkday") || {}).checked,
+    inicio: ($("workdayInicio") || {}).value || "",
+    fim: ($("workdayFim") || {}).value || "",
+  });
+  try {
+    workday.cfg = await invoke("workday_set", { cfg });
+    workdayTick();
+  } catch (e) {
+    toast(tErr(String(e)), 6000);
+    paintWorkdaySettings(); // a tela volta a dizer o que está guardado
+  }
 }
 
 // Resolve o completoRel (relativo ao acervo) num caminho de arquivo para a
@@ -1954,6 +2093,7 @@ async function openCfg() {
   enterOverlay(cfgWrap, cfgClose, closeCfg);
   cfgEnvSeen = false; // os checks de rede rodam de novo nesta visita, quando a seção aparecer
   cfgPluginsSeen = false; cfgLoopsSeen = false;
+  paintWorkdaySettings();
   document.querySelectorAll(".cfgsec").forEach((s) => (s.hidden = false));
   $("cfgPop").scrollTop = 0;
   markCfgNav("proj");
@@ -2333,6 +2473,10 @@ el.optOverlay.addEventListener("change", (e) => invoke("toggle_overlay", { show:
     // microfone no meio de uma reunião abriria um buraco na gravação
     if (meeting.active) toast(t("vale na próxima reunião"));
   });
+}
+for (const id of ["optWorkday", "workdayInicio", "workdayFim"]) {
+  const c = $(id);
+  if (c) c.addEventListener("change", saveWorkdaySettings);
 }
 $("optEchoCancel").addEventListener("change", (e) => {
   settings.micEchoCancel = e.target.checked;
@@ -6469,8 +6613,9 @@ function paintMeetingSurface(id, raw, manifest, status, artefatos, rel, stale) {
 // visualizar isso era texto cinza igual ao resto: quem falou sumia. Aqui o selo
 // ganha a mesma cor que tem ao vivo (você = teal, os demais = âmbar).
 // Roda sobre HTML JÁ escapado por mdRender, então o casamento é seguro.
+// `h:mm:ss` também: um dia gravado (ADR-0038 §3) passa da primeira hora.
 function colorSpeakers(html) {
-  return html.replace(/\[(\d{1,2}:\d{2})\s*·\s*([^\]<]{1,24})\]/g, (m, ts, who) => {
+  return html.replace(/\[(\d{1,2}(?::\d{2}){1,2})\s*·\s*([^\]<]{1,24})\]/g, (m, ts, who) => {
     const me = /^(voc[e\u00ea]|you|eu)$/i.test(who.trim());
     return `<span class="mtg-src${me ? " me" : ""}">${ts} \u00b7 ${who}</span>`;
   });
@@ -7675,6 +7820,7 @@ const COMMANDS = [
   { group: "gravar", label: "Gravar", code: "KeyR", run: () => startMeetingFlow() },
   { group: "gravar", label: "Encerrar gravação", combo: IS_MAC ? "⇧⌘R" : "Ctrl+Shift+R", run: () => { if (state.running || meeting.active) stopSession(); else toast(t("nenhuma gravação em andamento")); } },
   { group: "gravar", label: "Marcar momento", code: "KeyM", run: () => markMeeting() },
+  { group: "gravar", label: "Retomar o dia gravado", when: workdaySuspended, run: () => resumeWorkday() },
 
   { group: "criar", label: "Nova ideia", code: "KeyB", run: () => promptNewTema() },
   { group: "criar", label: "Novo caderno de notas", code: "KeyK", run: () => promptNewNotebook() },
@@ -13681,6 +13827,8 @@ listen("loop-tool-result", (e) => {
 // Ele arma no FIM do bloco, depois dos pintores: armá-lo antes deixava o
 // `LOOP_TICK_MS` na zona morta do `const`.
 setInterval(loopTick, LOOP_TICK_MS);
+// ADR-0038 §2 — o relógio do dia, armado no mesmo ponto pela mesma razão.
+setInterval(workdayTick, WORKDAY_TICK_MS);
 refreshPlugins();
 
 listen("loop-cycle", (e) => {

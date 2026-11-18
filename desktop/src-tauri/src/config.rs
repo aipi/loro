@@ -79,6 +79,11 @@ pub struct LoroConfig {
     // Distinct from Acervo.lang, which drives the templates of one project.
     #[serde(default = "default_ui_lang")]
     pub ui_lang: String,
+    // ADR-0038 §5 — the recorded workday is the PERSON's preference, not a
+    // project's: it records into whichever project is active. Absent = off, and a
+    // config that never had it is written without it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dia_gravado: Option<crate::workday::WorkdayCfg>,
 }
 
 impl Default for LoroConfig {
@@ -87,6 +92,7 @@ impl Default for LoroConfig {
             acervos: Vec::new(),
             active: String::new(),
             ui_lang: default_ui_lang(),
+            dia_gravado: None,
         }
     }
 }
@@ -300,7 +306,7 @@ pub fn read_loro_config() -> LoroConfig {
                     ticket_base: String::new(),
                 }],
                 active: id,
-                ui_lang: default_ui_lang(),
+                ..LoroConfig::default()
             };
             let _ = write_loro_config(&cfg);
             return cfg;

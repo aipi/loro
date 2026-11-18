@@ -67,11 +67,15 @@ mod voice_install;
 // pausa de verdade por sinal — e não força dispositivo, ao contrário do
 // intérprete.
 mod read_aloud;
+// ADR-0038 — o dia gravado: a configuração global e a asserção de energia. A
+// decisão de quando gravar fica no frontend (src/workday.js), dono do relógio.
+mod workday;
 use interpreter::*;
 use meeting::*;
 use read_aloud::*;
 use voice_install::*;
 use voice_sample::*;
+use workday::*;
 mod models;
 // ADR-0032 — o aviso de versão nova. Módulo próprio: a checagem é uma
 // política (intervalo, chave, rota de instalação), não uma linha de wiring.
@@ -4988,6 +4992,9 @@ pub fn run() {
             read_aloud_pause,
             read_aloud_stop,
             read_aloud_state,
+            workday_get,
+            workday_set,
+            workday_keep_awake,
             interpreter_devices,
             interpreter_voices,
             interpreter_translate,
@@ -5146,6 +5153,9 @@ pub fn run() {
             tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
         ) {
             read_aloud::stop_reading();
+            // ADR-0038 §4: o `-w <pid>` já soltaria a asserção, mas o app desfaz o
+            // que ele mesmo começou.
+            workday::release_keep_awake();
         }
         // clicking the Dock icon reopens the window (macOS)
         #[cfg(target_os = "macos")]

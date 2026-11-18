@@ -2640,7 +2640,7 @@ body.resizing #mainRow * { pointer-events: none; }
 }
 .cfgcard .field > *:last-child, .wizcard .wfield > *:last-child { justify-self: stretch; min-width: 0; }
 .cfgcard .field select, .wizcard .wfield select,
-.cfgcard .field input[type="text"], .wizcard .wfield input {
+.cfgcard .field input[type="text"], .cfgcard .field input[type="time"], .wizcard .wfield input {
   width: 100%; max-width: none; justify-self: stretch;
   font: 13px var(--sans); color: var(--ink);
   background: var(--paper); border: 1px solid var(--line-control);

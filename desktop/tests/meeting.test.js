@@ -580,3 +580,49 @@ test("fala sem relação nenhuma não é sinalizada como vazamento", () => {
   const novo = fala("Preciso revisar o contrato de manutenção da filial de Recife amanhã cedo.", 1000, 9000, "mic");
   assert.strictEqual(LM.partialCrossTalk(novo, recent), false);
 });
+
+// ---- ADR-0038 §3 · cada fala carrega a hora de relógio ---------------------
+// O `e=` do comentário é a época ABSOLUTA da fala. Quem sabe é o frontend: cada
+// segmento de captura tem a sua âncora (a primeira amostra do sidecar, ou o início
+// do segmento de microfone), e a fala está a `offsetMs` dela. Recalcular no backend
+// como início + t + pausa erraria toda fala de um segmento anterior a uma pausa
+// que chegasse ao arquivo depois do retomar.
+test("ADR-0038 — a época de uma fala é a âncora do segmento mais o offset", () => {
+  assert.strictEqual(LM.blockEpoch(1_763_474_000_000, 9_700), 1_763_474_009_700);
+  // âncora desconhecida: sem época, em vez de uma hora inventada
+  assert.strictEqual(LM.blockEpoch(null, 9_700), null);
+  assert.strictEqual(LM.blockEpoch(undefined, 0), null);
+  // o t clampado em 0 por um relógio que voltou não arrasta a época junto
+  const origem = 1_763_474_000_000;
+  assert.strictEqual(LM.micBlockMs(origem - 5_000, 0, origem, 0), 0);
+  assert.strictEqual(LM.blockEpoch(origem - 5_000, 0), origem - 5_000);
+});
+
+test("ADR-0038 — o parágrafo leva a época da PRIMEIRA fala, como leva o tMs", () => {
+  const blocos = LM.speechParagraphs([
+    { tMs: 18000, endMs: 20000, eMs: 1_000_018_000, text: "a" },
+    { tMs: 20000, endMs: 22000, eMs: 1_000_020_000, text: "b" },
+    { tMs: 40000, endMs: 41000, eMs: 1_000_040_000, text: "c" },
+  ]);
+  assert.deepStrictEqual(blocos.map((b) => b.eMs), [1_000_018_000, 1_000_040_000]);
+  // fala sem época continua sem o campo (o formato antigo não ganha um null)
+  assert.ok(!("eMs" in LM.speechParagraphs([{ tMs: 1, endMs: 2, text: "x" }])[0]));
+});
+
+test("ADR-0038 — o comentário com e= some da superfície como o antigo", () => {
+  const body = "# R\n\n<!-- loro:transcricao -->\n\n<!-- loro:t=754000 e=1763474054000 -->\n[12:34 · você] olá\n\n<!-- loro:t=9000 -->\n[00:09 · sistema] oi\n";
+  const out = LM.stripMarker(body);
+  assert.ok(!out.includes("loro:t="), out);
+  assert.ok(out.includes("[12:34 · você] olá") && out.includes("[00:09 · sistema] oi"));
+});
+
+// O selo colorido do modo leitura casava só `mm:ss` de 1–2 dígitos: um dia gravado
+// passa de uma hora, e o carimbo vira `h:mm:ss` (ADR-0038 §3).
+test("ADR-0038 — o selo de quem falou reconhece h:mm:ss", () => {
+  const APP_SRC = require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "src", "app.js"), "utf8");
+  const m = APP_SRC.match(/function colorSpeakers\(html\) \{\n  return html\.replace\((\/.*\/g),/);
+  assert.ok(m, "colorSpeakers mantém a forma de uma regex");
+  const re = eval(m[1]);
+  const hits = (s) => [...s.matchAll(re)].map((x) => x[1]);
+  assert.deepStrictEqual(hits("[12:34 · você] a [1:02:03 · sistema] b [10:00:00 · você] c"), ["12:34", "1:02:03", "10:00:00"]);
+});
