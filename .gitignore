@@ -30,3 +30,4 @@ dist/
 
 # compiled system-audio capturer (built from syscap/loro-syscap.swift)
 desktop/src-tauri/syscap/loro-syscap
+desktop/src-tauri/syscap/build/

@@ -518,6 +518,50 @@
       if (leakCoverage(mine, other) >= LEAK_MIN_COVERAGE
         && tokenContainment(mine, other) >= LEAK_MIN_SYMMETRY) return prev;
     }
+    return paraphrasedLeak(c, list);
+  }
+
+  // ADR-0040 §2 · a rede de segurança atrás do cancelador de eco. O teste do dono
+  // num MacBook sem fone (2026-11-18) deixou passar três ecos que o par literal
+  // acima não vê, por dois motivos medidos:
+  //  1. o whisper transcreve as duas trilhas com palavras diferentes para o mesmo
+  //     som — «tô»/«estou», «tá»/«está», «pra»/«para», muleta («né», «aí») de um
+  //     lado só. Corridas de 4 palavras literais caem para 0,39;
+  //  2. as fronteiras dos segmentos não coincidem: uma fala do microfone atravessa
+  //     DUAS falas do sistema, e contra cada uma sozinha a cobertura não chega lá.
+  // Então: as palavras viram a forma canônica (CANON, sem MULETAS) e a fala do
+  // microfone é comparada com a UNIÃO das falas do sistema que a cobrem no tempo
+  // (±PARAPHRASE_SLACK_MS). Os limiares são os mesmos do par literal — o vão
+  // medido não muda; muda só o que é comparado.
+  //
+  //   par (canônico, contra a união)         corridas≥4   mútua
+  //   eco 01:12 (2 falas do sistema)          0,95         0,94
+  //   eco 01:30                               0,93         0,75
+  //   eco 00:54 SEM a fala própria do dono    0,93         0,91
+  //   eco 00:54 COM a fala própria (bloco)    0,72         0,74   → fica (parcial)
+  //   vazamento + fala própria (PARC)         0,66         0,76   → fica
+  //   coincidência                            0,56         0,28   → fica
+  //   resposta sobre o mesmo assunto          0,29         0,53   → fica
+  const CANON = { to: "estou", tou: "estou", ta: "esta", tava: "estava", tao: "estao", tamo: "estamos", pra: "para", pro: "para" };
+  const MULETAS = new Set(["ne", "ai", "aqui", "ali", "la", "tipo", "assim", "e", "o", "a"]);
+  function canonTokens(tokens) {
+    return (tokens || []).map(function (w) { return CANON[w] || w; })
+      .filter(function (w) { return !MULETAS.has(w); });
+  }
+  const PARAPHRASE_SLACK_MS = 2000;
+  function paraphrasedLeak(c, list) {
+    const mine = canonTokens(c.tokens);
+    if (mine.length < LEAK_MIN_RUN) return null;
+    const cover = list.filter(function (p) {
+      return p && p !== c && p.source === "system"
+        && (c.tMs || 0) - PARAPHRASE_SLACK_MS <= spanEnd(p)
+        && (p.tMs || 0) - PARAPHRASE_SLACK_MS <= spanEnd(c);
+    }).sort(function (a, b) { return (a.tMs || 0) - (b.tMs || 0); });
+    if (!cover.length) return null;
+    const union = [];
+    cover.forEach(function (p) { canonTokens(p.tokens).forEach(function (w) { union.push(w); }); });
+    if (leakCoverage(mine, union) >= LEAK_MIN_COVERAGE
+      && tokenContainment(mine, union) >= LEAK_MIN_SYMMETRY) return cover[0];
     return null;
   }
 

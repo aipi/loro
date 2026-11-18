@@ -40,9 +40,13 @@ SIDEBAR      │ TABS (only when a document is open) │ PANEL 330px
   leak at the source, turn on **cancel speaker echo** in Settings → Capture, at
   the cost, stated there, of your voice coming out quieter. On **macOS** Loro
   records the meeting microphone straight from the device, with no voice
-  processing and on a track of its own, apart from the system audio, so that
-  switch does not exist there: if you listen through speakers and want one track,
-  turn the meeting microphone off. If the microphone does not open (permission
+  processing and on a track of its own, apart from the system audio, and
+  **removes the speakers' sound from its own copy** by itself, using the system
+  audio as the reference — what the call receives from your microphone does not
+  change. The first seconds of a meeting (or after changing the volume or moving
+  the laptop) can still leak while it adapts; the echo filter above catches what
+  is left. So that switch does not exist there; if you want one track, turn the
+  meeting microphone off. If the microphone does not open (permission
   denied in System Settings → Privacy & Security → Microphone), the meeting keeps
   recording system audio only and says so.
 - **The text lands in paragraphs**, one per stretch of continuous speech, stamped
@@ -486,8 +490,8 @@ others». If you listen **through speakers**, the mic hears the machine back and
 speech arrives on both tracks. Loro detects that and offers the exit on the spot: **record
 only the system** (one track, no echo, no microphone permission asked — your voice stays out)
 and, on Windows, also **cancel the echo** (both tracks stay, but your voice comes out quieter).
-On macOS the microphone is recorded raw, on a track of its own, so there is no echo to cancel
-there. Whatever you pick applies **from the next meetings on**, and the switches live in
+On macOS Loro already removes the speakers' sound from its own copy of the microphone, without
+touching what the call hears, so that switch does not exist there. Whatever you pick applies **from the next meetings on**, and the switches live in
 **Settings → Capture**. With **headphones there is no echo** — then keeping
 both is best.
 

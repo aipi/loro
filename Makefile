@@ -13,14 +13,14 @@ export PATH := $(HOME)/.cargo/bin:$(PATH)
 # Vanilla JS frontend files that must at least parse (node --check).
 JS_SRC := desktop/src/app.js desktop/src/shell.js desktop/src/overlay.js desktop/src/text.js desktop/src/audio.js desktop/src/interpreter.js desktop/src/interp-worklet.js desktop/src/readaloud.js desktop/src/mdedit.js desktop/src/review.js desktop/src/workspace.js desktop/src/loops.js desktop/src/workday.js desktop/src/update.js
 
-.PHONY: help test test-rust test-js test-cli test-layout test-ui lint lint-offmac fmt build app test-docker syscap vendor-cm6 require-rust release
+.PHONY: help test test-rust test-js test-cli test-aec aec-speech test-layout test-ui lint lint-offmac fmt build app test-docker syscap vendor-cm6 require-rust release
 
 help: ## Show this help menu
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
 		| sort \
 		| awk 'BEGIN {FS = ":.*?## "} {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
 
-test: test-cli test-rust test-js ## Run the full suite (CLI + Rust + JS)
+test: test-cli test-rust test-js test-aec ## Run the full suite (CLI + Rust + JS + echo canceller)
 
 test-cli: ## Run loro.sh regression tests under the system bash (macOS bash 3.2 floor)
 	/bin/bash tests/cli.sh
@@ -110,8 +110,53 @@ lint-offmac: ## Clippy AND tests with the macOS path off (catches non-macOS dead
 fmt: ## Format the Rust code (cargo fmt)
 	cargo fmt --manifest-path desktop/src-tauri/Cargo.toml
 
-syscap: ## Compile the macOS system-audio capturer (ScreenCaptureKit, ADR-0005)
-	swiftc -O desktop/src-tauri/syscap/loro-syscap.swift -o desktop/src-tauri/syscap/loro-syscap
+# ADR-0040 — the echo canceller of the meeting mic is speexdsp (vendored, BSD)
+# plus a small C timeline (aec/loro_aec.c), compiled into the sidecar: no
+# runtime dependency, nothing for the user to install.
+SYSCAP_DIR := desktop/src-tauri/syscap
+SYSCAP_BUILD := $(SYSCAP_DIR)/build
+SPEEX := $(SYSCAP_DIR)/speexdsp
+AEC_CFLAGS := -O2 -Wall -DFLOATING_POINT -DUSE_KISS_FFT -DEXPORT= -I$(SPEEX)/include -I$(SPEEX)/libspeexdsp -I$(SYSCAP_DIR)/aec
+AEC_SRC := $(addprefix $(SPEEX)/libspeexdsp/,mdf.c preprocess.c fftwrap.c kiss_fft.c kiss_fftr.c filterbank.c) $(SYSCAP_DIR)/aec/loro_aec.c
+
+# One object per source, rebuilt every time (seven small files): no stale-object
+# class of bug for a binary that ships.
+aec-objs:
+	@mkdir -p $(SYSCAP_BUILD)
+	@for f in $(AEC_SRC); do cc $(AEC_CFLAGS) -c $$f -o $(SYSCAP_BUILD)/$$(basename $$f .c).o || exit 1; done
+
+# Swift only lets the file named main.swift carry top-level code when a module
+# has more than one file; the sidecar's entry file keeps its name in the repo and
+# is copied to main.swift for the build.
+syscap: aec-objs ## Compile the macOS system-audio capturer (ScreenCaptureKit, ADR-0005; echo canceller, ADR-0040)
+	cp $(SYSCAP_DIR)/loro-syscap.swift $(SYSCAP_BUILD)/main.swift
+	swiftc -O -import-objc-header $(SYSCAP_DIR)/aec/loro_aec.h \
+	  $(SYSCAP_BUILD)/main.swift $(SYSCAP_DIR)/aec/AecPipeline.swift $(SYSCAP_BUILD)/*.o \
+	  -o $(SYSCAP_DIR)/loro-syscap
+
+# ADR-0040 — the echo canceller, measured offline: a simulated laptop (speakers
+# → room → mic, plus the person speaking) through the C canceller, and on macOS
+# also through the Swift pipeline the sidecar runs above it (resampling, downmix,
+# host-time placement). Fails below 20 dB of echo removed or if the person's own
+# speech is attenuated. Portable C half: runs wherever `cc` exists.
+test-aec: aec-objs ## Measure the meeting-mic echo canceller offline (ADR-0040)
+	cc $(AEC_CFLAGS) $(SYSCAP_DIR)/aec/aec_eval.c $(SYSCAP_BUILD)/*.o -lm -o $(SYSCAP_BUILD)/aec_eval
+	$(SYSCAP_BUILD)/aec_eval
+	@if [ "$$(uname)" = Darwin ]; then \
+	  swiftc -O -parse-as-library -import-objc-header $(SYSCAP_DIR)/aec/loro_aec.h \
+	    $(SYSCAP_DIR)/aec/AecPipeline.swift $(SYSCAP_DIR)/aec/pipeline_eval.swift $(SYSCAP_BUILD)/*.o \
+	    -o $(SYSCAP_BUILD)/pipeline_eval && $(SYSCAP_BUILD)/pipeline_eval; fi
+
+# The same measurement on real speech (macOS `say`, pt-BR, two voices) — not part
+# of `test` (needs `say` + ffmpeg). AEC_EVAL_OUT=<dir> also writes the WAVs.
+aec-speech: test-aec ## Measure the echo canceller on synthesized pt-BR speech (macOS)
+	@d=$$(mktemp -d) && \
+	  say -v Luciana -o $$d/far.aiff "Bom dia pessoal, vamos começar a reunião de planejamento da semana. Primeiro eu queria revisar o orçamento da frota e depois falar dos atrasos na entrega dos carros novos. A gente precisa fechar essa conta até sexta feira sem falta." && \
+	  say -v Luciana -o $$d/near.aiff "Concordo com você, mas acho que antes disso precisamos olhar os contratos de manutenção. Eu revisei ontem e tem três fornecedores com preço acima da média do mercado." && \
+	  ffmpeg -y -loglevel error -i $$d/far.aiff -af "asetrate=22050*0.82,aresample=16000,atempo=1.2" -ac 1 -c:a pcm_s16le $$d/far.wav && \
+	  ffmpeg -y -loglevel error -i $$d/near.aiff -ar 16000 -ac 1 -c:a pcm_s16le $$d/near.wav && \
+	  $(SYSCAP_BUILD)/aec_eval $$d/far.wav $$d/near.wav && \
+	  $(SYSCAP_BUILD)/pipeline_eval $$d/far.wav $$d/near.wav; rc=$$?; rm -rf $$d; exit $$rc
 
 # npm deps are a real file prerequisite: on a fresh clone node_modules/.bin has
 # no `tauri`, so `npm run tauri ...` fails with "sh: tauri: command not found".
