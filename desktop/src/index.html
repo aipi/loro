@@ -992,6 +992,16 @@
                 <p class="hint" data-i18n>ligado, a reunião capta a sua voz e o áudio da máquina — o que a análise lê como «você» e «os outros». Desligado, ela grava só a máquina: uma trilha, sem eco e sem pedir permissão do microfone. Com fone de ouvido não há eco, então deixe ligado.</p>
                 <label class="opt"><input type="checkbox" id="optEchoCancel" /> <span data-i18n>cancelar o eco do alto-falante</span></label>
                 <p class="hint" data-i18n>ligue se você ouve pela caixa e a transcrição confunde quem falou. O custo é real: o macOS troca o caminho de áudio da máquina e a sua voz sai mais baixa — com fone, deixe desligado.</p>
+                <!-- ADR-0038 — o dia gravado: a decisão de quando gravar é do app aberto
+                     (src/workday.js); aqui só a janela, guardada no config global. -->
+                <label class="opt"><input type="checkbox" id="optWorkday" /> <span data-i18n>gravar o dia de trabalho sozinho</span></label>
+                <label class="field"><span class="mono" data-i18n>começa às</span>
+                  <input id="workdayInicio" type="time" value="09:00" />
+                </label>
+                <label class="field"><span class="mono" data-i18n>termina às</span>
+                  <input id="workdayFim" type="time" value="18:30" />
+                </label>
+                <p class="hint" data-i18n>dentro desse horário o Loro grava sem clique, uma reunião por hora na ideia «dia», e não deixa o Mac dormir. Parar à mão suspende até a próxima hora; para voltar antes, use «Retomar o dia gravado» na paleta.</p>
                 <button class="opt as-btn" id="clearBtn" data-i18n>limpar transcrição</button>
               </div>
             </section>
@@ -1199,6 +1209,7 @@
     <script src="presets.js"></script>
     <script src="modelui.js"></script>
     <script src="loops.js"></script>
+    <script src="workday.js"></script>
     <script src="update.js"></script>
     <script src="audio.js"></script>
     <script src="interpreter.js"></script>
