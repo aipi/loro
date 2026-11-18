@@ -38,6 +38,9 @@
     "err.update_check_failed": "não deu para verificar se há versão nova",
     "err.update_open_failed": "não deu para abrir a página da versão",
     "err.update_pref_save": "não deu para guardar essa preferência",
+    // ---- ADR-0038 · dia gravado ----
+    "err.workday_invalid_window": "horário inválido — o início tem de vir antes do fim, no formato 09:00",
+    "err.workday_keep_awake_failed": "não deu para impedir o Mac de dormir durante o dia gravado",
     // ---- ADR-0029 · loops e plugins ----
     "err.loop_stopped": "o ciclo foi parado",
     "err.loop_parallel_full": "já há ciclos rodando — este espera a vez",
@@ -245,6 +248,8 @@
     "err.update_check_failed": "couldn't check whether a new version is out",
     "err.update_open_failed": "couldn't open the release page",
     "err.update_pref_save": "couldn't save that preference",
+    "err.workday_invalid_window": "invalid hours — the start must come before the end, as 09:00",
+    "err.workday_keep_awake_failed": "couldn't keep the Mac from sleeping during the recorded day",
     "v{v} disponível": "v{v} available",
     "há uma versão nova ({v}) — clique para ver como atualizar":
       "a new version is out ({v}) — click to see how to update",
