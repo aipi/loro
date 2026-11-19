@@ -626,7 +626,7 @@
                      mostra enquanto ela existe); numa transcrição avulsa só recusavam -->
                 <button id="recMark" class="chip" hidden><span aria-hidden="true">✎</span> <span data-i18n>Marcar momento</span></button>
                 <button id="recImage" class="chip" hidden><span data-i18n>Anexar imagem</span></button>
-                <button id="recOverlay" class="chip"><span data-i18n>Legenda flutuante</span></button>
+                <button id="recBubble" class="chip"><span data-i18n>Balão</span></button>
                 <select id="recSource" class="mini-select"
                   aria-label="fonte de áudio" data-i18n-attrs="aria-label">
                   <option value="mic" data-i18n>microfone</option>
@@ -984,7 +984,9 @@
               <div class="cfgcard">
                 <label class="opt"><input type="checkbox" id="optScroll" checked /> <span data-i18n>auto-scroll</span></label>
                 <label class="opt"><input type="checkbox" id="optTop" /> <span data-i18n>sempre no topo</span></label>
-                <label class="opt"><input type="checkbox" id="optOverlay" /> <span data-i18n>modo legenda flutuante</span></label>
+                <!-- ADR-0041 — o balão de gravação: sempre no topo, em todos os Spaces. A
+                     preferência mora no config global (bubble_set_visible). -->
+                <label class="opt"><input type="checkbox" id="optBubble" checked /> <span data-i18n>mostrar o balão de gravação</span></label>
                 <!-- ADR-0022 §24b — uma reunião capta DUAS trilhas (você + a máquina). Quando o
                      som sai pela caixa, o microfone escuta a máquina de volta e a mesma fala
                      chega duas vezes. Desligar o microfone é a saída física: uma trilha só. -->
@@ -996,16 +998,6 @@
                      fora do webview, e o eco da caixa sai da cópia do Loro no próprio sidecar:
                      o controle do getUserMedia fica inerte. -->
                 <p class="hint" id="echoCancelMacHint" hidden data-i18n>no macOS o Loro grava o microfone da reunião direto do dispositivo, sem processamento de voz, e tira o som da caixa da SUA cópia sozinho — o que a chamada recebe do microfone não muda. Este controle não se aplica aqui.</p>
-                <!-- ADR-0038 — o dia gravado: a decisão de quando gravar é do app aberto
-                     (src/workday.js); aqui só a janela, guardada no config global. -->
-                <label class="opt"><input type="checkbox" id="optWorkday" /> <span data-i18n>gravar o dia de trabalho sozinho</span></label>
-                <label class="field"><span class="mono" data-i18n>começa às</span>
-                  <input id="workdayInicio" type="time" value="09:00" />
-                </label>
-                <label class="field"><span class="mono" data-i18n>termina às</span>
-                  <input id="workdayFim" type="time" value="18:30" />
-                </label>
-                <p class="hint" data-i18n>dentro desse horário o Loro grava sem clique, uma reunião por hora na ideia «dia», e não deixa o Mac dormir. Parar à mão suspende até a próxima hora; para voltar antes, use «Retomar o dia gravado» na paleta.</p>
                 <button class="opt as-btn" id="clearBtn" data-i18n>limpar transcrição</button>
               </div>
             </section>
@@ -1213,7 +1205,7 @@
     <script src="presets.js"></script>
     <script src="modelui.js"></script>
     <script src="loops.js"></script>
-    <script src="workday.js"></script>
+    <script src="agenda.js"></script>
     <script src="update.js"></script>
     <script src="audio.js"></script>
     <script src="interpreter.js"></script>

@@ -67,15 +67,19 @@ mod voice_install;
 // pausa de verdade por sinal — e não força dispositivo, ao contrário do
 // intérprete.
 mod read_aloud;
-// ADR-0038 — o dia gravado: a configuração global e a asserção de energia. A
-// decisão de quando gravar fica no frontend (src/workday.js), dono do relógio.
-mod workday;
+// ADR-0041 — o balão de gravação (a janela flutuante), a agenda do dia escrita
+// por um agente externo, e o Mac acordado enquanto qualquer gravação roda
+// (herdado da ADR-0038, que o balão substitui).
+mod agenda;
+mod bubble;
+mod keep_awake;
+use agenda::*;
+use bubble::*;
 use interpreter::*;
 use meeting::*;
 use read_aloud::*;
 use voice_install::*;
 use voice_sample::*;
-use workday::*;
 mod models;
 // ADR-0032 — o aviso de versão nova. Módulo próprio: a checagem é uma
 // política (intervalo, chave, rota de instalação), não uma linha de wiring.
@@ -87,8 +91,12 @@ pub mod ai;
 use ai::*;
 
 const TRAY_ID: &str = "loro-tray";
+// ADR-0041 §4: the beat of the agenda (start/stop scheduled meetings) — the same
+// 15 s the recorded workday ticked at.
+const AGENDA_TICK_MS: u64 = 15_000;
+// ADR-0041 §6: one static icon. The tray no longer blinks while recording — the
+// recording sign lives only in the bubble (owner, 2026-11-18).
 const TRAY_ON: &[u8] = include_bytes!("../icons/tray-on.png");
-const TRAY_DIM: &[u8] = include_bytes!("../icons/tray-dim.png");
 
 #[derive(Default)]
 pub(crate) struct AppState {
@@ -98,7 +106,6 @@ pub(crate) struct AppState {
     // the Windows counterpart is a thread, not a process (ADR-0033)
     #[cfg(windows)]
     syscap_win: Mutex<Option<syscap_win::Capture>>,
-    tray: Mutex<Option<tauri::tray::TrayIcon>>,
     tray_menu: Mutex<Option<TrayMenuItems>>,
     recording: AtomicBool,
     term: Mutex<Option<TermSession>>,
@@ -108,32 +115,34 @@ pub(crate) struct AppState {
 struct TrayMenuItems {
     show: MenuItem<tauri::Wry>,
     toggle: MenuItem<tauri::Wry>,
+    bubble: MenuItem<tauri::Wry>,
     quit: MenuItem<tauri::Wry>,
 }
 
 // Tray chrome per UI language. The webview translates itself (frontend I18N);
 // the tray lives outside the webview, so the backend owns these few strings.
+// ADR-0041 §6: the verbs are the bubble's — «Gravar» starts, «Encerrar» ends.
 struct TrayLabels {
     show: &'static str,
     toggle: &'static str,
+    bubble: &'static str,
     quit: &'static str,
-    tooltip_recording: &'static str,
 }
 
 fn tray_labels(lang: &str) -> TrayLabels {
     if lang == "en" {
         TrayLabels {
             show: "Open Loro",
-            toggle: "Start / Stop transcription",
+            toggle: "Record / Stop recording",
+            bubble: "Show / hide bubble",
             quit: "Quit",
-            tooltip_recording: "Loro — transcribing",
         }
     } else {
         TrayLabels {
             show: "Abrir Loro",
-            toggle: "Iniciar / Parar transcrição",
+            toggle: "Gravar / Encerrar gravação",
+            bubble: "Mostrar / ocultar balão",
             quit: "Sair",
-            tooltip_recording: "Loro — transcrevendo",
         }
     }
 }
@@ -609,16 +618,13 @@ fn extract_text(line: &str) -> Option<String> {
     extract_line(line).map(|(_, text)| text)
 }
 
-// marks the recording state; icon blinking is owned by the tray thread
-fn set_tray_recording(state: &AppState, on: bool) {
-    state.recording.store(on, Ordering::Relaxed);
-    if let Some(tray) = state.tray.lock().unwrap().as_ref() {
-        let tooltip = if on {
-            tray_labels(&ui_lang()).tooltip_recording
-        } else {
-            "Loro"
-        };
-        let _ = tray.set_tooltip(Some(tooltip));
+// The single recording switch: every start, stop, pause and resume (live mode
+// and meetings) passes here. ADR-0041: it no longer touches the tray (no blink,
+// no tooltip — the recording sign is the bubble's), and it holds the Mac awake
+// while anything records (§5, inherited from ADR-0038 §4).
+fn set_recording(state: &AppState, on: bool) {
+    if state.recording.swap(on, Ordering::Relaxed) != on {
+        keep_awake::set(on);
     }
 }
 
@@ -712,7 +718,7 @@ fn start(app: AppHandle, state: State<AppState>, cfg: StartCfg) -> Result<(), St
     }
 
     *state.child.lock().unwrap() = Some(child);
-    set_tray_recording(state.inner(), true);
+    set_recording(state.inner(), true);
     let _ = app.emit("rec-state", true);
     Ok(())
 }
@@ -723,7 +729,7 @@ fn stop(app: AppHandle, state: State<AppState>) -> Result<(), String> {
         let _ = child.kill();
         let _ = child.wait();
     }
-    set_tray_recording(state.inner(), false);
+    set_recording(state.inner(), false);
     let _ = app.emit("rec-state", false);
     Ok(())
 }
@@ -2021,6 +2027,7 @@ fn ui_set_lang(lang: String, state: State<AppState>) -> Result<String, String> {
     if let Some(items) = state.tray_menu.lock().unwrap().as_ref() {
         let _ = items.show.set_text(labels.show);
         let _ = items.toggle.set_text(labels.toggle);
+        let _ = items.bubble.set_text(labels.bubble);
         let _ = items.quit.set_text(labels.quit);
     }
     Ok(lang)
@@ -4608,19 +4615,6 @@ async fn diarize(audio_path: String) -> Result<String, String> {
     .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
-fn toggle_overlay(app: AppHandle, show: bool) -> Result<(), String> {
-    if let Some(w) = app.get_webview_window("overlay") {
-        if show {
-            w.show().map_err(|e| e.to_string())?;
-            let _ = w.set_always_on_top(true);
-        } else {
-            w.hide().map_err(|e| e.to_string())?;
-        }
-    }
-    Ok(())
-}
-
 // headless self-test: active only when LORO_SELFTEST is in the environment
 #[tauri::command]
 fn selftest_enabled() -> bool {
@@ -5021,8 +5015,9 @@ pub fn run() {
             let labels = tray_labels(&ui_lang());
             let show = MenuItem::with_id(app, "show", labels.show, true, None::<&str>)?;
             let toggle = MenuItem::with_id(app, "toggle", labels.toggle, true, None::<&str>)?;
+            let bubble_item = MenuItem::with_id(app, "bubble", labels.bubble, true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", labels.quit, true, Some("Cmd+Q"))?;
-            let menu = Menu::with_items(app, &[&show, &toggle, &quit])?;
+            let menu = Menu::with_items(app, &[&show, &toggle, &bubble_item, &quit])?;
             app.state::<AppState>()
                 .tray_menu
                 .lock()
@@ -5030,9 +5025,11 @@ pub fn run() {
                 .replace(TrayMenuItems {
                     show: show.clone(),
                     toggle: toggle.clone(),
+                    bubble: bubble_item.clone(),
                     quit: quit.clone(),
                 });
-            let tray = TrayIconBuilder::with_id(TRAY_ID)
+            // the tray keeps it by id (tray_by_id); no handle is needed here
+            let _tray = TrayIconBuilder::with_id(TRAY_ID)
                 .icon(Image::from_bytes(TRAY_ON)?)
                 .icon_as_template(true)
                 .menu(&menu)
@@ -5047,36 +5044,28 @@ pub fn run() {
                     "toggle" => {
                         let _ = app.emit("hotkey-toggle", ());
                     }
+                    "bubble" => bubble::toggle_visible(app),
                     "quit" => app.exit(0),
                     _ => {}
                 })
                 .build(app)?;
-            app.state::<AppState>().tray.lock().unwrap().replace(tray);
 
-            // --- blink the parrot while recording ---
+            // --- ADR-0041: the recording bubble, always on top ---
+            if let Err(e) = bubble::create(app.handle()) {
+                warn!(error = %e, "bubble window not created");
+            }
+
+            // --- ADR-0041 §4: the clock of the agenda lives in the BACKEND ---
+            // A thread, not a webview timer: the main window spends most of the
+            // day hidden in the tray, and a hidden WKWebView's timers can be
+            // throttled (ADR-0038 left that unverified). An event delivered to
+            // the webview runs regardless. The same beat brings a bubble left on
+            // an unplugged screen back into view.
             let handle = app.handle().clone();
-            std::thread::spawn(move || {
-                let mut dimmed = false;
-                loop {
-                    let rec = handle.state::<AppState>().recording.load(Ordering::Relaxed);
-                    if let Some(tray) = handle.tray_by_id(TRAY_ID) {
-                        if rec {
-                            dimmed = !dimmed;
-                            let bytes = if dimmed { TRAY_DIM } else { TRAY_ON };
-                            if let Ok(img) = Image::from_bytes(bytes) {
-                                let _ = tray.set_icon(Some(img));
-                                let _ = tray.set_icon_as_template(true);
-                            }
-                        } else if dimmed {
-                            dimmed = false;
-                            if let Ok(img) = Image::from_bytes(TRAY_ON) {
-                                let _ = tray.set_icon(Some(img));
-                                let _ = tray.set_icon_as_template(true);
-                            }
-                        }
-                    }
-                    std::thread::sleep(Duration::from_millis(if rec { 550 } else { 300 }));
-                }
+            std::thread::spawn(move || loop {
+                std::thread::sleep(Duration::from_millis(AGENDA_TICK_MS));
+                let _ = handle.emit_to("main", "loro-tick", ());
+                bubble::clamp_into_view(&handle);
             });
 
             // --- global shortcut: Cmd/Ctrl + Alt + Space ---
@@ -5092,6 +5081,12 @@ pub fn run() {
         })
         // closing the window does NOT quit: hide and keep running in the background
         .on_window_event(|window, event| {
+            // ADR-0041: a drag of the bubble is saved when it settles
+            if window.label() == bubble::LABEL {
+                if let WindowEvent::Moved(_) = event {
+                    bubble::on_moved(window.app_handle());
+                }
+            }
             if let WindowEvent::CloseRequested { api, .. } = event {
                 // ADR-0037 — fechar a janela SÓ A ESCONDE (o app segue na
                 // bandeja), e sem cortar a leitura a voz continuava lendo um
@@ -5112,7 +5107,6 @@ pub fn run() {
             save_transcript,
             save_recording,
             diarize,
-            toggle_overlay,
             client_log,
             doctor,
             list_models,
@@ -5135,9 +5129,12 @@ pub fn run() {
             read_aloud_pause,
             read_aloud_stop,
             read_aloud_state,
-            workday_get,
-            workday_set,
-            workday_keep_awake,
+            bubble_expand,
+            bubble_set_visible,
+            bubble_get_visible,
+            agenda_read,
+            agenda_schedule_get,
+            agenda_schedule_set,
             interpreter_devices,
             interpreter_voices,
             interpreter_translate,
@@ -5296,9 +5293,9 @@ pub fn run() {
             tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
         ) {
             read_aloud::stop_reading();
-            // ADR-0038 §4: o `-w <pid>` já soltaria a asserção, mas o app desfaz o
-            // que ele mesmo começou.
-            workday::release_keep_awake();
+            // o `-w <pid>` já soltaria a asserção, mas o app desfaz o que ele
+            // mesmo começou
+            keep_awake::release();
         }
         // clicking the Dock icon reopens the window (macOS)
         #[cfg(target_os = "macos")]
@@ -5531,16 +5528,29 @@ mod tests {
     fn tray_labels_follow_ui_lang() {
         let pt = tray_labels("pt");
         assert_eq!(pt.show, "Abrir Loro");
-        assert_eq!(pt.toggle, "Iniciar / Parar transcrição");
+        // ADR-0041 §6: the bubble's verbs, and the item that shows/hides it
+        assert_eq!(pt.toggle, "Gravar / Encerrar gravação");
+        assert_eq!(pt.bubble, "Mostrar / ocultar balão");
         assert_eq!(pt.quit, "Sair");
-        assert_eq!(pt.tooltip_recording, "Loro — transcrevendo");
         let en = tray_labels("en");
         assert_eq!(en.show, "Open Loro");
-        assert_eq!(en.toggle, "Start / Stop transcription");
+        assert_eq!(en.toggle, "Record / Stop recording");
+        assert_eq!(en.bubble, "Show / hide bubble");
         assert_eq!(en.quit, "Quit");
-        assert_eq!(en.tooltip_recording, "Loro — transcribing");
         // unknown languages fall back to pt
         assert_eq!(tray_labels("fr").show, "Abrir Loro");
+    }
+
+    // ADR-0041 §6 — the owner asked for no blinking: the tray icon is set once
+    // and never swapped while recording. The dim frame is gone from the binary,
+    // and nothing outside setup sets the tray's icon.
+    #[test]
+    fn adr0041_the_tray_icon_never_blinks() {
+        let src = include_str!("lib.rs");
+        let needle = ["TRAY", "_DIM"].concat();
+        assert!(!src.contains(&needle), "the dim frame is back");
+        let setter = [".set_", "icon(Some"].concat();
+        assert!(!src.contains(&setter), "something swaps the tray icon");
     }
 
     #[test]

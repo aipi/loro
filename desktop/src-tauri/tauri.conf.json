@@ -19,20 +19,6 @@
         "minWidth": 860,
         "minHeight": 560,
         "resizable": true
-      },
-      {
-        "label": "overlay",
-        "url": "overlay.html",
-        "title": "Legenda",
-        "width": 560,
-        "height": 104,
-        "decorations": false,
-        "transparent": true,
-        "alwaysOnTop": true,
-        "visible": false,
-        "skipTaskbar": true,
-        "shadow": false,
-        "resizable": true
       }
     ],
     "security": {

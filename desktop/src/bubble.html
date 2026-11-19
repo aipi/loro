@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="pt-br">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Loro</title>
+    <!-- ADR-0041 — o balão de gravação. Recolhido: o ícone do app (64 pt) com um
+         selo ESTÁVEL no canto (● gravando, ⏸ pausado) e o tempo embaixo. Clicar
+         abre o painel; apertar e arrastar move. NADA aqui anima ou pisca
+         (pedido explícito do dono, 2026-11-18). -->
+    <style>
+      :root {
+        --bg: rgba(250, 248, 243, 0.97); --fg: #1d2326; --muted: #6b7378; --line: rgba(0, 0, 0, 0.08);
+        --accent: #1f9e92; --rec: #e5484d; --chip: rgba(0, 0, 0, 0.05); --btn: #ffffff;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: rgba(24, 29, 31, 0.97); --fg: #ece9e2; --muted: #9aa3a8; --line: rgba(255, 255, 255, 0.09);
+          --accent: #2bc5b4; --chip: rgba(255, 255, 255, 0.06); --btn: #2a3134;
+        }
+      }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      html, body { width: 100%; height: 100%; position: relative; background: transparent; overflow: hidden;
+        font: 13px/1.4 -apple-system, system-ui, sans-serif; color: var(--fg); user-select: none; }
+      button, select, input { font: inherit; color: inherit; }
+
+      /* ---- o ícone ---- */
+      #icon { position: absolute; left: 10px; top: 8px; width: 64px; height: 64px; border: 0; padding: 0;
+        background: transparent; cursor: default; border-radius: 15px;
+        filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.28)); }
+      /* o PNG do ícone do app tem os cantos claros (medido no smoke: um quadrado
+         branco atrás do squircle sobre o painel escuro) — o recorte é aqui */
+      #icon img { width: 64px; height: 64px; display: block; pointer-events: none; -webkit-user-drag: none;
+        border-radius: 14px; }
+      #icon:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+      #badge { position: absolute; right: -3px; top: -3px; width: 18px; height: 18px; border-radius: 50%;
+        border: 2px solid #fff; display: none; align-items: center; justify-content: center;
+        font-size: 8px; line-height: 1; color: #fff; }
+      #badge.rec { display: flex; background: var(--rec); }
+      #badge.pause { display: flex; background: #6b7378; }
+      #badge.pending { display: flex; background: #b9b2a3; }
+      #time { position: absolute; left: 50%; bottom: -10px; transform: translateX(-50%); display: none;
+        padding: 1px 6px; border-radius: 8px; background: rgba(20, 24, 26, 0.86); color: #fff;
+        font: 600 10px/14px ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap; }
+      #time.show { display: block; }
+
+      /* ---- o painel: cresce a partir do ícone, para o lado com mais espaço ---- */
+      #panel { display: none; position: absolute; inset: 0; background: var(--bg); border-radius: 18px;
+        border: 1px solid var(--line); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25); overflow: hidden;
+        flex-direction: column; padding: 8px 12px 12px; }
+      body.open #panel { display: flex; }
+      body.open #icon { z-index: 2; }
+      body.anchor-bottom #panel { flex-direction: column-reverse; padding: 12px 12px 8px; }
+      #head { min-height: 72px; display: flex; align-items: center; gap: 10px; padding-left: 74px; }
+      body.anchor-right #head { padding-left: 0; padding-right: 74px; flex-direction: row-reverse; text-align: right; }
+      body.anchor-right #icon { left: auto; right: 10px; }
+      body.anchor-bottom #icon { top: auto; bottom: 12px; }
+      #head .st { font-weight: 600; }
+      #head .sub { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
+      #body { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; }
+      .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin-bottom: 4px; }
+      select, input[type="text"] { width: 100%; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line);
+        background: var(--btn); user-select: text; }
+      #bNovaIdeia[hidden] { display: none; }
+      .row { display: flex; gap: 6px; flex-wrap: wrap; }
+      .btn { padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--btn); cursor: pointer; }
+      .btn.primary { background: var(--rec); border-color: var(--rec); color: #fff; font-weight: 600; }
+      .btn.quiet { background: transparent; }
+      .btn[hidden] { display: none; }
+      #bPrompt { padding: 8px 10px; border-radius: 10px; background: var(--chip); border: 1px solid var(--line); }
+      #bPrompt[hidden] { display: none; }
+      #bPrompt p { margin-bottom: 6px; }
+      #bTail { min-height: 64px; max-height: 150px; overflow-y: auto; padding: 6px 8px; border-radius: 8px;
+        background: var(--chip); font-size: 12px; user-select: text; }
+      #bTail .who { font-weight: 600; color: var(--accent); margin-right: 4px; }
+      #bTail .who.sistema { color: var(--muted); }
+      #bTail:empty::before { content: attr(data-empty); color: var(--muted); }
+      #bAgenda { list-style: none; display: flex; flex-direction: column; gap: 4px; }
+      #bAgenda li { display: flex; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--line); }
+      #bAgenda .hora { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); flex: none; }
+      #bAgenda .tit { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      #bAgenda label { flex: none; font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 4px; }
+      #bAgendaNota { font-size: 12px; color: var(--muted); }
+      #bAviso { font-size: 12px; color: var(--rec); }
+      #bAviso:empty { display: none; }
+      #foot { display: flex; justify-content: flex-end; }
+    </style>
+  </head>
+  <body>
+    <div id="panel" role="dialog" aria-labelledby="bStatus">
+      <div id="head">
+        <div>
+          <div class="st" id="bStatus" data-i18n>pronto para gravar</div>
+          <div class="sub" id="bSub"></div>
+        </div>
+      </div>
+      <div id="body">
+        <div id="bPrompt" hidden>
+          <p id="bPromptText"></p>
+          <div class="row" id="bPromptActs"></div>
+        </div>
+        <div>
+          <div class="lbl" data-i18n>onde salvar</div>
+          <select id="bTema" aria-label="ideia"></select>
+          <input id="bNovaIdeia" type="text" hidden spellcheck="false" data-i18n-placeholder="nome da nova ideia" />
+        </div>
+        <div class="row">
+          <button class="btn primary" id="bGravar" data-i18n>Gravar</button>
+          <button class="btn" id="bPausar" hidden data-i18n>Pausar</button>
+          <button class="btn primary" id="bRetomar" hidden data-i18n>Retomar</button>
+          <button class="btn" id="bEncerrar" hidden data-i18n>Encerrar</button>
+          <button class="btn" id="bNova" hidden data-i18n>Nova gravação</button>
+        </div>
+        <div id="bAviso" role="status"></div>
+        <div>
+          <div class="lbl" data-i18n>agora</div>
+          <div id="bTail" aria-live="polite" data-empty="—"></div>
+        </div>
+        <div>
+          <div class="lbl" data-i18n>próximas reuniões</div>
+          <ul id="bAgenda"></ul>
+          <div id="bAgendaNota"></div>
+        </div>
+      </div>
+      <div id="foot"><button class="btn quiet" id="bAbrir" data-i18n>Abrir no Loro</button></div>
+    </div>
+    <button id="icon" aria-label="Loro" aria-expanded="false">
+      <img src="loro-icon.png" alt="" />
+      <span id="badge" aria-hidden="true"></span>
+      <span id="time"></span>
+    </button>
+    <script src="i18n.js"></script>
+    <script src="bubble-core.js"></script>
+    <script src="bubble.js"></script>
+  </body>
+</html>

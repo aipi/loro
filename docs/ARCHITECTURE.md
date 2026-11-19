@@ -269,8 +269,10 @@ Brainstorming world + the fila → contexto flow (ADR-0001 §7):
 | `brain_triage_files` | `rels[]` | `[{rel, findings[]}]` | read-only: what these files carry before they enter the acervo — `{severity, rule, line, count}`, NEVER the matched text (BR-8 binds the detector itself). A meeting expands to its `notes/*` through the same owner as the send path (ADR-0024) |
 | `brain_meeting_pause` | `id` | `()` / err | stop the capture sidecar mid-meeting: NOTHING is recorded while paused. The segment already written stays in the pending list so its last window can still be transcribed (ADR-0022 §19) |
 | `brain_meeting_resume` | `id` | `()` / err | open a NEW capture segment (`system-2.wav`, … and `mic-2.wav`, … when the sidecar records the mic). Its window offsets restart at zero and its place on the meeting timeline comes from the segment's own anchor, with the pause discounted on both tracks alike (ADR-0022 §19, ADR-0025). The pause it closes is added to `manifest.pausedMs`; `brain_meeting_start` persists `manifest.startedEpochMs` (ADR-0038 §3) |
-| `workday_get` / `workday_set` | — / `cfg {ligado, inicio, fim, dias}` | `WorkdayCfg` / err | ADR-0038 §5: the recorded workday, `diaGravado` in `~/.loro/config.json` — the person's preference, valid for whichever project is active. Absent = off (09:00–18:30, every day). `set` refuses a window that cannot be recorded (`err.workday_invalid_window`: unreadable `HH:MM`, or start ≥ end; `24:00` is the end of the day). The frontend re-reads it on every tick, so a file written by the external agent takes effect within 15 s |
-| `workday_keep_awake` | `on: bool` | held: bool / err | ADR-0038 §4: while the day records, hold `/usr/bin/caffeinate -i -w <Loro's pid>` (idle sleep only; `-w` releases it if the app dies). Spawned once, reaped on `off` and on app exit. macOS only — elsewhere it holds nothing and returns `false` |
+| `bubble_expand` | `expanded: bool` | `{right, bottom}` / err | ADR-0041 §2: grow the bubble window into the panel (340×520) toward the side of its screen with more room, clamped to the visible area, or shrink it back to where the icon sat. Returns the corner the icon is in, so the panel draws its header there |
+| `bubble_set_visible` / `bubble_get_visible` | `visible: bool` / — | bool | ADR-0041 §1: show or hide the bubble and remember it (`balao.visivel` in `~/.loro/config.json`, the person's preference; absent = shown). Emits `bubble-visible`. The tray's «Mostrar / ocultar balão» goes through the same path |
+| `agenda_read` | `date (YYYY-MM-DD)` | text \| null / err | ADR-0041 §4: the day file the EXTERNAL agent wrote, `<acervo>/.loro/agenda/<date>.json`, as raw text (parsed and validated in the pure `agenda.js`). `null` = not written. The date is digits-only (no path can be built from it); > 512 KB is refused (`err.agenda_too_large`) |
+| `agenda_schedule_get` / `agenda_schedule_set` | — / `schedule {versao, eventos{id: {tema, data}}}` | `Schedule` / err | ADR-0041 §4: what the person toggled «gravar» on, `<acervo>/.loro/agenda/agendadas.json`, written write-then-rename. A tema with a separator is refused (`err.agenda_bad_schedule`); a corrupted file reads as empty. `.loro/agenda/` is git-ignored (BR-8) |
 | `brain_rename_brainstorm` | `slug, nome` | `{slug, rel}` | rename a brainstorming (folder + meta) |
 | `brain_set_brainstorm_category` | `{slug, categoria?}` | `()` | set/clear the UI grouping category |
 | `brain_brainstorm_delete` | `{rel}` | `()` | delete a brainstorming item (guarded to `brainstorming/`) |
@@ -320,6 +322,10 @@ description or a review comment — the log lines carry counts, review numbers a
 | `transcribe-state` | `bool` | file-mode transcription job running / finished |
 | `transcribe-error` | `string` | file-mode transcription failed with a message |
 | `hotkey-toggle` | — | global shortcut or tray toggle fired |
+| `loro-tick` | — | ADR-0041 §4: the BACKEND's 15 s beat to the main window — the agenda's clock. A thread, not a webview timer: the main window spends the day hidden in the tray. The same beat clamps the bubble back into view |
+| `bubble-state` | `{rec, meeting, startedAt, pausedMs, pauseStart, titulo, tema, destino, temas[], linhas[{who, text}], agenda{status, eventos[]}, prompt, aviso, lang, canRecord}` | ADR-0041 §3: main window → bubble. The bubble is a REMOTE; this is everything it paints |
+| `bubble-cmd` | `{cmd, …}` | ADR-0041 §3: bubble → main window: `hello`, `start {tema, nova}`, `pause`, `resume`, `stop`, `new {tema, nova}`, `open`, `set-tema`, `schedule {id, on, tema}`, `extend`, `switch {id}`, `keep`, `record-suggested {id}`, `dismiss` |
+| `bubble-visible` | `bool` | ADR-0041 §1: the bubble was shown/hidden (Settings or tray) |
 | `model-download-progress` | `{model, downloaded, total}` | model download progress in bytes (ADR-0006) |
 | `model-download-done` | `string` | a model finished downloading and was installed (ADR-0006) |
 | `voice-install-progress` | `{part, downloaded, total}` | one cloned-voice piece downloading, in bytes (ADR-0036). Paints the **same** bar as `model-download-progress`: the pieces are offered as rows of the model manager, so the screen has one way to draw "something large to download" |
@@ -331,16 +337,18 @@ Path resolution: `LORO_HOME` (exported by `loro.sh`) or a sensible default;
 
 ## 5. Key flows
 
-- **Recorded workday (ADR-0038):** a 15 s tick in the frontend — deliberately
-  without the `document.hidden` guard the loop tick has, so it runs with the
-  window hidden in the tray — asks the pure `workday.js` for
-  `iniciar | rotacionar | encerrar | nada` and executes it through the ordinary
-  meeting path (`startMeetingWith({tema: "dia", titulo: "Dia AAAA-MM-DD HH:00"})`,
-  `stopMeeting`). Rotating at each whole hour is stop → wait for the whole close
-  (finish + purge) → start. A manual stop of a day meeting suspends the day until
-  the next whole hour; the palette's «Retomar o dia gravado» lifts it.
+- **Recording bubble and agenda (ADR-0041):** the `bubble` window (created in
+  `setup`, always on top, every Space, over fullscreen apps) is a REMOTE of the
+  main window: it sends `bubble-cmd` and paints `bubble-state`; the meeting, the
+  agenda and every decision stay in `app.js`, through the ordinary meeting path
+  (`startMeetingWith` without the modal, `pauseMeeting`, `stopMeeting`). The
+  backend's `loro-tick` (15 s) makes the main window re-read
+  `.loro/agenda/<today>.json` and ask the pure `agenda.js` for
+  `iniciar | encerrar | trocar | avisar-fim | perguntar-troca | sugerir | nada`.
+  A scheduled meeting starts with `quiet: true` (closes without tab or analysis
+  offer); a recording the person started is never cut — the bubble asks.
 - **Live:** `start` → spawn `whisper-stream` (VAD) → stdout thread parses lines →
-  `transcript-line` events → UI appends; `rec-state true` drives the wave/tray/
+  `transcript-line` events → UI appends; `rec-state true` drives the wave/bubble/
   timer. `stop` kills the child; on EOF the thread emits `rec-state false`.
 - **File (ADR-0001 §2):** the UI records the whole session locally (`MediaRecorder`,
   same mechanism as the diarization capture) — no engine process runs while
@@ -530,7 +538,7 @@ All technical decisions are consolidated in the single **`docs/adr/0001-baseline
 | System file drop | ONE `tauri://drag-drop` router whose destination is the DROP POSITION (`dropDestinationAt` → `elementFromPoint`): `#panelChat` pastes the path into the composer at the cursor, `#termPanel` types it into the PTY **without `\n`** (a drop never executes), anything else keeps the fila import and its `_prompt.md` guard. The event position is typed `PhysicalPosition` but is in points on macOS/Linux and device pixels on Windows, so `dropPointCss` divides by `devicePixelRatio` **only** on Windows. Two quote rules, one per reader: shell (`zsh`/`cmd.exe`) for the terminal, prompt-string for the composer | ADR-0028 |
 | Intake triage | content is inspected BEFORE entering the fila: a vendor-prefixed credential **blocks** (BR-9 — the acervo is versioned, so the door is one-way and re-checked in the backend), a CPF or a pasted transcript **warns** and the user decides. Closes the BR-8 hole where `is_queueable` judged by file NAME, so a transcript pasted into any other file walked in. Rules are narrow on purpose; the other three doors (`brain_import_files`, `/loro-sync`, AI notes) are not covered yet | ADR-0024 |
 | Meeting pause/resume | pausing kills the capture sidecar (nothing reaches disk while paused); resuming opens a new segment. Audio stays a LIST of segments (`system.wav`, `system-2.wav`, …) that `purge_audio_core` sweeps whole; the clock excludes pauses and the system tail rebases (`tailBase` + `tailFrom`) so mic and system stay interleaved | ADR-0022 §19 |
-| Recording indicator | the tray parrot blinks for a MEETING too, and stops while paused — `set_tray_recording` used to be called only by the loose-recording `start`/`stop` | ADR-0022 §21 |
+| Recording indicator | the BUBBLE: a steady red dot (and the elapsed time) on the app icon, a steady pause glyph while paused — nothing blinks. The tray icon is static; `set_recording` only flips the state and holds the Mac awake | ADR-0041 §2, §6 (replaces ADR-0022 §21's blinking tray) |
 | Process PATH | hydrated ONCE at startup (`proc::hydrate_path`): login shell first, then the inherited PATH, then the known bin dirs last — a GUI launch has only launchd's four system dirs, which is why the chat spawned `claude` as ENOENT while the embedded terminal (a login shell) ran it, and why the doctor asked for a `gh` that was installed. The agent is additionally spawned through a resolution (`chat::agent_command`), and a genuinely missing one is `err.agent_not_found:<bin>`, never an errno | ADR-0030 |
 | Spawned-agent environment | `proc::INHERITED_SESSION_MARKERS` is stripped from every child (and from the PTY): a Loro started inside another agent's session used to hand that session's markers to its own agent, which then disabled its transcript. A deny list, never a `CLAUDE_*` wildcard — user configuration shares the prefix | ADR-0022 §18 |
 | Settings page | ONE scrolling page: every section visible, the nav scrolls to a section and a scroll-spy tracks it; the network check (`gh auth status`) still runs once per visit, when its section is first reached | ADR-0022 §22 |
@@ -540,4 +548,4 @@ All technical decisions are consolidated in the single **`docs/adr/0001-baseline
 | Extension as a package | a pacote IS a Claude Code plugin + `loro.json`; the class is read from the TREE, not the manifest; the executable class is refused by name; installing is a change that passes the intake triage and shows up in Revisão | ADR-0029 |
 | Loops (standing AI work) | definition = versioned document (`loops/<slug>.md`), runtime = quarantined record; the CLOCK is the open app (no scheduler in the core), the local civil time comes from the frontend; one authority (`loop_status`) for every surface; seven states, of which **blocked** is the one that keeps «on» from lying; a cycle is `acceptEdits` only, never `bypassPermissions`; the scope may be POINTED at one folder or one context, and then the cycle is told to read only that (§4.15); the model and the effort are the loop's own (§4.16); what a cycle may reach OUTSIDE the project is **the project's** grant, never declared in advance but given in answer to a request that names the tool, applied to cycles only (the Chat keeps its own control), never grantable by a pacote, with `Bash`/`*` refused (§4.18) | ADR-0029 |
 | Edit-mode formatting | markdown-aware bar (not WYSIWYG): pure `LoroMdEdit.apply(doc, anchor, head, action)` → CM6 `{changes, selection}`; `⌘B`/`⌘I`/`⌘K` captured off the editor DOM; same bar + CM6 in the Studio tab and the modal editor | ADR-0016 |
-| Recorded workday | the day is a chain of ordinary meetings of at most one hour (tema `dia`), rotated at each whole hour by a 15 s frontend tick that runs with the window hidden; the decision is pure (`workday.js`); each utterance carries its wall-clock epoch (`e=`) next to `t=`; `caffeinate -i -w <pid>` while it records (macOS); config is the person's, in `~/.loro/config.json` | ADR-0038 |
+| Recording bubble + agenda | the bubble (app icon, drag anywhere, click opens the panel) chooses WHERE to record; the day's agenda is a file an external agent writes into the acervo (BR-9: no calendar credential in the app), and only the events the person toggled are recorded — started/stopped by the backend's 15 s beat, with «+15 min», «trocar?» and «gravar?» prompts in the bubble; `caffeinate -i -w <pid>` while ANYTHING records; each utterance keeps its wall-clock epoch (`e=`) | ADR-0041 (supersedes ADR-0038) |

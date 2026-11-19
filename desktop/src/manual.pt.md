@@ -59,7 +59,7 @@ BARRA LATERAL │ ABAS (só quando há documento aberto) │ PAINEL 330px
   relógio, onda do áudio e o selo de privacidade no pé do conteúdo. Numa reunião
   ele ganha **⏸ pausar / ▶ retomar** e **■ Encerrar reunião**, à esquerda do
   relógio. Pausar **para a captura de verdade** — nada é gravado até você
-  retomar, o relógio congela e o papagaio da barra de menu para de piscar.
+  retomar, o relógio congela e o balão mostra o sinal de pausa.
 - **✦ IA** mostra ou recolhe o painel da direita.
 - **Abas são só documentos abertos** — não existe aba "Início". Um clique na
   árvore abre uma aba de pré-visualização (em itálico); dois cliques fixam.
@@ -215,31 +215,71 @@ quando quiser pela paleta: `Cmd/Ctrl+K` → "apresentação do Loro".
 - O áudio é **transitório**: usado para transcrever e descartado. O indicador
   de privacidade na barra mostra o estado ("sem gravar" / "grava áudio").
 
-### Gravar o dia de trabalho sozinho
+### O balão de gravação
 
-Em **Configurações → Captura**, ligue **gravar o dia de trabalho sozinho** e
-escolha **começa às** e **termina às** (o padrão é 09:00–18:30, todos os
-dias). Dentro desse horário o Loro grava sem você clicar em nada — também com a
-janela fechada, só na bandeja:
+O símbolo do Loro fica num **balão** sempre por cima de todos os apps — em todas
+as mesas (Spaces) e também sobre um app em tela cheia, como a chamada. É dele que
+você grava as reuniões sem abrir a janela do Loro.
 
-- O dia vira **uma reunião por hora**, na ideia `dia`, com o título
-  `Dia AAAA-MM-DD HH:00`. Na virada de cada hora cheia a reunião é encerrada e a
-  próxima começa; entre uma e outra ficam alguns segundos sem gravação. No fim
-  do horário a gravação para.
-- Se você abrir o Loro no meio do horário (às 10:17, por exemplo), ele começa
-  na hora e grava até a próxima virada.
-- **Parar à mão** uma gravação do dia suspende o dia até a próxima hora cheia.
-  Para voltar antes, use **Retomar o dia gravado** na paleta (`Cmd/Ctrl+K`).
-- Se você já estiver numa reunião sua, o dia **espera** ela acabar e começa na
-  verificação seguinte (a cada 15 s).
-- Cada fala é gravada com a **hora de relógio** em que foi dita (escondida no
-  arquivo, ao lado do tempo da reunião), para que um agente externo — o Claude
-  Code com a sua agenda, por exemplo — recorte o dia pelos horários das suas
-  reuniões. O Loro **não lê a agenda**.
-- No macOS, enquanto o dia grava, o Loro impede o Mac de **dormir por
-  inatividade**. Tampa fechada sem monitor externo ainda dorme — isso é do
-  sistema.
-- O carimbo visível passa a ter horas depois da primeira: `[1:02:03 · você]`.
+- **Apertar e arrastar** move o balão para qualquer lugar, inclusive para outro
+  monitor. Ele lembra onde ficou em cada tela; se um monitor sumir, ele volta
+  para a tela que sobrou.
+- **Clicar** abre o painel, que cresce do ícone para o lado da tela com mais
+  espaço. Clicar no ícone de novo, clicar fora ou apertar **Esc** fecha.
+- Gravando, o ícone ganha um **ponto vermelho** e o tempo embaixo; pausado, um
+  sinal de **pausa**. Nada pisca — e o ícone da barra de menu também não pisca
+  mais: o sinal de gravação mora só no balão.
+
+No painel:
+
+- **Onde salvar**: a ideia em que a reunião vai morar (a última usada já vem
+  escolhida). **+ nova ideia…** cria uma na hora.
+- **Gravar**, e durante a gravação **Pausar / Retomar**, **Encerrar** e **Nova
+  gravação** (encerra a atual e começa outra na ideia escolhida).
+- **Agora**: as últimas falas da reunião, marcadas **você** e **sistema**.
+- **Próximas reuniões** com uma chave **gravar** em cada uma (veja abaixo).
+- **Abrir no Loro** abre a janela principal na reunião em andamento.
+
+Para esconder o balão: **Configurações → Captura → mostrar o balão de
+gravação**, o item **Mostrar / ocultar balão** da barra de menu ou da paleta.
+
+### Gravar as reuniões da agenda
+
+O Loro **não lê a sua agenda** e não guarda senha nem login de nada. Quem lê é
+um agente seu (o Claude Code com o conector de agenda, por exemplo), que escreve
+o dia num arquivo dentro do projeto:
+
+```
+.loro/agenda/AAAA-MM-DD.json
+{"versao":1,"geradoEm":"2026-11-18T08:00:00-03:00","eventos":[
+  {"id":"…","titulo":"Semanal de custos","inicio":"2026-11-18T10:00:00-03:00",
+   "fim":"2026-11-18T10:30:00-03:00","comConvidados":true}]}
+```
+
+Com esse arquivo, o painel mostra as reuniões de hoje que ainda não acabaram:
+
+- Ligar **gravar** numa reunião a agenda para a ideia escolhida no painel. Na
+  hora de início o Loro começa a gravar sozinho — também com a janela fechada —
+  com o título do evento, e no fim encerra.
+- Dois minutos antes do fim o balão pergunta **«termina em 2 min — estender?»**;
+  **+15 min** empurra o fim.
+- Reuniões **emendadas**: no fim de uma, a outra começa.
+- Se você já estiver gravando algo seu quando uma agendada começar, nada é
+  interrompido: o balão pergunta **«Começou: … — trocar para ela?»**
+  (**Trocar** / **Continuar**).
+- Uma reunião **com convidados** que você não agendou ganha, no começo, uma
+  sugestão **«Gravar …?»** — um clique, nunca sozinha.
+- Uma reunião agendada fecha **calada**: sem abrir aba nem oferecer análise. Ela
+  fica na ideia, como qualquer outra.
+- Sem o arquivo, ou com ele mais velho que 2 horas, o painel diz **agenda não
+  atualizada** — gravar à mão continua funcionando.
+- Enquanto qualquer gravação roda, o Loro impede o Mac de **dormir por
+  inatividade** (tampa fechada sem monitor externo ainda dorme — é do sistema).
+- Cada fala guarda a **hora de relógio** em que foi dita, e o carimbo visível
+  ganha horas depois da primeira: `[1:02:03 · você]`.
+
+O arquivo da agenda e o que você marcou para gravar ficam em `.loro/agenda/`,
+que **nunca é versionado**.
 
 ## Modo intérprete (sua voz sai em inglês)
 

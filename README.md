@@ -42,11 +42,12 @@ people and AI agents can use as context.
   sentence comes out — and the voice is synthetic, not yours. Off by default,
   translation into English only, and like everything here it runs on-device
   (ADR-0035).
-- **Record the whole workday, hands-free** — optional: inside a daily window
-  (09:00–18:30 by default) Loro records on its own as back-to-back one-hour
-  meetings, stamps every utterance with its wall-clock time so an external agent
-  can cut the day by your calendar, and keeps the Mac from idle-sleeping while it
-  records. Loro never reads the calendar itself (ADR-0038).
+- **A recording bubble, always on top** — Loro's icon floats over every app,
+  every Space and fullscreen calls; drag it anywhere, click it to choose the idea
+  the meeting goes into, record, pause, start a new one and read the live
+  transcript (you / system). The day's calendar comes from a file an external
+  agent writes into the project — Loro never reads the calendar itself — and the
+  meetings you toggle are recorded on their own, start to end (ADR-0041).
 - **Listen to any document** — read-aloud for accessibility: markdown is turned
   into speakable prose first (links read by their text, code blocks announced and
   skipped, tables read as values) and spoken on your default output device, with

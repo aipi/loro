@@ -2,7 +2,10 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Permissões das janelas do app",
-  "windows": ["main", "overlay"],
+  "windows": [
+    "main",
+    "bubble"
+  ],
   "permissions": [
     "core:default",
     "core:event:default",
@@ -10,6 +13,7 @@
     "core:window:allow-minimize",
     "core:window:allow-show",
     "core:window:allow-hide",
-    "core:window:allow-set-focus"
+    "core:window:allow-set-focus",
+    "core:window:allow-start-dragging"
   ]
 }

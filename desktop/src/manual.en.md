@@ -58,7 +58,7 @@ SIDEBAR      │ TABS (only when a document is open) │ PANEL 330px
   clock, waveform and the privacy pill at the foot of the content. In a meeting
   it also carries **⏸ pause / ▶ resume** and **■ End meeting**, left of the
   clock. Pausing **really stops capture** — nothing is recorded until you
-  resume, the clock freezes and the menu-bar parrot stops blinking.
+  resume, the clock freezes and the bubble shows the pause sign.
 - **✦ AI** shows or collapses the right-hand panel.
 - **Tabs are open documents only** — there is no "Home" tab. One click in the
   tree opens a preview tab (italic); a double click pins it.
@@ -215,31 +215,72 @@ palette: `Cmd/Ctrl+K` → "Loro tour".
 - Audio is **transient**: used to transcribe, then discarded. The privacy
   indicator in the bar shows the state ("not recording" / "records audio").
 
-### Record the workday on its own
+### The recording bubble
 
-In **Settings → Capture**, turn on **record the workday on its own** and pick
-**starts at** and **ends at** (the default is 09:00–18:30, every day). Within
-those hours Loro records without a click — also with the window closed, from
-the tray alone:
+Loro's symbol lives in a **bubble** that stays on top of every app — on every
+desktop (Space) and over a fullscreen app too, like the call. It is how you
+record meetings without opening Loro's window.
 
-- The day becomes **one meeting per hour**, in the idea `dia`, titled
-  `Dia AAAA-MM-DD HH:00`. At each whole hour the meeting is closed and the next
-  one starts; a few seconds go unrecorded between them. At the end of the
-  window recording stops.
-- If you open Loro in the middle of the window (at 10:17, say), it starts right
-  away and records until the next whole hour.
-- **Stopping by hand** a meeting of the day pauses the day until the next whole
-  hour. To come back sooner, use **Resume the recorded day** in the palette
-  (`Cmd/Ctrl+K`).
-- If you are already in a meeting of your own, the day **waits** for it to end
-  and starts on the following check (every 15 s).
-- Every utterance is stored with the **wall-clock time** it was said (hidden in
-  the file, next to the meeting time), so an external agent — Claude Code with
-  your calendar, for example — can cut the day by your meetings. Loro **does not
-  read the calendar**.
-- On macOS, while the day records, Loro keeps the Mac from **idle sleep**. A
-  closed lid with no external monitor still sleeps — that is the system's call.
-- The visible stamp gains hours after the first one: `[1:02:03 · você]`.
+- **Press and drag** moves the bubble anywhere, including to another monitor. It
+  remembers where it sat on each screen; if a monitor goes away, it comes back to
+  the one that is left.
+- **Click** opens the panel, which grows from the icon toward the side of the
+  screen with more room. Click the icon again, click outside or press **Esc** to
+  close it.
+- While recording, the icon gets a **red dot** and the elapsed time under it;
+  paused, a **pause** sign. Nothing blinks — and the menu-bar icon no longer
+  blinks either: the recording sign lives only in the bubble.
+
+In the panel:
+
+- **Save to**: the idea the meeting will live in (the last one used comes
+  selected). **+ new idea…** creates one on the spot.
+- **Record**, and while recording **Pause / Resume**, **Stop** and **New
+  recording** (stops the current one and starts another in the chosen idea).
+- **Now**: the latest lines of the meeting, marked **you** and **system**.
+- **Upcoming meetings**, each with a **record** switch (see below).
+- **Open in Loro** opens the main window on the meeting in progress.
+
+To hide the bubble: **Settings → Capture → show the recording bubble**, or
+**Show / hide bubble** in the menu bar or the palette.
+
+### Record the meetings on your calendar
+
+Loro **does not read your calendar** and keeps no password or login. An agent of
+yours (Claude Code with a calendar connector, for example) reads it and writes
+the day into a file inside the project:
+
+```
+.loro/agenda/YYYY-MM-DD.json
+{"versao":1,"geradoEm":"2026-11-18T08:00:00-03:00","eventos":[
+  {"id":"…","titulo":"Weekly costs","inicio":"2026-11-18T10:00:00-03:00",
+   "fim":"2026-11-18T10:30:00-03:00","comConvidados":true}]}
+```
+
+With that file, the panel lists today's meetings that have not ended yet:
+
+- Turning **record** on for a meeting schedules it into the idea chosen in the
+  panel. At its start Loro records on its own — with the window closed too —
+  titled with the event, and stops at its end.
+- Two minutes before the end the bubble asks **«ends in 2 min — extend?»**;
+  **+15 min** pushes the end.
+- **Back-to-back** meetings: when one ends, the next one starts.
+- If you are already recording something of your own when a scheduled one
+  starts, nothing is cut: the bubble asks **«Started: … — switch to it?»**
+  (**Switch** / **Keep going**).
+- A meeting **with guests** you did not schedule gets, at its start, a
+  **«Record …?»** suggestion — one click, never on its own.
+- A scheduled meeting closes **quietly**: no tab and no analysis offer. It stays
+  in its idea like any other.
+- Without the file, or with one older than 2 hours, the panel says **agenda not
+  up to date** — recording by hand still works.
+- While anything records, Loro keeps the Mac from **idle sleep** (a closed lid
+  with no external monitor still sleeps — that is the system's call).
+- Every utterance keeps the **wall-clock time** it was said, and the visible
+  stamp gains hours after the first one: `[1:02:03 · você]`.
+
+The agenda file and what you scheduled live in `.loro/agenda/`, which is
+**never versioned**.
 
 ## Interpreter mode (your voice goes out in English)
 

@@ -11,7 +11,7 @@
 export PATH := $(HOME)/.cargo/bin:$(PATH)
 
 # Vanilla JS frontend files that must at least parse (node --check).
-JS_SRC := desktop/src/app.js desktop/src/shell.js desktop/src/overlay.js desktop/src/text.js desktop/src/audio.js desktop/src/interpreter.js desktop/src/interp-worklet.js desktop/src/readaloud.js desktop/src/mdedit.js desktop/src/review.js desktop/src/workspace.js desktop/src/loops.js desktop/src/workday.js desktop/src/update.js
+JS_SRC := desktop/src/app.js desktop/src/shell.js desktop/src/bubble.js desktop/src/bubble-core.js desktop/src/agenda.js desktop/src/text.js desktop/src/audio.js desktop/src/interpreter.js desktop/src/interp-worklet.js desktop/src/readaloud.js desktop/src/mdedit.js desktop/src/review.js desktop/src/workspace.js desktop/src/loops.js desktop/src/update.js
 
 .PHONY: help test test-rust test-js test-cli test-aec aec-speech test-layout test-ui lint lint-offmac fmt build app test-docker syscap vendor-cm6 require-rust release
 
@@ -45,6 +45,9 @@ test-layout: ## Measure the header across viewport widths (needs Chrome)
 # um innerHTML que lança) — a suíte portátil lê o fonte e não vê nenhum deles.
 test-ui: ## Smoke the real UI in headless Chrome (needs Chrome)
 	node tools/smoke-ui.js
+	@# ADR-0041 — o balão é outra janela (bubble.html): clique vs arrasto, o selo que
+	@# não pisca (medido em dois instantes) e o painel.
+	node tools/smoke-bubble.js
 
 lint: ## Lint: clippy (deny warnings) + rustfmt --check + node --check on the JS sources
 	cargo clippy --manifest-path desktop/src-tauri/Cargo.toml -- -D warnings

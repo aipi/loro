@@ -79,11 +79,12 @@ pub struct LoroConfig {
     // Distinct from Acervo.lang, which drives the templates of one project.
     #[serde(default = "default_ui_lang")]
     pub ui_lang: String,
-    // ADR-0038 §5 — the recorded workday is the PERSON's preference, not a
-    // project's: it records into whichever project is active. Absent = off, and a
-    // config that never had it is written without it.
+    // ADR-0041 — the bubble is the PERSON's (shown or hidden, where it sits per
+    // screen), not a project's. Absent = shown at the default spot, and a config
+    // that never had it is written without it. ADR-0038's `diaGravado` key, left
+    // by v0.19, is simply not read (and dropped on the next write).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub dia_gravado: Option<crate::workday::WorkdayCfg>,
+    pub balao: Option<crate::bubble::BubbleCfg>,
 }
 
 impl Default for LoroConfig {
@@ -92,7 +93,7 @@ impl Default for LoroConfig {
             acervos: Vec::new(),
             active: String::new(),
             ui_lang: default_ui_lang(),
-            dia_gravado: None,
+            balao: None,
         }
     }
 }
