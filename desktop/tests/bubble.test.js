@@ -398,3 +398,12 @@ test("o selo de quem fala mantém a cor depois do minuto cem (gravações antiga
   assert.strictEqual((out.match(/class="mtg-src/g) || []).length, 4);
   assert.strictEqual((out.match(/mtg-src me/g) || []).length, 3);
 });
+
+test("o chat do balão usa e troca o modelo do chat da janela (§17)", () => {
+  assert.match(JS, /channel: "bubble", fresh: !chat\.hasSession, model: chatModel\(\), effort: st\.chatEffort \|\| ""/);
+  assert.match(JS, /send\("chat-model", \{ model: m \}\)/);
+  assert.match(HTML, /<button class="btn link" id="bChatModel" hidden/);
+  const APP = fs.readFileSync(path.join(__dirname, "..", "src", "app.js"), "utf8");
+  assert.match(APP, /chatModel: chatPrefs\.model, chatEffort: effortCli\(chatPrefs\.effort\), chatModelos: AGENT_MODELS/);
+  assert.match(APP, /case "chat-model":\s+if \(AGENT_MODELS\.includes\(c\.model\)\)/);
+});

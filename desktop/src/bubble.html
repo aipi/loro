@@ -212,6 +212,9 @@
       .composer { display: flex; gap: 6px; align-items: flex-end; }
       #bChatIn { resize: none; min-height: 32px; max-height: 96px; font-size: 12.5px; line-height: 1.35; }
       #bChatSend, #bChatStop { flex: none; }
+      #bChatModels { display: flex; align-items: center; gap: 2px; }
+      #bChatModels .btn.link { font-size: 11px; }
+      #bChatModels .btn.link.on { color: var(--fg); font-weight: 600; }
       #chatBar { display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: var(--muted); min-height: 16px; }
       /* entrar na reunião, e as tarefas */
       .ev .join { flex: none; padding: 2px 9px; font-size: 11px; }
@@ -315,7 +318,7 @@
             <button class="btn ghost" id="bChatSend" data-i18n>Enviar</button>
             <button class="btn ghost" id="bChatStop" hidden data-i18n>Parar</button>
           </div>
-          <div id="chatBar"><span id="bChatState"></span><button class="btn link" id="bChatNova" hidden data-i18n>nova conversa</button></div>
+          <div id="chatBar"><span id="bChatModels"><button class="btn link" id="bChatModel" hidden aria-expanded="false"></button></span><span id="bChatState"></span><button class="btn link" id="bChatNova" hidden data-i18n>nova conversa</button></div>
         </div>
         <div id="foot"><button class="btn link" id="bOcultar" data-i18n>Ocultar balão</button><button class="btn link" id="bAbrir" data-i18n>Abrir no Loro</button></div>
       </div>

@@ -681,6 +681,7 @@ function paint() {
   if (!open) return;
   paintHead(b);
   paintTarefasBadge();
+  paintChatModel();
   if (tab === "rec") { paintTemas(); paintControls(); paintTail(); }
   else if (tab === "agenda") { paintAgenda(); $("bAviso").textContent = st.aviso ? t(st.aviso) : ""; }
   else paintTarefas();
@@ -715,6 +716,39 @@ function renderAnswer(el, text) {
   });
   el.appendChild(c);
 }
+// The chat model is ONE preference, shared with the window's Chat panel: the
+// main window owns it (state.chatModel), the bubble shows and changes it. A pick
+// is kept locally until the next state echoes it, so a send right after the
+// change already uses it.
+let pickedModel = "";
+let modelOpen = false;
+function chatModel() { return pickedModel || st.chatModel || ""; }
+// No <select> in the panel (§8): the name is a button that unfolds the choices
+// in place, in the same row.
+function paintChatModel() {
+  const btn = $("bChatModel"), box = $("bChatModels");
+  const list = st.chatModelos || [];
+  if (pickedModel && st.chatModel === pickedModel) pickedModel = "";
+  btn.hidden = !list.length || modelOpen;
+  btn.textContent = chatModel() + " ⌄";
+  btn.setAttribute("aria-label", t("modelo do chat") + ": " + chatModel());
+  btn.setAttribute("aria-expanded", String(modelOpen));
+  for (const b of box.querySelectorAll("[data-model]")) b.remove();
+  if (!modelOpen) return;
+  for (const m of list) {
+    const b = document.createElement("button");
+    b.className = "btn link" + (m === chatModel() ? " on" : "");
+    b.dataset.model = m; b.textContent = m;
+    b.setAttribute("aria-pressed", String(m === chatModel()));
+    b.addEventListener("click", () => {
+      modelOpen = false;
+      if (m !== chatModel()) { pickedModel = m; send("chat-model", { model: m }); }
+      paintChatModel();
+    });
+    box.appendChild(b);
+  }
+}
+$("bChatModel").addEventListener("click", () => { modelOpen = true; paintChatModel(); });
 function paintChatBar() {
   $("bChatSend").hidden = chat.busy;
   $("bChatStop").hidden = !chat.busy;
@@ -741,7 +775,7 @@ async function chatSend() {
   chat.cur = addMsg("a", ""); chat.buf = "";
   chat.busy = true; paintChatBar(); chatScrollToEnd(); fitChat();
   try {
-    await invoke("chat_send", { input: { prompt: BC.chatPrompt(q, st.chatCtx || []), channel: "bubble", fresh: !chat.hasSession } });
+    await invoke("chat_send", { input: { prompt: BC.chatPrompt(q, st.chatCtx || []), channel: "bubble", fresh: !chat.hasSession, model: chatModel(), effort: st.chatEffort || "" } });
   } catch (e) {
     chat.busy = false; chat.cur.remove(); chat.cur = null;
     addMsg("err", I18N ? I18N.tErr(String(e)) : String(e));

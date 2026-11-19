@@ -1433,6 +1433,7 @@
     "Gravação": "Recording",
     "Agenda": "Agenda",
     "nova conversa": "new conversation",
+    "modelo do chat": "chat model",
     "Pergunte ao Claude…": "Ask Claude…",
     "Próxima": "Next",
     "Reunião": "Meeting",

@@ -184,6 +184,14 @@ On top of the walk (§13), every 1 to 4.5 seconds of recording the parrot does o
 
 Selecting a passage inside one line of the bubble's live talk shows three options under it: **Grifar**, **Comentar** and **Tarefa**. The bubble sends `annotate` with the quote; the main window writes it with `brain_annotation_add` into the running meeting's `meeting.anotacoes.json` — the same sidecar and shape as the main window's highlights (ADR-0007), so the mark also shows in the living tab. A to-do is an annotation with `tipo: "tarefa"` and a comment `tarefa: <text>` (the passage itself when left empty). Loro only stores it (BR-9): whoever analyses the meeting afterwards — the owner's agenda loop — reads the sidecar, weighs highlights and comments, and turns `tarefa` annotations into tasks. While a passage is being marked the live talk is not repainted, so the selection survives new lines.
 
+## §17 Choosing the chat model from the bubble (owner, 2026-11-19)
+
+The window's Chat panel already let the owner pick the agent's model and effort; the bubble's chat sent neither, so it always ran on the CLI default. The bubble now carries the same choice.
+
+- **One preference, not two.** The main window owns it (`settings.chatModel` / `chatEffort`) and publishes it in the bubble state (`chatModel`, `chatEffort` as the CLI level, `chatModelos` as the list). The bubble shows the model name as a button in the chat bar that unfolds the choices in the same row (no `<select>`, per §8) and sends `chat-model`; the window validates against its own list, persists and repaints its own control.
+- **A pick is used at once.** The bubble keeps the picked value until the next state echoes it, so a question sent right after the change already goes with the new model.
+- **Mid-conversation changes are allowed**: the next turn resumes the same session with the new `--model`. Effort is not editable in the bubble (no room); it follows the window's.
+
 ## Explicitly NOT done
 
 - Loro still does not read the calendar, does not know who attends, and does not write the agenda file.
