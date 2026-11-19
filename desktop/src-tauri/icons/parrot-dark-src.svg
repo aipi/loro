@@ -5,8 +5,8 @@
     <clipPath id="head"><circle cx="60" cy="29" r="15"/></clipPath>
   </defs>
 
-  <!-- tema escuro: fundo no tom do terminal (#26231D), bico e pernas claros -->
-  <rect x="0" y="0" width="1024" height="1024" rx="232" fill="#26231D"/>
+  <!-- tema escuro: fundo no tom do painel (--panel, #2A2620), bico e pernas claros -->
+  <rect x="0" y="0" width="1024" height="1024" rx="232" fill="#2A2620"/>
 
   <g transform="scale(10.24) translate(50 50) scale(.86) translate(-46 -54)">
     <!-- cauda (verde, ponta azul) -->
