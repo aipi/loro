@@ -598,10 +598,9 @@ pub fn bubble_set_size(app: AppHandle, size: u32) -> Result<u32, String> {
 
 pub fn set_visible(app: &AppHandle, visible: bool) -> Result<bool, String> {
     if let Some(w) = app.get_webview_window(LABEL) {
-        if visible && steps_aside(&read_cfg(), with_rt(|r| r.main_focused)) {
-            // shown again, but the main window is in front: it appears when
-            // that window loses focus
-        } else if visible {
+        // an explicit «show» (tray, Settings, ⌘K, the recording bar) shows it
+        // NOW, even over the main window: the person asked for it
+        if visible {
             w.show().map_err(|e| e.to_string())?;
             let _ = w.set_always_on_top(true);
         } else {

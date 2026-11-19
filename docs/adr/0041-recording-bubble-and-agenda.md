@@ -158,7 +158,7 @@ Typing `/` in the bubble composer opens a completion list of the owner's skills 
 "ocultar quando a janela do loro for aberta, ou fechar essa miniatura a algum momento."
 
 - **Steps aside with the main window.** While the main window has focus, the bubble is hidden; when it loses focus (another app, or the window is closed to the tray) the bubble comes back. This is NOT the person's "hidden" (`balao.visivel` is untouched); it is `balao.ocultarComJanela`, on by default, with a checkbox in Settings. "Abrir no Loro" folds the panel first, so the bubble returns as the icon.
-- **Hide from the bubble itself.** The panel's footer has "Ocultar balão": it sets `visivel: false` (the same as the Settings checkbox). It comes back from the tray item, ⌘K "Mostrar / ocultar balão" or Settings.
+- **Hide from the bubble itself.** The panel's footer has "Ocultar balão": it sets `visivel: false` (the same as the Settings checkbox). It comes back from the menu bar (the tray item "Mostrar / ocultar balão"), or from Loro: ⌘K "Mostrar / ocultar balão", the bubble button on the recording bar, or Settings. An explicit show shows it right away, even over the main window; it steps aside again the next time that window takes focus.
 
 ## Explicitly NOT done
 

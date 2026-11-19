@@ -4,6 +4,9 @@
 // externo escreve, valida, e decide a cada tique {iniciar, encerrar, trocar,
 // avisar-fim, perguntar-troca, sugerir, nada}. O que não pode ser puro (o tique,
 // o executor, a ponte com o balão) é conferido no FONTE de app.js.
+// "hoje" e "amanhã" são o dia LOCAL da máquina (é o dia do dono); os horários
+// dos testes estão em -03:00, então o teste roda em São Paulo, não no fuso do CI.
+process.env.TZ = "America/Sao_Paulo";
 const test = require("node:test");
 const assert = require("node:assert");
 const fs = require("node:fs");
