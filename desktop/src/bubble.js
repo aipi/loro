@@ -305,7 +305,7 @@ function nextTrick() {
   $("icon").classList.add("t-" + lastTrick);
   trickTimer = setTimeout(() => { clearTrick(); armTrick(); }, TRICKS[lastTrick] + 80);
 }
-function armTrick() { trickTimer = setTimeout(nextTrick, 4000 + Math.random() * 7000); }
+function armTrick() { trickTimer = setTimeout(nextTrick, 1200 + Math.random() * 3300); }
 function tricks(on) {
   if (on === !!trickTimer) return;
   if (on) { armTrick(); return; }

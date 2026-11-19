@@ -6,14 +6,14 @@
   </defs>
 
   <!-- fundo arredondado -->
-  <rect x="0" y="0" width="1024" height="1024" rx="232" fill="#2C2822"/>
+  <rect x="0" y="0" width="1024" height="1024" rx="232" fill="#0F4C5C"/>
 
   <g transform="scale(10.24) translate(50 50) scale(.86) translate(-46 -54)">
     <!-- cauda (verde, ponta azul) -->
     <path d="M36 62 L9 90 Q6 95 12 94 L46 76 Z" fill="#1F7F3B"/>
     <path d="M30 72 L9 90 Q6 95 12 94 L36 81 Z" fill="#2D6BE0"/>
     <!-- pernas, no meio do passo -->
-    <g fill="none" stroke="#B7BCC6" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round">
+    <g fill="none" stroke="#C9CED6" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round">
       <path d="M44 76 L39 91 H49"/>
       <path d="M55 73 L63 87 H73"/>
     </g>
