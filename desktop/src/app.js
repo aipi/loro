@@ -1867,6 +1867,27 @@ function isoLocal(d) {
   return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) + "T" + p(d.getHours()) + ":" + p(d.getMinutes())
     + ":" + p(d.getSeconds()) + (off >= 0 ? "+" : "-") + p(Math.trunc(off / 60)) + ":" + p(off % 60);
 }
+// ADR-0041 §16 — um trecho marcado no balão vira anotação da reunião em curso: o
+// mesmo `.anotacoes.json` dos grifos da janela (ADR-0007). `tipo: "tarefa"` é o
+// pedido de to-do que o loop da agenda lê depois; o Loro só guarda.
+async function bubbleAnnotate(c) {
+  const quote = String(c.quote || "").trim();
+  if (!quote) return;
+  if (!meeting.active || !meeting.livingRel) { bubble.aviso = "só dá para anotar durante uma reunião"; return; }
+  const tarefa = c.tipo === "tarefa";
+  const texto = String(c.comentario || "").trim();
+  const anotacao = {
+    tipo: tarefa ? "tarefa" : "grifo",
+    anchor: { quote, prefix: "", suffix: "" },
+    comentarios: texto || tarefa ? [{ texto: tarefa ? "tarefa: " + (texto || quote) : texto }] : [],
+  };
+  try {
+    await invoke("brain_annotation_add", { rel: meeting.livingRel, anotacao });
+    bubble.aviso = tarefa ? "tarefa anotada" : texto ? "comentário anotado" : "trecho grifado";
+    // a aba viva, se aberta, mostra a marca
+    if (currentRel() === meeting.livingRel) decorateAnnotations(meeting.livingRel);
+  } catch (e) { bubble.aviso = tErr(String(e)); clog("bubble annotate error: " + e); }
+}
 async function tarefaAcao(id, acao) {
   if (!id || !/^(concluir|reabrir)$/.test(acao)) return;
   try {
@@ -2048,6 +2069,7 @@ async function onBubbleCmd(p) {
       }
       case "keep": agenda.prompt = null; break;
       case "tarefa": await tarefaAcao(String(c.id || ""), String(c.acao || "")); break;
+      case "annotate": await bubbleAnnotate(c); break;
       case "record-now": {
         // «Gravar agora» num evento que está acontecendo: como uma agendada —
         // título do evento, encerra no fim dele, fecha calada

@@ -178,6 +178,12 @@ On top of the walk (§13), every 1 to 4.5 seconds of recording the parrot does o
 
 `src/parrot.js` replaces every `<img src="parrot.png">` of the main window with the same inline SVG the bubble draws (`.parrotbox`, styles in `style.css`). While recording and not paused it walks and does the same random tricks (§13, §14), driven from `paintRecordingChrome`. Light theme: the cream tile. Dark theme: the tile is `--panel` and the beak and legs go light. The drawing and its keyframes now exist twice (bubble.html and style.css/parrot.js): the bubble is a separate window with its own CSS, and keeping it self-contained was preferred to a shared file for now.
 
+## §16 Marking the live talk from the bubble (owner, 2026-11-19)
+
+"no balão, deve permitir grifar uma palavra e aparecer as opções. Se eu comentar, isso deve ser considerado na análise, ou criado um to-do depois."
+
+Selecting a passage inside one line of the bubble's live talk shows three options under it: **Grifar**, **Comentar** and **Tarefa**. The bubble sends `annotate` with the quote; the main window writes it with `brain_annotation_add` into the running meeting's `meeting.anotacoes.json` — the same sidecar and shape as the main window's highlights (ADR-0007), so the mark also shows in the living tab. A to-do is an annotation with `tipo: "tarefa"` and a comment `tarefa: <text>` (the passage itself when left empty). Loro only stores it (BR-9): whoever analyses the meeting afterwards — the owner's agenda loop — reads the sidecar, weighs highlights and comments, and turns `tarefa` annotations into tasks. While a passage is being marked the live talk is not repainted, so the selection survives new lines.
+
 ## Explicitly NOT done
 
 - Loro still does not read the calendar, does not know who attends, and does not write the agenda file.

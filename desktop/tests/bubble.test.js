@@ -375,3 +375,17 @@ test("ADR-0041 §11 — completar deixa «/nome » e o envio vai cru para o CLI"
   assert.match(JS, /e\.key === "Tab" \|\| \(e\.key === "Enter" && !e\.shiftKey\)/);
   assert.match(fs.readFileSync(path.join(ROOT, "src", "lib.rs"), "utf8"), /skills::skills_list/);
 });
+
+test("ADR-0041 §16 — um trecho marcado no balão vira anotação da reunião (grifo, comentário ou tarefa)", () => {
+  assert.match(HTML, /id="bSel" hidden/);
+  assert.match(JS, /send\("annotate", Object\.assign\(\{ quote: selQuote \}/);
+  // marcando um trecho, a fala não é repintada (a seleção sobreviveria um tique só)
+  assert.match(JS, /function paintTail\(\) \{\n  const box = \$\("bTail"\);\n[^\n]*\n  if \(selQuote\) return;/);
+  const APP = fs.readFileSync(path.join(SRC, "app.js"), "utf8");
+  assert.match(APP, /case "annotate": await bubbleAnnotate\(c\); break;/);
+  assert.match(APP, /invoke\("brain_annotation_add", \{ rel: meeting\.livingRel, anotacao \}\)/);
+  assert.match(APP, /tipo: tarefa \? "tarefa" : "grifo"/);
+  // nada sai da máquina por aqui: o Loro só guarda; quem cria a tarefa é o loop
+  const fn = APP.slice(APP.indexOf("async function bubbleAnnotate"), APP.indexOf("async function tarefaAcao"));
+  assert.doesNotMatch(fn, /slack|fetch\(|http/i);
+});
