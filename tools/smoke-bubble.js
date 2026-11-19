@@ -191,7 +191,7 @@ const DRIVER = `
     // a ação principal é a vermelha
     const enc = getComputedStyle(q("#bEncerrar")), pau = getComputedStyle(q("#bPausar"));
     if (enc.backgroundColor === pau.backgroundColor) throw new Error("Encerrar não se distingue de Pausar");
-    if ([...document.querySelectorAll("#bTemaChips .chip")].some((c) => !c.disabled)) throw new Error("a ideia de uma gravação em curso não pode ser trocada");
+    if (!q("#bDest .pickbtn").disabled) throw new Error("a ideia de uma gravação em curso não pode ser trocada");
     const body = q("#tabRec");
     if (body.scrollWidth > body.clientWidth + 1) throw new Error("estoura na horizontal: " + body.scrollWidth + " em " + body.clientWidth);
     for (const el of [q("#bAbrir"), q("#bChatIn")]) {
@@ -209,9 +209,10 @@ const DRIVER = `
     const over = (f, b) => ({ r: f.r * f.a + b.r * (1 - f.a), g: f.g * f.a + b.g * (1 - f.a), b: f.b * f.a + b.b * (1 - f.a), a: 1 });
     const lum = (c) => { const ch = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }; return 0.2126 * ch(c.r) + 0.7152 * ch(c.g) + 0.0722 * ch(c.b); };
     const ratio = (x, y) => { const a = lum(x), b = lum(y); return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05); };
-    const probe = document.createElement("div");
-    probe.style.background = "var(--bg-solid)"; document.body.appendChild(probe);
-    const solid = parse(getComputedStyle(probe).backgroundColor); probe.remove();
+    // o painel é OPACO: o fundo medido é o dele, e alpha tem de ser 1
+    const solid = parse(getComputedStyle(q("#panel")).backgroundColor);
+    if (solid.a !== 1) throw new Error("o painel não é opaco: alpha " + solid.a);
+    if (getComputedStyle(q("#panel")).backdropFilter !== "none") throw new Error("ainda há backdrop-filter");
     const fails = [];
     const check = (el, min, name) => {
       if (!el) return;
@@ -233,29 +234,55 @@ const DRIVER = `
     if (fails.length) throw new Error(fails.join(" · "));
   });
 
+  // o seletor de destino: um campo que abre uma lista com busca (escala)
+  const pick = async (host, typed, keys) => {
+    host.querySelector(".pickbtn").click(); await wait(30);
+    const qq = host.querySelector(".pickq");
+    if (!vis(qq)) throw new Error("a lista não abriu");
+    qq.value = typed; qq.dispatchEvent(new Event("input")); await wait(20);
+    for (const k of keys) { qq.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true })); await wait(20); }
+  };
   await step("gravar-do-painel", async () => {
-    state({ rec: "idle", linhas: [] });
+    state({ rec: "idle", linhas: [], recentes: ["vendas"],
+      temas: [{ slug: "frota-2026", nome: "frota 2026" }, { slug: "vendas", nome: "vendas" },
+        ...Array.from({ length: 30 }, (_, i) => ({ slug: "ideia-" + i, nome: "ideia " + String(i).padStart(2, "0") }))] });
     await wait(60);
     if (!vis(q("#bGravar"))) throw new Error("ocioso sem «Gravar»");
-    const chips = [...document.querySelectorAll("#bTemaChips .chip")];
-    if (!chips.length || chips[0].getAttribute("aria-pressed") !== "true" || !/frota 2026/.test(chips[0].textContent)) throw new Error("a última ideia não veio marcada");
-    chips.find((c) => /vendas/.test(c.textContent)).click();
-    await wait(40);
+    const host = q("#bDest");
+    if (!/frota 2026/.test(host.querySelector(".pickbtn").textContent)) throw new Error("o destino atual não aparece: " + host.textContent);
+    // aberta e sem busca: «Recentes» em cima, 8 linhas visíveis, o resto rola
+    host.querySelector(".pickbtn").click(); await wait(40);
+    const list = host.querySelector(".picklist");
+    const first = list.querySelector(".pickgrp");
+    if (!first || !/Recentes/.test(first.textContent)) throw new Error("sem «Recentes» no topo");
+    if (!/vendas/.test(list.querySelector(".pickit").textContent)) throw new Error("a recente não vem primeiro");
+    const rows = list.querySelectorAll(".pickit").length;
+    if (rows !== 32) throw new Error("linhas: " + rows);
+    if (list.clientHeight > 8 * 28 + 2 || list.scrollHeight <= list.clientHeight) throw new Error("a lista não está limitada a ~8 linhas com rolagem: " + list.clientHeight + "/" + list.scrollHeight);
+    if (host.querySelector(".pickit[title], .pickbtn[title]")) throw new Error("tooltip nativo no seletor");
+    // Esc fecha a LISTA, e o painel continua aberto
+    host.querySelector(".pickq").dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    await wait(30);
+    if (vis(host.querySelector(".pickpop"))) throw new Error("Esc não fechou a lista");
+    if (!document.body.classList.contains("open")) throw new Error("Esc da lista fechou o painel");
+    // busca + teclado
+    await pick(host, "vend", ["Enter"]);
     if (lastSent().cmd !== "set-tema" || lastSent().tema !== "vendas") throw new Error("escolher a ideia mandou " + JSON.stringify(lastSent()));
     q("#bGravar").click();
     await wait(30);
     let c = lastSent();
     if (c.cmd !== "start" || c.tema !== "vendas" || c.nova) throw new Error("gravar mandou " + JSON.stringify(c));
-    // ideia nova pelo «outra… / + nova ideia…»
-    const more = [...document.querySelectorAll("#bTemaChips .chip")].pop();
-    more.click(); await wait(40);
-    if (vis(q("#bTema"))) { q("#bTema").value = "__nova__"; q("#bTema").dispatchEvent(new Event("change")); await wait(20); }
-    if (!vis(q("#bNovaIdeia"))) throw new Error("não há onde nomear a ideia nova");
-    q("#bNovaIdeia").value = "lançamento q4";
+    // ↓ move para a segunda linha
+    await pick(host, "ideia 0", ["ArrowDown", "Enter"]);
+    if (lastSent().tema !== "ideia-1") throw new Error("↓ + Enter escolheu " + JSON.stringify(lastSent()));
+    // ideia nova: o que se digita e não bate com nada
+    await pick(host, "lançamento q4", ["Enter"]);
+    if (!/nova: lançamento q4/.test(host.querySelector(".pickbtn").textContent)) throw new Error("a ideia nova não aparece no campo");
     q("#bGravar").click();
     await wait(30);
     c = lastSent();
     if (c.cmd !== "start" || c.tema !== "lançamento q4" || c.nova !== true) throw new Error("ideia nova mandou " + JSON.stringify(c));
+    state({ temas: BASE.temas, recentes: [] });
   });
 
   await step("agenda-hoje-amanha", async () => {
@@ -278,7 +305,8 @@ const DRIVER = `
     if (!det) throw new Error("o evento não abre");
     if (!/começa em (2[4-5]) min/.test(det.textContent)) throw new Error("estado ao vivo: " + det.textContent);
     if (!/30 min/.test(det.textContent) || !/com convidados/.test(det.textContent)) throw new Error("detalhes: " + det.textContent);
-    det.querySelector("select").value = "vendas";
+    // o MESMO seletor, no detalhe do evento
+    await pick(det.querySelector(".picker").parentElement, "vend", ["Enter"]);
     det.querySelector("input[type=checkbox]").click();
     await wait(30);
     let c = lastSent();

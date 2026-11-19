@@ -12,15 +12,16 @@
     <style>
       :root {
         --icon: 32px; --pad: 6px; --badge: 10px;
-        /* claro: material translúcido de menu do macOS, texto com contraste AA */
-        --bg: rgba(246, 246, 248, 0.82); --bg-solid: #f6f6f8; --fg: #1d1d1f; --muted: #5f5f66;
+        /* claro: superfície OPACA (dono, 2026-11-18: a translucidez deixava o texto
+           das janelas de trás vazar por baixo das palavras), contraste AA medido */
+        --bg: #f6f6f8; --bg-solid: #ffffff; --border: rgba(0, 0, 0, 0.14); --fg: #1d1d1f; --muted: #5f5f66;
         --line: rgba(0, 0, 0, 0.09); --chip: rgba(0, 0, 0, 0.05); --chip-on: rgba(0, 0, 0, 0.09);
         --ghost-hover: rgba(0, 0, 0, 0.06); --accent: #0f766e; --rec: #d70015; --rec-fg: #ffffff; --rec-text: #c00013;
         --now: rgba(215, 0, 21, 0.08); --shadow: 0 12px 32px rgba(0, 0, 0, 0.18), 0 0 0 0.5px rgba(0, 0, 0, 0.12);
       }
       @media (prefers-color-scheme: dark) {
         :root {
-          --bg: rgba(36, 36, 40, 0.78); --bg-solid: #242428; --fg: #f5f5f7; --muted: #a8a8b0;
+          --bg: #242428; --bg-solid: #2f2f34; --border: rgba(255, 255, 255, 0.14); --fg: #f5f5f7; --muted: #a8a8b0;
           --line: rgba(255, 255, 255, 0.10); --chip: rgba(255, 255, 255, 0.07); --chip-on: rgba(255, 255, 255, 0.16);
           --ghost-hover: rgba(255, 255, 255, 0.08); --accent: #5eead4; --rec: #d70015; --rec-text: #ff7b72;
           --now: rgba(255, 69, 58, 0.14); --shadow: 0 12px 32px rgba(0, 0, 0, 0.5), 0 0 0 0.5px rgba(255, 255, 255, 0.12);
@@ -49,7 +50,7 @@
 
       /* ---- o painel: cresce a partir do ícone, para o lado com mais espaço ---- */
       #panel { position: absolute; inset: 0; display: flex; flex-direction: column;
-        background: var(--bg); -webkit-backdrop-filter: saturate(180%) blur(24px); backdrop-filter: saturate(180%) blur(24px);
+        background: var(--bg); border: 1px solid var(--border);
         border-radius: 14px; box-shadow: var(--shadow); overflow: hidden;
         visibility: hidden; opacity: 0; transform: scale(0.96); transform-origin: top left;
         transition: opacity 140ms ease-out, transform 140ms ease-out, visibility 0s linear 140ms; }
@@ -59,7 +60,6 @@
       body.anchor-bottom #panel { transform-origin: bottom left; }
       body.anchor-right.anchor-bottom #panel { transform-origin: bottom right; }
       @media (prefers-reduced-motion: reduce) { #panel, body.open #panel { transition: none; } }
-      @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) { #panel { background: var(--bg-solid); } }
       body.anchor-right #icon { left: auto; right: var(--pad); }
       body.anchor-bottom #icon { top: auto; bottom: var(--pad); }
 
@@ -87,17 +87,24 @@
       .tab[hidden] { display: none; }
       .lbl { font-size: 11px; font-weight: 600; color: var(--muted); margin-bottom: 5px; }
 
-      /* destino: chips inline + «outra…» */
-      #bTemaChips { display: flex; flex-wrap: wrap; gap: 6px; }
-      .chip { border: 0; background: var(--chip); padding: 4px 10px; border-radius: 999px; font-size: 12px; max-width: 150px;
-        white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: default; }
-      .chip[aria-pressed="true"] { background: var(--fg); color: var(--bg-solid); font-weight: 600; }
-      .chip:disabled { opacity: 0.5; }
+      /* destino: um campo compacto que abre uma lista com busca (escala para muitas ideias) */
+      .picker { position: relative; }
+      .pickbtn { width: 100%; display: flex; align-items: center; gap: 6px; padding: 6px 9px; border-radius: 8px;
+        border: 1px solid var(--line); background: var(--bg-solid); text-align: left; cursor: default; }
+      .pickbtn:disabled { opacity: 0.6; }
+      .pickname { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .pickcaret { flex: none; color: var(--muted); font-size: 10px; }
+      .pickpop { margin-top: 4px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg-solid); padding: 4px; }
+      .pickpop[hidden] { display: none; }
+      .pickq { margin-bottom: 4px; }
+      .picklist { list-style: none; max-height: 224px; overflow-y: auto; }
+      .pickgrp { font-size: 11px; font-weight: 600; color: var(--muted); padding: 6px 8px 2px; }
+      .pickit { padding: 5px 8px; border-radius: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: default; height: 28px; }
+      .pickit[aria-selected="true"] { background: var(--accent); color: var(--bg-solid); }
+      .pickit.new { font-weight: 600; }
       select, input[type="text"], textarea { width: 100%; padding: 6px 9px; border-radius: 8px; border: 1px solid var(--line);
         background: var(--bg-solid); user-select: text; outline: none; }
       select:focus-visible, input:focus-visible, textarea:focus-visible, .btn:focus-visible, .chip:focus-visible, .tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-      #bTema[hidden], #bNovaIdeia[hidden] { display: none; }
-      #bTema, #bNovaIdeia { margin-top: 6px; }
 
       .row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
       .btn { border: 0; padding: 6px 12px; border-radius: 8px; background: transparent; cursor: default; font-weight: 500; }
@@ -175,9 +182,7 @@
         <div class="tab" id="tabRec" role="tabpanel" aria-labelledby="tabBtnRec">
           <div>
             <div class="lbl" data-i18n>onde salvar</div>
-            <div id="bTemaChips" role="group" aria-label="ideia"></div>
-            <select id="bTema" hidden aria-label="ideia"></select>
-            <input id="bNovaIdeia" type="text" hidden spellcheck="false" data-i18n-placeholder="nome da nova ideia" />
+            <div id="bDest"></div>
           </div>
           <div class="row">
             <button class="btn primary" id="bGravar" data-i18n>Gravar</button>
@@ -214,6 +219,7 @@
       <span id="badge" aria-hidden="true"></span>
     </button>
     <script src="i18n.js"></script>
+    <script src="fuzzy.js"></script>
     <script src="agenda.js"></script>
     <script src="bubble-core.js"></script>
     <script src="bubble.js"></script>

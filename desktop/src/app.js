@@ -258,6 +258,9 @@ const DEFAULTS = {
   // ADR-0041 — a ideia onde o balão grava (a última escolhida) e o padrão das
   // reuniões agendadas sem ideia própria. Vazio até a primeira escolha.
   bubbleTema: "",
+  // as últimas ideias escolhidas no balão (a mais recente primeiro, até 5): o
+  // «Recentes» do seletor de destino
+  bubbleRecentes: [],
   autoscroll: true, autosave: false, saveDir: "", source: "mic", mode: "live", uiLang: "pt", termSide: true,
   sideW: 0, // sidebar width in px; 0 = the default CSS clamp (ADR-0002 §6)
   welcomeSeen: false, // first-launch feature tour (reopen via palette)
@@ -1764,6 +1767,7 @@ function bubbleState() {
     titulo: meeting.active ? (meeting.titulo || "") : "",
     tema: meeting.active ? (meeting.tema || "") : "",
     destino: settings.bubbleTema || "",
+    recentes: settings.bubbleRecentes || [],
     temas: bubbleTemas.map((x) => ({ slug: x.slug, nome: x.nome || x.slug })),
     linhas: bubble.linhas.slice(-12),
     agenda: {
@@ -1929,20 +1933,33 @@ async function agendaSchedule(id, on, tema) {
   catch (e) { bubble.aviso = tErr(String(e)); clog("agenda_schedule_set error: " + e); }
 }
 
+// Uma ideia nova escolhida no seletor do balão nasce AQUI (como no ＋ da lateral),
+// antes de gravar ou agendar nela. Devolve o slug, ou "" com o aviso no balão.
+async function ensureTema(tema, nova) {
+  let slug = String(tema || "").trim();
+  if (!slug) { bubble.aviso = "escolha ou nomeie uma ideia"; return ""; }
+  if (!nova) return slug;
+  try {
+    const r = await invoke("brain_create_brainstorm", { input: { nome: slug } });
+    slug = (r && r.slug) || slug;
+    try { bubbleTemas = (await invoke("brain_list_brainstorms")) || bubbleTemas; } catch (_) {}
+    return slug;
+  } catch (e) { bubble.aviso = tErr(String(e)); return ""; }
+}
+function noteRecentTema(slug) {
+  if (!slug) return;
+  settings.bubbleRecentes = [slug].concat((settings.bubbleRecentes || []).filter((x) => x !== slug)).slice(0, 5);
+  persistSettings();
+}
+
 // «Gravar» do balão: a ideia escolhida no painel, sem modal.
 async function bubbleStart(tema, nova) {
   bubble.aviso = "";
   if (!LoroAudio.meetingSupported(hostOs)) { toggle(); return; }
   if (!brainTab) { bubble.aviso = "abra o Loro e escolha um projeto antes de gravar"; return; }
-  let slug = String(tema || "").trim();
-  if (!slug) { bubble.aviso = "escolha ou nomeie uma ideia"; return; }
-  if (nova) {
-    try {
-      const r = await invoke("brain_create_brainstorm", { input: { nome: slug } });
-      slug = (r && r.slug) || slug;
-    } catch (e) { bubble.aviso = tErr(String(e)); return; }
-  }
-  settings.bubbleTema = slug; persistSettings();
+  const slug = await ensureTema(tema, nova);
+  if (!slug) return;
+  settings.bubbleTema = slug; noteRecentTema(slug);
   // a gravação à mão já cobre a reunião que está acontecendo agora: o agendador
   // não pergunta «trocar?» por ela
   const now = Date.now();
@@ -1976,8 +1993,14 @@ async function onBubbleCmd(p) {
         await bubbleStart(c.tema, !!c.nova);
         break;
       case "open": await bubbleOpenMain(); break;
-      case "set-tema": settings.bubbleTema = String(c.tema || ""); persistSettings(); break;
-      case "schedule": await agendaSchedule(String(c.id || ""), !!c.on, c.tema); break;
+      case "set-tema": settings.bubbleTema = String(c.tema || ""); noteRecentTema(settings.bubbleTema); break;
+      case "schedule": {
+        const slug = c.on ? await ensureTema(c.tema, !!c.nova) : String(c.tema || "");
+        if (c.on && !slug) break;
+        if (c.on) noteRecentTema(slug);
+        await agendaSchedule(String(c.id || ""), !!c.on, slug);
+        break;
+      }
       case "extend":
         if (agenda.atual && agenda.atual.tipo === "agendada") {
           agenda.atual.extraMs = (agenda.atual.extraMs || 0) + LAG.EXTEND_MS;
@@ -2000,7 +2023,10 @@ async function onBubbleCmd(p) {
         const ev = agendaEvent(c.id);
         if (!ev) break;
         if (recNow() !== "idle") { bubble.aviso = "já há uma gravação em andamento"; break; }
-        await agendaStart(ev, String(c.tema || "") || agendaTemaFor(ev));
+        const slug = c.tema ? await ensureTema(c.tema, !!c.nova) : agendaTemaFor(ev);
+        if (!slug) break;
+        noteRecentTema(slug);
+        await agendaStart(ev, slug);
         break;
       }
       case "record-suggested": {

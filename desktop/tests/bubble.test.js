@@ -115,7 +115,7 @@ test("ADR-0041 §2 — o balão é o ícone colorido do app, não o template mon
 // ---- o painel ----------------------------------------------------------------
 
 test("ADR-0041 §3 — o painel tem as cinco partes: transcrição, ideia, controles, abrir, próximas", () => {
-  for (const id of ["bTail", "bTema", "bNovaIdeia", "bGravar", "bPausar", "bRetomar", "bEncerrar", "bNova", "bAbrir", "bAgenda", "bAgendaNota", "bPrompt"]) {
+  for (const id of ["bTail", "bDest", "bGravar", "bPausar", "bRetomar", "bEncerrar", "bNova", "bAbrir", "bAgenda", "bAgendaNota", "bPrompt"]) {
     assert.match(HTML, new RegExp(`id="${id}"`), `bubble.html deve ter #${id}`);
   }
 });
@@ -232,11 +232,15 @@ test("ADR-0041 §3 — o painel abre e fecha a partir do ícone, curto e sem rep
   const comTransicao = HTML.split("\n").filter((l) => /transition\s*:/.test(l));
   assert.ok(comTransicao.length > 0);
   for (const l of comTransicao) assert.match(l, /#panel|^\s*transition: opacity/, "transição fora do painel: " + l.trim());
-  assert.match(HTML, /backdrop-filter: saturate\(180%\) blur\(24px\)/);
+  // OPACO (dono, depois do build real: o texto de trás vazava por baixo)
+  assert.doesNotMatch(HTML, /backdrop-filter/);
+  assert.match(HTML, /--bg: #f6f6f8;/);
+  assert.match(HTML, /--bg: #242428;/);
+  assert.match(HTML, /border: 1px solid var\(--border\)/);
   assert.match(HTML, /prefers-color-scheme: dark/);
   assert.match(HTML, /border-radius: 14px/);
   // a agenda é uma aba com hoje, amanhã e os que já passaram recolhidos
-  for (const id of ["tabBtnRec", "tabBtnAgenda", "tabRec", "tabAgenda", "bPassados", "bTemaChips"]) {
+  for (const id of ["tabBtnRec", "tabBtnAgenda", "tabRec", "tabAgenda", "bPassados", "bDest"]) {
     assert.match(HTML, new RegExp(`id="${id}"`));
   }
   assert.match(JS, /LAG\.group\(/);
@@ -267,4 +271,65 @@ test("ADR-0041 §3 — a resposta é escapada antes de ganhar formatação", () 
   assert.match(h, /<strong>sim<\/strong> &lt;img/);
   assert.match(h, /<ul><li>um<\/li><li><code>dois<\/code><\/li><\/ul>/);
   assert.match(h, /<pre><code>&lt;b&gt;x&lt;\/b&gt;<\/code><\/pre>/);
+});
+
+// ---- o seletor de destino (dono: «e se tiver uma lista grande?») -------------
+const FZ = require("../src/fuzzy.js");
+const TEMAS = [
+  { slug: "dia", nome: "dia" }, { slug: "henrique", nome: "henrique" }, { slug: "luan", nome: "Luan" },
+  { slug: "frota-2026", nome: "frota 2026" }, { slug: "zeta", nome: "zeta" }, { slug: "agua", nome: "Água" },
+];
+
+test("ADR-0041 §8 — sem busca: Recentes (mais recente primeiro, até 5) e depois todas em ordem alfabética", () => {
+  const it = BC.pickerItems({ temas: TEMAS, recentes: ["luan", "sumiu", "dia", "luan"] });
+  assert.deepStrictEqual(it.filter((x) => x.kind === "recent").map((x) => x.slug), ["luan", "dia"],
+    "a que não existe mais cai, repetida não duplica");
+  assert.deepStrictEqual(it.filter((x) => x.kind === "all").map((x) => x.nome), ["Água", "frota 2026", "henrique", "zeta"],
+    "alfabética, acento e caixa não mudam a ordem, sem repetir as recentes");
+  const muitas = Array.from({ length: 9 }, (_, i) => ({ slug: "t" + i, nome: "t" + i }));
+  assert.strictEqual(BC.pickerItems({ temas: muitas, recentes: muitas.map((x) => x.slug) }).filter((x) => x.kind === "recent").length, 5);
+});
+
+test("ADR-0041 §8 — digitar filtra pelo fuzzy, e oferece criar quando nenhum nome bate", () => {
+  const f = BC.pickerItems({ temas: TEMAS, query: "fro", filter: FZ.filter });
+  assert.deepStrictEqual(f.map((x) => [x.kind, x.nome]), [["match", "frota 2026"], ["new", "fro"]]);
+  // sem acento acha o com acento, e um nome exato não oferece criar de novo
+  assert.deepStrictEqual(BC.pickerItems({ temas: TEMAS, query: "agua", filter: FZ.filter }).map((x) => x.kind), ["match"]);
+  assert.deepStrictEqual(BC.pickerItems({ temas: TEMAS, query: "LUAN", filter: FZ.filter }).map((x) => x.kind), ["match"]);
+  // nada bate: só criar
+  assert.deepStrictEqual(BC.pickerItems({ temas: TEMAS, query: "lançamento q4", filter: FZ.filter }),
+    [{ kind: "new", slug: "", nome: "lançamento q4" }]);
+  // sem nenhuma ideia ainda, o campo vazio não oferece nada (digitar é o caminho)
+  assert.deepStrictEqual(BC.pickerItems({ temas: [], query: "" }), []);
+});
+
+test("ADR-0041 §8 — teclado: ↑/↓ movem sem passar das pontas, Enter escolhe, Esc fecha", () => {
+  assert.deepStrictEqual(BC.pickerKey(0, "ArrowDown", 3), { index: 1, action: "move" });
+  assert.deepStrictEqual(BC.pickerKey(2, "ArrowDown", 3), { index: 2, action: "move" });
+  assert.deepStrictEqual(BC.pickerKey(0, "ArrowUp", 3), { index: 0, action: "move" });
+  assert.deepStrictEqual(BC.pickerKey(1, "Enter", 3), { index: 1, action: "pick" });
+  assert.deepStrictEqual(BC.pickerKey(-1, "Enter", 0), { index: -1, action: "none" });
+  assert.deepStrictEqual(BC.pickerKey(1, "Escape", 3), { index: 1, action: "close" });
+  assert.deepStrictEqual(BC.pickerKey(1, "a", 3), { index: 1, action: "none" });
+});
+
+test("ADR-0041 §8 — a escolha vira a mais recente, sem repetir, até 5", () => {
+  assert.deepStrictEqual(BC.noteRecent(["a", "b", "c"], "b"), ["b", "a", "c"]);
+  assert.deepStrictEqual(BC.noteRecent(["a", "b", "c", "d", "e"], "f"), ["f", "a", "b", "c", "d"]);
+  assert.deepStrictEqual(BC.noteRecent(["a"], ""), ["a"]);
+  assert.match(APP, /bubbleRecentes: \[\]/);
+  assert.match(APP, /recentes: settings\.bubbleRecentes/);
+});
+
+test("ADR-0041 §8 — o MESMO seletor no Gravação e no detalhe do evento; nada de <select> nem de title no painel", () => {
+  assert.strictEqual((JS.match(/makePicker\(/g) || []).length, 3, "a definição + o do Gravação + o do evento");
+  assert.doesNotMatch(JS, /createElement\("select"\)/);
+  assert.doesNotMatch(HTML, /<select/);
+  // a única dica nativa é a do ícone recolhido
+  const titles = JS.match(/\.title = /g) || [];
+  assert.strictEqual(titles.length, 1, "só o ícone tem title");
+  assert.match(JS, /\$\("icon"\)\.title = /);
+  assert.match(HTML, /<script src="fuzzy\.js"><\/script>/);
+  // Esc com a lista aberta fecha a LISTA, não o painel
+  assert.match(JS, /if \(openPicker\) \{ openPicker\.close\(\); return; \}/);
 });

@@ -152,6 +152,53 @@
     return lines.filter(Boolean).join("\n");
   }
 
+  // ---- the destination picker (owner: «e se tiver uma lista grande?») ----------
+  const foldName = (x) => String(x || "").normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase().trim();
+
+  // The rows of the searchable dropdown. No query: «Recentes» (the last ones
+  // used, most recent first, at most `maxRecent`, only ideas that still exist),
+  // then EVERY other idea alphabetically. With a query: the fuzzy matches (the
+  // caller passes LoroFuzzy.filter, so this module stays pure), and «+ nova ideia
+  // «text»» at the end when no idea has exactly that name.
+  // → [{kind: "recent"|"all"|"match"|"new", slug, nome}]
+  function pickerItems(input) {
+    const temas = ((input && input.temas) || []).map((x) => ({ slug: x.slug, nome: x.nome || x.slug }));
+    const q = String((input && input.query) || "").trim();
+    const maxRecent = (input && input.maxRecent) || 5;
+    if (!q) {
+      const recent = [];
+      for (const slug of (input && input.recentes) || []) {
+        const x = temas.find((y) => y.slug === slug);
+        if (x && !recent.some((r) => r.slug === slug) && recent.length < maxRecent) recent.push(x);
+      }
+      const rest = temas.filter((x) => !recent.some((r) => r.slug === x.slug))
+        .sort((a, b) => foldName(a.nome).localeCompare(foldName(b.nome)));
+      return recent.map((x) => ({ kind: "recent", ...x })).concat(rest.map((x) => ({ kind: "all", ...x })));
+    }
+    const filter = (input && input.filter) || ((qq, items, key) => items.filter((it) => foldName(key(it)).includes(foldName(qq))));
+    const out = filter(q, temas, (x) => x.nome).map((x) => ({ kind: "match", ...x }));
+    if (!temas.some((x) => foldName(x.nome) === foldName(q) || foldName(x.slug) === foldName(q))) {
+      out.push({ kind: "new", slug: "", nome: q });
+    }
+    return out;
+  }
+
+  // Keyboard over the list: ↑/↓ move (clamped, never wrapping past the ends),
+  // Enter picks, Esc closes. → {index, action: "move"|"pick"|"close"|"none"}
+  function pickerKey(index, key, length) {
+    if (key === "ArrowDown") return { index: length ? Math.min(index + 1, length - 1) : -1, action: "move" };
+    if (key === "ArrowUp") return { index: length ? Math.max(index - 1, 0) : -1, action: "move" };
+    if (key === "Enter") return { index, action: index >= 0 && index < length ? "pick" : "none" };
+    if (key === "Escape") return { index, action: "close" };
+    return { index, action: "none" };
+  }
+
+  // The recents after a choice: the chosen one first, no repeats, at most 5.
+  function noteRecent(list, slug, max) {
+    if (!slug) return (list || []).slice();
+    return [slug].concat((list || []).filter((x) => x !== slug)).slice(0, max || 5);
+  }
+
   return { DRAG_THRESHOLD_PX, isDrag, gesture, panel, formatElapsed, elapsedMs, badge, whoLabel, tail, controls,
-    badgePx, chatPrompt, mdLite, tooltip };
+    badgePx, chatPrompt, mdLite, tooltip, pickerItems, pickerKey, noteRecent };
 });

@@ -100,7 +100,9 @@ $("icon").addEventListener("keydown", (e) => {
   if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onIconClick(); }
 });
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") setOpen(BC.panel(open, "escape"));
+  if (e.key !== "Escape") return;
+  if (openPicker) { openPicker.close(); return; }
+  setOpen(BC.panel(open, "escape"));
 });
 window.addEventListener("blur", () => setOpen(BC.panel(open, "blur")));
 
@@ -116,45 +118,144 @@ function setTab(name) {
 $("tabBtnRec").addEventListener("click", () => setTab("rec"));
 $("tabBtnAgenda").addEventListener("click", () => setTab("agenda"));
 
-// ---- destination: chips inline, «outra…» opens the full list ---------------------
-const NOVA = "__nova__";
-let temaChoice = "";      // "" = follow the main window's `destino`
-let temaMode = "chips";   // "chips" | "list" | "nova"
-function chosenTema() {
-  if (temaMode === "nova") return ($("bNovaIdeia").value || "").trim();
-  if (temaMode === "list") return $("bTema").value === NOVA ? ($("bNovaIdeia").value || "").trim() : $("bTema").value;
-  return temaChoice || st.destino || "";
+// ---- destination: ONE compact field that opens a searchable list ----------------
+// Owner (2026-11-18): chips did not scale («e se tiver uma lista grande?»). The
+// picker shows the current idea; clicking opens a type-to-filter list (fuzzy.js):
+// «Recentes» first, then every idea alphabetically (8 rows, scrolls), and
+// «+ nova ideia «texto»» when nothing has that name. ↑/↓/Enter/Esc. The SAME
+// component is the per-event destination in the Agenda.
+const FZ = window.LoroFuzzy;
+let dest = null;          // {slug, nome, nova} chosen here; null = follow st.destino
+const temaNome = (slug) => ((st.temas || []).find((x) => x.slug === slug) || {}).nome || slug;
+function currentDest() {
+  if (dest) return dest;
+  return st.destino ? { slug: st.destino, nome: temaNome(st.destino), nova: false } : null;
 }
-function pickTema(slug) {
-  temaChoice = slug; temaMode = "chips";
-  send("set-tema", { tema: slug });
-  paint();
+// what the main window receives: an existing idea's slug, or the NAME of a new one
+const destArg = (d) => (d ? (d.nova ? d.nome : d.slug) : "");
+
+let openPicker = null;    // the one picker whose list is open
+function makePicker(host, opts) {
+  const wrap = document.createElement("div");
+  wrap.className = "picker";
+  const btn = document.createElement("button");
+  btn.className = "pickbtn";
+  btn.setAttribute("aria-haspopup", "listbox");
+  btn.setAttribute("aria-expanded", "false");
+  const pop = document.createElement("div");
+  pop.className = "pickpop"; pop.hidden = true;
+  const q = document.createElement("input");
+  q.type = "text"; q.className = "pickq"; q.spellcheck = false;
+  q.setAttribute("role", "combobox"); q.setAttribute("aria-autocomplete", "list");
+  q.placeholder = t("buscar ou criar ideia…");
+  const ul = document.createElement("ul");
+  ul.className = "picklist"; ul.setAttribute("role", "listbox");
+  ul.setAttribute("aria-label", t("ideias"));
+  pop.append(q, ul);
+  wrap.append(btn, pop);
+  host.textContent = "";
+  host.appendChild(wrap);
+  let items = [], active = -1;
+  const label = () => {
+    const v = opts.value();
+    btn.textContent = "";
+    const name = document.createElement("span"); name.className = "pickname";
+    name.textContent = v ? (v.nova ? t("nova: %1", [v.nome]) : v.nome) : t("escolher ideia…");
+    const caret = document.createElement("span"); caret.className = "pickcaret"; caret.textContent = "▾";
+    btn.append(name, caret);
+    btn.disabled = !!(opts.disabled && opts.disabled());
+  };
+  const render = () => {
+    items = BC.pickerItems({ temas: st.temas || [], recentes: st.recentes || [], query: q.value, filter: FZ ? FZ.filter : undefined });
+    if (active >= items.length) active = items.length - 1;
+    if (active < 0 && items.length) active = 0;
+    ul.textContent = "";
+    let lastKind = "";
+    items.forEach((it, i) => {
+      const grp = it.kind === "recent" ? t("Recentes") : it.kind === "all" ? t("Todas as ideias") : "";
+      if (grp && it.kind !== lastKind) {
+        const h = document.createElement("li"); h.className = "pickgrp"; h.setAttribute("role", "presentation"); h.textContent = grp;
+        ul.appendChild(h);
+      }
+      lastKind = it.kind;
+      const li = document.createElement("li");
+      li.className = "pickit" + (it.kind === "new" ? " new" : "");
+      li.setAttribute("role", "option");
+      li.id = "pk-" + Math.random().toString(36).slice(2);
+      li.setAttribute("aria-selected", String(i === active));
+      li.textContent = it.kind === "new" ? t("+ nova ideia «%1»", [it.nome]) : it.nome;
+      li.addEventListener("mousedown", (e) => { e.preventDefault(); choose(i); });
+      ul.appendChild(li);
+      if (i === active) { q.setAttribute("aria-activedescendant", li.id); li.scrollIntoView({ block: "nearest" }); }
+    });
+    if (!items.length) {
+      const li = document.createElement("li"); li.className = "pickgrp"; li.textContent = t("digite o nome de uma ideia");
+      ul.appendChild(li);
+    }
+  };
+  const close = () => {
+    pop.hidden = true; btn.setAttribute("aria-expanded", "false");
+    if (openPicker === api) openPicker = null;
+  };
+  const choose = (i) => {
+    const it = items[i];
+    if (!it) return;
+    close();
+    opts.onPick(it.kind === "new" ? { slug: "", nome: it.nome, nova: true } : { slug: it.slug, nome: it.nome, nova: false });
+    label();
+    btn.focus();
+  };
+  const openIt = () => {
+    if (openPicker && openPicker !== api) openPicker.close();
+    openPicker = api;
+    q.value = ""; active = -1;
+    pop.hidden = false; btn.setAttribute("aria-expanded", "true");
+    render(); q.focus();
+  };
+  btn.addEventListener("click", () => (pop.hidden ? openIt() : close()));
+  q.addEventListener("input", () => { active = 0; render(); });
+  q.addEventListener("keydown", (e) => {
+    const r = BC.pickerKey(active, e.key, items.length);
+    if (r.action === "none") return;
+    e.preventDefault();
+    // Esc closes the LIST, not the whole panel
+    e.stopPropagation();
+    if (r.action === "move") { active = r.index; render(); }
+    else if (r.action === "pick") choose(r.index);
+    else if (r.action === "close") { close(); btn.focus(); }
+  });
+  const api = { close, label, isOpen: () => !pop.hidden };
+  label();
+  return api;
 }
-$("bTema").addEventListener("change", () => {
-  const nova = $("bTema").value === NOVA;
-  $("bNovaIdeia").hidden = !nova;
-  if (nova) { $("bNovaIdeia").focus(); return; }
-  pickTema($("bTema").value);
+
+const mainPicker = makePicker($("bDest"), {
+  value: () => (st.rec !== "idle" && st.tema ? { slug: st.tema, nome: temaNome(st.tema), nova: false } : currentDest()),
+  // during a recording the destination is the meeting's: changing it would
+  // promise a move that does not happen
+  disabled: () => st.rec !== "idle",
+  onPick: (d) => {
+    dest = d;
+    if (!d.nova) send("set-tema", { tema: d.slug });
+    paint();
+  },
 });
-$("bNovaIdeia").addEventListener("keydown", (e) => {
-  if (e.key === "Enter") { e.preventDefault(); $("bGravar").click(); }
-});
-function isNova() {
-  return temaMode === "nova" || (temaMode === "list" && $("bTema").value === NOVA);
-}
+
 $("bGravar").addEventListener("click", () => {
-  const tema = chosenTema();
-  if (!tema) { $("bAviso").textContent = t("escolha ou nomeie uma ideia"); return; }
+  const d = currentDest();
+  if (!d) { $("bAviso").textContent = t("escolha ou nomeie uma ideia"); return; }
   $("bAviso").textContent = "";
-  send("start", { tema, nova: isNova() });
+  send("start", { tema: destArg(d), nova: !!d.nova });
+  if (d.nova) dest = null; // created now; the main window makes it the destino
 });
 $("bPausar").addEventListener("click", () => send("pause"));
 $("bRetomar").addEventListener("click", () => send("resume"));
 $("bEncerrar").addEventListener("click", () => send("stop"));
 $("bNova").addEventListener("click", () => {
-  const tema = chosenTema();
-  if (!tema) { $("bAviso").textContent = t("escolha ou nomeie uma ideia"); return; }
-  send("new", { tema, nova: isNova() });
+  const d = currentDest();
+  if (!d) { $("bAviso").textContent = t("escolha ou nomeie uma ideia"); return; }
+  send("new", { tema: destArg(d), nova: !!d.nova });
+  if (d.nova) dest = null;
 });
 $("bAbrir").addEventListener("click", () => send("open"));
 
@@ -195,61 +296,16 @@ function paintHead(b) {
   const label = st.rec === "recording" ? t("gravando") : st.rec === "paused" ? t("pausado")
     : st.rec === "starting" ? t("iniciando…") : st.rec === "stopping" ? t("encerrando…") : t("pronto para gravar");
   $("bStatusText").textContent = label;
-  const temaNome = (slug) => ((st.temas || []).find((x) => x.slug === slug) || {}).nome || slug;
+  const d = currentDest();
   $("bTitle").textContent = st.rec !== "idle"
     ? (st.titulo || t("Reunião")) + (st.tema ? " · " + temaNome(st.tema) : "")
-    : (chosenTema() ? t("em %1", [temaNome(chosenTema())]) : "Loro");
+    : (d ? t("em %1", [d.nome]) : "Loro");
   $("bTime").textContent = b.time || "";
 }
 
 function paintTemas() {
-  const box = $("bTemaChips");
-  const sel = $("bTema");
-  const busy = st.rec !== "idle";
-  const current = busy ? st.tema : chosenTema();
-  // the chips: the current one first, then the others the main window lists
-  const temas = st.temas || [];
-  const order = [];
-  if (current && temas.some((x) => x.slug === current)) order.push(current);
-  for (const x of temas) if (order.length < 4 && !order.includes(x.slug)) order.push(x.slug);
-  box.textContent = "";
-  for (const slug of order) {
-    const x = temas.find((y) => y.slug === slug);
-    const b = document.createElement("button");
-    b.className = "chip"; b.textContent = (x && (x.nome || x.slug)) || slug; b.title = b.textContent;
-    b.setAttribute("aria-pressed", String(slug === current && temaMode === "chips"));
-    b.disabled = busy;
-    b.addEventListener("click", () => pickTema(slug));
-    box.appendChild(b);
-  }
-  const more = document.createElement("button");
-  more.className = "chip"; more.textContent = temas.length > order.length ? t("outra…") : t("+ nova ideia…");
-  more.disabled = busy;
-  more.setAttribute("aria-pressed", String(temaMode !== "chips"));
-  more.addEventListener("click", () => {
-    temaMode = temas.length > order.length ? "list" : "nova";
-    paint();
-    if (temaMode === "nova") $("bNovaIdeia").focus();
-  });
-  box.appendChild(more);
-  if (!temas.length && temaMode === "chips") temaMode = "nova";
-  // the full list, when asked for
-  if (sel !== document.activeElement) {
-    const keep = sel.value;
-    sel.textContent = "";
-    for (const x of temas) {
-      const o = document.createElement("option");
-      o.value = x.slug; o.textContent = x.nome || x.slug;
-      sel.appendChild(o);
-    }
-    const n = document.createElement("option");
-    n.value = NOVA; n.textContent = t("+ nova ideia…");
-    sel.appendChild(n);
-    if (keep && [...sel.options].some((o) => o.value === keep)) sel.value = keep;
-    else if (current) sel.value = current;
-  }
-  sel.hidden = busy || temaMode !== "list";
-  $("bNovaIdeia").hidden = busy || !(temaMode === "nova" || (temaMode === "list" && sel.value === NOVA));
+  // a list the person is typing in is not repainted under the cursor
+  if (!mainPicker.isOpen()) mainPicker.label();
 }
 
 function paintControls() {
@@ -297,7 +353,7 @@ function eventRow(e, now) {
   head.setAttribute("aria-expanded", String(openEv === e.id));
   const h = document.createElement("span"); h.className = "hora"; h.textContent = hhmm(e.inicioMs);
   const tit = document.createElement("span"); tit.className = "tit";
-  tit.textContent = e.titulo || t("(sem título)"); tit.title = tit.textContent;
+  tit.textContent = e.titulo || t("(sem título)");
   head.append(h, tit);
   if (s.kind === "agora") { const m = document.createElement("span"); m.className = "mark"; m.textContent = t("agora"); head.appendChild(m); }
   if (e.agendada) { const m = document.createElement("span"); m.className = "mark"; m.textContent = "● " + t("gravar"); head.appendChild(m); }
@@ -313,33 +369,31 @@ function eventRow(e, now) {
     + (e.comConvidados ? t("com convidados") : t("sem convidados"));
   det.appendChild(meta);
   if (s.kind !== "passou") {
-    // the destination for THIS event
-    const sel = document.createElement("select");
-    sel.setAttribute("aria-label", t("onde salvar"));
-    for (const x of st.temas || []) {
-      const o = document.createElement("option"); o.value = x.slug; o.textContent = x.nome || x.slug; sel.appendChild(o);
-    }
-    const want = temaEv[e.id] || e.tema || chosenTema();
-    if (want && [...sel.options].some((o) => o.value === want)) sel.value = want;
-    sel.addEventListener("change", () => {
-      temaEv[e.id] = sel.value;
-      if (e.agendada) send("schedule", { id: e.id, on: true, tema: sel.value });
+    // the destination for THIS event: the same picker as the Gravação tab
+    const host = document.createElement("div");
+    det.appendChild(host);
+    const evDest = () => temaEv[e.id] || (e.tema ? { slug: e.tema, nome: temaNome(e.tema), nova: false } : currentDest());
+    makePicker(host, {
+      value: evDest,
+      onPick: (d) => {
+        temaEv[e.id] = d;
+        if (e.agendada) send("schedule", { id: e.id, on: true, tema: destArg(d), nova: !!d.nova });
+      },
     });
-    det.appendChild(sel);
     const lab = document.createElement("label");
     const cb = document.createElement("input");
     cb.type = "checkbox"; cb.checked = !!e.agendada;
     cb.addEventListener("change", () => {
-      const tema = sel.value || chosenTema();
-      if (cb.checked && !tema) { cb.checked = false; $("bAviso").textContent = t("escolha ou nomeie uma ideia"); return; }
-      send("schedule", { id: e.id, on: cb.checked, tema });
+      const d = evDest();
+      if (cb.checked && !d) { cb.checked = false; $("bAviso").textContent = t("escolha ou nomeie uma ideia"); return; }
+      send("schedule", { id: e.id, on: cb.checked, tema: destArg(d), nova: !!(d && d.nova) });
     });
     lab.append(cb, document.createTextNode(t("Gravar quando começar")));
     det.appendChild(lab);
     if (s.kind === "agora" && st.rec === "idle") {
       const now2 = document.createElement("button");
       now2.className = "btn primary"; now2.textContent = t("Gravar agora");
-      now2.addEventListener("click", () => send("record-now", { id: e.id, tema: sel.value || chosenTema() }));
+      now2.addEventListener("click", () => { const d = evDest(); send("record-now", { id: e.id, tema: destArg(d), nova: !!(d && d.nova) }); });
       const row = document.createElement("div"); row.className = "row"; row.appendChild(now2);
       det.appendChild(row);
     }
@@ -439,7 +493,7 @@ function addMsg(kind, text) {
 function renderAnswer(el, text) {
   el.innerHTML = BC.mdLite(text);
   const c = document.createElement("button");
-  c.className = "copy"; c.textContent = "⧉"; c.title = t("copiar"); c.setAttribute("aria-label", t("copiar"));
+  c.className = "copy"; c.textContent = "⧉"; c.setAttribute("aria-label", t("copiar"));
   c.addEventListener("click", () => {
     try { navigator.clipboard.writeText(text); c.textContent = "✓"; setTimeout(() => (c.textContent = "⧉"), 1200); } catch (_) {}
   });
