@@ -160,6 +160,30 @@ Typing `/` in the bubble composer opens a completion list of the owner's skills 
 - **Steps aside with the main window.** While the main window has focus, the bubble is hidden; when it loses focus (another app, or the window is closed to the tray) the bubble comes back. This is NOT the person's "hidden" (`balao.visivel` is untouched); it is `balao.ocultarComJanela`, on by default, with a checkbox in Settings. "Abrir no Loro" folds the panel first, so the bubble returns as the icon.
 - **Hide from the bubble itself.** The panel's footer has "Ocultar balão": it sets `visivel: false` (the same as the Settings checkbox). It comes back from the menu bar (the tray item "Mostrar / ocultar balão"), or from Loro: ⌘K "Mostrar / ocultar balão", the bubble button on the recording bar, or Settings. An explicit show shows it right away, even over the main window; it steps aside again the next time that window takes focus.
 
+## §13 The parrot walks while recording (owner, 2026-11-19)
+
+"quando ele estiver em gravação, poderia fazer o loro se movimentar no bubble, como se tivesse andando."
+
+This amends §2's "the icon never animates", by the owner who asked for that rule. While **recording**, the parrot in the bubble walks in place: the two legs swing and the body bobs (0.7 s cycle). Paused, starting, stopping or idle, it stands still. What §2 was about still holds: **nothing blinks** — the red dot and the pause badge stay steady, and no opacity or colour changes on a timer. `prefers-reduced-motion` turns the walk off. To animate, the bubble draws the parrot as inline SVG (`#bird`, the same drawing as `icons/parrot-src.svg`) instead of the PNG.
+
+## §14 Random tricks while recording (owner, 2026-11-19)
+
+"faz ele pular e abrir as asas de vez em quando, ou se mexer a ponto de sumir. Ter vários movimentos diferentes e aleatórios."
+
+On top of the walk (§13), every 1 to 4.5 seconds of recording the parrot does one trick, drawn at random and never the same twice in a row: **jump** (with the wings open), **flap**, **exit** (walks out of the icon and comes back from the other side), **flip** (turns around for a moment), **spin** (a somersault), **peck**, **fly** (takes off flapping, leaves through the top and lands back from the other side) and **talk** (the beak moves and a small speech balloon pops up beside him). Each is one finite CSS animation behind a class on `#icon` (`t-<name>`); `bubble.js` only draws the next one and clears it. They stop with the recording, and `prefers-reduced-motion` turns all of it off. The red dot still never moves or blinks.
+
+## §15 The parrot inside the main window (owner, 2026-11-19)
+
+"faz esse de dentro fazer os truques também, enquanto grava" — and, in the dark theme, the panel grey around it instead of the cream square.
+
+`src/parrot.js` replaces every `<img src="parrot.png">` of the main window with the same inline SVG the bubble draws (`.parrotbox`, styles in `style.css`). While recording and not paused it walks and does the same random tricks (§13, §14), driven from `paintRecordingChrome`. Light theme: the cream tile. Dark theme: the tile is `--panel` and the beak and legs go light. The drawing and its keyframes now exist twice (bubble.html and style.css/parrot.js): the bubble is a separate window with its own CSS, and keeping it self-contained was preferred to a shared file for now.
+
+## §16 Marking the live talk from the bubble (owner, 2026-11-19)
+
+"no balão, deve permitir grifar uma palavra e aparecer as opções. Se eu comentar, isso deve ser considerado na análise, ou criado um to-do depois."
+
+Selecting a passage inside one line of the bubble's live talk shows three options under it: **Grifar**, **Comentar** and **Tarefa**. The bubble sends `annotate` with the quote; the main window writes it with `brain_annotation_add` into the running meeting's `meeting.anotacoes.json` — the same sidecar and shape as the main window's highlights (ADR-0007), so the mark also shows in the living tab. A to-do is an annotation with `tipo: "tarefa"` and a comment `tarefa: <text>` (the passage itself when left empty). Loro only stores it (BR-9): whoever analyses the meeting afterwards — the owner's agenda loop — reads the sidecar, weighs highlights and comments, and turns `tarefa` annotations into tasks. While a passage is being marked the live talk is not repainted, so the selection survives new lines.
+
 ## Explicitly NOT done
 
 - Loro still does not read the calendar, does not know who attends, and does not write the agenda file.

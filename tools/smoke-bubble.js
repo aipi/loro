@@ -127,14 +127,14 @@ const DRIVER = `
   await wait(300);
 
   await step("boot", async () => {
-    if (!q("#icon img")) throw new Error("sem o ícone");
-    if (!/loro-icon\\.png$/.test(q("#icon img").src)) throw new Error("o ícone não é o do app: " + q("#icon img").src);
+    if (!q("#icon #bird")) throw new Error("sem o ícone");
     if (!S.sent.some((c) => c.cmd === "hello")) throw new Error("o balão não pediu o estado à janela principal");
     if (vis(q("#panel"))) throw new Error("o painel nasce aberto");
     const r = q("#icon").getBoundingClientRect();
     if (Math.round(r.width) !== 32 || Math.round(r.height) !== 32) throw new Error("o ícone padrão não tem 32pt: " + r.width + "x" + r.height);
-    // nítido: o PNG tem pelo menos o dobro do maior tamanho (64 pt × 2)
-    if (q("#icon img").naturalWidth < 128) throw new Error("ícone de baixa resolução: " + q("#icon img").naturalWidth);
+    // nítido em qualquer tamanho: é vetor, e ocupa o botão inteiro
+    const br0 = q("#bird").getBoundingClientRect();
+    if (Math.round(br0.width) !== 32) throw new Error("o papagaio não ocupa o ícone: " + br0.width);
   });
 
   await step("ocioso-sem-selo", async () => {
@@ -156,7 +156,11 @@ const DRIVER = `
     // NÃO PISCA: medido, não lido do CSS — duas leituras com 1,3 s entre elas
     const look = () => { const cs = getComputedStyle(b); return [cs.backgroundColor, cs.opacity, cs.visibility, cs.display, cs.transform].join("|"); };
     const a1 = look();
-    for (const el of [b, q("#icon"), q("#icon img")]) {
+    // §13: gravando, as pernas andam — e SÓ elas e o corpo; o selo e o botão não
+    for (const el of [q("#bird .leg.a"), q("#bird .leg.b"), q("#bird .bob")]) {
+      if (!/^walk-/.test(getComputedStyle(el).animationName)) throw new Error("gravando e o papagaio não anda: " + el.getAttribute("class"));
+    }
+    for (const el of [b, q("#icon"), q("#bird")]) {
       const cs = getComputedStyle(el);
       if (cs.animationName !== "none") throw new Error("animação em " + (el.id || el.tagName) + ": " + cs.animationName);
       if (cs.transitionDuration !== "0s") throw new Error("transição em " + (el.id || el.tagName) + ": " + cs.transitionDuration);
@@ -169,6 +173,7 @@ const DRIVER = `
     state({ rec: "paused", meeting: true, startedAt: NOW - 65000, pauseStart: NOW - 5000, tema: "frota-2026" });
     await wait(50);
     if (!q("#badge").classList.contains("pause")) throw new Error("pausado sem o selo de pausa");
+    if (getComputedStyle(q("#bird .leg.a")).animationName !== "none") throw new Error("pausado e o papagaio continua andando");
   });
 
   await step("clique-abre", async () => {

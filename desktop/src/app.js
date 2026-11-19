@@ -1867,6 +1867,27 @@ function isoLocal(d) {
   return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) + "T" + p(d.getHours()) + ":" + p(d.getMinutes())
     + ":" + p(d.getSeconds()) + (off >= 0 ? "+" : "-") + p(Math.trunc(off / 60)) + ":" + p(off % 60);
 }
+// ADR-0041 §16 — um trecho marcado no balão vira anotação da reunião em curso: o
+// mesmo `.anotacoes.json` dos grifos da janela (ADR-0007). `tipo: "tarefa"` é o
+// pedido de to-do que o loop da agenda lê depois; o Loro só guarda.
+async function bubbleAnnotate(c) {
+  const quote = String(c.quote || "").trim();
+  if (!quote) return;
+  if (!meeting.active || !meeting.livingRel) { bubble.aviso = "só dá para anotar durante uma reunião"; return; }
+  const tarefa = c.tipo === "tarefa";
+  const texto = String(c.comentario || "").trim();
+  const anotacao = {
+    tipo: tarefa ? "tarefa" : "grifo",
+    anchor: { quote, prefix: "", suffix: "" },
+    comentarios: texto || tarefa ? [{ texto: tarefa ? "tarefa: " + (texto || quote) : texto }] : [],
+  };
+  try {
+    await invoke("brain_annotation_add", { rel: meeting.livingRel, anotacao });
+    bubble.aviso = tarefa ? "tarefa anotada" : texto ? "comentário anotado" : "trecho grifado";
+    // a aba viva, se aberta, mostra a marca
+    if (currentRel() === meeting.livingRel) decorateAnnotations(meeting.livingRel);
+  } catch (e) { bubble.aviso = tErr(String(e)); clog("bubble annotate error: " + e); }
+}
 async function tarefaAcao(id, acao) {
   if (!id || !/^(concluir|reabrir)$/.test(acao)) return;
   try {
@@ -2048,6 +2069,7 @@ async function onBubbleCmd(p) {
       }
       case "keep": agenda.prompt = null; break;
       case "tarefa": await tarefaAcao(String(c.id || ""), String(c.acao || "")); break;
+      case "annotate": await bubbleAnnotate(c); break;
       case "record-now": {
         // «Gravar agora» num evento que está acontecendo: como uma agendada —
         // título do evento, encerra no fim dele, fecha calada
@@ -7070,9 +7092,11 @@ function paintMeetingSurface(id, raw, manifest, status, artefatos, rel, stale) {
 // visualizar isso era texto cinza igual ao resto: quem falou sumia. Aqui o selo
 // ganha a mesma cor que tem ao vivo (você = teal, os demais = âmbar).
 // Roda sobre HTML JÁ escapado por mdRender, então o casamento é seguro.
-// `h:mm:ss` também: um dia gravado (ADR-0038 §3) passa da primeira hora.
+// `h:mm:ss` também: um dia gravado (ADR-0038 §3) passa da primeira hora. E os
+// minutos podem ter três dígitos: antes da ADR-0038 uma gravação longa escrevia
+// `[100:00 · você]`, e do minuto cem em diante a fala perdia a cor (dono, 2026-11-19).
 function colorSpeakers(html) {
-  return html.replace(/\[(\d{1,2}(?::\d{2}){1,2})\s*·\s*([^\]<]{1,24})\]/g, (m, ts, who) => {
+  return html.replace(/\[(\d{1,4}(?::\d{2}){1,2})\s*·\s*([^\]<]{1,24})\]/g, (m, ts, who) => {
     const me = /^(voc[e\u00ea]|you|eu)$/i.test(who.trim());
     return `<span class="mtg-src${me ? " me" : ""}">${ts} \u00b7 ${who}</span>`;
   });
@@ -12877,6 +12901,8 @@ function paintRecordingChrome() {
   // parado é o estado normal: sem gravação, um tick não toca no DOM
   if (!on && !recChromeWasOn) return;
   recChromeWasOn = on;
+  // ADR-0041 §15 — gravando (e não pausado), o papagaio da janela anda e faz truques
+  if (window.LoroParrot) LoroParrot.setRecording(on && !state.paused);
   paintRecControl();
   el.toggle.classList.toggle("recording", on);
   const pill = $("headRec");

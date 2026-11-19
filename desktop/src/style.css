@@ -9,6 +9,8 @@
    são QUENTES (#211e19), não o cinza-frio anterior. */
 :root {
   color-scheme: light;
+  /* o papagaio (ADR-0041 §15): o fundo do logo, as pernas e o bico */
+  --parrot-bg: #f6efe0; --parrot-leg: #8a8f98; --parrot-beak: #2a2a30;
   /* papel e tinta (claro) */
   --paper: #fbfaf6;
   --panel: #ffffff;
@@ -87,6 +89,7 @@
 }
 :root[data-theme="dark"] {
   color-scheme: dark;
+  --parrot-bg: #2a2620; --parrot-leg: #b7bcc6; --parrot-beak: #efe6cf;
   --paper: #211e19;
   --panel: #2a2620;
   --side: #26231d;
@@ -3550,3 +3553,71 @@ button.refitem {
    nomes em mono (os spans corriam num parágrafo só, colados) */
 .plugbrings { display: flex; flex-direction: column; gap: 4px; font: 11.5px/1.5 var(--sans); color: var(--ink2); }
 .plugbrings .loopwhen { color: var(--ink3); }
+
+/* ---- o Adalto dentro da janela (parrot.js troca cada <img src="parrot.png"> por
+   este desenho): o mesmo do balão, para andar e fazer truques enquanto grava
+   (ADR-0041 §13–§15). No tema escuro o fundo é o do painel e o bico clareia. */
+.parrotbox { display: inline-block; flex: none; line-height: 0; overflow: hidden; border-radius: 23%; }
+.parrotbox svg { width: 100%; height: 100%; display: block; pointer-events: none; border-radius: 23%; background: var(--parrot-bg); }
+.parrotbox svg .legs { stroke: var(--parrot-leg); } .parrotbox svg .beak { fill: var(--parrot-beak); }
+.parrotbox svg .leg { transform-box: view-box; }
+.parrotbox svg .leg.a { transform-origin: 45px 75px; transform: rotate(18deg); }
+.parrotbox svg .leg.b { transform-origin: 54px 73px; transform: rotate(-28deg); }
+/* ADR-0041 §13 — gravando, ele ANDA (dono, 2026-11-19). Só as pernas e o
+   corpo: o selo vermelho continua parado, e nada pisca. Pausado, ele para. */
+@keyframes walk-a { 0%, 100% { transform: rotate(18deg); } 50% { transform: rotate(-28deg); } }
+@keyframes walk-b { 0%, 100% { transform: rotate(-28deg); } 50% { transform: rotate(18deg); } }
+@keyframes walk-bob { 0%, 50%, 100% { transform: translateY(0); } 25%, 75% { transform: translateY(-1.6px); } }
+.parrotbox.walk svg .leg.a { animation: walk-a 0.7s ease-in-out infinite; }
+.parrotbox.walk svg .leg.b { animation: walk-b 0.7s ease-in-out infinite; }
+.parrotbox.walk svg .bob { animation: walk-bob 0.7s ease-in-out infinite; }
+/* ADR-0041 §14 — de vez em quando, um truque sorteado (bubble.js): pula, abre
+   as asas, sai andando e volta, vira, dá uma cambalhota, cisca. Só gravando. */
+.parrotbox svg .actor, .parrotbox svg .wing { transform-box: view-box; }
+.parrotbox svg .actor { transform-origin: 47px 55px; }
+.parrotbox svg .wing { transform-origin: 42px 42px; }
+@keyframes t-jump { 0%, 100% { transform: translateY(0); } 14% { transform: translateY(3px); } 45% { transform: translateY(-15px); } 72% { transform: translateY(0); } 84% { transform: translateY(-5px); } }
+@keyframes t-flap { 0%, 100% { transform: rotate(0deg); } 20%, 60% { transform: rotate(105deg); } 40%, 80% { transform: rotate(62deg); } }
+@keyframes t-flap-far { 0%, 100% { transform: rotate(0deg); } 20%, 60% { transform: rotate(138deg); } 40%, 80% { transform: rotate(90deg); } }
+@keyframes t-exit { 0% { transform: translateX(0); opacity: 1; } 35% { transform: translateX(125px); opacity: 1; } 36% { transform: translateX(125px); opacity: 0; } 54% { transform: translateX(-125px); opacity: 0; } 55% { transform: translateX(-125px); opacity: 1; } 100% { transform: translateX(0); opacity: 1; } }
+@keyframes t-flip { 0%, 100% { transform: scaleX(1); } 8%, 92% { transform: scaleX(-1); } }
+@keyframes t-spin { 0% { transform: translateY(0) rotate(0deg); } 50% { transform: translateY(-14px) rotate(-180deg); } 100% { transform: translateY(0) rotate(-360deg); } }
+@keyframes t-peck { 0%, 100% { transform: rotate(0deg); } 25%, 65% { transform: rotate(20deg); } 45% { transform: rotate(8deg); } }
+@keyframes t-fly { 0% { transform: translate(0, 0) rotate(0deg); opacity: 1; } 12% { transform: translate(0, -10px) rotate(-12deg); opacity: 1; } 40% { transform: translate(75px, -115px) rotate(-18deg); opacity: 1; } 41% { transform: translate(75px, -115px); opacity: 0; } 57% { transform: translate(-85px, -115px); opacity: 0; } 58% { transform: translate(-85px, -115px) rotate(12deg); opacity: 1; } 90% { transform: translate(0, -8px) rotate(6deg); opacity: 1; } 100% { transform: translate(0, 0) rotate(0deg); opacity: 1; } }
+@keyframes t-wing { 0%, 100% { transform: rotate(55deg); } 50% { transform: rotate(118deg); } }
+@keyframes t-wing-far { 0%, 100% { transform: rotate(85deg); } 50% { transform: rotate(150deg); } }
+.parrotbox.walk.t-fly svg .actor { animation: t-fly 4.4s ease-in-out 1; }
+.parrotbox.walk.t-fly svg .wing.near { animation: t-wing 0.4s ease-in-out 11; }
+.parrotbox.walk.t-fly svg .wing.far { animation: t-wing-far 0.4s ease-in-out 11; }
+.parrotbox svg .say { opacity: 0; transform-box: view-box; transform-origin: 42px 30px; }
+.parrotbox svg .beak { transform-box: view-box; transform-origin: 72px 25px; }
+@keyframes t-say { 0% { opacity: 0; transform: scale(0.3); } 12% { opacity: 1; transform: scale(1.08); } 18%, 85% { opacity: 1; transform: scale(1); } 100% { opacity: 0; transform: scale(0.6); } }
+@keyframes t-beak { 0%, 100% { transform: rotate(0deg); } 50% { transform: rotate(-11deg); } }
+.parrotbox.walk.t-talk svg .say { animation: t-say 2.4s ease-in-out 1; }
+.parrotbox.walk.t-talk svg .beak { animation: t-beak 0.3s ease-in-out 7; }
+.parrotbox.walk.t-jump svg .actor { animation: t-jump 1.1s ease-in-out 1; }
+.parrotbox.walk.t-jump svg .wing.near, .parrotbox.walk.t-flap svg .wing.near { animation: t-flap 1.1s ease-in-out 1; }
+.parrotbox.walk.t-jump svg .wing.far, .parrotbox.walk.t-flap svg .wing.far { animation: t-flap-far 1.1s ease-in-out 1; }
+.parrotbox.walk.t-exit svg .actor { animation: t-exit 4s linear 1; }
+.parrotbox.walk.t-flip svg .actor { animation: t-flip 2.4s ease-in-out 1; }
+.parrotbox.walk.t-spin svg .actor { animation: t-spin 0.9s ease-in-out 1; }
+.parrotbox.walk.t-peck svg .actor { transform-origin: 52px 90px; animation: t-peck 1.4s ease-in-out 1; }
+@media (prefers-reduced-motion: reduce) {
+  .parrotbox.walk svg .leg.a,
+  .parrotbox.walk svg .leg.b,
+  .parrotbox.walk svg .bob,
+  .parrotbox.walk.t-fly svg .actor,
+  .parrotbox.walk.t-fly svg .wing.near,
+  .parrotbox.walk.t-fly svg .wing.far,
+  .parrotbox.walk.t-talk svg .say,
+  .parrotbox.walk.t-talk svg .beak,
+  .parrotbox.walk.t-jump svg .actor,
+  .parrotbox.walk.t-jump svg .wing.near,
+  .parrotbox.walk.t-flap svg .wing.near,
+  .parrotbox.walk.t-jump svg .wing.far,
+  .parrotbox.walk.t-flap svg .wing.far,
+  .parrotbox.walk.t-exit svg .actor,
+  .parrotbox.walk.t-flip svg .actor,
+  .parrotbox.walk.t-spin svg .actor,
+  .parrotbox.walk.t-peck svg .actor { animation: none; }
+}

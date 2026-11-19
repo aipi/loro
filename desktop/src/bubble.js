@@ -293,11 +293,34 @@ function stateLine(b) {
   if (st.rec === "stopping") return t("encerrando…");
   return t("pronto para gravar");
 }
+// ADR-0041 §14 — while recording, every few seconds the parrot does one trick,
+// drawn at random and never the same twice in a row. The CSS owns the motion
+// (one finite animation per class); here is only the draw and the clock.
+const TRICKS = { jump: 1100, flap: 1100, exit: 4000, flip: 2400, spin: 900, peck: 1400, fly: 4400, talk: 2400 };
+let trickTimer = null, lastTrick = "";
+function clearTrick() { for (const k of Object.keys(TRICKS)) $("icon").classList.remove("t-" + k); }
+function nextTrick() {
+  const names = Object.keys(TRICKS).filter((k) => k !== lastTrick);
+  lastTrick = names[Math.floor(Math.random() * names.length)];
+  $("icon").classList.add("t-" + lastTrick);
+  trickTimer = setTimeout(() => { clearTrick(); armTrick(); }, TRICKS[lastTrick] + 80);
+}
+function armTrick() { trickTimer = setTimeout(nextTrick, 1200 + Math.random() * 3300); }
+function tricks(on) {
+  if (on === !!trickTimer) return;
+  if (on) { armTrick(); return; }
+  clearTimeout(trickTimer); trickTimer = null; clearTrick();
+}
+
 function paintBadge() {
   const b = BC.badge(st, Date.now());
   const badge = $("badge");
   badge.className = b.kind || "";
   badge.textContent = b.kind === "pause" ? "❚❚" : "";
+  // ADR-0041 §13 — recording: the parrot walks (collapsed or open). Paused,
+  // starting or idle: it stands still.
+  $("icon").classList.toggle("walk", st.rec === "recording");
+  tricks(st.rec === "recording");
   // the collapsed icon's tooltip: the state and the next meeting (refinamento 4)
   const next = LAG ? LAG.nextEvent((st.agenda && st.agenda.eventos) || [], scheduledMap(), Date.now()) : null;
   const tip = BC.tooltip(b.kind ? stateLine(b) : "Loro", next, hhmm,
@@ -335,8 +358,61 @@ function paintControls() {
   $("bAviso").textContent = st.aviso ? t(st.aviso) : "";
 }
 
+// ---- ADR-0041 §16: select a passage of the live talk → grifar / comentar / tarefa ----
+// The bubble only says WHAT was marked; the main window writes it beside the
+// meeting (the same `.anotacoes.json` the main window's highlights use).
+let selQuote = "", selMode = "";
+function selClose() {
+  selQuote = ""; selMode = "";
+  $("bSel").hidden = true; $("bSelRow").hidden = true; $("bSelIn").value = "";
+  paintTail();
+}
+function selSave(extra) {
+  if (!selQuote) return;
+  send("annotate", Object.assign({ quote: selQuote }, extra || {}));
+  const s = window.getSelection && window.getSelection();
+  if (s) s.removeAllRanges();
+  selClose();
+}
+function selAsk(mode) {
+  selMode = mode;
+  $("bSelRow").hidden = false;
+  $("bSelIn").placeholder = mode === "tarefa" ? t("o que fazer? (vazio = o próprio trecho)") : t("seu comentário");
+  $("bSelIn").focus();
+}
+function selCommit() {
+  const txt = $("bSelIn").value.trim();
+  if (selMode === "tarefa") selSave({ tipo: "tarefa", comentario: txt });
+  else if (txt) selSave({ comentario: txt });
+}
+$("bTail").addEventListener("mouseup", () => setTimeout(() => {
+  const s = window.getSelection && window.getSelection();
+  if (!s || s.isCollapsed || !s.rangeCount) return;
+  const line = (n) => { while (n && n.parentNode !== $("bTail")) n = n.parentNode; return n; };
+  const a = line(s.anchorNode), b = line(s.focusNode);
+  // one passage of ONE line: the quote has to be found again in the meeting's text
+  if (!a || a !== b) { $("bAviso").textContent = t("selecione um trecho dentro de uma fala"); return; }
+  const q = s.toString().replace(/\s+/g, " ").trim().slice(0, 400);
+  if (!q) return;
+  selQuote = q;
+  $("bSelQuote").textContent = "“" + q + "”";
+  $("bSelRow").hidden = true;
+  $("bSel").hidden = false;
+}, 0));
+$("bSelGrifar").addEventListener("click", () => selSave());
+$("bSelComentar").addEventListener("click", () => selAsk("comentario"));
+$("bSelTarefa").addEventListener("click", () => selAsk("tarefa"));
+$("bSelX").addEventListener("click", selClose);
+$("bSelOk").addEventListener("click", selCommit);
+$("bSelIn").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); selCommit(); }
+  else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); selClose(); }
+});
+
 function paintTail() {
   const box = $("bTail");
+  // a passage is being marked: repainting would drop the selection
+  if (selQuote) return;
   box.dataset.empty = st.rec === "idle" ? t("nada gravando") : t("aguardando fala…");
   const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 8;
   box.textContent = "";

@@ -99,16 +99,24 @@ test("ADR-0041 §2 — o tempo passa de m:ss para h:mm:ss depois da primeira hor
   assert.strictEqual(BC.formatElapsed(-5), "0:00");
 });
 
-test("ADR-0041 §2 — NADA pisca: sem animação no balão (pedido explícito do dono)", () => {
-  assert.doesNotMatch(HTML, /@keyframes|animation\s*:|animation-name/);
+test("ADR-0041 §2/§13 — NADA pisca; a única animação é o papagaio andando enquanto grava", () => {
+  // as únicas @keyframes são as do passo, e só rodam sob #icon.walk, no #bird
+  const frames = HTML.match(/@keyframes\s+[\w-]+/g) || [];
+  assert.deepStrictEqual(frames.map((f) => f.replace(/@keyframes\s+/, "")).sort(), ["t-beak", "t-exit", "t-flap", "t-flap-far", "t-flip", "t-fly", "t-jump", "t-peck", "t-say", "t-spin", "t-wing", "t-wing-far", "walk-a", "walk-b", "walk-bob"]);
+  const animadas = HTML.split("\n").filter((l) => /animation\s*:/.test(l));
+  for (const l of animadas) assert.match(l, /#icon\.walk(\.t-\w+)? #bird .*animation: (walk-(a|b|bob) 0\.7s|t-[\w-]+ [\d.]+s [\w-]+ \d+;|none)/, "animação fora do passo: " + l.trim());
+  // o selo e o botão não animam; pausado não tem regra de animação; movimento reduzido desliga o passo
+  assert.doesNotMatch(HTML, /#badge[^{]*\{[^}]*animation/);
+  assert.doesNotMatch(HTML, /body\.paused[^{]*\{[^}]*animation/);
+  assert.match(HTML, /prefers-reduced-motion: reduce\) \{ #icon\.walk #bird [^}]*animation: none/);
   assert.doesNotMatch(JS, /\.animate\(|setInterval\([^)]*(blink|pisca)/i);
   // o relógio troca de segundo em segundo, mas o ponto não troca de estado
   assert.doesNotMatch(JS, /classList\.toggle\("(on|blink|dim)"/);
 });
 
-test("ADR-0041 §2 — o balão é o ícone colorido do app, não o template monocromático da bandeja", () => {
-  assert.match(HTML, /src="loro-icon\.png"/);
-  assert.ok(fs.existsSync(path.join(SRC, "loro-icon.png")), "o ícone do app está no frontendDist");
+test("ADR-0041 §2/§13 — o balão é o papagaio colorido do app (desenhado no próprio HTML), não o template da bandeja", () => {
+  assert.match(HTML, /<svg id="bird"/);
+  assert.match(HTML, /class="leg a"[\s\S]*class="leg b"[\s\S]*class="bob"/);
   assert.doesNotMatch(HTML, /tray-on|parrot\.png/);
 });
 
@@ -366,4 +374,27 @@ test("ADR-0041 §11 — completar deixa «/nome » e o envio vai cru para o CLI"
   assert.match(JS, /invoke\("skills_list"\)/);
   assert.match(JS, /e\.key === "Tab" \|\| \(e\.key === "Enter" && !e\.shiftKey\)/);
   assert.match(fs.readFileSync(path.join(ROOT, "src", "lib.rs"), "utf8"), /skills::skills_list/);
+});
+
+test("ADR-0041 §16 — um trecho marcado no balão vira anotação da reunião (grifo, comentário ou tarefa)", () => {
+  assert.match(HTML, /id="bSel" hidden/);
+  assert.match(JS, /send\("annotate", Object\.assign\(\{ quote: selQuote \}/);
+  // marcando um trecho, a fala não é repintada (a seleção sobreviveria um tique só)
+  assert.match(JS, /function paintTail\(\) \{\n  const box = \$\("bTail"\);\n[^\n]*\n  if \(selQuote\) return;/);
+  const APP = fs.readFileSync(path.join(SRC, "app.js"), "utf8");
+  assert.match(APP, /case "annotate": await bubbleAnnotate\(c\); break;/);
+  assert.match(APP, /invoke\("brain_annotation_add", \{ rel: meeting\.livingRel, anotacao \}\)/);
+  assert.match(APP, /tipo: tarefa \? "tarefa" : "grifo"/);
+  // nada sai da máquina por aqui: o Loro só guarda; quem cria a tarefa é o loop
+  const fn = APP.slice(APP.indexOf("async function bubbleAnnotate"), APP.indexOf("async function tarefaAcao"));
+  assert.doesNotMatch(fn, /slack|fetch\(|http/i);
+});
+
+test("o selo de quem fala mantém a cor depois do minuto cem (gravações antigas: [100:00 · você])", () => {
+  const APP = fs.readFileSync(path.join(SRC, "app.js"), "utf8");
+  const src = APP.match(/function colorSpeakers\(html\) \{[\s\S]*?\n\}/)[0];
+  const colorSpeakers = new Function("return " + src)();
+  const out = colorSpeakers("[59:59 · você] a [100:00 · você] b [570:00 · sistema] c [1:40:00 · você] d");
+  assert.strictEqual((out.match(/class="mtg-src/g) || []).length, 4);
+  assert.strictEqual((out.match(/mtg-src me/g) || []).length, 3);
 });
