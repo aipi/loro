@@ -293,6 +293,25 @@ function stateLine(b) {
   if (st.rec === "stopping") return t("encerrando…");
   return t("pronto para gravar");
 }
+// ADR-0041 §14 — while recording, every few seconds the parrot does one trick,
+// drawn at random and never the same twice in a row. The CSS owns the motion
+// (one finite animation per class); here is only the draw and the clock.
+const TRICKS = { jump: 1100, flap: 1100, exit: 4000, flip: 2400, spin: 900, peck: 1400 };
+let trickTimer = null, lastTrick = "";
+function clearTrick() { for (const k of Object.keys(TRICKS)) $("icon").classList.remove("t-" + k); }
+function nextTrick() {
+  const names = Object.keys(TRICKS).filter((k) => k !== lastTrick);
+  lastTrick = names[Math.floor(Math.random() * names.length)];
+  $("icon").classList.add("t-" + lastTrick);
+  trickTimer = setTimeout(() => { clearTrick(); armTrick(); }, TRICKS[lastTrick] + 80);
+}
+function armTrick() { trickTimer = setTimeout(nextTrick, 4000 + Math.random() * 7000); }
+function tricks(on) {
+  if (on === !!trickTimer) return;
+  if (on) { armTrick(); return; }
+  clearTimeout(trickTimer); trickTimer = null; clearTrick();
+}
+
 function paintBadge() {
   const b = BC.badge(st, Date.now());
   const badge = $("badge");
@@ -301,6 +320,7 @@ function paintBadge() {
   // ADR-0041 §13 — recording: the parrot walks (collapsed or open). Paused,
   // starting or idle: it stands still.
   $("icon").classList.toggle("walk", st.rec === "recording");
+  tricks(st.rec === "recording");
   // the collapsed icon's tooltip: the state and the next meeting (refinamento 4)
   const next = LAG ? LAG.nextEvent((st.agenda && st.agenda.eventos) || [], scheduledMap(), Date.now()) : null;
   const tip = BC.tooltip(b.kind ? stateLine(b) : "Loro", next, hhmm,

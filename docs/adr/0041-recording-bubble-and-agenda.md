@@ -166,6 +166,12 @@ Typing `/` in the bubble composer opens a completion list of the owner's skills 
 
 This amends §2's "the icon never animates", by the owner who asked for that rule. While **recording**, the parrot in the bubble walks in place: the two legs swing and the body bobs (0.7 s cycle). Paused, starting, stopping or idle, it stands still. What §2 was about still holds: **nothing blinks** — the red dot and the pause badge stay steady, and no opacity or colour changes on a timer. `prefers-reduced-motion` turns the walk off. To animate, the bubble draws the parrot as inline SVG (`#bird`, the same drawing as `icons/parrot-src.svg`) instead of the PNG.
 
+## §14 Random tricks while recording (owner, 2026-11-19)
+
+"faz ele pular e abrir as asas de vez em quando, ou se mexer a ponto de sumir. Ter vários movimentos diferentes e aleatórios."
+
+On top of the walk (§13), every 4 to 11 seconds of recording the parrot does one trick, drawn at random and never the same twice in a row: **jump** (with the wings open), **flap**, **exit** (walks out of the icon and comes back from the other side), **flip** (turns around for a moment), **spin** (a somersault) and **peck**. Each is one finite CSS animation behind a class on `#icon` (`t-<name>`); `bubble.js` only draws the next one and clears it. They stop with the recording, and `prefers-reduced-motion` turns all of it off. The red dot still never moves or blinks.
+
 ## Explicitly NOT done
 
 - Loro still does not read the calendar, does not know who attends, and does not write the agenda file.
