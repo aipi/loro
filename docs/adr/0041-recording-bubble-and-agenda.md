@@ -170,7 +170,7 @@ This amends §2's "the icon never animates", by the owner who asked for that rul
 
 "faz ele pular e abrir as asas de vez em quando, ou se mexer a ponto de sumir. Ter vários movimentos diferentes e aleatórios."
 
-On top of the walk (§13), every 4 to 11 seconds of recording the parrot does one trick, drawn at random and never the same twice in a row: **jump** (with the wings open), **flap**, **exit** (walks out of the icon and comes back from the other side), **flip** (turns around for a moment), **spin** (a somersault) and **peck**. Each is one finite CSS animation behind a class on `#icon` (`t-<name>`); `bubble.js` only draws the next one and clears it. They stop with the recording, and `prefers-reduced-motion` turns all of it off. The red dot still never moves or blinks.
+On top of the walk (§13), every 4 to 11 seconds of recording the parrot does one trick, drawn at random and never the same twice in a row: **jump** (with the wings open), **flap**, **exit** (walks out of the icon and comes back from the other side), **flip** (turns around for a moment), **spin** (a somersault), **peck** and **fly** (takes off flapping, leaves through the top and lands back from the other side). Each is one finite CSS animation behind a class on `#icon` (`t-<name>`); `bubble.js` only draws the next one and clears it. They stop with the recording, and `prefers-reduced-motion` turns all of it off. The red dot still never moves or blinks.
 
 ## Explicitly NOT done
 

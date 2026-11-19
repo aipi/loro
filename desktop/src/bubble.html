@@ -62,6 +62,12 @@
       @keyframes t-flip { 0%, 100% { transform: scaleX(1); } 8%, 92% { transform: scaleX(-1); } }
       @keyframes t-spin { 0% { transform: translateY(0) rotate(0deg); } 50% { transform: translateY(-14px) rotate(-180deg); } 100% { transform: translateY(0) rotate(-360deg); } }
       @keyframes t-peck { 0%, 100% { transform: rotate(0deg); } 25%, 65% { transform: rotate(20deg); } 45% { transform: rotate(8deg); } }
+      @keyframes t-fly { 0% { transform: translate(0, 0) rotate(0deg); opacity: 1; } 12% { transform: translate(0, -10px) rotate(-12deg); opacity: 1; } 40% { transform: translate(75px, -115px) rotate(-18deg); opacity: 1; } 41% { transform: translate(75px, -115px); opacity: 0; } 57% { transform: translate(-85px, -115px); opacity: 0; } 58% { transform: translate(-85px, -115px) rotate(12deg); opacity: 1; } 90% { transform: translate(0, -8px) rotate(6deg); opacity: 1; } 100% { transform: translate(0, 0) rotate(0deg); opacity: 1; } }
+      @keyframes t-wing { 0%, 100% { transform: rotate(55deg); } 50% { transform: rotate(118deg); } }
+      @keyframes t-wing-far { 0%, 100% { transform: rotate(85deg); } 50% { transform: rotate(150deg); } }
+      #icon.walk.t-fly #bird .actor { animation: t-fly 4.4s ease-in-out 1; }
+      #icon.walk.t-fly #bird .wing.near { animation: t-wing 0.4s ease-in-out 11; }
+      #icon.walk.t-fly #bird .wing.far { animation: t-wing-far 0.4s ease-in-out 11; }
       #icon.walk.t-jump #bird .actor { animation: t-jump 1.1s ease-in-out 1; }
       #icon.walk.t-jump #bird .wing.near, #icon.walk.t-flap #bird .wing.near { animation: t-flap 1.1s ease-in-out 1; }
       #icon.walk.t-jump #bird .wing.far, #icon.walk.t-flap #bird .wing.far { animation: t-flap-far 1.1s ease-in-out 1; }

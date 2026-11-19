@@ -296,7 +296,7 @@ function stateLine(b) {
 // ADR-0041 §14 — while recording, every few seconds the parrot does one trick,
 // drawn at random and never the same twice in a row. The CSS owns the motion
 // (one finite animation per class); here is only the draw and the clock.
-const TRICKS = { jump: 1100, flap: 1100, exit: 4000, flip: 2400, spin: 900, peck: 1400 };
+const TRICKS = { jump: 1100, flap: 1100, exit: 4000, flip: 2400, spin: 900, peck: 1400, fly: 4400 };
 let trickTimer = null, lastTrick = "";
 function clearTrick() { for (const k of Object.keys(TRICKS)) $("icon").classList.remove("t-" + k); }
 function nextTrick() {
