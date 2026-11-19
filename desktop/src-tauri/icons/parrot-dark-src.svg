@@ -5,9 +5,10 @@
     <clipPath id="head"><circle cx="60" cy="29" r="15"/></clipPath>
   </defs>
 
-  <!-- tema escuro: sem fundo, bico e pernas claros -->
+  <!-- tema escuro: fundo no tom do terminal (#26231D), bico e pernas claros -->
+  <rect x="0" y="0" width="1024" height="1024" rx="232" fill="#26231D"/>
 
-  <g transform="scale(10.24) translate(50 50) scale(1.12) translate(-48.5 -54.5)">
+  <g transform="scale(10.24) translate(50 50) scale(.86) translate(-46 -54)">
     <!-- cauda (verde, ponta azul) -->
     <path d="M36 62 L9 90 Q6 95 12 94 L46 76 Z" fill="#1F7F3B"/>
     <path d="M30 72 L9 90 Q6 95 12 94 L36 81 Z" fill="#2D6BE0"/>
