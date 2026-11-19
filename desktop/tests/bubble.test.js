@@ -389,3 +389,12 @@ test("ADR-0041 §16 — um trecho marcado no balão vira anotação da reunião 
   const fn = APP.slice(APP.indexOf("async function bubbleAnnotate"), APP.indexOf("async function tarefaAcao"));
   assert.doesNotMatch(fn, /slack|fetch\(|http/i);
 });
+
+test("o selo de quem fala mantém a cor depois do minuto cem (gravações antigas: [100:00 · você])", () => {
+  const APP = fs.readFileSync(path.join(SRC, "app.js"), "utf8");
+  const src = APP.match(/function colorSpeakers\(html\) \{[\s\S]*?\n\}/)[0];
+  const colorSpeakers = new Function("return " + src)();
+  const out = colorSpeakers("[59:59 · você] a [100:00 · você] b [570:00 · sistema] c [1:40:00 · você] d");
+  assert.strictEqual((out.match(/class="mtg-src/g) || []).length, 4);
+  assert.strictEqual((out.match(/mtg-src me/g) || []).length, 3);
+});

@@ -7092,9 +7092,11 @@ function paintMeetingSurface(id, raw, manifest, status, artefatos, rel, stale) {
 // visualizar isso era texto cinza igual ao resto: quem falou sumia. Aqui o selo
 // ganha a mesma cor que tem ao vivo (você = teal, os demais = âmbar).
 // Roda sobre HTML JÁ escapado por mdRender, então o casamento é seguro.
-// `h:mm:ss` também: um dia gravado (ADR-0038 §3) passa da primeira hora.
+// `h:mm:ss` também: um dia gravado (ADR-0038 §3) passa da primeira hora. E os
+// minutos podem ter três dígitos: antes da ADR-0038 uma gravação longa escrevia
+// `[100:00 · você]`, e do minuto cem em diante a fala perdia a cor (dono, 2026-11-19).
 function colorSpeakers(html) {
-  return html.replace(/\[(\d{1,2}(?::\d{2}){1,2})\s*·\s*([^\]<]{1,24})\]/g, (m, ts, who) => {
+  return html.replace(/\[(\d{1,4}(?::\d{2}){1,2})\s*·\s*([^\]<]{1,24})\]/g, (m, ts, who) => {
     const me = /^(voc[e\u00ea]|you|eu)$/i.test(who.trim());
     return `<span class="mtg-src${me ? " me" : ""}">${ts} \u00b7 ${who}</span>`;
   });
