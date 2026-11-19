@@ -554,6 +554,7 @@ dependencies = [
 name = "desktop"
 version = "0.19.0"
 dependencies = [
+ "objc2",
  "portable-pty",
  "serde",
  "serde_json",

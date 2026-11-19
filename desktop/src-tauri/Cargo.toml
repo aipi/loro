@@ -23,6 +23,12 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
 portable-pty = "0.9.0"
 
+# ADR-0041 — the recording bubble sets its NSWindow collection behavior and level
+# (every Space, over fullscreen apps), which Tauri does not expose. objc2 is
+# already in the tree through Tauri on macOS: no new download.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+
 # Windows has no `ps`, and `wmic` was removed from Windows 11, so the terminal's
 # process tree is read straight from the ToolHelp snapshot API (ADR-0023, the
 # decision drafted as 0013). Already

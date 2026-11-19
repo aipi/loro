@@ -55,10 +55,37 @@ pub struct ChatState {
 }
 
 static CHAT: Mutex<Option<ChatState>> = Mutex::new(None);
+// ADR-0041 — the recording bubble has its OWN conversation: a question asked over
+// a call must not land in (or resume) the main window's chat, and the two may run
+// at the same time.
+static BUBBLE_CHAT: Mutex<Option<ChatState>> = Mutex::new(None);
+
+/// "bubble" → the bubble's conversation; anything else → the main chat.
+fn is_bubble(channel: &str) -> bool {
+    channel == "bubble"
+}
+
+/// The event prefix of a channel: `chat-delta`… or `bubble-chat-delta`….
+pub(crate) fn event_prefix(channel: &str) -> &'static str {
+    if is_bubble(channel) {
+        "bubble-chat"
+    } else {
+        "chat"
+    }
+}
+
+fn with_state_of<T>(channel: &str, f: impl FnOnce(&mut ChatState) -> T) -> T {
+    let slot = if is_bubble(channel) {
+        &BUBBLE_CHAT
+    } else {
+        &CHAT
+    };
+    let mut guard = slot.lock().expect("chat state poisoned");
+    f(guard.get_or_insert_with(ChatState::default))
+}
 
 fn with_state<T>(f: impl FnOnce(&mut ChatState) -> T) -> T {
-    let mut guard = CHAT.lock().expect("chat state poisoned");
-    f(guard.get_or_insert_with(ChatState::default))
+    with_state_of("chat", f)
 }
 
 #[derive(Deserialize)]
@@ -79,6 +106,9 @@ pub struct ChatSendInput {
     /// NEGA toda escrita porque não tem como perguntar.
     #[serde(default)]
     pub permission: String,
+    /// ADR-0041: "bubble" for the recording bubble's mini chat; empty = the main chat.
+    #[serde(default)]
+    pub channel: String,
 }
 
 // Só os modos que fazem sentido num chat não-interativo. `manual`/`plan` pedem
@@ -417,9 +447,13 @@ pub(crate) fn handle_stream_line(
 }
 
 #[tauri::command]
-pub fn chat_status() -> ChatStatus {
+pub fn chat_status(channel: Option<String>) -> ChatStatus {
+    status_of(channel.as_deref().unwrap_or(""))
+}
+
+fn status_of(channel: &str) -> ChatStatus {
     let agent = crate::active_agent();
-    with_state(|st| {
+    with_state_of(channel, |st| {
         // `try_wait` sem bloquear: um filho que já saiu não conta como rodando.
         let running = match st.child.as_mut() {
             Some(c) => matches!(c.try_wait(), Ok(None)),
@@ -439,8 +473,8 @@ pub fn chat_status() -> ChatStatus {
 // Matar sem colher deixa um zumbi por toda a vida do app: ao TIRAR o processo
 // do estado, quem cancela também desarma a thread leitora, que era quem faria o
 // wait(). Quem tira, colhe — e colhe FORA do mutex.
-fn kill_current_child() {
-    let child = with_state(|st| {
+fn kill_current_child(channel: &str) {
+    let child = with_state_of(channel, |st| {
         st.turn += 1; // o turno em curso deixa de ser o dono do slot
         st.child.take()
     });
@@ -453,13 +487,14 @@ fn kill_current_child() {
 /// A pessoa está usando o agente? Um ciclo de loop espera a vez em vez de
 /// cancelar a conversa de ninguém (ADR-0029 §4.10).
 pub(crate) fn agent_busy() -> bool {
-    chat_status().running
+    status_of("chat").running || status_of("bubble").running
 }
 
 #[tauri::command]
-pub fn chat_reset() {
-    kill_current_child();
-    with_state(|st| {
+pub fn chat_reset(channel: Option<String>) {
+    let ch = channel.unwrap_or_default();
+    kill_current_child(&ch);
+    with_state_of(&ch, |st| {
         st.session_id = None;
         st.session_dir = None;
     });
@@ -467,8 +502,8 @@ pub fn chat_reset() {
 }
 
 #[tauri::command]
-pub fn chat_cancel() {
-    kill_current_child();
+pub fn chat_cancel(channel: Option<String>) {
+    kill_current_child(&channel.unwrap_or_default());
     info!("chat turn cancelled");
 }
 
@@ -501,7 +536,9 @@ pub fn chat_send(app: AppHandle, input: ChatSendInput) -> Result<(), String> {
     if prompt.is_empty() {
         return Err("err.chat_empty_prompt".into());
     }
-    if chat_status().running {
+    let channel = input.channel.clone();
+    let ch = event_prefix(&channel);
+    if status_of(&channel).running {
         return Err("err.chat_busy".into());
     }
     let cfg = read_loro_config();
@@ -511,7 +548,7 @@ pub fn chat_send(app: AppHandle, input: ChatSendInput) -> Result<(), String> {
     let agent = crate::active_agent();
 
     // A sessão vale para o acervo em que nasceu (ver ChatState::session_dir).
-    let resume = with_state(|st| {
+    let resume = with_state_of(&channel, |st| {
         let other_project = st
             .session_dir
             .as_ref()
@@ -534,12 +571,20 @@ pub fn chat_send(app: AppHandle, input: ChatSendInput) -> Result<(), String> {
     cmd.args(&base_args);
     let claude = agent_is_claude(&agent);
     if claude {
+        // ADR-0042: the mode and the deny list come from «Permissões do Claude»
+        let perms = crate::agent_perms::read();
+        let surface = if is_bubble(&channel) {
+            crate::agent_perms::Surface::Bubble
+        } else {
+            crate::agent_perms::Surface::Chat
+        };
         cmd.args(claude_args(
             &input.model,
             &input.effort,
-            &input.permission,
+            crate::agent_perms::permission_mode(&perms, surface, &input.permission),
             resume.as_deref(),
         ));
+        cmd.args(crate::agent_perms::tool_flags(&perms, surface, &[], &[]));
         // O prompt vai por stdin: um argumento gigante estoura o limite de
         // argv e obriga a escapar aspas na mão.
         cmd.stdin(Stdio::piped());
@@ -579,7 +624,7 @@ pub fn chat_send(app: AppHandle, input: ChatSendInput) -> Result<(), String> {
             }
         });
     }
-    let my_turn = with_state(|st| {
+    let my_turn = with_state_of(&channel, |st| {
         st.turn += 1;
         st.child = Some(child);
         st.turn
@@ -597,12 +642,12 @@ pub fn chat_send(app: AppHandle, input: ChatSendInput) -> Result<(), String> {
         for line in BufReader::new(stdout).lines().map_while(Result::ok) {
             lines += 1;
             if claude {
-                if let Some(id) = handle_stream_line(&app, &line, &mut done, "chat", None) {
+                if let Some(id) = handle_stream_line(&app, &line, &mut done, ch, None) {
                     session = Some(id);
                 }
             } else {
                 // agente sem modo estruturado: o stdout É a resposta
-                let _ = app.emit("chat-delta", format!("{line}\n"));
+                let _ = app.emit(&format!("{ch}-delta"), format!("{line}\n"));
             }
         }
 
@@ -613,7 +658,7 @@ pub fn chat_send(app: AppHandle, input: ChatSendInput) -> Result<(), String> {
         // com o wait() dentro do `with_state` a trava global ficava presa pelo
         // tempo inteiro do processo seguinte, e as chamadas do chat — inclusive o
         // cancelar, o único capaz de destravar — bloqueavam na thread principal.
-        let mine = with_state(|st| {
+        let mine = with_state_of(&channel, |st| {
             if st.turn == my_turn {
                 st.child.take()
             } else {
@@ -643,14 +688,14 @@ pub fn chat_send(app: AppHandle, input: ChatSendInput) -> Result<(), String> {
             done.error = Some("err.chat_agent_failed".into());
         }
         if let Some(id) = session {
-            with_state(|st| {
+            with_state_of(&channel, |st| {
                 st.session_id = Some(id);
                 st.session_dir = Some(dir_for_session.clone());
             });
         }
         // BR-8: contagem e código, nunca o conteúdo.
         info!(lines, code, ok = done.ok, "chat turn finished");
-        let _ = app.emit("chat-done", done);
+        let _ = app.emit(&format!("{ch}-done"), done);
     });
 
     Ok(())
@@ -819,6 +864,21 @@ mod tests {
             .position(|x| x == "--permission-mode")
             .expect("modo de permissão é obrigatório");
         assert_eq!(a[i + 1], "acceptEdits");
+    }
+
+    // ADR-0041 — the bubble's chat is its own conversation, on its own events:
+    // a question asked over a call never lands in the main window's chat
+    #[test]
+    fn adr0041_the_bubble_chat_has_its_own_channel() {
+        assert_eq!(super::event_prefix("bubble"), "bubble-chat");
+        assert_eq!(super::event_prefix(""), "chat");
+        assert_eq!(super::event_prefix("chat"), "chat");
+        super::with_state_of("bubble", |st| st.session_id = Some("b-1".into()));
+        assert_eq!(
+            super::with_state_of("chat", |st| st.session_id.clone()),
+            None
+        );
+        super::with_state_of("bubble", |st| st.session_id = None);
     }
 
     #[test]

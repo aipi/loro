@@ -1,5 +1,7 @@
 # ADR-0029 — Extension as a package: pacote, catálogo, and the loop as a kind
 
+- **Amended by:** [ADR-0042](0042-claude-permissions.md) (2026-11-18) — a cycle's permission mode and its `Bash` lock (§4.9, §4.18) now come from the person's «Permissões do Claude»; they hold in the «restrito» mode, which is no longer the default.
+
 - **Status:** **accepted and implemented** (round 1 + the loop). The owner accepted
   the recommendations of §4 on 2026-08-17 and then **designed the screens** (Claude
   Design project *ADR-0029 Pacotes e Loops*, 2026-08-17), which settled §4.11–§4.14

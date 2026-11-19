@@ -11,7 +11,9 @@ global `window.__TAURI__`.
 desktop/
 ├─ src/                        frontend (servido estático)
 │  ├─ index.html               janela principal (superfície única)
-│  ├─ overlay.html/.js         janela de legenda flutuante
+│  ├─ bubble.html/.js          o balão de gravação (ADR-0041), sempre no topo
+│  ├─ bubble-core.js           decisões puras do balão (clique × arrasto, selo)
+│  ├─ agenda.js                a agenda do dia e o agendador (puro, ADR-0041)
 │  ├─ app.js                   estado, eventos, onda de áudio, gravação
 │  ├─ text.js                  utilidades de texto/markdown (testável, UMD)
 │  └─ style.css                sistema de design (mono/hairline, tema do sistema)
@@ -35,7 +37,7 @@ desktop/
 | `save_transcript` | `content` | caminho salvo ou `null` | diálogo nativo + grava |
 | `save_recording` | `data: bytes, filename` | caminho | grava áudio p/ diarizar |
 | `diarize` | `audioPath` | Markdown | roda `loro.sh diarize` |
-| `toggle_overlay` | `show: bool` | `()` | mostra/oculta a legenda |
+| `bubble_set_visible` | `visible: bool` | `bool` | mostra/oculta o balão (ADR-0041) |
 | `client_log` | `msg` | — | diagnóstico → `loro-client.log` |
 | `selftest_enabled` | — | `bool` | true se `LORO_SELFTEST` setado |
 | `pick_folder` | — | caminho ou `null` | seletor nativo de pasta |
@@ -142,11 +144,14 @@ Depois do setup, a aba é um **shell estilo site de documentação**:
 - **Fechar a janela não encerra o app**: ela é escondida e o Loro segue vivo na
   barra de menu. Sair só pelo menu do tray ("Sair") ou **⌘Q**. Clicar no ícone
   do Dock reabre a janela (macOS `RunEvent::Reopen`).
-- **Tray**: silhueta do papagaio como *template icon* (`icons/tray-on.png` +
-  `tray-dim.png`, gerados de `tray-src.svg`) — o macOS a renderiza branca/preta
-  conforme o tema, sem fundo. Uma thread pisca o ícone (~2 Hz alternando as duas
-  versões) enquanto `AppState.recording` estiver ativo. Menu: Abrir Loro ·
-  Iniciar/Parar transcrição · Sair.
+- **Tray**: silhueta do papagaio como *template icon* (`icons/tray-on.png`,
+  gerado de `tray-src.svg`) — o macOS a renderiza branca/preta conforme o tema,
+  sem fundo. O ícone é **estático**: não pisca durante a gravação (ADR-0041 §6) —
+  o sinal de gravação vive só no balão. Menu: Abrir Loro · Gravar / Encerrar
+  gravação · Mostrar / ocultar balão · Sair.
+- **Balão** (ADR-0041): janela `bubble` sempre no topo, em todos os Spaces e
+  sobre apps em tela cheia, com o ícone do Loro; arrastar move, clicar abre o
+  painel (transcrição ao vivo, ideia de destino, controles, próximas reuniões).
 - **Configurações persistidas** (`localStorage`, chave `loro-settings`, mescladas
   por `mergeSettings` de `text.js`): modelo, idioma, tradução, auto-scroll,
   **auto-save** e **pasta de armazenamento**. Com auto-save ligado, ao parar a

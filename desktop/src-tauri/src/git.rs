@@ -2040,9 +2040,13 @@ pub fn git_available() -> bool {
 // é o oposto — política escrita por uma pessoa — e continua versionada. Sem esta
 // linha cada ciclo deixava a árvore suja e todo o material produzido era
 // commitável, o contrário do que §4.7 decidiu.
-pub const GIT_IGNORED: [&str; 14] = [
+// ADR-0041 §4 — a agenda do dia (escrita por um agente externo) e o que a pessoa
+// marcou para gravar: títulos de reunião, contabilidade da máquina. Nunca vão
+// para um remoto compartilhado (BR-8).
+pub const GIT_IGNORED: [&str; 15] = [
     ".DS_Store",
     ".loro/loops/",
+    ".loro/agenda/",
     "loops/*/",
     "inbox/",
     "processed/",
@@ -2565,6 +2569,14 @@ mod tests {
             !is_quarantined(".loro/plugins.json"),
             "o registro de plugins é versionado"
         );
+        assert!(!is_quarantined(".loro/settings.json"));
+    }
+
+    // ADR-0041 §4 — a agenda tem os títulos das reuniões do dia: fica local.
+    #[test]
+    fn adr0041_the_agenda_is_never_versioned() {
+        assert!(is_quarantined(".loro/agenda/2026-11-18.json"));
+        assert!(is_quarantined(".loro/agenda/agendadas.json"));
         assert!(!is_quarantined(".loro/settings.json"));
     }
 

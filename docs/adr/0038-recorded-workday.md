@@ -1,6 +1,6 @@
 # ADR-0038 — Dia gravado: o Loro grava o expediente sozinho, em horas emendadas
 
-- **Status:** accepted and implemented (decisão do dono, 2026-11-18; implementado na mesma data), macOS primeiro.
+- **Status:** superseded by [ADR-0041](0041-recording-bubble-and-agenda.md) (2026-11-18). Originally: accepted and implemented (decisão do dono, 2026-11-18; implementado na mesma data), macOS primeiro.
 - **Extends:** ADR-0001 §2 (modo reunião), ADR-0022 (pausa/retomada e segmentos),
   ADR-0025 (âncora de época por segmento), ADR-0018 (a transcrição ao vivo é a saída)
 - **Revokes:** nothing.

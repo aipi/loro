@@ -24,8 +24,8 @@ while looking frozen; a meeting recorded with no clock; a meeting with no
 analysis offered an arrow into an empty list. If the app knows, the app shows.
 
 **State must never lie.** Pausing a recording stops capture *for real* — a pause
-that kept recording would say "stopped" while recording. The tray parrot stops
-blinking while paused for the same reason. A control that reports a state it
+that kept recording would say "stopped" while recording. The recording bubble
+trades its red dot for a pause sign while paused for the same reason (ADR-0041). A control that reports a state it
 does not enforce is worse than no control.
 
 **Offer the action, not the affordance for a thing that isn't there.** A
@@ -689,7 +689,7 @@ definition is structured, so edit is a form, not CM6). Three rules hold it:
 
 | Rule | Why |
 |---|---|
-| Seven states, three marks: **teal** = the AI is or will be working · **amber** = it needs you (`impedido`, `falhando`) · `--ink3`/outline = it does nothing (`desligado`, `expirou`) | No new token, and **red stays recording-and-irreversible**: a cycle running is not a recording. The mark does not blink either — blinking is the tray parrot's, and it means capture |
+| Seven states, three marks: **teal** = the AI is or will be working · **amber** = it needs you (`impedido`, `falhando`) · `--ink3`/outline = it does nothing (`desligado`, `expirou`) | No new token, and **red stays recording-and-irreversible**: a cycle running is not a recording. The mark does not blink either — the recording sign is the bubble's steady red dot, and it means capture (ADR-0041) |
 | A loop that **cannot** run never shows a next run | «ligado» and «capaz de rodar» are different facts. The screen says `impedido` and names the reason instead of promising a time it will not keep |
 | A quiet cycle is `muted`, not amber, and consecutive quiet cycles are ONE row with a count | A cycle with nothing to say is a legitimate outcome. Painting it as a failure would train the person to ignore the amber that matters — and a row per silence is the activity feed §8 removed |
 

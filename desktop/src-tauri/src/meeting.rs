@@ -992,9 +992,9 @@ pub fn brain_meeting_start(
         tracing::warn!(error = %e, "meeting start: started epoch not persisted");
     }
 
-    // A reunião também é uma gravação: sem isto o ícone da bandeja não piscava
-    // durante uma reunião — só a gravação avulsa (que passa por `start`) o fazia.
-    crate::set_tray_recording(&state, true);
+    // A reunião também é uma gravação: é por aqui que o Mac fica acordado
+    // enquanto ela grava (ADR-0041 §5) — antes era o que fazia a bandeja piscar.
+    crate::set_recording(&state, true);
 
     let dir_rel = rel_of(&base, &created.dir);
     let tema_slug = sanitize_slug(&input.tema).unwrap_or_default();
@@ -1069,7 +1069,7 @@ pub fn brain_meeting_stop(
             crate::syscap_anchor_forget(src);
         }
     }
-    crate::set_tray_recording(&state, false);
+    crate::set_recording(&state, false);
 
     manifest.status = "transcribing".into();
     manifest.atualizado_em = now_iso();
@@ -1286,7 +1286,7 @@ pub fn brain_meeting_pause(state: State<AppState>, input: MeetingPauseInput) -> 
         return Err("err.meeting_not_recording".into());
     }
     crate::system_capture_stop(&state);
-    crate::set_tray_recording(&state, false);
+    crate::set_recording(&state, false);
     pause_started()
         .lock()
         .unwrap()
@@ -1331,7 +1331,7 @@ pub fn brain_meeting_resume(
             .or_default()
             .push(PathBuf::from(mic_wav));
     }
-    crate::set_tray_recording(&state, true);
+    crate::set_recording(&state, true);
     Ok(())
 }
 

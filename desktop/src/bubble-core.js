@@ -1,0 +1,229 @@
+// Loro — the recording bubble's decisions (ADR-0041 §1–§3). Isolated, testable
+// module: loaded in the bubble window via <script> (defines window.LoroBubble)
+// and in Node via require() for node --test. PURE: no DOM, no IPC.
+(function (root, factory) {
+  const api = factory();
+  if (typeof module !== "undefined" && module.exports) module.exports = api;
+  root.LoroBubble = api;
+})(typeof window !== "undefined" ? window : globalThis, function () {
+  // Below this distance a press-and-release is a CLICK. A hand on a trackpad
+  // moves 1–3 px while clicking; 4 px keeps those clicks and still starts a drag
+  // on the first deliberate movement.
+  const DRAG_THRESHOLD_PX = 4;
+
+  function isDrag(a, b, threshold) {
+    const t = threshold == null ? DRAG_THRESHOLD_PX : threshold;
+    return Math.hypot(b.x - a.x, b.y - a.y) > t;
+  }
+
+  // One press at a time: down → (move…) → up. Returns what the window must do:
+  // "drag" once, when the movement crosses the threshold (the system then owns
+  // the drag); "click" on a release that never crossed it; "none" otherwise.
+  function gesture(threshold) {
+    let start = null, dragging = false;
+    return {
+      down(x, y) { start = { x, y }; dragging = false; return "none"; },
+      move(x, y) {
+        if (!start || dragging) return "none";
+        if (!isDrag(start, { x, y }, threshold)) return "none";
+        dragging = true;
+        return "drag";
+      },
+      up() {
+        const was = start && !dragging;
+        start = null; dragging = false;
+        return was ? "click" : "none";
+      },
+    };
+  }
+
+  // The panel, open or closed. The icon toggles it; a click outside (blur) and
+  // Esc close it; a scheduler prompt opens it so the question is seen.
+  function panel(open, event) {
+    switch (event) {
+      case "icon-click": return !open;
+      case "blur":
+      case "escape": return false;
+      case "prompt": return true;
+      default: return !!open;
+    }
+  }
+
+  const p2 = (n) => String(n).padStart(2, "0");
+  function formatElapsed(ms) {
+    const s = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60;
+    return h ? `${h}:${p2(m)}:${p2(r)}` : `${m}:${p2(r)}`;
+  }
+
+  // Recorded time: since the start, minus every pause — the running pause too.
+  function elapsedMs(st, nowMs) {
+    if (!st || !st.startedAt) return 0;
+    const paused = (Number(st.pausedMs) || 0) + (st.rec === "paused" && st.pauseStart ? nowMs - st.pauseStart : 0);
+    return nowMs - st.startedAt - paused;
+  }
+
+  // The collapsed icon's corner: a STEADY dot (recording), a STEADY pause glyph,
+  // or a neutral one while starting/stopping. Never an animation.
+  function badge(st, nowMs) {
+    const rec = st && st.rec;
+    if (rec === "recording") return { kind: "rec", time: formatElapsed(elapsedMs(st, nowMs)) };
+    if (rec === "paused") return { kind: "pause", time: formatElapsed(elapsedMs(st, nowMs)) };
+    if (rec === "starting" || rec === "stopping") return { kind: "pending", time: null };
+    return { kind: null, time: null };
+  }
+
+  // Speaker labels of the meeting transcript (ADR-0013: mic = você, system = sistema).
+  function whoLabel(source) {
+    return source === "system" ? "sistema" : "você";
+  }
+
+  function tail(lines, n) {
+    return (lines || []).slice(-n);
+  }
+
+  // Which buttons the panel shows. A live (non-meeting) recording has no pause:
+  // only meetings pause (ADR-0022).
+  function controls(st) {
+    const rec = st && st.rec;
+    if (rec === "idle") return st.canRecord ? ["gravar"] : [];
+    if (rec === "recording") return st.meeting ? ["pausar", "encerrar", "nova"] : ["encerrar"];
+    if (rec === "paused") return ["retomar", "encerrar", "nova"];
+    return [];
+  }
+
+  // The badge on the icon, sized from the icon (32/48/64 pt): a third of it, but
+  // never under 9 pt — a dot smaller than that stops reading as a recording sign.
+  function badgePx(iconPx) {
+    return Math.max(9, Math.round((Number(iconPx) || 32) * 0.3));
+  }
+
+  // ADR-0041 — the bubble's chat question, with its CONTEXT as file references
+  // (paths relative to the acervo, where the agent runs), never pasted: the
+  // agent reads what it needs. Language-free on purpose: the header is a
+  // machine-facing contract the agent reads, not UI copy.
+  function chatPrompt(question, ctx) {
+    const q = String(question || "").trim();
+    // a slash command goes to the CLI UNCHANGED: it is the CLI that resolves it,
+    // and a header in front would stop it from being read as a command
+    if (q.startsWith("/")) return q;
+    const refs = (ctx || []).filter((p) => typeof p === "string" && p && !/\.\.|^\//.test(p));
+    if (!refs.length) return q;
+    return "[Loro context — read these files only if the question needs them]\n"
+      + refs.map((p) => "- @" + p).join("\n") + "\n\n" + q;
+  }
+
+  // Markdown-lite for the chat answer: escaped FIRST (the answer is untrusted
+  // text), then **bold**, `code`, fenced blocks, "- " bullets and "#" headings.
+  function mdLite(src) {
+    const esc = (x) => String(x).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c]));
+    const inline = (x) => esc(x)
+      .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+      .replace(/`([^`]+)`/g, "<code>$1</code>");
+    const out = [];
+    let code = null, list = false;
+    const closeList = () => { if (list) { out.push("</ul>"); list = false; } };
+    for (const line of String(src || "").replace(/\r\n?/g, "\n").split("\n")) {
+      if (/^```/.test(line)) {
+        if (code) { out.push("<pre><code>" + esc(code.join("\n")) + "</code></pre>"); code = null; }
+        else { closeList(); code = []; }
+        continue;
+      }
+      if (code) { code.push(line); continue; }
+      const li = /^\s*[-*] (.*)$/.exec(line);
+      if (li) { if (!list) { out.push("<ul>"); list = true; } out.push("<li>" + inline(li[1]) + "</li>"); continue; }
+      closeList();
+      const h = /^#{1,6} (.*)$/.exec(line);
+      if (h) { out.push("<p><strong>" + inline(h[1]) + "</strong></p>"); continue; }
+      if (line.trim()) out.push("<p>" + inline(line) + "</p>");
+    }
+    if (code) out.push("<pre><code>" + esc(code.join("\n")) + "</code></pre>");
+    closeList();
+    return out.join("");
+  }
+
+  // The collapsed icon's tooltip: the state, and the next meeting (with ✓ when
+  // it is scheduled to record). `next` is LoroAgenda.nextEvent's answer; texts
+  // come translated from the caller.
+  function tooltip(stateLine, next, hhmm, words) {
+    const lines = [stateLine];
+    if (next && next.evento) {
+      const w = words || {};
+      lines.push((w.proxima || "Próxima") + ": " + hhmm(next.evento.inicioMs) + " " + (next.evento.titulo || w.semTitulo || "")
+        + (next.agendada ? " — " + (w.gravar || "gravar") + " ✓" : ""));
+    }
+    return lines.filter(Boolean).join("\n");
+  }
+
+  // ---- the destination picker (owner: «e se tiver uma lista grande?») ----------
+  const foldName = (x) => String(x || "").normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase().trim();
+
+  // The rows of the searchable dropdown. No query: «Recentes» (the last ones
+  // used, most recent first, at most `maxRecent`, only ideas that still exist),
+  // then EVERY other idea alphabetically. With a query: the fuzzy matches (the
+  // caller passes LoroFuzzy.filter, so this module stays pure), and «+ nova ideia
+  // «text»» at the end when no idea has exactly that name.
+  // → [{kind: "recent"|"all"|"match"|"new", slug, nome}]
+  function pickerItems(input) {
+    const temas = ((input && input.temas) || []).map((x) => ({ slug: x.slug, nome: x.nome || x.slug }));
+    const q = String((input && input.query) || "").trim();
+    const maxRecent = (input && input.maxRecent) || 5;
+    if (!q) {
+      const recent = [];
+      for (const slug of (input && input.recentes) || []) {
+        const x = temas.find((y) => y.slug === slug);
+        if (x && !recent.some((r) => r.slug === slug) && recent.length < maxRecent) recent.push(x);
+      }
+      const rest = temas.filter((x) => !recent.some((r) => r.slug === x.slug))
+        .sort((a, b) => foldName(a.nome).localeCompare(foldName(b.nome)));
+      return recent.map((x) => ({ kind: "recent", ...x })).concat(rest.map((x) => ({ kind: "all", ...x })));
+    }
+    const filter = (input && input.filter) || ((qq, items, key) => items.filter((it) => foldName(key(it)).includes(foldName(qq))));
+    const out = filter(q, temas, (x) => x.nome).map((x) => ({ kind: "match", ...x }));
+    if (!temas.some((x) => foldName(x.nome) === foldName(q) || foldName(x.slug) === foldName(q))) {
+      out.push({ kind: "new", slug: "", nome: q });
+    }
+    return out;
+  }
+
+  // Keyboard over the list: ↑/↓ move (clamped, never wrapping past the ends),
+  // Enter picks, Esc closes. → {index, action: "move"|"pick"|"close"|"none"}
+  function pickerKey(index, key, length) {
+    if (key === "ArrowDown") return { index: length ? Math.min(index + 1, length - 1) : -1, action: "move" };
+    if (key === "ArrowUp") return { index: length ? Math.max(index - 1, 0) : -1, action: "move" };
+    if (key === "Enter") return { index, action: index >= 0 && index < length ? "pick" : "none" };
+    if (key === "Escape") return { index, action: "close" };
+    return { index, action: "none" };
+  }
+
+  // The recents after a choice: the chosen one first, no repeats, at most 5.
+  function noteRecent(list, slug, max) {
+    if (!slug) return (list || []).slice();
+    return [slug].concat((list || []).filter((x) => x !== slug)).slice(0, max || 5);
+  }
+
+  // ---- slash commands in the chat composer (like Claude Code's terminal) ------
+  // The query while the person is typing the command NAME: the text starts with
+  // "/" and has no whitespace yet. Anything else → null (the popover closes).
+  function slashQuery(text) {
+    const m = /^\/(\S*)$/.exec(String(text || ""));
+    return m ? m[1] : null;
+  }
+  // The rows: every skill/command when the query is empty (in the order the
+  // backend lists them), else the fuzzy matches on the name. Capped.
+  function slashItems(list, q, filter, max) {
+    const items = list || [];
+    const cap = max || 50;
+    if (!q) return items.slice(0, cap);
+    const f = filter || ((qq, xs, key) => xs.filter((x) => key(x).toLowerCase().includes(qq.toLowerCase())));
+    return f(q, items, (x) => x.name).slice(0, cap);
+  }
+  // Completing replaces what was typed with "/name " — the space is where the
+  // arguments go. The text is sent unchanged: the CLI resolves the command.
+  function slashComplete(name) {
+    return "/" + String(name || "").replace(/^\//, "") + " ";
+  }
+
+  return { DRAG_THRESHOLD_PX, isDrag, gesture, panel, formatElapsed, elapsedMs, badge, whoLabel, tail, controls,
+    badgePx, chatPrompt, mdLite, tooltip, pickerItems, pickerKey, noteRecent, slashQuery, slashItems, slashComplete };
+});

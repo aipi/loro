@@ -5,6 +5,8 @@
 const TAURI = window.__TAURI__ || {};
 const invoke = TAURI.core ? TAURI.core.invoke : async () => { throw new Error("Tauri unavailable"); };
 const listen = TAURI.event ? TAURI.event.listen : async () => {};
+// ADR-0041: a janela principal fala com o balão por evento (ela é a dona da reunião)
+const emit = TAURI.event && TAURI.event.emit ? TAURI.event.emit : async () => {};
 const getWin = TAURI.window ? TAURI.window.getCurrentWindow : null;
 const { esc, mdInline, mdRender, mergeSettings } = window.LoroText;
 // plataforma reportada pelo doctor ("macos" | "windows" | "linux"); guia o setup
@@ -15,7 +17,8 @@ const R = window.LoroRefs || {};
 // ADR-0010 — pure meeting-path helpers (id parsing, marker strip, base join).
 const LM = window.LoroMeeting || {};
 const LP = window.LoroLoops || {};   // ADR-0029: ritmo, estado e histórico de um loop
-const LWD = window.LoroWorkday || {}; // ADR-0038: a decisão do dia gravado
+const LAG = window.LoroAgenda || {}; // ADR-0041: a agenda do dia e o agendador
+const LTF = window.LoroTarefas || {}; // ADR-0041 §10: as tarefas que o agente escreve
 // ADR-0029 — o ESTADO dos loops é declarado aqui, no topo, junto do módulo que o
 // interpreta. Declarado no fim do arquivo (onde vivem os pintores) ele ficava na
 // zona morta do `const`: `brainRefresh()` roda no boot, chama `refreshLoops`, e a
@@ -46,7 +49,7 @@ const el = {
   wave: $("wave"), toggle: $("toggleBtn"), savebar: $("savebar"),
   saveBtn: $("saveBtn"), exportBtn: $("exportBtn"), discardBtn: $("discardBtn"),
   cfgPop: $("cfgPop"), toast: $("toast"), srLive: $("srLive"),
-  optScroll: $("optScroll"), optTop: $("optTop"), optOverlay: $("optOverlay"),
+  optScroll: $("optScroll"), optTop: $("optTop"), optBubble: $("optBubble"),
   optDiar: $("optDiar"), clearBtn: $("clearBtn"),
   model: $("model"), lang: $("lang"), translate: $("translate"),
   autosave: $("autosave"), pickDir: $("pickDir"), source: $("source"), mode: $("mode"),
@@ -227,12 +230,20 @@ const meeting = {
   micAnchor: null, micSegPausedMs: 0, micUnavailable: false,
 };
 
-// ADR-0038 — o dia gravado. `meetingId` é a reunião que o DIA abriu (uma reunião
-// manual nunca entra aqui); `hora` é a chave "AAAA-MM-DD HH" dela; `suspensoAte`
-// é a chave da hora em que uma parada à mão deixa de valer.
-const WORKDAY_TEMA = "dia";
-const WORKDAY_TICK_MS = 15000;
-const workday = { cfg: null, meetingId: null, hora: null, suspensoAte: null, busy: false, selfStop: false };
+// ADR-0041 §4 — o agendador. `atual` é o que está gravando AGORA do ponto de vista
+// da agenda: {tipo:"manual"} ou {tipo:"agendada", eventId, fimMs, extraMs, meetingId};
+// `tratados` são os eventos de HOJE já começados, perguntados, sugeridos ou
+// recusados (nenhum é tocado de novo); `prompt` é a pergunta que o balão mostra.
+const agenda = {
+  dia: "", parsed: { status: "missing", geradoEmMs: null, eventos: [] },
+  agendadas: { versao: 1, eventos: {} }, atual: null, tratados: [], avisoFimDado: false,
+  prompt: null, busy: false,
+};
+// ADR-0041 §3 — o que o balão mostra: as últimas falas (com quem falou) e um aviso.
+const bubble = { linhas: [], aviso: "", pushTimer: null };
+// ADR-0041 §10 — as tarefas: o arquivo lido, e as ações que o Loro gravou e o
+// agente ainda não refletiu (mostradas como «concluindo…» até o próximo arquivo)
+const tarefas = { parsed: { status: "missing", geradoEmMs: null, tarefas: [] }, pendentes: [] };
 
 // ---- configurações persistidas (localStorage) ----
 const SETTINGS_KEY = "loro-settings";
@@ -248,6 +259,12 @@ const DEFAULTS = {
   // lista é só inglês (o -tr do whisper só produz inglês), e aqui o texto é o
   // do documento, normalmente português. Vazio = a voz do sistema.
   readVoice: "",
+  // ADR-0041 — a ideia onde o balão grava (a última escolhida) e o padrão das
+  // reuniões agendadas sem ideia própria. Vazio até a primeira escolha.
+  bubbleTema: "",
+  // as últimas ideias escolhidas no balão (a mais recente primeiro, até 5): o
+  // «Recentes» do seletor de destino
+  bubbleRecentes: [],
   autoscroll: true, autosave: false, saveDir: "", source: "mic", mode: "live", uiLang: "pt", termSide: true,
   sideW: 0, // sidebar width in px; 0 = the default CSS clamp (ADR-0002 §6)
   welcomeSeen: false, // first-launch feature tour (reopen via palette)
@@ -1015,6 +1032,10 @@ async function startMeetingWith(choice) {
 
   meeting.active = true; meeting.id = res.id; meeting.dir = res.dir;
   meeting.livingRel = res.livingRel; meeting.tema = choice.tema;
+  // ADR-0041 §5: uma reunião começada pela AGENDA fecha calada (sem aba nem oferta
+  // de análise) — a pessoa a abre se quiser, pelo balão ou pela árvore
+  meeting.quiet = !!choice.quiet; meeting.titulo = choice.titulo || "";
+  bubble.linhas = []; bubble.aviso = "";
   meeting.originEpoch = res.startedEpochMs || null; // ADR-0025: o t=0 das DUAS trilhas
   meeting.phase = "recording"; meeting.pendingLines = [];
   stopPending = false; // um encerramento que morreu no meio não trava esta
@@ -1339,6 +1360,9 @@ async function appendMeetingSpeech(id, utterances, source) {
     }
     throw e;
   }
+  // ADR-0041 §3: o que entrou no arquivo é o que o balão mostra (nunca o que caiu
+  // como eco) — com o rótulo de quem falou
+  bubbleLines(blocks.map((b) => ({ who: source, text: b.text })));
   return { appended: fresh.length, dropped: dropped };
 }
 
@@ -1518,7 +1542,10 @@ function setTailStatus(id, msg) {
 let stopPending = false;
 function stopMeeting() {
   if (stopPending) return;
-  workdayNoteManualStop();
+  // ADR-0041 §4: encerrou (à mão ou pela agenda) — o agendador deixa de contar com
+  // esta gravação; o evento dela já está em `tratados`, então não recomeça
+  agenda.atual = null; agenda.avisoFimDado = false;
+  if (agenda.prompt && agenda.prompt.kind === "extend") agenda.prompt = null;
   stopPending = true;
   clog("stop (meeting ADR-0010)");
   setRecPending("stopping");
@@ -1599,6 +1626,7 @@ async function resumeMeeting() {
   }
 }
 function paintPauseBtn(mode) {
+  bubblePush(); // ADR-0041: pausar/retomar repinta o selo do balão
   const b = $("recPause");
   if (!b) return;
   b.disabled = mode === "pending";
@@ -1670,16 +1698,19 @@ async function flushMeetingLines() {
 // Conclusão: garante o flush final, fecha a reunião (brain_meeting_finish) e abre
 // reuniao.md como aba. ADR-0018: nada é autorado — a análise é OFERECIDA, em um
 // clique e dispensável, e só roda se o usuário pedir. Reentrância por meeting.active.
-// ADR-0038: `meeting.active` cai no PRIMEIRO passo do fechamento, mas o resto
-// (flush, brain_meeting_finish, purga, a aba da reunião concluída) ainda roda. A
-// rotação do dia espera este contador zerar — sem isso o cromo e a aba da hora
-// anterior chegavam por cima da hora que acabou de começar.
+// `meeting.active` cai no PRIMEIRO passo do fechamento, mas o resto (flush,
+// brain_meeting_finish, purga, a aba da reunião concluída) ainda roda. Trocar de
+// uma agendada para a seguinte (ADR-0041 §4) espera este contador zerar — sem
+// isso o cromo e a aba da anterior chegavam por cima da que acabou de começar
+// (aprendido na rotação da ADR-0038).
 let meetingsClosing = 0;
 async function finishMeetingAfterTranscription() {
   if (!meeting.active) return;
   meeting.active = false; meeting.phase = "done"; // reentrancy guard set synchronously
   stopPending = false;
   meetingsClosing++;
+  const quiet = !!meeting.quiet;
+  meeting.quiet = false;
   try {
     const id = meeting.id;
     if (meeting.flushTimer) { clearTimeout(meeting.flushTimer); meeting.flushTimer = null; }
@@ -1699,128 +1730,347 @@ async function finishMeetingAfterTranscription() {
     }
     pessoalSig = ""; refreshPessoal();
     renderIfLiving(id);
-    // ADR-0038: uma hora do dia fecha calada — são ~10 por dia, e quem as lê é o
-    // agente que recorta pela agenda; abrir aba e oferecer análise a cada hora
-    // seria uma interrupção por hora.
-    if (rel && LWD.isWorkdayMeeting(rel)) clog("workday hour closed");
+    // ADR-0041 §5 (herdado da ADR-0038): uma reunião que a AGENDA começou fecha
+    // calada — a pessoa estava em outra janela, numa chamada; abrir aba e oferecer
+    // análise ali seria uma interrupção que ela não pediu. Ela abre se quiser.
+    if (rel && quiet) clog("scheduled meeting closed quietly");
     else if (rel) { openDoc(rel, { preview: false }); offerAnalyse(LM.meetingDir(rel)); }
     else if (id) toast(t("reunião encerrada"));
-  } finally { meetingsClosing--; }
+  } finally { meetingsClosing--; bubblePush(); }
 }
 
-// ---- ADR-0038 · o dia gravado ---------------------------------------------
-// A decisão é pura (src/workday.js); aqui só se executa o que ela devolve, pelos
-// MESMOS caminhos de uma reunião comum: startMeetingWith (sem modal) e stopMeeting.
-function workdayRecording() {
-  return !!(workday.meetingId && meeting.active && meeting.id === workday.meetingId);
+// ---- ADR-0041 · o balão e a agenda do dia -----------------------------------
+// A JANELA PRINCIPAL É A DONA. O balão (bubble.html) é um controle remoto: manda
+// `bubble-cmd` e pinta o `bubble-state` que recebe. A reunião, a agenda e as
+// decisões ficam aqui, pelos MESMOS caminhos de uma reunião comum
+// (startMeetingWith sem modal, pauseMeeting, stopMeeting).
+
+// O estado da gravação em uma palavra, para o balão e para o agendador.
+function recNow() {
+  if (recPending === "starting" || meetingStarting) return "starting";
+  if (recPending === "stopping" || stopPending || meetingsClosing > 0) return "stopping";
+  if (meeting.active && state.paused) return "paused";
+  if (meeting.active || state.running) return "recording";
+  return "idle";
 }
-function workdaySuspended() {
-  return !!(workday.suspensoAte && workday.cfg && workday.cfg.ligado
-    && LWD.hourKey(loopNow()) < workday.suspensoAte);
+
+let bubbleTemas = [];
+function bubbleState() {
+  const now = Date.now();
+  const sched = (agenda.agendadas && agenda.agendadas.eventos) || {};
+  return {
+    lang: settings.uiLang,
+    rec: recNow(),
+    meeting: !!meeting.active,
+    // sem projeto não há onde gravar uma reunião; fora do macOS/Windows o balão
+    // grava no modo ao vivo (não há reunião)
+    canRecord: !!brainTab || !LoroAudio.meetingSupported(hostOs),
+    startedAt: state.startTime || 0,
+    pausedMs: state.pausedMs || 0,
+    pauseStart: state.paused ? state.pauseStart : 0,
+    titulo: meeting.active ? (meeting.titulo || "") : "",
+    tema: meeting.active ? (meeting.tema || "") : "",
+    destino: settings.bubbleTema || "",
+    recentes: settings.bubbleRecentes || [],
+    temas: bubbleTemas.map((x) => ({ slug: x.slug, nome: x.nome || x.slug })),
+    linhas: bubble.linhas.slice(-12),
+    agenda: {
+      status: agenda.parsed.status,
+      // TODOS os de hoje e amanhã (os passados também: o balão os recolhe em
+      // «Já passaram (N)»); o balão agrupa e calcula o «começa em» ao pintar
+      eventos: agenda.parsed.eventos.map((e) => ({
+        id: e.id, titulo: e.titulo, inicioMs: e.inicioMs, fimMs: e.fimMs,
+        comConvidados: e.comConvidados, agendada: Object.prototype.hasOwnProperty.call(sched, e.id),
+        link: e.link || null, linkAgenda: e.linkAgenda || null,
+        tema: (sched[e.id] && sched[e.id].tema) || "",
+      })),
+    },
+    prompt: agenda.prompt,
+    aviso: bubble.aviso,
+    tarefas: { status: tarefas.parsed.status, lista: tarefas.parsed.tarefas, pendentes: tarefas.pendentes },
+    // o contexto do chat do balão, como REFERÊNCIA de arquivo (relativa ao acervo,
+    // onde o agente roda): a reunião em andamento e os dois arquivos da agenda
+    chatCtx: [
+      meeting.active && meeting.livingRel ? meeting.livingRel : "",
+      ".loro/agenda/" + LAG.dayKey(new Date(now)) + ".json",
+      ".loro/agenda/" + LAG.tomorrowKey(now) + ".json",
+    ].filter(Boolean),
+  };
 }
-// Parar à mão é uma decisão da pessoa: o dia respeita até a próxima hora cheia
-// em vez de reabrir a gravação 15 s depois (ADR-0038 §1).
-function workdayNoteManualStop() {
-  if (workday.selfStop || !workdayRecording()) return;
-  workday.suspensoAte = LWD.nextHourKey(loopNow());
-  workday.meetingId = null; workday.hora = null;
-  invoke("workday_keep_awake", { on: false }).catch((e) => clog("workday_keep_awake off: " + e));
-  toast(t("dia gravado suspenso até a próxima hora — «Retomar o dia gravado» na paleta volta antes"), 8000);
+// Um envio por rajada: uma janela de 18 s escreve várias falas de uma vez.
+function bubblePush() {
+  if (bubble.pushTimer) return;
+  bubble.pushTimer = setTimeout(() => {
+    bubble.pushTimer = null;
+    Promise.resolve(emit("bubble-state", bubbleState())).catch(() => {});
+  }, 60);
 }
-function resumeWorkday() {
-  workday.suspensoAte = null;
-  toast(t("dia gravado retomado"));
-  workdayTick();
+function bubbleLines(items) {
+  for (const l of items || []) {
+    const text = String((l && l.text) || "").trim();
+    if (text) bubble.linhas.push({ who: l.who === "system" ? "system" : "mic", text });
+  }
+  if (bubble.linhas.length > 40) bubble.linhas.splice(0, bubble.linhas.length - 40);
+  bubblePush();
 }
-// Encerrar uma reunião passa pelo flush da última janela e pelo whisper: segundos
-// no macOS. O teto só existe para um encerramento que travou não prender o dia.
-const WORKDAY_IDLE_MAX_MS = 120000;
-async function workdayIdle(maxMs) {
+
+// Encerrar passa pelo flush da última janela e pelo whisper: segundos no macOS.
+// O teto só existe para um encerramento que travou não prender o agendador.
+const CLOSE_WAIT_MAX_MS = 120000;
+async function waitRecordingIdle(maxMs) {
   const until = Date.now() + maxMs;
-  const busy = () => meetingBusy() || meetingsClosing > 0;
+  const busy = () => meetingBusy() || meetingsClosing > 0 || stopPending;
   while (busy() && Date.now() < until) await new Promise((r) => setTimeout(r, 250));
   return !busy();
 }
-async function workdayStart(d) {
-  await startMeetingWith({ tema: WORKDAY_TEMA, titulo: d.titulo });
+function markTratado(id) {
+  if (id && !agenda.tratados.includes(id)) agenda.tratados.push(id);
+}
+function agendaEvent(id) {
+  return agenda.parsed.eventos.find((e) => e.id === id) || null;
+}
+function agendaTemaFor(ev) {
+  const s = (agenda.agendadas.eventos || {})[ev.id];
+  return (s && s.tema) || settings.bubbleTema || "";
+}
+
+// Relê o arquivo do dia e o que foi marcado para gravar. O arquivo é do agente
+// externo: muda a qualquer hora, então é relido a cada tique (ele é pequeno).
+async function agendaLoad() {
+  const dia = LAG.dayKey(new Date());
+  if (dia !== agenda.dia) { agenda.dia = dia; agenda.tratados = []; agenda.prompt = null; }
+  // O agente escreve HOJE e AMANHÃ (refinamento do dono: seguir todos os
+  // próximos, e agendar à noite a reunião da manhã seguinte). Qualquer um pode faltar.
+  const now = Date.now();
+  const read = async (date) => {
+    try { return await invoke("agenda_read", { date }); }
+    catch (e) { clog("agenda_read error: " + e); return null; }
+  };
+  const [hoje, amanha] = await Promise.all([read(dia), read(LAG.tomorrowKey(now))]);
+  agenda.parsed = LAG.mergeDays([LAG.parseAgenda(hoje, now), LAG.parseAgenda(amanha, now)]);
+  try { agenda.agendadas = LAG.pruneSchedule(await invoke("agenda_schedule_get"), dia); }
+  catch (e) { clog("agenda_schedule_get error: " + e); }
+  try { bubbleTemas = (await invoke("brain_list_brainstorms")) || []; } catch (_) {}
+  // ADR-0041 §10 — as tarefas, no mesmo tique: o arquivo é do agente
+  let tt = null;
+  try { tt = await invoke("tarefas_read"); } catch (e) { clog("tarefas_read error: " + e); }
+  if (LTF.parseTarefas) {
+    tarefas.parsed = LTF.parseTarefas(tt, now);
+    tarefas.pendentes = LTF.reconcile(tarefas.pendentes, tarefas.parsed.tarefas);
+  }
+}
+
+// ISO-8601 com o fuso LOCAL (o agente lê a hora em que a pessoa clicou)
+function isoLocal(d) {
+  const p = (n) => String(Math.abs(n)).padStart(2, "0");
+  const off = -d.getTimezoneOffset();
+  return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) + "T" + p(d.getHours()) + ":" + p(d.getMinutes())
+    + ":" + p(d.getSeconds()) + (off >= 0 ? "+" : "-") + p(Math.trunc(off / 60)) + ":" + p(off % 60);
+}
+async function tarefaAcao(id, acao) {
+  if (!id || !/^(concluir|reabrir)$/.test(acao)) return;
+  try {
+    await invoke("tarefas_acao", { id, acao, em: isoLocal(new Date()) });
+    tarefas.pendentes = tarefas.pendentes.filter((p) => p.id !== id).concat([{ id, acao }]);
+  } catch (e) { bubble.aviso = tErr(String(e)); clog("tarefas_acao error: " + e); }
+}
+
+// Uma agendada começa sem modal e CALADA (ADR-0041 §5).
+async function agendaStart(ev, tema) {
+  markTratado(ev.id);
+  if (!tema) { bubble.aviso = "escolha uma ideia para as reuniões agendadas"; return false; }
+  await startMeetingWith({ tema: tema, titulo: ev.titulo || null, quiet: true });
   if (meeting.active && meeting.phase === "recording") {
-    workday.meetingId = meeting.id; workday.hora = d.hora;
-    invoke("workday_keep_awake", { on: true }).catch((e) => toast(tErr(String(e))));
-    return;
+    agenda.atual = { tipo: "agendada", eventId: ev.id, fimMs: ev.fimMs, extraMs: 0, meetingId: meeting.id };
+    agenda.avisoFimDado = false;
+    // ADR-0041 §9: a gravação começou e a reunião tem link — o balão oferece entrar
+    if (ev.link) agenda.prompt = { kind: "join", eventId: ev.id, titulo: ev.titulo, link: ev.link };
+    return true;
   }
-  // Não subiu (permissão de gravação de tela, projeto ausente): startMeetingWith já
-  // disse por quê. Tentar de novo a cada 15 s repetiria o mesmo aviso o dia inteiro —
-  // a próxima tentativa é na próxima hora, ou antes por «Retomar o dia gravado».
-  workday.suspensoAte = LWD.nextHourKey(loopNow());
+  // startMeetingWith já disse por quê na janela principal; o balão diz onde olhar
+  bubble.aviso = "não iniciou — abra o Loro para ver o motivo";
+  return false;
 }
-async function workdayStop() {
-  workday.selfStop = true;
-  try {
-    if (workdayRecording()) stopMeeting();
-    await workdayIdle(WORKDAY_IDLE_MAX_MS);
-  } finally {
-    workday.selfStop = false;
-    workday.meetingId = null; workday.hora = null;
+async function agendaStop() {
+  if (meeting.active) stopMeeting();
+  else if (state.running) await stopSession();
+  await waitRecordingIdle(CLOSE_WAIT_MAX_MS);
+}
+
+async function agendaApply(d) {
+  const ev = d.evento || null;
+  switch (d.acao) {
+    case "iniciar": await agendaStart(ev, d.tema); break;
+    case "encerrar": agenda.prompt = null; await agendaStop(); break;
+    case "trocar":
+      agenda.prompt = null;
+      await agendaStop();
+      if (recNow() === "idle") await agendaStart(ev, d.tema);
+      break;
+    case "avisar-fim":
+      agenda.avisoFimDado = true;
+      agenda.prompt = { kind: "extend", eventId: ev ? ev.id : "", titulo: ev ? ev.titulo : "", minutos: d.minutos };
+      break;
+    case "perguntar-troca":
+      markTratado(ev.id);
+      agenda.prompt = { kind: "switch", eventId: ev.id, titulo: ev.titulo };
+      break;
+    case "sugerir":
+      markTratado(ev.id);
+      agenda.prompt = { kind: "suggest", eventId: ev.id, titulo: ev.titulo };
+      break;
+    default: break;
   }
 }
-// Rotacionar é parar e começar (ADR-0038 §1): o buraco entre as duas é o flush do
-// último segmento. Se a anterior ainda não fechou, a próxima verificação tenta.
-async function workdayRotate(d) {
-  await workdayStop();
-  if (meetingBusy() || meetingsClosing > 0) return;
-  await workdayStart(d);
-}
-async function workdayEnd() {
-  await workdayStop();
-  invoke("workday_keep_awake", { on: false }).catch((e) => clog("workday_keep_awake off: " + e));
-}
-// O tique do dia. SEM a trava de `document.hidden` do loopTick: o dia grava com o
-// Loro só na bandeja (fechar a janela só a esconde). A configuração é relida a cada
-// tique porque o arquivo também é escrito pelo agente (ADR-0038 §5).
-async function workdayTick() {
-  if (workday.busy) return;
-  workday.busy = true;
+
+// O tique da agenda. Quem bate é o BACKEND (`loro-tick`, a cada 15 s): a janela
+// passa o dia escondida na bandeja, e o timer de uma webview escondida pode ser
+// estrangulado. SEM a trava de `document.hidden` do loopTick, pela mesma razão.
+async function agendaTick() {
+  if (agenda.busy) return;
+  agenda.busy = true;
   try {
-    try { workday.cfg = await invoke("workday_get"); }
-    catch (e) { clog("workday_get error: " + e); return; }
+    await agendaLoad();
+    // a agendada que acabou por outro caminho (encerrada no app) deixa de contar
+    if (agenda.atual && agenda.atual.tipo === "agendada" && !(meeting.active && meeting.id === agenda.atual.meetingId)) agenda.atual = null;
     if (!brainTab || !LoroAudio.meetingSupported(hostOs)) return;
-    const d = LWD.decide({
-      agora: loopNow(),
-      cfg: workday.cfg,
+    const rec = recNow();
+    const d = LAG.decide({
+      nowMs: Date.now(),
+      eventos: agenda.parsed.eventos,
+      agendadas: agenda.agendadas.eventos,
       estado: {
-        gravandoDia: workdayRecording(),
-        horaDaGravacao: workday.hora,
-        suspensoAteHora: workday.suspensoAte,
-        gravandoManual: meetingBusy() && !workdayRecording(),
+        rec: rec === "starting" || rec === "stopping" ? "busy" : rec,
+        atual: agenda.atual || (rec !== "idle" ? { tipo: "manual" } : null),
+        tratados: agenda.tratados,
+        avisoFimDado: agenda.avisoFimDado,
+        ultimoTema: settings.bubbleTema || "",
       },
     });
-    if (d.acao === "iniciar") await workdayStart(d);
-    else if (d.acao === "rotacionar") await workdayRotate(d);
-    else if (d.acao === "encerrar") await workdayEnd();
-  } catch (e) { clog("workday tick error: " + e); }
-  finally { workday.busy = false; }
+    await agendaApply(d);
+  } catch (e) { clog("agenda tick error: " + e); }
+  finally { agenda.busy = false; bubblePush(); }
 }
-// Configurações → Captura: liga/desliga e os dois horários (ADR-0038 §5).
-async function paintWorkdaySettings() {
-  try { workday.cfg = (await invoke("workday_get")) || {}; } catch (_) { return; }
-  const on = $("optWorkday"), ini = $("workdayInicio"), fim = $("workdayFim");
-  if (on) on.checked = !!workday.cfg.ligado;
-  if (ini && workday.cfg.inicio) ini.value = workday.cfg.inicio;
-  if (fim && workday.cfg.fim) fim.value = workday.cfg.fim;
+
+async function agendaSchedule(id, on, tema) {
+  const s = LAG.pruneSchedule(agenda.agendadas, agenda.dia || LAG.dayKey(new Date()));
+  const ev = agendaEvent(id);
+  // o DIA DO EVENTO, não o de hoje: marcado às 23h, o de amanhã sobrevive à poda
+  const data = ev ? LAG.dayKey(new Date(ev.inicioMs)) : agenda.dia;
+  if (on) s.eventos[id] = { tema: tema || settings.bubbleTema || "", data };
+  else delete s.eventos[id];
+  try { agenda.agendadas = await invoke("agenda_schedule_set", { schedule: s }); bubble.aviso = ""; }
+  catch (e) { bubble.aviso = tErr(String(e)); clog("agenda_schedule_set error: " + e); }
 }
-async function saveWorkdaySettings() {
-  const cfg = Object.assign({}, workday.cfg || {}, {
-    ligado: !!($("optWorkday") || {}).checked,
-    inicio: ($("workdayInicio") || {}).value || "",
-    fim: ($("workdayFim") || {}).value || "",
-  });
+
+// Uma ideia nova escolhida no seletor do balão nasce AQUI (como no ＋ da lateral),
+// antes de gravar ou agendar nela. Devolve o slug, ou "" com o aviso no balão.
+async function ensureTema(tema, nova) {
+  let slug = String(tema || "").trim();
+  if (!slug) { bubble.aviso = "escolha ou nomeie uma ideia"; return ""; }
+  if (!nova) return slug;
   try {
-    workday.cfg = await invoke("workday_set", { cfg });
-    workdayTick();
-  } catch (e) {
-    toast(tErr(String(e)), 6000);
-    paintWorkdaySettings(); // a tela volta a dizer o que está guardado
-  }
+    const r = await invoke("brain_create_brainstorm", { input: { nome: slug } });
+    slug = (r && r.slug) || slug;
+    try { bubbleTemas = (await invoke("brain_list_brainstorms")) || bubbleTemas; } catch (_) {}
+    return slug;
+  } catch (e) { bubble.aviso = tErr(String(e)); return ""; }
+}
+function noteRecentTema(slug) {
+  if (!slug) return;
+  settings.bubbleRecentes = [slug].concat((settings.bubbleRecentes || []).filter((x) => x !== slug)).slice(0, 5);
+  persistSettings();
+}
+
+// «Gravar» do balão: a ideia escolhida no painel, sem modal.
+async function bubbleStart(tema, nova) {
+  bubble.aviso = "";
+  if (!LoroAudio.meetingSupported(hostOs)) { toggle(); return; }
+  if (!brainTab) { bubble.aviso = "abra o Loro e escolha um projeto antes de gravar"; return; }
+  const slug = await ensureTema(tema, nova);
+  if (!slug) return;
+  settings.bubbleTema = slug; noteRecentTema(slug);
+  // a gravação à mão já cobre a reunião que está acontecendo agora: o agendador
+  // não pergunta «trocar?» por ela
+  const now = Date.now();
+  for (const e of agenda.parsed.eventos) if (e.inicioMs <= now && now < e.fimMs) markTratado(e.id);
+  agenda.prompt = null;
+  await startMeetingWith({ tema: slug, titulo: null });
+  if (meeting.active) agenda.atual = { tipo: "manual" };
+  else bubble.aviso = "não iniciou — abra o Loro para ver o motivo";
+}
+
+async function bubbleOpenMain() {
+  try {
+    const w = getWin && getWin();
+    if (w) { await w.show(); await w.setFocus(); }
+  } catch (e) { clog("bubble open main: " + e); }
+  if (meeting.active && meeting.livingRel) openDoc(meeting.livingRel, { preview: false });
+}
+
+async function onBubbleCmd(p) {
+  const c = p || {};
+  try {
+    switch (c.cmd) {
+      case "hello": break;
+      case "start": await bubbleStart(c.tema, !!c.nova); break;
+      case "pause": await pauseMeeting(); break;
+      case "resume": await resumeMeeting(); break;
+      case "stop": await stopSession(); break;
+      case "new":
+        // «Nova gravação»: encerra a corrente e começa outra na ideia escolhida
+        await agendaStop();
+        await bubbleStart(c.tema, !!c.nova);
+        break;
+      case "open": await bubbleOpenMain(); break;
+      case "set-tema": settings.bubbleTema = String(c.tema || ""); noteRecentTema(settings.bubbleTema); break;
+      case "schedule": {
+        const slug = c.on ? await ensureTema(c.tema, !!c.nova) : String(c.tema || "");
+        if (c.on && !slug) break;
+        if (c.on) noteRecentTema(slug);
+        await agendaSchedule(String(c.id || ""), !!c.on, slug);
+        break;
+      }
+      case "extend":
+        if (agenda.atual && agenda.atual.tipo === "agendada") {
+          agenda.atual.extraMs = (agenda.atual.extraMs || 0) + LAG.EXTEND_MS;
+          agenda.avisoFimDado = false;
+        }
+        agenda.prompt = null;
+        break;
+      case "switch": {
+        agenda.prompt = null;
+        const ev = agendaEvent(c.id);
+        if (!ev) break;
+        await agendaStop();
+        if (recNow() === "idle") await agendaStart(ev, agendaTemaFor(ev));
+        break;
+      }
+      case "keep": agenda.prompt = null; break;
+      case "tarefa": await tarefaAcao(String(c.id || ""), String(c.acao || "")); break;
+      case "record-now": {
+        // «Gravar agora» num evento que está acontecendo: como uma agendada —
+        // título do evento, encerra no fim dele, fecha calada
+        const ev = agendaEvent(c.id);
+        if (!ev) break;
+        if (recNow() !== "idle") { bubble.aviso = "já há uma gravação em andamento"; break; }
+        const slug = c.tema ? await ensureTema(c.tema, !!c.nova) : agendaTemaFor(ev);
+        if (!slug) break;
+        noteRecentTema(slug);
+        await agendaStart(ev, slug);
+        break;
+      }
+      case "record-suggested": {
+        agenda.prompt = null;
+        const ev = agendaEvent(c.id);
+        if (ev && recNow() === "idle") await agendaStart(ev, agendaTemaFor(ev));
+        break;
+      }
+      case "dismiss": agenda.prompt = null; break;
+      default: break;
+    }
+  } catch (e) { clog("bubble cmd error: " + e); }
+  bubblePush();
 }
 
 // Resolve o completoRel (relativo ao acervo) num caminho de arquivo para a
@@ -1913,6 +2163,7 @@ async function startFileSession() {
 function onStarted() {
   setRecPending(null);
   state.running = true;
+  bubblePush();
   requestAnimationFrame(() => resizeWave());
   el.dot.classList.add("on");
   el.toggle.classList.add("on", "recording");
@@ -1928,6 +2179,7 @@ function onStopped() {
   setRecPending(null);
   if (!state.running) return;
   state.running = false;
+  bubblePush();
   el.dot.classList.remove("on");
   el.toggle.classList.remove("on", "recording");
   stopTimer();
@@ -2016,6 +2268,7 @@ function paintRecControl() {
 }
 function setRecPending(kind) {
   recPending = kind;
+  bubblePush(); // ADR-0041: o balão diz «iniciando…/encerrando…» também
   el.toggle.classList.toggle("pending", !!kind);
   el.toggle.disabled = !!kind;
   paintRecControl();
@@ -2244,7 +2497,8 @@ async function openCfg() {
   enterOverlay(cfgWrap, cfgClose, closeCfg);
   cfgEnvSeen = false; // os checks de rede rodam de novo nesta visita, quando a seção aparecer
   cfgPluginsSeen = false; cfgLoopsSeen = false;
-  paintWorkdaySettings();
+  paintBubbleSetting();
+  paintAgentPerms();
   document.querySelectorAll(".cfgsec").forEach((s) => (s.hidden = false));
   $("cfgPop").scrollTop = 0;
   markCfgNav("proj");
@@ -2614,7 +2868,63 @@ el.optScroll.addEventListener("change", (e) => {
   settings.autoscroll = e.target.checked; persistSettings();
 });
 el.optTop.addEventListener("change", (e) => { if (getWin) getWin().setAlwaysOnTop(e.target.checked); });
-el.optOverlay.addEventListener("change", (e) => invoke("toggle_overlay", { show: e.target.checked }));
+// ADR-0041 §1 — mostrar/ocultar o balão. A preferência mora no config global
+// (é da pessoa), e a bandeja também a muda: o evento `bubble-visible` repinta.
+async function setBubbleVisible(visible) {
+  try { const v = await invoke("bubble_set_visible", { visible }); if (el.optBubble) el.optBubble.checked = !!v; }
+  catch (e) { toast(tErr(String(e))); paintBubbleSetting(); }
+}
+async function paintBubbleSetting() {
+  if (el.optBubble) { try { el.optBubble.checked = !!(await invoke("bubble_get_visible")); } catch (_) {} }
+  const sz = $("optBubbleSize");
+  if (sz) { try { sz.value = String((await invoke("bubble_get_size")) || 32); } catch (_) {} }
+  const ah = $("optBubbleAutoHide");
+  if (ah) { try { ah.checked = !!(await invoke("bubble_get_auto_hide")); } catch (_) {} }
+}
+// ADR-0042 — «Permissões do Claude». Mora no config global (é da pessoa) e o
+// backend a lê em cada turno; a tela só mostra e grava.
+let agentPerms = null;
+async function paintAgentPerms() {
+  try { agentPerms = await invoke("agent_perms_get"); } catch (_) { return; }
+  if (!agentPerms) return;
+  document.querySelectorAll("[data-agentperm]").forEach((b) =>
+    b.classList.toggle("on", b.dataset.agentperm === agentPerms.modo));
+  const ta = $("agentDenylist"); if (ta && document.activeElement !== ta) ta.value = (agentPerms.bloqueio || []).join("\n");
+  const cb = $("agentBlockChat"); if (cb) cb.checked = !!agentPerms.bloquearNoChat;
+  // o chat do painel só escolhe o modo quando o geral é «restrito»
+  const seg = $("chatPermSeg"); if (seg) seg.closest(".field").hidden = agentPerms.modo !== "restrito";
+}
+async function saveAgentPerms(patch) {
+  const next = Object.assign({}, agentPerms || {}, patch);
+  try { agentPerms = await invoke("agent_perms_set", { perms: next }); }
+  catch (e) { toast(tErr(String(e))); }
+  paintAgentPerms();
+}
+document.querySelectorAll("[data-agentperm]").forEach((b) =>
+  b.addEventListener("click", () => saveAgentPerms({ modo: b.dataset.agentperm })));
+{
+  const ta = $("agentDenylist");
+  if (ta) ta.addEventListener("change", () => saveAgentPerms({
+    bloqueio: ta.value.split(/[\n,]+/).map((x) => x.trim()).filter(Boolean),
+  }));
+  const cb = $("agentBlockChat");
+  if (cb) cb.addEventListener("change", () => saveAgentPerms({ bloquearNoChat: cb.checked }));
+}
+// ADR-0041 — o tamanho do ícone: pequeno 32 (padrão) · médio 48 · grande 64
+{
+  const sz = $("optBubbleSize");
+  if (sz) sz.addEventListener("change", async () => {
+    try { sz.value = String(await invoke("bubble_set_size", { size: Number(sz.value) })); }
+    catch (e) { toast(tErr(String(e))); paintBubbleSetting(); }
+  });
+}
+if (el.optBubble) el.optBubble.addEventListener("change", (e) => setBubbleVisible(e.target.checked));
+// owner, 2026-11-19: o balão sai da frente enquanto a janela do Loro está em primeiro plano
+if ($("optBubbleAutoHide")) $("optBubbleAutoHide").addEventListener("change", async (e) => {
+  try { e.target.checked = !!(await invoke("bubble_set_auto_hide", { on: e.target.checked })); }
+  catch (err) { toast(tErr(String(err))); paintBubbleSetting(); }
+});
+listen("bubble-visible", (e) => { if (el.optBubble) el.optBubble.checked = !!(e && e.payload); });
 {
   const mm = $("optMeetingMic");
   if (mm) mm.addEventListener("change", (e) => {
@@ -2624,10 +2934,6 @@ el.optOverlay.addEventListener("change", (e) => invoke("toggle_overlay", { show:
     // microfone no meio de uma reunião abriria um buraco na gravação
     if (meeting.active) toast(t("vale na próxima reunião"));
   });
-}
-for (const id of ["optWorkday", "workdayInicio", "workdayFim"]) {
-  const c = $(id);
-  if (c) c.addEventListener("change", saveWorkdaySettings);
 }
 $("optEchoCancel").addEventListener("change", (e) => {
   settings.micEchoCancel = e.target.checked;
@@ -7971,7 +8277,7 @@ const COMMANDS = [
   { group: "gravar", label: "Gravar", code: "KeyR", run: () => startMeetingFlow() },
   { group: "gravar", label: "Encerrar gravação", combo: IS_MAC ? "⇧⌘R" : "Ctrl+Shift+R", run: () => { if (state.running || meeting.active) stopSession(); else toast(t("nenhuma gravação em andamento")); } },
   { group: "gravar", label: "Marcar momento", code: "KeyM", run: () => markMeeting() },
-  { group: "gravar", label: "Retomar o dia gravado", when: workdaySuspended, run: () => resumeWorkday() },
+  { group: "gravar", label: "Mostrar / ocultar balão", run: () => setBubbleVisible(!(el.optBubble && el.optBubble.checked)) },
 
   { group: "criar", label: "Nova ideia", code: "KeyB", run: () => promptNewTema() },
   { group: "criar", label: "Novo caderno de notas", code: "KeyK", run: () => promptNewNotebook() },
@@ -11636,9 +11942,14 @@ listen("tauri://drag-leave", () => paintDropTarget(null));
 listen("transcript-line", (e) => {
   if (meeting.active && meeting.phase === "transcribing") { meetingAccumulate(e.payload); return; }
   appendLine(e.payload);
+  // ADR-0041 §3: o modo ao vivo também aparece no balão (substitui a legenda flutuante)
+  if (state.running) bubbleLines([{ who: settings.source === "system" ? "system" : "mic", text: e.payload }]);
 });
 listen("rec-state", (e) => (e.payload ? onStarted() : onStopped()));
 listen("hotkey-toggle", () => toggle());
+// ADR-0041 — o balão é um controle remoto desta janela; o relógio da agenda é do backend
+listen("bubble-cmd", (e) => onBubbleCmd(e && e.payload));
+listen("loro-tick", () => agendaTick());
 
 // ADR-0010: reuniao.md cresceu — atualiza a aba viva no lugar (segue o rodapé só
 // se o usuário já estava no fim; senão, mostra o pill "novas linhas ↓").
@@ -11985,7 +12296,8 @@ $("recImage").addEventListener("click", () => {
   if (!(meeting.active && meeting.dir)) { toast(t("anexar precisa de uma reunião aberta")); return; }
   importAnexoFromComputer(meeting.dir + "/attachments", () => { pessoalSig = ""; refreshPessoal(); });
 });
-$("recOverlay").addEventListener("click", () => { el.optOverlay.checked = !el.optOverlay.checked; el.optOverlay.dispatchEvent(new Event("change")); });
+// ADR-0041: o chip do rodapé que ligava a legenda flutuante agora mostra/oculta o balão
+$("recBubble").addEventListener("click", () => setBubbleVisible(!(el.optBubble && el.optBubble.checked)));
 $("recSource").addEventListener("change", () => {
   el.source.value = $("recSource").value;
   el.source.dispatchEvent(new Event("change"));
@@ -13979,8 +14291,9 @@ listen("loop-tool-result", (e) => {
 // Ele arma no FIM do bloco, depois dos pintores: armá-lo antes deixava o
 // `LOOP_TICK_MS` na zona morta do `const`.
 setInterval(loopTick, LOOP_TICK_MS);
-// ADR-0038 §2 — o relógio do dia, armado no mesmo ponto pela mesma razão.
-setInterval(workdayTick, WORKDAY_TICK_MS);
+// ADR-0041 — a primeira leitura da agenda não espera o primeiro `loro-tick` (15 s):
+// o balão abre já com as próximas reuniões. Armado no fim pela mesma razão acima.
+agendaTick();
 refreshPlugins();
 
 listen("loop-cycle", (e) => {

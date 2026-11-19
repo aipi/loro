@@ -167,9 +167,14 @@ const ANSWERS = {
   // ADR-0036 — o motor neural com o modelo e a amostra AUSENTES: o passo exige
   // que a tela diga QUAL peça falta, não um "indisponível" mudo.
   read_aloud_state: { speaking: false, paused: false, supported: true },
-  // ADR-0038 — o dia gravado desligado, com a janela padrão: o tique roda e não
-  // faz nada, e a tela de Captura mostra os dois horários.
-  workday_get: { ligado: false, inicio: "09:00", fim: "18:30", dias: [0, 1, 2, 3, 4, 5, 6] },
+  // ADR-0041 — o balão visível e um dia sem agenda escrita: o primeiro tique roda,
+  // não acha o arquivo e não faz nada; Captura mostra o liga/desliga do balão.
+  bubble_get_visible: true,
+  bubble_get_size: 32,
+  // ADR-0042 — o padrão novo: livre, com a lista de bloqueio do dono
+  agent_perms_get: { modo: "livre", bloqueio: ["mcp__claude_ai_Slack__slack_send_message", "mcp__claude_ai_Gmail__trash_thread"], bloquearNoChat: false },
+  agenda_read: null,
+  agenda_schedule_get: { versao: 1, eventos: {} },
   read_aloud_voices: [
     { name: "Luciana", locale: "pt_BR" },
     { name: "Samantha", locale: "en_US" },
@@ -1178,19 +1183,31 @@ const DRIVER = `
     await new Promise((r) => setTimeout(r, 120));
   });
 
-  // ADR-0038 — o dia gravado mora em Captura: liga/desliga e os dois horários,
-  // lidos do config global (o mock devolve desligado, 09:00–18:30).
-  await step("cfg-dia-gravado", async () => {
+  // ADR-0041 — o balão mora em Captura (o lugar onde estava a legenda flutuante),
+  // lido do config global; e o dia gravado da ADR-0038 não existe mais.
+  await step("cfg-balao", async () => {
     window.showCfgSection("cap");
     await new Promise((r) => setTimeout(r, 200));
-    const on = q("#optWorkday"), ini = q("#workdayInicio"), fim = q("#workdayFim");
-    if (!on || !ini || !fim) throw new Error("Captura não tem o dia gravado");
-    if (on.checked) throw new Error("ausente = desligado (ADR-0038 §5), e o mock diz desligado");
-    if (ini.value !== "09:00" || fim.value !== "18:30") throw new Error("janela pintada errada: " + ini.value + "–" + fim.value);
+    const on = q("#optBubble");
+    if (!on) throw new Error("Captura não tem o balão");
+    if (!on.checked) throw new Error("o mock diz visível e a tela diz oculto");
+    if (q("#optWorkday") || q("#optOverlay")) throw new Error("sobrou um controle que saiu (dia gravado / legenda)");
+    if (!window.__SMOKE__.calls.bubble_get_visible) throw new Error("a tela não leu o config global");
+    if (!window.__SMOKE__.calls.agenda_read) throw new Error("o primeiro tique da agenda não rodou no boot");
+    if (window.__SMOKE__.calls.agenda_read < 2) throw new Error("a agenda não leu hoje E amanhã");
+    if (q("#optBubbleSize").value !== "32") throw new Error("tamanho do balão: " + q("#optBubbleSize").value);
+    // ADR-0042 — as permissões do Claude, lidas do config global
+    window.showCfgSection("ai");
+    await new Promise((r) => setTimeout(r, 150));
+    const permOn = [...document.querySelectorAll("[data-agentperm]")].find((b) => b.classList.contains("on"));
+    if (!permOn || permOn.dataset.agentperm !== "livre") throw new Error("o modo pintado não é o livre");
+    if (!/slack_send_message/.test(q("#agentDenylist").value)) throw new Error("a lista de bloqueio não aparece");
+    if (q("#agentBlockChat").checked) throw new Error("bloquear no chat nasce desligado");
+    if (!q("#chatPermSeg").closest(".field").hidden) throw new Error("no modo livre o seletor antigo do chat sobra");
+    window.showCfgSection("cap");
+    await new Promise((r) => setTimeout(r, 100));
     const card = on.closest(".cfgcard");
-    if (card.scrollWidth > card.clientWidth + 1) throw new Error("os horários estouram o cartão: " + card.scrollWidth + " em " + card.clientWidth);
-    if (!/Retomar o dia gravado/.test(card.textContent)) throw new Error("a dica não diz como voltar antes da próxima hora");
-    if (!window.__SMOKE__.calls.workday_get) throw new Error("a tela não leu o config global");
+    if (card.scrollWidth > card.clientWidth + 1) throw new Error("o cartão estoura: " + card.scrollWidth + " em " + card.clientWidth);
   });
 
   await step("cfg-loops", async () => {
