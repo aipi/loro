@@ -1790,6 +1790,9 @@ function bubbleState() {
     tarefas: { status: tarefas.parsed.status, lista: tarefas.parsed.tarefas, pendentes: tarefas.pendentes },
     // o contexto do chat do balão, como REFERÊNCIA de arquivo (relativa ao acervo,
     // onde o agente roda): a reunião em andamento e os dois arquivos da agenda
+    // o modelo do chat é UM só, o mesmo do painel Chat da janela: o balão
+    // mostra e troca a mesma preferência (ADR-0041 §17)
+    chatModel: chatPrefs.model, chatEffort: effortCli(chatPrefs.effort), chatModelos: AGENT_MODELS,
     chatCtx: [
       meeting.active && meeting.livingRel ? meeting.livingRel : "",
       ".loro/agenda/" + LAG.dayKey(new Date(now)) + ".json",
@@ -2070,6 +2073,9 @@ async function onBubbleCmd(p) {
       case "keep": agenda.prompt = null; break;
       case "tarefa": await tarefaAcao(String(c.id || ""), String(c.acao || "")); break;
       case "annotate": await bubbleAnnotate(c); break;
+      case "chat-model":
+        if (AGENT_MODELS.includes(c.model)) { chatPrefs.model = c.model; persistChatPrefs(); }
+        break;
       case "record-now": {
         // «Gravar agora» num evento que está acontecendo: como uma agendada —
         // título do evento, encerra no fim dele, fecha calada
