@@ -2878,6 +2878,8 @@ async function paintBubbleSetting() {
   if (el.optBubble) { try { el.optBubble.checked = !!(await invoke("bubble_get_visible")); } catch (_) {} }
   const sz = $("optBubbleSize");
   if (sz) { try { sz.value = String((await invoke("bubble_get_size")) || 32); } catch (_) {} }
+  const ah = $("optBubbleAutoHide");
+  if (ah) { try { ah.checked = !!(await invoke("bubble_get_auto_hide")); } catch (_) {} }
 }
 // ADR-0042 — «Permissões do Claude». Mora no config global (é da pessoa) e o
 // backend a lê em cada turno; a tela só mostra e grava.
@@ -2917,6 +2919,11 @@ document.querySelectorAll("[data-agentperm]").forEach((b) =>
   });
 }
 if (el.optBubble) el.optBubble.addEventListener("change", (e) => setBubbleVisible(e.target.checked));
+// owner, 2026-11-19: o balão sai da frente enquanto a janela do Loro está em primeiro plano
+if ($("optBubbleAutoHide")) $("optBubbleAutoHide").addEventListener("change", async (e) => {
+  try { e.target.checked = !!(await invoke("bubble_set_auto_hide", { on: e.target.checked })); }
+  catch (err) { toast(tErr(String(err))); paintBubbleSetting(); }
+});
 listen("bubble-visible", (e) => { if (el.optBubble) el.optBubble.checked = !!(e && e.payload); });
 {
   const mm = $("optMeetingMic");

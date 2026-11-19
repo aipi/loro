@@ -61,6 +61,11 @@ pub struct BubbleCfg {
     // the icon size in pt: 32 (pequeno), 48 (médio) or 64 (grande)
     #[serde(default = "default_size")]
     pub tamanho: u32,
+    // owner, 2026-11-19: "ocultar quando a janela do loro for aberta" — while
+    // the main window is in front, the bubble steps aside (not persisted as
+    // hidden: it comes back as soon as the window loses focus)
+    #[serde(default = "yes")]
+    pub ocultar_com_janela: bool,
 }
 
 fn yes() -> bool {
@@ -77,6 +82,7 @@ impl Default for BubbleCfg {
             tela: None,
             posicoes: BTreeMap::new(),
             tamanho: DEFAULT_SIZE,
+            ocultar_com_janela: true,
         }
     }
 }
@@ -237,6 +243,8 @@ struct Runtime {
     anchor: Option<Anchor>,
     // a generation counter for the debounced save of a drag
     save_gen: u64,
+    // the main window is in front: the bubble is out of the way for now
+    main_focused: bool,
 }
 
 static RT: Mutex<Option<Runtime>> = Mutex::new(None);
@@ -590,7 +598,10 @@ pub fn bubble_set_size(app: AppHandle, size: u32) -> Result<u32, String> {
 
 pub fn set_visible(app: &AppHandle, visible: bool) -> Result<bool, String> {
     if let Some(w) = app.get_webview_window(LABEL) {
-        if visible {
+        if visible && steps_aside(&read_cfg(), with_rt(|r| r.main_focused)) {
+            // shown again, but the main window is in front: it appears when
+            // that window loses focus
+        } else if visible {
             w.show().map_err(|e| e.to_string())?;
             let _ = w.set_always_on_top(true);
         } else {
@@ -602,6 +613,47 @@ pub fn set_visible(app: &AppHandle, visible: bool) -> Result<bool, String> {
     write_cfg(&cfg)?;
     let _ = app.emit("bubble-visible", visible);
     Ok(visible)
+}
+
+/// Whether the bubble stays out of the way right now (the person wants it
+/// shown, but asked it to step aside while the main window is in front).
+pub fn steps_aside(cfg: &BubbleCfg, main_focused: bool) -> bool {
+    cfg.ocultar_com_janela && main_focused
+}
+
+/// `WindowEvent::Focused` of the main window: hide the bubble while that window
+/// is in front, bring it back when it is not. Never touches `visivel`.
+pub fn on_main_focus(app: &AppHandle, focused: bool) {
+    with_rt(|r| r.main_focused = focused);
+    let cfg = read_cfg();
+    if !cfg.visivel {
+        return;
+    }
+    let Some(w) = app.get_webview_window(LABEL) else {
+        return;
+    };
+    if steps_aside(&cfg, focused) {
+        let _ = w.hide();
+    } else if !w.is_visible().unwrap_or(true) {
+        let _ = w.show();
+        let _ = w.set_always_on_top(true);
+    }
+}
+
+#[tauri::command]
+pub fn bubble_get_auto_hide() -> bool {
+    read_cfg().ocultar_com_janela
+}
+
+/// «ocultar o balão com a janela do Loro em primeiro plano» (Settings).
+#[tauri::command]
+pub fn bubble_set_auto_hide(app: AppHandle, on: bool) -> Result<bool, String> {
+    let mut cfg = read_cfg();
+    cfg.ocultar_com_janela = on;
+    write_cfg(&cfg)?;
+    // the Settings checkbox is IN the main window, so it is in front now
+    on_main_focus(&app, with_rt(|r| r.main_focused));
+    Ok(on)
 }
 
 pub fn toggle_visible(app: &AppHandle) {
@@ -720,6 +772,19 @@ mod tests {
         assert_eq!(collapsed_for(7), (44.0, 44.0));
         // 32 pt is a quarter of the 64 pt icon's area
         assert_eq!(32 * 32 * 4, 64 * 64);
+    }
+
+    #[test]
+    fn adr0041_the_bubble_steps_aside_only_while_the_main_window_is_in_front() {
+        let mut cfg = BubbleCfg::default();
+        assert!(cfg.ocultar_com_janela, "on by default (owner, 2026-11-19)");
+        assert!(steps_aside(&cfg, true));
+        assert!(!steps_aside(&cfg, false));
+        cfg.ocultar_com_janela = false;
+        assert!(!steps_aside(&cfg, true));
+        // an older config without the field keeps the default
+        let old: BubbleCfg = serde_json::from_str(r#"{"visivel":true}"#).unwrap();
+        assert!(old.ocultar_com_janela);
     }
 
     #[test]

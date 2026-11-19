@@ -1391,6 +1391,8 @@
     "abra o Loro e escolha um projeto antes de gravar": "open Loro and choose a project before recording",
     "Balão": "Bubble",
     "mostrar o balão de gravação": "show the recording bubble",
+    "ocultar o balão com a janela do Loro em primeiro plano": "hide the bubble while the Loro window is in front",
+    "Ocultar balão": "Hide bubble",
     "Mostrar / ocultar balão": "Show / hide bubble",
     "Tarefas": "Tasks",
     "Entrar": "Join",

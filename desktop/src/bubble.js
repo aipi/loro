@@ -266,7 +266,15 @@ $("bNova").addEventListener("click", () => {
   send("new", { tema: destArg(d), nova: !!d.nova });
   if (d.nova) dest = null;
 });
-$("bAbrir").addEventListener("click", () => send("open"));
+// opening the main window folds the panel: the bubble steps aside while that
+// window is in front, and comes back as the icon, not the open panel
+$("bAbrir").addEventListener("click", () => { setOpen(false); send("open"); });
+// owner, 2026-11-19: «fechar essa miniatura a algum momento». Hidden until the
+// tray item, ⌘K «Mostrar / ocultar balão» or Settings shows it again.
+$("bOcultar").addEventListener("click", async () => {
+  await setOpen(false);
+  setTimeout(() => { invoke("bubble_set_visible", { visible: false }).catch(() => {}); }, 160);
+});
 
 // ---- painting ----------------------------------------------------------------------
 const hhmm = (ms) => {

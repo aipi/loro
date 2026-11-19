@@ -153,6 +153,13 @@ Completing (or reopening) cannot write Google, so Loro APPENDS an action to `<ac
 
 Typing `/` in the bubble composer opens a completion list of the owner's skills and commands, as in Claude Code's terminal: each row is `/name` + a one-line description, filtered as he types (`fuzzy.js`), ↑/↓ to move, Tab/Enter to complete to `/name ` (the space is where arguments go), Esc closes the list. `skills_list` (Rust, `skills.rs`) discovers what the CLI would load for the acervo — project `.claude/skills/*/SKILL.md` and `.claude/commands/*.md`, user `~/.claude/skills` and `~/.claude/commands`, plugin skills under `~/.claude/plugins/**/skills` shown as `plugin:skill` (the plugin's name from its `.claude-plugin/plugin.json`) — reading ONLY the frontmatter `name`/`description` (plain, quoted, block or wrapped values; missing name → folder/file name), precedence project > user > plugin, names restricted to plain tokens, cached 60 s. No CLI built-ins are listed: the ones that exist are interactive and do nothing in `-p` mode. A message that starts with `/` is sent to `claude -p` UNCHANGED (no context header in front), so the CLI resolves it. Not done: the same popover in the main window's chat composer (left for a follow-up).
 
+## §12 Getting out of the way (owner, 2026-11-19)
+
+"ocultar quando a janela do loro for aberta, ou fechar essa miniatura a algum momento."
+
+- **Steps aside with the main window.** While the main window has focus, the bubble is hidden; when it loses focus (another app, or the window is closed to the tray) the bubble comes back. This is NOT the person's "hidden" (`balao.visivel` is untouched); it is `balao.ocultarComJanela`, on by default, with a checkbox in Settings. "Abrir no Loro" folds the panel first, so the bubble returns as the icon.
+- **Hide from the bubble itself.** The panel's footer has "Ocultar balão": it sets `visivel: false` (the same as the Settings checkbox). It comes back from the tray item, ⌘K "Mostrar / ocultar balão" or Settings.
+
 ## Explicitly NOT done
 
 - Loro still does not read the calendar, does not know who attends, and does not write the agenda file.

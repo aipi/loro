@@ -5091,6 +5091,12 @@ pub fn run() {
                     bubble::on_moved(window.app_handle());
                 }
             }
+            // the bubble steps aside while the main window is in front
+            if window.label() == "main" {
+                if let WindowEvent::Focused(f) = event {
+                    bubble::on_main_focus(window.app_handle(), *f);
+                }
+            }
             if let WindowEvent::CloseRequested { api, .. } = event {
                 // ADR-0037 — fechar a janela SÓ A ESCONDE (o app segue na
                 // bandeja), e sem cortar a leitura a voz continuava lendo um
@@ -5099,6 +5105,9 @@ pub fn run() {
                 read_aloud::stop_reading();
                 api.prevent_close();
                 let _ = window.hide();
+                if window.label() == "main" {
+                    bubble::on_main_focus(window.app_handle(), false);
+                }
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -5136,6 +5145,8 @@ pub fn run() {
             bubble_expand,
             bubble_set_visible,
             bubble_get_visible,
+            bubble_get_auto_hide,
+            bubble_set_auto_hide,
             bubble_get_size,
             agent_perms::agent_perms_get,
             agent_perms::agent_perms_set,
