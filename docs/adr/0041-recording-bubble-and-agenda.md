@@ -170,7 +170,13 @@ This amends §2's "the icon never animates", by the owner who asked for that rul
 
 "faz ele pular e abrir as asas de vez em quando, ou se mexer a ponto de sumir. Ter vários movimentos diferentes e aleatórios."
 
-On top of the walk (§13), every 1 to 4.5 seconds of recording the parrot does one trick, drawn at random and never the same twice in a row: **jump** (with the wings open), **flap**, **exit** (walks out of the icon and comes back from the other side), **flip** (turns around for a moment), **spin** (a somersault), **peck** and **fly** (takes off flapping, leaves through the top and lands back from the other side). Each is one finite CSS animation behind a class on `#icon` (`t-<name>`); `bubble.js` only draws the next one and clears it. They stop with the recording, and `prefers-reduced-motion` turns all of it off. The red dot still never moves or blinks.
+On top of the walk (§13), every 1 to 4.5 seconds of recording the parrot does one trick, drawn at random and never the same twice in a row: **jump** (with the wings open), **flap**, **exit** (walks out of the icon and comes back from the other side), **flip** (turns around for a moment), **spin** (a somersault), **peck**, **fly** (takes off flapping, leaves through the top and lands back from the other side) and **talk** (the beak moves and a small speech balloon pops up beside him). Each is one finite CSS animation behind a class on `#icon` (`t-<name>`); `bubble.js` only draws the next one and clears it. They stop with the recording, and `prefers-reduced-motion` turns all of it off. The red dot still never moves or blinks.
+
+## §15 The parrot inside the main window (owner, 2026-11-19)
+
+"faz esse de dentro fazer os truques também, enquanto grava" — and, in the dark theme, the panel grey around it instead of the cream square.
+
+`src/parrot.js` replaces every `<img src="parrot.png">` of the main window with the same inline SVG the bubble draws (`.parrotbox`, styles in `style.css`). While recording and not paused it walks and does the same random tricks (§13, §14), driven from `paintRecordingChrome`. Light theme: the cream tile. Dark theme: the tile is `--panel` and the beak and legs go light. The drawing and its keyframes now exist twice (bubble.html and style.css/parrot.js): the bubble is a separate window with its own CSS, and keeping it self-contained was preferred to a shared file for now.
 
 ## Explicitly NOT done
 

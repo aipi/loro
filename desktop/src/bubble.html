@@ -69,6 +69,12 @@
       #icon.walk.t-fly #bird .actor { animation: t-fly 4.4s ease-in-out 1; }
       #icon.walk.t-fly #bird .wing.near { animation: t-wing 0.4s ease-in-out 11; }
       #icon.walk.t-fly #bird .wing.far { animation: t-wing-far 0.4s ease-in-out 11; }
+      #bird .say { opacity: 0; transform-box: view-box; transform-origin: 42px 30px; }
+      #bird .beak { transform-box: view-box; transform-origin: 72px 25px; }
+      @keyframes t-say { 0% { opacity: 0; transform: scale(0.3); } 12% { opacity: 1; transform: scale(1.08); } 18%, 85% { opacity: 1; transform: scale(1); } 100% { opacity: 0; transform: scale(0.6); } }
+      @keyframes t-beak { 0%, 100% { transform: rotate(0deg); } 50% { transform: rotate(-11deg); } }
+      #icon.walk.t-talk #bird .say { animation: t-say 2.4s ease-in-out 1; }
+      #icon.walk.t-talk #bird .beak { animation: t-beak 0.3s ease-in-out 7; }
       #icon.walk.t-jump #bird .actor { animation: t-jump 1.1s ease-in-out 1; }
       #icon.walk.t-jump #bird .wing.near, #icon.walk.t-flap #bird .wing.near { animation: t-flap 1.1s ease-in-out 1; }
       #icon.walk.t-jump #bird .wing.far, #icon.walk.t-flap #bird .wing.far { animation: t-flap-far 1.1s ease-in-out 1; }
@@ -312,6 +318,10 @@
           <circle cx="63" cy="27" r="5.6" fill="#FFFFFF"/><circle cx="64.4" cy="28.6" r="2.5" fill="#1B1B1F"/>
           <g transform="rotate(20 63 27)"><rect x="55" y="19" width="16" height="7.2" fill="#F7C500"/><path d="M56 26.2 H70.5" stroke="#1B1B1F" stroke-width="2.6" stroke-linecap="round"/></g>
         </g>
+        </g>
+        <g class="say">
+          <path d="M5 -1 H27 A12 12 0 0 1 39 11 V13 A12 12 0 0 1 34 22.6 L44 32 L27 25 H5 A12 12 0 0 1 -7 13 V11 A12 12 0 0 1 5 -1 Z" fill="#FFFFFF" stroke="#1B1B1F" stroke-width="2.4" stroke-linejoin="round"/>
+          <circle cx="6" cy="12" r="2.7" fill="#1B1B1F"/><circle cx="16" cy="12" r="2.7" fill="#1B1B1F"/><circle cx="26" cy="12" r="2.7" fill="#1B1B1F"/>
         </g>
       </svg>
       <span id="badge" aria-hidden="true"></span>

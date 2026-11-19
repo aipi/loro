@@ -12877,6 +12877,8 @@ function paintRecordingChrome() {
   // parado é o estado normal: sem gravação, um tick não toca no DOM
   if (!on && !recChromeWasOn) return;
   recChromeWasOn = on;
+  // ADR-0041 §15 — gravando (e não pausado), o papagaio da janela anda e faz truques
+  if (window.LoroParrot) LoroParrot.setRecording(on && !state.paused);
   paintRecControl();
   el.toggle.classList.toggle("recording", on);
   const pill = $("headRec");

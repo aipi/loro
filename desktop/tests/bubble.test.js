@@ -102,7 +102,7 @@ test("ADR-0041 §2 — o tempo passa de m:ss para h:mm:ss depois da primeira hor
 test("ADR-0041 §2/§13 — NADA pisca; a única animação é o papagaio andando enquanto grava", () => {
   // as únicas @keyframes são as do passo, e só rodam sob #icon.walk, no #bird
   const frames = HTML.match(/@keyframes\s+[\w-]+/g) || [];
-  assert.deepStrictEqual(frames.map((f) => f.replace(/@keyframes\s+/, "")).sort(), ["t-exit", "t-flap", "t-flap-far", "t-flip", "t-fly", "t-jump", "t-peck", "t-spin", "t-wing", "t-wing-far", "walk-a", "walk-b", "walk-bob"]);
+  assert.deepStrictEqual(frames.map((f) => f.replace(/@keyframes\s+/, "")).sort(), ["t-beak", "t-exit", "t-flap", "t-flap-far", "t-flip", "t-fly", "t-jump", "t-peck", "t-say", "t-spin", "t-wing", "t-wing-far", "walk-a", "walk-b", "walk-bob"]);
   const animadas = HTML.split("\n").filter((l) => /animation\s*:/.test(l));
   for (const l of animadas) assert.match(l, /#icon\.walk(\.t-\w+)? #bird .*animation: (walk-(a|b|bob) 0\.7s|t-[\w-]+ [\d.]+s [\w-]+ \d+;|none)/, "animação fora do passo: " + l.trim());
   // o selo e o botão não animam; pausado não tem regra de animação; movimento reduzido desliga o passo
