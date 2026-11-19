@@ -99,16 +99,24 @@ test("ADR-0041 §2 — o tempo passa de m:ss para h:mm:ss depois da primeira hor
   assert.strictEqual(BC.formatElapsed(-5), "0:00");
 });
 
-test("ADR-0041 §2 — NADA pisca: sem animação no balão (pedido explícito do dono)", () => {
-  assert.doesNotMatch(HTML, /@keyframes|animation\s*:|animation-name/);
+test("ADR-0041 §2/§13 — NADA pisca; a única animação é o papagaio andando enquanto grava", () => {
+  // as únicas @keyframes são as do passo, e só rodam sob #icon.walk, no #bird
+  const frames = HTML.match(/@keyframes\s+[\w-]+/g) || [];
+  assert.deepStrictEqual(frames.map((f) => f.replace(/@keyframes\s+/, "")).sort(), ["walk-a", "walk-b", "walk-bob"]);
+  const animadas = HTML.split("\n").filter((l) => /animation\s*:/.test(l));
+  for (const l of animadas) assert.match(l, /#icon\.walk #bird .*animation: (walk-(a|b|bob) 0\.7s|none)/, "animação fora do passo: " + l.trim());
+  // o selo e o botão não animam; pausado não tem regra de animação; movimento reduzido desliga o passo
+  assert.doesNotMatch(HTML, /#badge[^{]*\{[^}]*animation/);
+  assert.doesNotMatch(HTML, /body\.paused[^{]*\{[^}]*animation/);
+  assert.match(HTML, /prefers-reduced-motion: reduce\) \{ #icon\.walk #bird [^}]*animation: none/);
   assert.doesNotMatch(JS, /\.animate\(|setInterval\([^)]*(blink|pisca)/i);
   // o relógio troca de segundo em segundo, mas o ponto não troca de estado
   assert.doesNotMatch(JS, /classList\.toggle\("(on|blink|dim)"/);
 });
 
-test("ADR-0041 §2 — o balão é o ícone colorido do app, não o template monocromático da bandeja", () => {
-  assert.match(HTML, /src="loro-icon\.png"/);
-  assert.ok(fs.existsSync(path.join(SRC, "loro-icon.png")), "o ícone do app está no frontendDist");
+test("ADR-0041 §2/§13 — o balão é o papagaio colorido do app (desenhado no próprio HTML), não o template da bandeja", () => {
+  assert.match(HTML, /<svg id="bird"/);
+  assert.match(HTML, /class="leg a"[\s\S]*class="leg b"[\s\S]*class="bob"/);
   assert.doesNotMatch(HTML, /tray-on|parrot\.png/);
 });
 

@@ -298,6 +298,9 @@ function paintBadge() {
   const badge = $("badge");
   badge.className = b.kind || "";
   badge.textContent = b.kind === "pause" ? "❚❚" : "";
+  // ADR-0041 §13 — recording: the parrot walks (collapsed or open). Paused,
+  // starting or idle: it stands still.
+  $("icon").classList.toggle("walk", st.rec === "recording");
   // the collapsed icon's tooltip: the state and the next meeting (refinamento 4)
   const next = LAG ? LAG.nextEvent((st.agenda && st.agenda.eventos) || [], scheduledMap(), Date.now()) : null;
   const tip = BC.tooltip(b.kind ? stateLine(b) : "Loro", next, hhmm,

@@ -160,6 +160,12 @@ Typing `/` in the bubble composer opens a completion list of the owner's skills 
 - **Steps aside with the main window.** While the main window has focus, the bubble is hidden; when it loses focus (another app, or the window is closed to the tray) the bubble comes back. This is NOT the person's "hidden" (`balao.visivel` is untouched); it is `balao.ocultarComJanela`, on by default, with a checkbox in Settings. "Abrir no Loro" folds the panel first, so the bubble returns as the icon.
 - **Hide from the bubble itself.** The panel's footer has "Ocultar balão": it sets `visivel: false` (the same as the Settings checkbox). It comes back from the menu bar (the tray item "Mostrar / ocultar balão"), or from Loro: ⌘K "Mostrar / ocultar balão", the bubble button on the recording bar, or Settings. An explicit show shows it right away, even over the main window; it steps aside again the next time that window takes focus.
 
+## §13 The parrot walks while recording (owner, 2026-11-19)
+
+"quando ele estiver em gravação, poderia fazer o loro se movimentar no bubble, como se tivesse andando."
+
+This amends §2's "the icon never animates", by the owner who asked for that rule. While **recording**, the parrot in the bubble walks in place: the two legs swing and the body bobs (0.7 s cycle). Paused, starting, stopping or idle, it stands still. What §2 was about still holds: **nothing blinks** — the red dot and the pause badge stay steady, and no opacity or colour changes on a timer. `prefers-reduced-motion` turns the walk off. To animate, the bubble draws the parrot as inline SVG (`#bird`, the same drawing as `icons/parrot-src.svg`) instead of the PNG.
+
 ## Explicitly NOT done
 
 - Loro still does not read the calendar, does not know who attends, and does not write the agenda file.

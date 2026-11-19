@@ -175,7 +175,7 @@ quando detecta fala; cinza enquanto só ouve; pontilhada parada.
 
 ## Ícone
 
-O ícone é o Adalto, o papagaio da história em [`ORIGIN.md`](../ORIGIN.md): papagaio-verdadeiro, no passo de gângster e de cara fechada. Fonte em `src-tauri/icons/parrot-src.svg` (a silhueta da barra de menu, em `tray-src.svg`). Depois de regenerar, copie `128x128@2x.png` para `src/loro-icon.png` e `128x128.png` para `src/parrot.png`. Para regenerar todos os tamanhos:
+O ícone é o Adalto, o papagaio da história em [`ORIGIN.md`](../ORIGIN.md): papagaio-verdadeiro, no passo de gângster e de cara fechada. Fonte em `src-tauri/icons/parrot-src.svg` (a silhueta da barra de menu, em `tray-src.svg`). Depois de regenerar, copie `128x128.png` para `src/parrot.png`. O balão não usa PNG: o mesmo desenho está em `src/bubble.html` (`#bird`), para poder andar enquanto grava (ADR-0041 §13). Para regenerar todos os tamanhos:
 ```bash
 qlmanage -t -s 1024 -o /tmp icons/parrot-src.svg      # SVG -> PNG 1024
 cd desktop && npx tauri icon /tmp/parrot-src.svg.png  # gera .icns/.ico/PNGs

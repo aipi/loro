@@ -37,9 +37,20 @@
       #icon { position: absolute; left: var(--pad); top: var(--pad); width: var(--icon); height: var(--icon);
         border: 0; padding: 0; background: transparent; cursor: default; border-radius: 23%; z-index: 3;
         filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.3)); }
-      /* o PNG tem os cantos claros: o recorte é aqui (medido no smoke) */
-      #icon img { width: 100%; height: 100%; display: block; pointer-events: none; -webkit-user-drag: none;
-        border-radius: 23%; }
+      /* o Adalto, desenhado aqui (o mesmo de icons/parrot-src.svg) para poder andar */
+      #bird { width: 100%; height: 100%; display: block; pointer-events: none; border-radius: 23%; background: #f6efe0; }
+      #bird .leg { transform-box: view-box; }
+      #bird .leg.a { transform-origin: 45px 75px; transform: rotate(18deg); }
+      #bird .leg.b { transform-origin: 54px 73px; transform: rotate(-28deg); }
+      /* ADR-0041 §13 — gravando, ele ANDA (dono, 2026-11-19). Só as pernas e o
+         corpo: o selo vermelho continua parado, e nada pisca. Pausado, ele para. */
+      @keyframes walk-a { 0%, 100% { transform: rotate(18deg); } 50% { transform: rotate(-28deg); } }
+      @keyframes walk-b { 0%, 100% { transform: rotate(-28deg); } 50% { transform: rotate(18deg); } }
+      @keyframes walk-bob { 0%, 50%, 100% { transform: translateY(0); } 25%, 75% { transform: translateY(-1.6px); } }
+      #icon.walk #bird .leg.a { animation: walk-a 0.7s ease-in-out infinite; }
+      #icon.walk #bird .leg.b { animation: walk-b 0.7s ease-in-out infinite; }
+      #icon.walk #bird .bob { animation: walk-bob 0.7s ease-in-out infinite; }
+      @media (prefers-reduced-motion: reduce) { #icon.walk #bird .leg.a, #icon.walk #bird .leg.b, #icon.walk #bird .bob { animation: none; } }
       #icon:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
       #badge { position: absolute; right: -3px; top: -3px; width: var(--badge); height: var(--badge);
         border-radius: 50%; border: 1.5px solid #fff; display: none; align-items: center; justify-content: center;
@@ -253,7 +264,25 @@
       </div>
     </div>
     <button id="icon" aria-label="Loro" aria-expanded="false">
-      <img src="loro-icon.png" alt="" />
+      <svg id="bird" viewBox="-12.14 -4.14 116.28 116.28" aria-hidden="true">
+        <defs><clipPath id="birdHead"><circle cx="60" cy="29" r="15"/></clipPath></defs>
+        <g fill="none" stroke="#8A8F98" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round">
+          <path class="leg a" d="M45 75 V91 H54"/>
+          <path class="leg b" d="M54 73 V89 H63"/>
+        </g>
+        <g class="bob">
+          <path d="M36 62 L9 90 Q6 95 12 94 L46 76 Z" fill="#1F7F3B"/>
+          <path d="M30 72 L9 90 Q6 95 12 94 L36 81 Z" fill="#2D6BE0"/>
+          <ellipse cx="47" cy="54" rx="17" ry="25" transform="rotate(-22 47 54)" fill="#2FA84F"/>
+          <path d="M37 40 Q29 62 47 71 Q54 57 47 41 Z" fill="#1F7F3B"/>
+          <path d="M37 40 Q34 47 35 53 Q43 51 47 41 Z" fill="#E5484D"/>
+          <circle cx="60" cy="29" r="15" fill="#2FA84F"/>
+          <g clip-path="url(#birdHead)"><circle cx="65" cy="29.5" r="12" fill="#F7C500"/><ellipse cx="69" cy="17" rx="10" ry="6.5" fill="#3B82F6"/></g>
+          <path d="M71 20 C84 18 90 30 84 40 C81 44 76 44 74 41 C78 37 77 31 71 30 Z" fill="#2A2A30"/>
+          <circle cx="63" cy="27" r="5.6" fill="#FFFFFF"/><circle cx="64.4" cy="28.6" r="2.5" fill="#1B1B1F"/>
+          <g transform="rotate(20 63 27)"><rect x="55" y="19" width="16" height="7.2" fill="#F7C500"/><path d="M56 26.2 H70.5" stroke="#1B1B1F" stroke-width="2.6" stroke-linecap="round"/></g>
+        </g>
+      </svg>
       <span id="badge" aria-hidden="true"></span>
     </button>
     <script src="i18n.js"></script>
