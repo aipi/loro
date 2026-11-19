@@ -34,7 +34,7 @@ const html = fs.readFileSync(path.join(REAL_SRC, "bubble.html"), "utf8");
 
 const STUB = `
 <script>
-window.__SMOKE__ = { errors: [], calls: {}, handlers: {}, sent: [], expand: [], drags: 0 };
+window.__SMOKE__ = { errors: [], calls: {}, handlers: {}, sent: [], expand: [], drags: 0, chat: [], heights: [] };
 window.__SMOKE__.fire = (name, payload) => {
   for (const fn of window.__SMOKE__.handlers[name] || []) fn({ payload });
 };
@@ -44,6 +44,9 @@ window.__TAURI__ = {
   core: {
     invoke: (cmd, args) => {
       window.__SMOKE__.calls[cmd] = (window.__SMOKE__.calls[cmd] || 0) + 1;
+      if (cmd === "bubble_get_size") return Promise.resolve(32);
+      if (cmd === "chat_send") { window.__SMOKE__.chat.push(args && args.input); return Promise.resolve(null); }
+      if (cmd === "bubble_panel_height") { window.__SMOKE__.heights.push(args && args.height); return Promise.resolve(args && args.height); }
       if (cmd === "bubble_expand") {
         window.__SMOKE__.expand.push(!!(args && args.expanded));
         return Promise.resolve({ right: false, bottom: false });
@@ -71,9 +74,14 @@ const DRIVER = `
   const seen = {};
   const q = (sel) => document.querySelector(sel);
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-  const vis = (el) => !!el && !el.hidden && getComputedStyle(el).display !== "none" && el.getBoundingClientRect().height > 0;
+  const vis = (el) => {
+    if (!el || el.hidden) return false;
+    const cs = getComputedStyle(el);
+    return cs.display !== "none" && cs.visibility !== "hidden" && Number(cs.opacity) > 0 && el.getBoundingClientRect().height > 0;
+  };
   const mouse = (type, target, x, y) => (target || document).dispatchEvent(new MouseEvent(type, { bubbles: true, button: 0, screenX: x, screenY: y, clientX: x, clientY: y }));
   const lastSent = () => S.sent[S.sent.length - 1] || {};
+  const click = (el) => { mouse("mousedown", el, 10, 10); mouse("mouseup", document, 10, 10); };
   let stopped = false;
   const step = async (name, fn) => {
     if (stopped) return;
@@ -83,11 +91,20 @@ const DRIVER = `
     if (STOP && name === STOP) { stopped = true; document.title = "RESULT" + JSON.stringify({ steps: seen, errors: S.errors.slice(0, 12) }); }
   };
   const NOW = Date.now();
+  const at = (minutes) => NOW + minutes * 60000;
+  const tomorrow = (() => { const d = new Date(NOW); return new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1, 9, 30).getTime(); })();
+  const EVENTOS = [
+    { id: "cedo", titulo: "Café com o time", inicioMs: at(-180), fimMs: at(-150), comConvidados: true, agendada: false, tema: "" },
+    { id: "agora", titulo: "Semanal de custos", inicioMs: at(-10), fimMs: at(20), comConvidados: true, agendada: true, tema: "frota-2026" },
+    { id: "logo", titulo: "1:1 com a equipe", inicioMs: at(25), fimMs: at(55), comConvidados: true, agendada: false, tema: "" },
+    { id: "daily", titulo: "Daily", inicioMs: tomorrow, fimMs: tomorrow + 15 * 60000, comConvidados: true, agendada: true, tema: "vendas" },
+  ].filter((e) => new Date(e.inicioMs).getDate() === new Date(NOW).getDate() || e.id === "daily");
   const BASE = {
     lang: "pt", rec: "idle", meeting: false, canRecord: true, startedAt: 0, pausedMs: 0, pauseStart: 0,
     titulo: "", tema: "", destino: "frota-2026",
     temas: [{ slug: "frota-2026", nome: "frota 2026" }, { slug: "vendas", nome: "vendas" }],
-    linhas: [], agenda: { status: "ok", eventos: [] }, prompt: null, aviso: "",
+    linhas: [], agenda: { status: "ok", eventos: EVENTOS }, prompt: null, aviso: "",
+    chatCtx: ["brainstorming/frota-2026/meetings/x/reuniao.md", ".loro/agenda/2026-11-18.json"],
   };
   const state = (over) => S.fire("bubble-state", Object.assign({}, BASE, over || {}));
   await wait(300);
@@ -98,14 +115,16 @@ const DRIVER = `
     if (!S.sent.some((c) => c.cmd === "hello")) throw new Error("o balão não pediu o estado à janela principal");
     if (vis(q("#panel"))) throw new Error("o painel nasce aberto");
     const r = q("#icon").getBoundingClientRect();
-    if (Math.round(r.width) !== 64 || Math.round(r.height) !== 64) throw new Error("o ícone não tem 64pt: " + r.width + "x" + r.height);
+    if (Math.round(r.width) !== 32 || Math.round(r.height) !== 32) throw new Error("o ícone padrão não tem 32pt: " + r.width + "x" + r.height);
+    // nítido: o PNG tem pelo menos o dobro do maior tamanho (64 pt × 2)
+    if (q("#icon img").naturalWidth < 128) throw new Error("ícone de baixa resolução: " + q("#icon img").naturalWidth);
   });
 
   await step("ocioso-sem-selo", async () => {
     state();
     await wait(50);
     if (vis(q("#badge"))) throw new Error("ocioso mostra selo");
-    if (vis(q("#time"))) throw new Error("ocioso mostra tempo");
+    if (!/Próxima: \\d\\d:\\d\\d 1:1 com a equipe/.test(q("#icon").title)) throw new Error("tooltip sem a próxima: " + q("#icon").title);
   });
 
   await step("gravando-selo-estavel", async () => {
@@ -113,20 +132,20 @@ const DRIVER = `
     await wait(50);
     const b = q("#badge");
     if (!vis(b) || !b.classList.contains("rec")) throw new Error("gravando sem o ponto vermelho");
-    if (!vis(q("#time")) || !/^1:0[5-9]$/.test(q("#time").textContent)) throw new Error("tempo: " + q("#time").textContent);
+    const br = b.getBoundingClientRect(), win = document.body.getBoundingClientRect();
+    if (br.width < 9) throw new Error("selo ilegível: " + br.width);
+    if (br.left < 0 || br.top < 0 || br.right > win.right || br.bottom > win.bottom) throw new Error("o selo sai da janela recolhida: " + JSON.stringify([br.left, br.top, br.right, br.bottom]));
+    if (!/gravando · 1:0[5-9]/.test(q("#icon").title)) throw new Error("o tooltip não diz o tempo: " + q("#icon").title);
     // NÃO PISCA: medido, não lido do CSS — duas leituras com 1,3 s entre elas
     const look = () => { const cs = getComputedStyle(b); return [cs.backgroundColor, cs.opacity, cs.visibility, cs.display, cs.transform].join("|"); };
     const a1 = look();
-    for (const el of [b, q("#time"), q("#icon"), q("#icon img")]) {
+    for (const el of [b, q("#icon"), q("#icon img")]) {
       const cs = getComputedStyle(el);
-      if (cs.animationName !== "none") throw new Error("animação em " + el.id + ": " + cs.animationName);
+      if (cs.animationName !== "none") throw new Error("animação em " + (el.id || el.tagName) + ": " + cs.animationName);
       if (cs.transitionDuration !== "0s") throw new Error("transição em " + (el.id || el.tagName) + ": " + cs.transitionDuration);
     }
     await wait(1300);
     if (look() !== a1) throw new Error("o selo mudou sozinho: " + a1 + " → " + look());
-    // a única coisa que muda é o número do relógio
-    const r = q("#time").getBoundingClientRect();
-    if (r.right > 84 || r.bottom > 84 || r.left < 0) throw new Error("o tempo sai da janela recolhida (84×84): " + JSON.stringify([r.left, r.right, r.bottom]));
   });
 
   await step("pausado", async () => {
@@ -140,13 +159,13 @@ const DRIVER = `
     mouse("mousedown", q("#icon"), 100, 100);
     mouse("mousemove", document, 102, 101);
     mouse("mouseup", document, 102, 101);
-    await wait(80);
+    await wait(250);
     if (!document.body.classList.contains("open")) throw new Error("o clique não abriu o painel");
+    if (!vis(q("#panel"))) { const cs = getComputedStyle(q("#panel")); throw new Error("o painel não aparece: " + [cs.visibility, cs.opacity, cs.display, q("#panel").getBoundingClientRect().height].join(" ")); }
     if (S.expand[S.expand.length - 1] !== true) throw new Error("não pediu ao backend para crescer");
     if (S.drags) throw new Error("um clique virou arrasto");
     const cmds = S.sent.slice(before).map((c) => c.cmd);
     if (cmds.some((c) => /start|pause|resume|stop|toggle/.test(c))) throw new Error("o clique no ícone mandou gravar/pausar: " + cmds);
-    if (vis(q("#time"))) throw new Error("aberto, o tempo vai para o cabeçalho, não para baixo do ícone");
   });
 
   await step("arrasto-nao-alterna", async () => {
@@ -159,63 +178,161 @@ const DRIVER = `
     if (!document.body.classList.contains("open")) throw new Error("terminar um arrasto fechou o painel");
   });
 
-  await step("painel-cinco-partes", async () => {
+  await step("painel-gravando", async () => {
     state({ rec: "recording", meeting: true, startedAt: NOW - 125000, tema: "frota-2026", titulo: "Semanal de custos",
-      linhas: [{ who: "mic", text: "vamos começar pelo orçamento" }, { who: "system", text: "o número fechou ontem" }],
-      agenda: { status: "ok", eventos: [
-        { id: "e1", titulo: "1:1 com a equipe", inicioMs: NOW + 3600000, fimMs: NOW + 5400000, comConvidados: true, agendada: false },
-        { id: "e2", titulo: "Planejamento", inicioMs: NOW + 7200000, fimMs: NOW + 9000000, comConvidados: true, agendada: true },
-      ] } });
+      linhas: [{ who: "mic", text: "vamos começar pelo orçamento" }, { who: "system", text: "o número fechou ontem" }] });
     await wait(80);
-    if (!/gravando · 2:0/.test(q("#bStatus").textContent)) throw new Error("cabeçalho: " + q("#bStatus").textContent);
+    if (!/gravando/.test(q("#bStatusText").textContent)) throw new Error("status: " + q("#bStatusText").textContent);
+    if (!/^2:0/.test(q("#bTime").textContent)) throw new Error("tempo no cabeçalho: " + q("#bTime").textContent);
+    if (!/Semanal de custos/.test(q("#bTitle").textContent)) throw new Error("título: " + q("#bTitle").textContent);
     const tail = q("#bTail").textContent;
     if (!/você/.test(tail) || !/sistema/.test(tail)) throw new Error("a transcrição não diz quem falou: " + tail);
     if (vis(q("#bGravar")) || !vis(q("#bPausar")) || !vis(q("#bEncerrar")) || !vis(q("#bNova"))) throw new Error("controles errados para «gravando»");
-    if (!q("#bTema").disabled) throw new Error("a ideia de uma gravação em curso não pode ser trocada pelo seletor");
-    const lis = document.querySelectorAll("#bAgenda li");
-    if (lis.length !== 2) throw new Error("próximas reuniões: " + lis.length);
-    if (lis[0].querySelector("input").checked || !lis[1].querySelector("input").checked) throw new Error("o «gravar» por evento não reflete o agendado");
-    if (!vis(q("#bAbrir"))) throw new Error("sem «Abrir no Loro»");
-    lis[0].querySelector("input").click();
-    await wait(30);
-    const c = lastSent();
-    if (c.cmd !== "schedule" || c.id !== "e1" || c.on !== true || c.tema !== "frota-2026") throw new Error("agendar mandou " + JSON.stringify(c));
-    // nada estoura a largura do painel
-    const p = q("#panel"), body = q("#body");
-    if (body.scrollWidth > body.clientWidth + 1) throw new Error("o painel estoura na horizontal: " + body.scrollWidth + " em " + body.clientWidth);
-    const pr = p.getBoundingClientRect();
-    if (Math.round(pr.width) !== document.body.clientWidth || Math.round(pr.height) !== document.body.clientHeight) {
-      throw new Error("o painel não ocupa a janela: " + pr.width + "x" + pr.height + " em " + document.body.clientWidth + "x" + document.body.clientHeight);
+    // a ação principal é a vermelha
+    const enc = getComputedStyle(q("#bEncerrar")), pau = getComputedStyle(q("#bPausar"));
+    if (enc.backgroundColor === pau.backgroundColor) throw new Error("Encerrar não se distingue de Pausar");
+    if ([...document.querySelectorAll("#bTemaChips .chip")].some((c) => !c.disabled)) throw new Error("a ideia de uma gravação em curso não pode ser trocada");
+    const body = q("#tabRec");
+    if (body.scrollWidth > body.clientWidth + 1) throw new Error("estoura na horizontal: " + body.scrollWidth + " em " + body.clientWidth);
+    for (const el of [q("#bAbrir"), q("#bChatIn")]) {
+      const r = el.getBoundingClientRect(), p = q("#panel").getBoundingClientRect();
+      if (r.bottom > p.bottom - 2 || r.right > p.right - 2) throw new Error((el.id) + " fora do painel");
     }
-    // tudo o que importa cabe DENTRO do painel: o «gravar» de cada evento e o rodapé
-    const fora = [];
-    for (const el of [q("#bAbrir"), ...document.querySelectorAll("#bAgenda label")]) {
-      const r = el.getBoundingClientRect();
-      if (r.right > pr.right - 4 || r.bottom > pr.bottom - 4 || r.width === 0) fora.push((el.id || el.textContent.trim()) + " " + JSON.stringify([Math.round(r.right), Math.round(r.bottom)]));
-    }
-    if (fora.length) throw new Error("fora do painel (" + Math.round(pr.right) + "x" + Math.round(pr.bottom) + "): " + fora.join(" · "));
+  });
+
+  // CONTRASTE MEDIDO (WCAG): a cor de cada texto sobre o fundo opaco do painel
+  // (--bg-solid; a translucidez real depende do que está atrás, então o piso é
+  // medido contra o material sólido). Roda no tema que o Chrome estiver usando —
+  // SMOKE_SCHEME=dark|light mede o outro.
+  await step("contraste", async () => {
+    const parse = (c) => { const m = c.match(/[0-9.]+/g).map(Number); return { r: m[0], g: m[1], b: m[2], a: m[3] == null ? 1 : m[3] }; };
+    const over = (f, b) => ({ r: f.r * f.a + b.r * (1 - f.a), g: f.g * f.a + b.g * (1 - f.a), b: f.b * f.a + b.b * (1 - f.a), a: 1 });
+    const lum = (c) => { const ch = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }; return 0.2126 * ch(c.r) + 0.7152 * ch(c.g) + 0.0722 * ch(c.b); };
+    const ratio = (x, y) => { const a = lum(x), b = lum(y); return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05); };
+    const probe = document.createElement("div");
+    probe.style.background = "var(--bg-solid)"; document.body.appendChild(probe);
+    const solid = parse(getComputedStyle(probe).backgroundColor); probe.remove();
+    const fails = [];
+    const check = (el, min, name) => {
+      if (!el) return;
+      const cs = getComputedStyle(el);
+      let bg = solid;
+      const own = parse(cs.backgroundColor);
+      if (own.a > 0) bg = over(own, solid);
+      const r = ratio(over(parse(cs.color), bg), bg);
+      S.contraste = S.contraste || {}; S.contraste[name] = Math.round(r * 10) / 10;
+      if (r < min) fails.push(name + " " + r.toFixed(2) + " < " + min);
+    };
+    check(q("#bStatusText").parentElement, 4.5, "status gravando");
+    check(q("#bTitle"), 4.5, "título");
+    check(q(".lbl"), 4.5, "rótulo");
+    check(q("#bEncerrar"), 4.5, "Encerrar (vermelho)");
+    check(q("#bPausar"), 4.5, "Pausar (fantasma)");
+    check(q("#bAbrir"), 4.5, "Abrir no Loro");
+    check(q("#bTail .who.sistema"), 4.5, "rótulo sistema");
+    if (fails.length) throw new Error(fails.join(" · "));
   });
 
   await step("gravar-do-painel", async () => {
-    state({ rec: "idle", linhas: [], agenda: { status: "missing", eventos: [] } });
-    await wait(50);
+    state({ rec: "idle", linhas: [] });
+    await wait(60);
     if (!vis(q("#bGravar"))) throw new Error("ocioso sem «Gravar»");
-    if (q("#bTema").value !== "frota-2026") throw new Error("a última ideia não veio selecionada: " + q("#bTema").value);
-    if (!/agenda não atualizada/.test(q("#bAgendaNota").textContent)) throw new Error("sem agenda, o painel não diz: " + q("#bAgendaNota").textContent);
-    q("#bTema").value = "vendas"; q("#bTema").dispatchEvent(new Event("change"));
+    const chips = [...document.querySelectorAll("#bTemaChips .chip")];
+    if (!chips.length || chips[0].getAttribute("aria-pressed") !== "true" || !/frota 2026/.test(chips[0].textContent)) throw new Error("a última ideia não veio marcada");
+    chips.find((c) => /vendas/.test(c.textContent)).click();
+    await wait(40);
+    if (lastSent().cmd !== "set-tema" || lastSent().tema !== "vendas") throw new Error("escolher a ideia mandou " + JSON.stringify(lastSent()));
     q("#bGravar").click();
     await wait(30);
-    const c = lastSent();
+    let c = lastSent();
     if (c.cmd !== "start" || c.tema !== "vendas" || c.nova) throw new Error("gravar mandou " + JSON.stringify(c));
-    // uma ideia nova pelo campo
-    q("#bTema").value = "__nova__"; q("#bTema").dispatchEvent(new Event("change"));
-    if (!vis(q("#bNovaIdeia"))) throw new Error("«+ nova ideia…» não abriu o campo");
+    // ideia nova pelo «outra… / + nova ideia…»
+    const more = [...document.querySelectorAll("#bTemaChips .chip")].pop();
+    more.click(); await wait(40);
+    if (vis(q("#bTema"))) { q("#bTema").value = "__nova__"; q("#bTema").dispatchEvent(new Event("change")); await wait(20); }
+    if (!vis(q("#bNovaIdeia"))) throw new Error("não há onde nomear a ideia nova");
     q("#bNovaIdeia").value = "lançamento q4";
     q("#bGravar").click();
     await wait(30);
-    const c2 = lastSent();
-    if (c2.cmd !== "start" || c2.tema !== "lançamento q4" || c2.nova !== true) throw new Error("ideia nova mandou " + JSON.stringify(c2));
-    q("#bTema").value = "frota-2026"; q("#bTema").dispatchEvent(new Event("change"));
+    c = lastSent();
+    if (c.cmd !== "start" || c.tema !== "lançamento q4" || c.nova !== true) throw new Error("ideia nova mandou " + JSON.stringify(c));
+  });
+
+  await step("agenda-hoje-amanha", async () => {
+    q("#tabBtnAgenda").click();
+    await wait(60);
+    const txt = q("#bAgenda").textContent;
+    if (!/Hoje/.test(txt) || !/Amanhã/.test(txt)) throw new Error("sem os grupos Hoje/Amanhã: " + txt);
+    if (!/Daily/.test(txt)) throw new Error("o evento de amanhã não aparece");
+    const now = q('.ev[data-ev="agora"]');
+    if (!now || !now.classList.contains("now")) throw new Error("o evento em andamento não está destacado");
+    const past = q("#bPassados");
+    if (EVENTOS.some((e) => e.id === "cedo")) {
+      if (past.hidden || !/Já passaram \\(1\\)/.test(past.querySelector("summary").textContent)) throw new Error("os que passaram não estão recolhidos: " + past.querySelector("summary").textContent);
+      if (past.open) throw new Error("os que passaram nascem abertos");
+    }
+    // abrir um evento mostra os detalhes e as ações
+    q('.ev[data-ev="logo"] > button').click();
+    await wait(40);
+    const det = q('.ev[data-ev="logo"] .det');
+    if (!det) throw new Error("o evento não abre");
+    if (!/começa em (2[4-5]) min/.test(det.textContent)) throw new Error("estado ao vivo: " + det.textContent);
+    if (!/30 min/.test(det.textContent) || !/com convidados/.test(det.textContent)) throw new Error("detalhes: " + det.textContent);
+    det.querySelector("select").value = "vendas";
+    det.querySelector("input[type=checkbox]").click();
+    await wait(30);
+    let c = lastSent();
+    if (c.cmd !== "schedule" || c.id !== "logo" || c.on !== true || c.tema !== "vendas") throw new Error("agendar mandou " + JSON.stringify(c));
+    // o que está acontecendo agora pode ser gravado na hora
+    q('.ev[data-ev="agora"] > button').click();
+    await wait(40);
+    const now2 = [...q('.ev[data-ev="agora"] .det').querySelectorAll("button")].find((b) => /Gravar agora/.test(b.textContent));
+    if (!now2) throw new Error("sem «Gravar agora» no que está acontecendo");
+    now2.click(); await wait(30);
+    c = lastSent();
+    if (c.cmd !== "record-now" || c.id !== "agora") throw new Error("gravar agora mandou " + JSON.stringify(c));
+    // à noite, com hoje vazio, amanhã continua lá (o defeito que o dono viu)
+    state({ agenda: { status: "ok", eventos: EVENTOS.filter((e) => e.id === "daily") } });
+    await wait(40);
+    if (!/Amanhã/.test(q("#bAgenda").textContent) || /nenhuma reunião/.test(q("#bAgendaNota").textContent)) throw new Error("amanhã sumiu sem hoje");
+    state({ agenda: { status: "missing", eventos: [] } });
+    await wait(40);
+    if (!/agenda não atualizada/.test(q("#bAgendaNota").textContent)) throw new Error("sem agenda, o painel não diz");
+    state();
+  });
+
+  await step("chat", async () => {
+    q("#tabBtnRec").click();
+    const ta = q("#bChatIn");
+    ta.value = "o que o Rick pediu agora?";
+    ta.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    await wait(40);
+    const call = S.chat[S.chat.length - 1];
+    if (!call || call.channel !== "bubble") throw new Error("o chat não foi pelo canal do balão: " + JSON.stringify(call));
+    if (!/@brainstorming\\/frota-2026\\/meetings\\/x\\/reuniao\\.md/.test(call.prompt) || !/o que o Rick pediu agora\\?$/.test(call.prompt)) throw new Error("prompt: " + call.prompt);
+    if (!/pensando/.test(q("#bChatState").textContent) || !vis(q("#bChatStop"))) throw new Error("sem «pensando…» e Parar");
+    S.fire("bubble-chat-delta", "O Rick pediu **o orçamento** até sexta.\\n- revisar frota");
+    await wait(30);
+    S.fire("bubble-chat-done", { ok: true });
+    await wait(120);
+    const a = q("#bChatLog .msg.a");
+    if (!a || !a.querySelector("strong") || !a.querySelector("li")) throw new Error("resposta sem formatação: " + (a && a.innerHTML));
+    if (!a.querySelector(".copy")) throw new Error("sem copiar");
+    if (!vis(q("#bChatNova"))) throw new Error("sem «nova conversa»");
+    if (S.heights.length === 0) throw new Error("o cartão não pediu para crescer com a conversa");
+    // segunda pergunta segue a mesma sessão (fresh=false)
+    ta.value = "e o prazo?";
+    ta.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    await wait(30);
+    if (S.chat[S.chat.length - 1].fresh !== false) throw new Error("o seguimento abriu sessão nova");
+    q("#bChatStop").click(); await wait(20);
+    if (!S.calls.chat_cancel) throw new Error("Parar não matou o processo");
+    // Shift+Enter não envia
+    const n = S.chat.length;
+    ta.value = "linha";
+    ta.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", shiftKey: true, bubbles: true }));
+    await wait(20);
+    if (S.chat.length !== n) throw new Error("Shift+Enter enviou");
   });
 
   await step("pergunta-trocar", async () => {
@@ -227,44 +344,50 @@ const DRIVER = `
     await wait(30);
     const c = lastSent();
     if (c.cmd !== "switch" || c.id !== "e2") throw new Error("trocar mandou " + JSON.stringify(c));
-    state({ rec: "recording", meeting: true, startedAt: NOW - 60000, prompt: { kind: "extend", eventId: "e2", titulo: "Planejamento", minutos: 2 } });
-    await wait(50);
-    if (!/termina em 2 min — estender\\?/.test(q("#bPromptText").textContent)) throw new Error("estender: " + q("#bPromptText").textContent);
     state({ rec: "recording", meeting: true, startedAt: NOW - 60000, prompt: null });
   });
 
   await step("esc-fecha", async () => {
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-    await wait(60);
+    await wait(260);
     if (document.body.classList.contains("open")) throw new Error("Esc não fechou");
     if (S.expand[S.expand.length - 1] !== false) throw new Error("não pediu ao backend para encolher");
   });
 
   await step("clique-fora-fecha", async () => {
-    mouse("mousedown", q("#icon"), 10, 10); mouse("mouseup", document, 10, 10);
-    await wait(60);
+    click(q("#icon"));
+    await wait(200);
     if (!document.body.classList.contains("open")) throw new Error("não reabriu");
     window.dispatchEvent(new Event("blur"));
-    await wait(60);
+    await wait(260);
     if (document.body.classList.contains("open")) throw new Error("perder o foco não fechou");
   });
 
   await step("pergunta-nova-abre", async () => {
     state({ rec: "idle", prompt: { kind: "suggest", eventId: "e1", titulo: "1:1 com a equipe" } });
-    await wait(80);
+    await wait(200);
     if (!document.body.classList.contains("open")) throw new Error("uma pergunta nova não abriu o painel");
     if (!/Gravar 1:1 com a equipe\\?/.test(q("#bPromptText").textContent)) throw new Error("sugestão: " + q("#bPromptText").textContent);
+  });
+
+  await step("tamanho-64", async () => {
+    S.fire("bubble-size", 64);
+    await wait(40);
+    const r = q("#icon").getBoundingClientRect();
+    if (Math.round(r.width) !== 64) throw new Error("o tamanho grande não aplicou: " + r.width);
+    S.fire("bubble-size", 32);
   });
 
   await step("ingles", async () => {
     state({ lang: "en", rec: "idle", prompt: null });
     await wait(60);
-    if (!/ready to record/.test(q("#bStatus").textContent)) throw new Error("status em inglês: " + q("#bStatus").textContent);
+    if (!/ready to record/.test(q("#bStatusText").textContent)) throw new Error("status em inglês: " + q("#bStatusText").textContent);
     if (!/Record/.test(q("#bGravar").textContent)) throw new Error("botão: " + q("#bGravar").textContent);
     if (!/Open in Loro/.test(q("#bAbrir").textContent)) throw new Error("abrir: " + q("#bAbrir").textContent);
+    if (!/Ask Claude/.test(q("#bChatIn").placeholder)) throw new Error("chat: " + q("#bChatIn").placeholder);
   });
 
-  document.title = "RESULT" + JSON.stringify({ steps: seen, errors: S.errors.slice(0, 12), viewport: [document.body.clientWidth, document.body.clientHeight] });
+  document.title = "RESULT" + JSON.stringify({ steps: seen, errors: S.errors.slice(0, 12), viewport: [document.body.clientWidth, document.body.clientHeight], contraste: S.contraste });
 })();
 </script>
 `;
@@ -280,7 +403,12 @@ for (const [nome, corpo] of [["STUB", STUB], ["DRIVER", DRIVER]]) {
 // com o rodapé fora da tela. O documento é preso no tamanho real (bubble.rs
 // EXPANDED = 340×520) dentro de uma janela maior.
 const [W, H] = (process.env.SMOKE_SIZE || "340,520").split(",").map(Number);
-const FRAME = `<style>html, body { width: ${W}px !important; height: ${H}px !important; }</style>`;
+// E SEM TRANSIÇÃO: medido em 2026-11-18, o Chrome headless com --dump-dom não
+// avança transições CSS — 250 ms depois de abrir, o painel seguia em opacity 0
+// (visibility visible, 499px de altura: parado no primeiro quadro do scale). O
+// smoke mede o ESTADO FINAL; a transição em si (140 ms, sem repetição) é
+// conferida no fonte por bubble.test.js e vista no app de verdade.
+const FRAME = `<style>html, body { width: ${W}px !important; height: ${H}px !important; } *, *::before { transition: none !important; }</style>`;
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "loro-smoke-bubble-"));
 const page = html
   .replace("<head>", `<head><base href="${pathToFileURL(REAL_SRC + path.sep)}">` + STUB)
@@ -292,6 +420,8 @@ fs.writeFileSync(file, page);
 const shot = process.env.SMOKE_SHOT || "";
 const dom = execFileSync(CHROME, [
   ...(shot ? ["--screenshot=" + shot, "--hide-scrollbars", "--default-background-color=00000000"] : []),
+  // SMOKE_SCHEME=dark|light força o tema (sem ele vale o do sistema)
+  ...(process.env.SMOKE_SCHEME ? ["--blink-settings=preferredColorScheme=" + (process.env.SMOKE_SCHEME === "dark" ? 0 : 1)] : []),
   "--headless", "--disable-gpu", "--no-sandbox", "--allow-file-access-from-files",
   "--window-size=" + Math.max(W, 600) + "," + Math.max(H + 100, 700), "--virtual-time-budget=20000", "--dump-dom", pathToFileURL(file).href,
 ], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 1 << 26 });
@@ -310,6 +440,7 @@ for (const [k, v] of Object.entries(out.steps)) {
   console.log((ok ? "  ok   " : "  FALHA") + "  " + k + (ok ? "" : "  → " + v));
 }
 if (out.viewport) console.log("viewport:", out.viewport.join("x"));
+if (out.contraste) console.log("contraste:", JSON.stringify(out.contraste));
 if (out.errors.length) {
   console.log("\nERROS DE JS NO CONSOLE:");
   for (const e of out.errors) console.log("  · " + e);

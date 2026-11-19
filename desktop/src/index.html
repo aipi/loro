@@ -987,6 +987,13 @@
                 <!-- ADR-0041 — o balão de gravação: sempre no topo, em todos os Spaces. A
                      preferência mora no config global (bubble_set_visible). -->
                 <label class="opt"><input type="checkbox" id="optBubble" checked /> <span data-i18n>mostrar o balão de gravação</span></label>
+                <label class="field"><span class="mono" data-i18n>tamanho do balão</span>
+                  <select id="optBubbleSize">
+                    <option value="32" data-i18n>pequeno</option>
+                    <option value="48" data-i18n>médio</option>
+                    <option value="64" data-i18n>grande</option>
+                  </select>
+                </label>
                 <!-- ADR-0022 §24b — uma reunião capta DUAS trilhas (você + a máquina). Quando o
                      som sai pela caixa, o microfone escuta a máquina de volta e a mesma fala
                      chega duas vezes. Desligar o microfone é a saída física: uma trilha só. -->
@@ -1034,6 +1041,22 @@
                 </div>
                 <p class="hint" data-i18n>o chat não tem como parar e perguntar no meio de uma ação. "ler e editar o projeto" já cobre analisar uma reunião e escrever notas; "tudo, sem perguntar" libera também os conectores externos (Slack, Drive…) e comandos fora da pasta do projeto</p>
                 <p class="hint" data-i18n>o agente roda no seu computador; o Loro só envia o que você pedir</p>
+              </div>
+              <!-- ADR-0042 — «Permissões do Claude»: uma escolha da PESSOA (config global)
+                   que vale para o chat, o chat do balão e os loops. -->
+              <div class="cfgcard" id="cfgAgentPerms">
+                <div class="field"><span class="mono" id="lblAgentPerms" data-i18n>Permissões do Claude</span>
+                  <div class="segrow" id="agentPermSeg" role="group" aria-labelledby="lblAgentPerms">
+                    <button class="segbtn on" data-agentperm="livre" data-i18n>Livre (sem pedir autorização)</button>
+                    <button class="segbtn" data-agentperm="restrito" data-i18n>Restrito (como antes)</button>
+                  </div>
+                </div>
+                <p class="hint" data-i18n>livre: o Claude faz o que você pedir sem parar para perguntar — comandos, conectores e arquivos fora do projeto. Restrito: lê e edita o projeto; um loop nunca roda comandos.</p>
+                <label class="field stack"><span class="mono" data-i18n>ferramentas sempre bloqueadas nos loops</span>
+                  <textarea id="agentDenylist" rows="5" spellcheck="false"></textarea>
+                </label>
+                <p class="hint" data-i18n>uma por linha. São as que agem em nome de você com outras pessoas — enviar, compartilhar, apagar, responder convite. Um loop roda sem ninguém olhando, então elas ficam sempre de fora.</p>
+                <label class="opt"><input type="checkbox" id="agentBlockChat" /> <span data-i18n>Bloquear envios no chat do balão</span></label>
               </div>
             </section>
 

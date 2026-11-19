@@ -83,6 +83,68 @@
     return (eventos || []).filter((e) => e.fimMs > nowMs);
   }
 
+  // The next LOCAL day, through the platform's calendar (month and year turns,
+  // DST) — the agent writes today's AND tomorrow's file.
+  function tomorrowKey(nowMs) {
+    const d = new Date(Number(nowMs) || 0);
+    return dayKey(new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1, 12, 0, 0));
+  }
+
+  // Today's and tomorrow's parsed files → one agenda. Either may be missing.
+  // Events are merged by id (the first file wins: today's). The note follows the
+  // most recently GENERATED valid file — the agent writes both at once.
+  function mergeDays(parsedList) {
+    const list = (parsedList || []).filter(Boolean);
+    const valid = list.filter((p) => p.status === "ok" || p.status === "stale");
+    if (!valid.length) {
+      return { status: list.some((p) => p.status === "invalid") ? "invalid" : "missing", geradoEmMs: null, eventos: [] };
+    }
+    const latest = valid.reduce((a, b) => (b.geradoEmMs > a.geradoEmMs ? b : a));
+    const seen = new Set();
+    const eventos = [];
+    for (const p of valid) for (const e of p.eventos) {
+      if (seen.has(e.id)) continue;
+      seen.add(e.id);
+      eventos.push(e);
+    }
+    eventos.sort((a, b) => a.inicioMs - b.inicioMs || (a.id < b.id ? -1 : 1));
+    return { status: latest.status, geradoEmMs: latest.geradoEmMs, eventos };
+  }
+
+  // The panel's sections: today's events that already ended (collapsed under
+  // «Já passaram (N)»), today's still ahead or under way (one that began
+  // yesterday and is still running counts as today), and tomorrow's.
+  function group(eventos, nowMs) {
+    const hoje = dayKey(new Date(nowMs)), amanha = tomorrowKey(nowMs);
+    const out = { passados: [], hoje: [], amanha: [] };
+    for (const e of eventos || []) {
+      const dia = dayKey(new Date(e.inicioMs));
+      if (e.fimMs <= nowMs) { if (dia === hoje) out.passados.push(e); continue; }
+      if (dia <= hoje) out.hoje.push(e);
+      else if (dia === amanha) out.amanha.push(e);
+    }
+    return out;
+  }
+
+  // Live status of one event: under way, starts in N minutes, or over.
+  function statusOf(e, nowMs) {
+    if (nowMs >= e.fimMs) return { kind: "passou" };
+    if (nowMs >= e.inicioMs) return { kind: "agora" };
+    return { kind: "em", minutos: Math.max(1, Math.ceil((e.inicioMs - nowMs) / MIN)) };
+  }
+
+  function durationMin(e) {
+    return Math.round((e.fimMs - e.inicioMs) / MIN);
+  }
+
+  // The next event that has not started — what the collapsed bubble's tooltip
+  // names — and whether it is scheduled to record.
+  function nextEvent(eventos, agendadas, nowMs) {
+    const e = (eventos || []).filter((x) => x.inicioMs > nowMs).sort((a, b) => a.inicioMs - b.inicioMs)[0];
+    if (!e) return null;
+    return { evento: e, agendada: Object.prototype.hasOwnProperty.call(agendadas || {}, e.id) };
+  }
+
   function pruneSchedule(s, today) {
     const out = { versao: 1, eventos: {} };
     const src = (s && s.eventos) || {};
@@ -151,6 +213,7 @@
 
   return {
     STALE_MS, END_WARN_MS, EXTEND_MS, SUGGEST_MS,
-    dayKey, parseInstant, parseAgenda, upcoming, pruneSchedule, decide,
+    dayKey, tomorrowKey, parseInstant, parseAgenda, mergeDays, group, statusOf, durationMin, nextEvent,
+    upcoming, pruneSchedule, decide,
   };
 });

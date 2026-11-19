@@ -71,6 +71,8 @@ mod read_aloud;
 // por um agente externo, e o Mac acordado enquanto qualquer gravação roda
 // (herdado da ADR-0038, que o balão substitui).
 mod agenda;
+// ADR-0042 — «Permissões do Claude»: one setting, one flag builder for every run.
+mod agent_perms;
 mod bubble;
 mod keep_awake;
 use agenda::*;
@@ -5132,6 +5134,11 @@ pub fn run() {
             bubble_expand,
             bubble_set_visible,
             bubble_get_visible,
+            bubble_get_size,
+            agent_perms::agent_perms_get,
+            agent_perms::agent_perms_set,
+            bubble_set_size,
+            bubble_panel_height,
             agenda_read,
             agenda_schedule_get,
             agenda_schedule_set,

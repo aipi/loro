@@ -103,11 +103,16 @@ process is local and the account is yours.
   *In the chat*, the answer stays in the conversation; *in the terminal*, you
   follow each step and can step in. It applies to everything — analysing a
   meeting, asking the project, running an action from a ⋯ menu.
-- **What the chat may do** is also your choice (**Settings → AI and terminal**).
-  The chat cannot stop and ask mid-action, so it ships able to act: *read and
-  edit the project* covers analysing a meeting and writing notes; *everything,
-  without asking* also allows external connectors (Slack, Drive…) and paths
-  outside the project folder.
+- **Claude permissions** (**Settings → AI and terminal**) apply to the chat, the
+  bubble chat and loops. **Free (no authorization prompts)** is the default:
+  Claude does what you ask — commands, connectors, files outside the project —
+  without stopping to ask. **Restricted (as before)** brings back the old model:
+  the chat chooses between *read and edit the project* and *everything, without
+  asking*, and a loop never runs commands. In both modes the **tools always
+  blocked in loops** (Slack send, Gmail draft and trash, Drive share and trash,
+  calendar delete and invite replies — the list is editable) are left out of
+  every cycle. In the bubble chat they are blocked only if you turn on **Block
+  sends in the bubble chat**.
 
 ### Adjusting the widths
 
@@ -227,18 +232,24 @@ record meetings without opening Loro's window.
 - **Click** opens the panel, which grows from the icon toward the side of the
   screen with more room. Click the icon again, click outside or press **Esc** to
   close it.
-- While recording, the icon gets a **red dot** and the elapsed time under it;
-  paused, a **pause** sign. Nothing blinks — and the menu-bar icon no longer
-  blinks either: the recording sign lives only in the bubble.
+- The icon is **small** (32 pt) by default; **medium** and **large** in
+  **Settings → Capture → bubble size**.
+- While recording, the icon gets a **red dot**; paused, a **pause** sign. The
+  elapsed time is in the panel and in the hint shown when you hover the icon —
+  which also names the **next meeting** («Next: 09:30 Daily — record ✓»).
+  Nothing blinks — and the menu-bar icon no longer blinks either.
 
 In the panel:
 
-- **Save to**: the idea the meeting will live in (the last one used comes
-  selected). **+ new idea…** creates one on the spot.
-- **Record**, and while recording **Pause / Resume**, **Stop** and **New
-  recording** (stops the current one and starts another in the chosen idea).
-- **Now**: the latest lines of the meeting, marked **you** and **system**.
-- **Upcoming meetings**, each with a **record** switch (see below).
+- **Recording** tab: **save to** (the idea; the last one used comes selected,
+  **other…** opens the list, **+ new idea…** creates one); **Record**, and while
+  recording **Stop**, **Pause / Resume** and **New recording**; **now**: the
+  latest lines, marked **you** and **system**.
+- **Agenda** tab: **Today**'s and **Tomorrow**'s meetings (see below).
+- **Ask Claude…**, at the bottom: a short chat with the project's agent. It gets
+  the meeting in progress and the agenda as references and answers right there;
+  **Enter** sends, **Shift+Enter** breaks the line, **Stop** interrupts, **new
+  conversation** starts over. The card grows with the conversation.
 - **Open in Loro** opens the main window on the meeting in progress.
 
 To hide the bubble: **Settings → Capture → show the recording bubble**, or
@@ -248,7 +259,7 @@ To hide the bubble: **Settings → Capture → show the recording bubble**, or
 
 Loro **does not read your calendar** and keeps no password or login. An agent of
 yours (Claude Code with a calendar connector, for example) reads it and writes
-the day into a file inside the project:
+the day — today and tomorrow, one file each — inside the project:
 
 ```
 .loro/agenda/YYYY-MM-DD.json
@@ -257,11 +268,15 @@ the day into a file inside the project:
    "fim":"2026-11-18T10:30:00-03:00","comConvidados":true}]}
 ```
 
-With that file, the panel lists today's meetings that have not ended yet:
+With those files, the **Agenda** tab shows **Today** and **Tomorrow**; the one
+under way is highlighted and the ones already over are folded under **Already
+over (N)**. Clicking a meeting opens its details: time, duration, «starts in 25
+min» or «now», whether it has guests, and the idea it will be saved in.
 
-- Turning **record** on for a meeting schedules it into the idea chosen in the
-  panel. At its start Loro records on its own — with the window closed too —
+- **Record when it starts** schedules it — tomorrow's too, set tonight. At its
+  start Loro records on its own — with the window closed too —
   titled with the event, and stops at its end.
+- **Record now** records the meeting that is happening right away.
 - Two minutes before the end the bubble asks **«ends in 2 min — extend?»**;
   **+15 min** pushes the end.
 - **Back-to-back** meetings: when one ends, the next one starts.
@@ -538,9 +553,9 @@ both is best.
 
 **The price, said up front:** a loop runs the AI **while the app is open**. With
 the app closed it does not run — and the loop's screen counts how many runs it
-missed, catching up at most **once** when you come back. Every cycle runs with
-«read and edit the project»; «everything, without asking» is refused for a cycle
-that happens without you.
+missed, catching up at most **once** when you come back. What each cycle may do
+comes from **Claude permissions** (free by default); the tools that act on your
+behalf with other people are always left out.
 
 **Creating is the same screen as editing.** Name, the skill it cites (optional),
 instruction, **model**, **effort**, scope, rhythm, destination and the **brakes**:
@@ -564,9 +579,10 @@ instruction, **model**, **effort**, scope, rhythm, destination and the **brakes*
   closes the door: cycles stop trying it and the request does not come back.
   What has been decided is read and undone in **Settings → Loops**, and each loop's
   screen shows the same under the **may use** button.
-  *Never* granted to a cycle: «everything, without asking» and **running commands** — a
-  cycle runs no commands at all, which is why it cannot version, push, or step outside the
-  project's folder. That is a lock, not a request made of the agent.
+  In the **Restricted** mode of Claude permissions a cycle is *never* granted «everything,
+  without asking» or **running commands** — it cannot version, push, or step outside the
+  project's folder. In the **Free** mode (the default) that lock is off; what is always
+  left out is the list of blocked tools.
   *Two honest caveats:* allowing a connector allows what that tool does (Loro cannot tell,
   from a name, what only reads from what writes — the cycle's instruction forbids sending,
   but that is a rule told to the agent, not a lock); and what a connector returns can

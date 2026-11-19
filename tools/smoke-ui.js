@@ -170,6 +170,9 @@ const ANSWERS = {
   // ADR-0041 — o balão visível e um dia sem agenda escrita: o primeiro tique roda,
   // não acha o arquivo e não faz nada; Captura mostra o liga/desliga do balão.
   bubble_get_visible: true,
+  bubble_get_size: 32,
+  // ADR-0042 — o padrão novo: livre, com a lista de bloqueio do dono
+  agent_perms_get: { modo: "livre", bloqueio: ["mcp__claude_ai_Slack__slack_send_message", "mcp__claude_ai_Gmail__trash_thread"], bloquearNoChat: false },
   agenda_read: null,
   agenda_schedule_get: { versao: 1, eventos: {} },
   read_aloud_voices: [
@@ -1191,6 +1194,18 @@ const DRIVER = `
     if (q("#optWorkday") || q("#optOverlay")) throw new Error("sobrou um controle que saiu (dia gravado / legenda)");
     if (!window.__SMOKE__.calls.bubble_get_visible) throw new Error("a tela não leu o config global");
     if (!window.__SMOKE__.calls.agenda_read) throw new Error("o primeiro tique da agenda não rodou no boot");
+    if (window.__SMOKE__.calls.agenda_read < 2) throw new Error("a agenda não leu hoje E amanhã");
+    if (q("#optBubbleSize").value !== "32") throw new Error("tamanho do balão: " + q("#optBubbleSize").value);
+    // ADR-0042 — as permissões do Claude, lidas do config global
+    window.showCfgSection("ai");
+    await new Promise((r) => setTimeout(r, 150));
+    const permOn = [...document.querySelectorAll("[data-agentperm]")].find((b) => b.classList.contains("on"));
+    if (!permOn || permOn.dataset.agentperm !== "livre") throw new Error("o modo pintado não é o livre");
+    if (!/slack_send_message/.test(q("#agentDenylist").value)) throw new Error("a lista de bloqueio não aparece");
+    if (q("#agentBlockChat").checked) throw new Error("bloquear no chat nasce desligado");
+    if (!q("#chatPermSeg").closest(".field").hidden) throw new Error("no modo livre o seletor antigo do chat sobra");
+    window.showCfgSection("cap");
+    await new Promise((r) => setTimeout(r, 100));
     const card = on.closest(".cfgcard");
     if (card.scrollWidth > card.clientWidth + 1) throw new Error("o cartão estoura: " + card.scrollWidth + " em " + card.clientWidth);
   });

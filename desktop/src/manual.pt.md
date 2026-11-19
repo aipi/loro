@@ -104,11 +104,16 @@ Loro: o processo é local e a conta é sua.
   *No chat*, a resposta fica na conversa; *no terminal*, você acompanha o passo a
   passo e pode intervir. Vale para tudo — analisar uma reunião, perguntar ao
   projeto, rodar uma ação pelo menu ⋯.
-- **O que o chat pode fazer** também é escolha sua (**Configurações → IA e
-  terminal**). O chat não consegue parar e perguntar no meio de uma ação, então
-  ele já vem com permissão para agir: *ler e editar o projeto* cobre analisar uma
-  reunião e escrever notas; *tudo, sem perguntar* libera também conectores
-  externos (Slack, Drive…) e caminhos fora da pasta do projeto.
+- **Permissões do Claude** (**Configurações → IA e terminal**) valem para o
+  chat, o chat do balão e os loops. **Livre (sem pedir autorização)** é o padrão:
+  o Claude faz o que você pedir — comandos, conectores, arquivos fora do projeto —
+  sem parar para perguntar. **Restrito (como antes)** volta ao modelo antigo: o
+  chat escolhe entre *ler e editar o projeto* e *tudo, sem perguntar*, e um loop
+  nunca roda comandos. Nos dois modos, as **ferramentas sempre bloqueadas nos
+  loops** (enviar no Slack, rascunho e lixeira do Gmail, compartilhar e apagar no
+  Drive, apagar e responder convite na agenda — a lista é editável) ficam de fora
+  de todo ciclo. No chat do balão elas só são bloqueadas se você ligar **Bloquear
+  envios no chat do balão**.
 
 ### Ajustar as larguras
 
@@ -226,18 +231,26 @@ você grava as reuniões sem abrir a janela do Loro.
   para a tela que sobrou.
 - **Clicar** abre o painel, que cresce do ícone para o lado da tela com mais
   espaço. Clicar no ícone de novo, clicar fora ou apertar **Esc** fecha.
-- Gravando, o ícone ganha um **ponto vermelho** e o tempo embaixo; pausado, um
-  sinal de **pausa**. Nada pisca — e o ícone da barra de menu também não pisca
-  mais: o sinal de gravação mora só no balão.
+- O ícone é **pequeno** (32 pt) por padrão; **médio** e **grande** em
+  **Configurações → Captura → tamanho do balão**.
+- Gravando, o ícone ganha um **ponto vermelho**; pausado, um sinal de **pausa**.
+  O tempo fica no painel e na dica que aparece ao parar o mouse em cima — que
+  também diz a **próxima reunião** («Próxima: 09:30 Daily — gravar ✓»). Nada
+  pisca — e o ícone da barra de menu também não pisca mais.
 
 No painel:
 
-- **Onde salvar**: a ideia em que a reunião vai morar (a última usada já vem
-  escolhida). **+ nova ideia…** cria uma na hora.
-- **Gravar**, e durante a gravação **Pausar / Retomar**, **Encerrar** e **Nova
-  gravação** (encerra a atual e começa outra na ideia escolhida).
-- **Agora**: as últimas falas da reunião, marcadas **você** e **sistema**.
-- **Próximas reuniões** com uma chave **gravar** em cada uma (veja abaixo).
+- Aba **Gravação**: **onde salvar** (a ideia; a última usada já vem marcada,
+  **outra…** abre a lista, **+ nova ideia…** cria uma na hora); **Gravar**, e
+  durante a gravação **Encerrar**, **Pausar / Retomar** e **Nova gravação**
+  (encerra a atual e começa outra); **agora**: as últimas falas, marcadas
+  **você** e **sistema**.
+- Aba **Agenda**: as reuniões de **Hoje** e de **Amanhã** (veja abaixo).
+- **Pergunte ao Claude…**, embaixo: um chat curto com o agente do projeto. Ele
+  recebe como referência a reunião em andamento e a agenda, e responde ali
+  mesmo; **Enter** envia, **Shift+Enter** quebra a linha, **Parar** interrompe,
+  **nova conversa** recomeça. O cartão cresce com a conversa. Ex.: «o que o Rick
+  pediu agora?», «resume os últimos 10 min».
 - **Abrir no Loro** abre a janela principal na reunião em andamento.
 
 Para esconder o balão: **Configurações → Captura → mostrar o balão de
@@ -247,7 +260,7 @@ gravação**, o item **Mostrar / ocultar balão** da barra de menu ou da paleta.
 
 O Loro **não lê a sua agenda** e não guarda senha nem login de nada. Quem lê é
 um agente seu (o Claude Code com o conector de agenda, por exemplo), que escreve
-o dia num arquivo dentro do projeto:
+o dia — hoje e amanhã, um arquivo para cada — dentro do projeto:
 
 ```
 .loro/agenda/AAAA-MM-DD.json
@@ -256,11 +269,16 @@ o dia num arquivo dentro do projeto:
    "fim":"2026-11-18T10:30:00-03:00","comConvidados":true}]}
 ```
 
-Com esse arquivo, o painel mostra as reuniões de hoje que ainda não acabaram:
+Com esses arquivos, a aba **Agenda** mostra **Hoje** e **Amanhã**; a que está
+acontecendo fica destacada e as que já passaram ficam recolhidas em **Já passaram
+(N)**. Clicar numa reunião abre os detalhes: horário, duração, «começa em 25 min»
+ou «agora», se tem convidados, e a ideia onde ela vai ser salva.
 
-- Ligar **gravar** numa reunião a agenda para a ideia escolhida no painel. Na
+- **Gravar quando começar** agenda a reunião — inclusive a de amanhã, marcada
+  hoje à noite. Na
   hora de início o Loro começa a gravar sozinho — também com a janela fechada —
   com o título do evento, e no fim encerra.
+- **Gravar agora** grava na hora a reunião que está acontecendo.
 - Dois minutos antes do fim o balão pergunta **«termina em 2 min — estender?»**;
   **+15 min** empurra o fim.
 - Reuniões **emendadas**: no fim de uma, a outra começa.
@@ -545,8 +563,9 @@ aí o melhor é deixar as duas.
 
 **O preço, dito antes:** um loop roda a IA **enquanto o app estiver aberto**. Com
 o app fechado ele não roda — e a tela do loop conta quantas execuções ele perdeu,
-recuperando no máximo **uma** quando você volta. Cada ciclo roda com «ler e
-editar o projeto»; «tudo, sem perguntar» é recusado num ciclo sem você.
+recuperando no máximo **uma** quando você volta. O que cada ciclo pode fazer vem
+das **Permissões do Claude** (livre por padrão, em Configurações → IA e terminal); as
+ferramentas que agem em nome de você com outras pessoas ficam sempre de fora.
 
 **Criar é a mesma tela do editar.** Nome, habilidade que ele cita (opcional),
 instrução, **modelo**, **esforço**, escopo, ritmo, destino e os **freios**:
@@ -570,9 +589,10 @@ instrução, **modelo**, **esforço**, escopo, ritmo, destino e os **freios**:
   «Não» fecha a porta: o ciclo não tenta mais aquilo e o pedido não volta.
   O que já foi decidido se vê e se desfaz em **Configurações → Loops**, e a tela de cada
   loop mostra o mesmo no botão **pode usar**.
-  *Nunca* são liberados a um ciclo: «tudo, sem perguntar» e **rodar comandos** — um
-  ciclo não roda comando nenhum, e é por isso que ele não versiona, não dá push e não sai
-  da pasta do projeto. Isso é uma tranca, não uma recomendação ao agente.
+  No modo **Restrito** das Permissões do Claude, *nunca* são liberados a um ciclo:
+  «tudo, sem perguntar» e **rodar comandos** — o ciclo não versiona, não dá push e não
+  sai da pasta do projeto. No modo **Livre** (o padrão) essa tranca não existe; o que
+  fica sempre de fora é a lista de ferramentas bloqueadas.
   *Dois avisos honestos:* liberar um conector libera o que aquela ferramenta faz (o Loro
   não sabe, pelo nome, o que só lê e o que escreve — a instrução do ciclo proíbe enviar,
   mas isso é regra dita ao agente, não tranca); e o que um conector devolve pode trazer

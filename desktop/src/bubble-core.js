@@ -92,5 +92,66 @@
     return [];
   }
 
-  return { DRAG_THRESHOLD_PX, isDrag, gesture, panel, formatElapsed, elapsedMs, badge, whoLabel, tail, controls };
+  // The badge on the icon, sized from the icon (32/48/64 pt): a third of it, but
+  // never under 9 pt — a dot smaller than that stops reading as a recording sign.
+  function badgePx(iconPx) {
+    return Math.max(9, Math.round((Number(iconPx) || 32) * 0.3));
+  }
+
+  // ADR-0041 — the bubble's chat question, with its CONTEXT as file references
+  // (paths relative to the acervo, where the agent runs), never pasted: the
+  // agent reads what it needs. Language-free on purpose: the header is a
+  // machine-facing contract the agent reads, not UI copy.
+  function chatPrompt(question, ctx) {
+    const q = String(question || "").trim();
+    const refs = (ctx || []).filter((p) => typeof p === "string" && p && !/\.\.|^\//.test(p));
+    if (!refs.length) return q;
+    return "[Loro context — read these files only if the question needs them]\n"
+      + refs.map((p) => "- @" + p).join("\n") + "\n\n" + q;
+  }
+
+  // Markdown-lite for the chat answer: escaped FIRST (the answer is untrusted
+  // text), then **bold**, `code`, fenced blocks, "- " bullets and "#" headings.
+  function mdLite(src) {
+    const esc = (x) => String(x).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c]));
+    const inline = (x) => esc(x)
+      .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+      .replace(/`([^`]+)`/g, "<code>$1</code>");
+    const out = [];
+    let code = null, list = false;
+    const closeList = () => { if (list) { out.push("</ul>"); list = false; } };
+    for (const line of String(src || "").replace(/\r\n?/g, "\n").split("\n")) {
+      if (/^```/.test(line)) {
+        if (code) { out.push("<pre><code>" + esc(code.join("\n")) + "</code></pre>"); code = null; }
+        else { closeList(); code = []; }
+        continue;
+      }
+      if (code) { code.push(line); continue; }
+      const li = /^\s*[-*] (.*)$/.exec(line);
+      if (li) { if (!list) { out.push("<ul>"); list = true; } out.push("<li>" + inline(li[1]) + "</li>"); continue; }
+      closeList();
+      const h = /^#{1,6} (.*)$/.exec(line);
+      if (h) { out.push("<p><strong>" + inline(h[1]) + "</strong></p>"); continue; }
+      if (line.trim()) out.push("<p>" + inline(line) + "</p>");
+    }
+    if (code) out.push("<pre><code>" + esc(code.join("\n")) + "</code></pre>");
+    closeList();
+    return out.join("");
+  }
+
+  // The collapsed icon's tooltip: the state, and the next meeting (with ✓ when
+  // it is scheduled to record). `next` is LoroAgenda.nextEvent's answer; texts
+  // come translated from the caller.
+  function tooltip(stateLine, next, hhmm, words) {
+    const lines = [stateLine];
+    if (next && next.evento) {
+      const w = words || {};
+      lines.push((w.proxima || "Próxima") + ": " + hhmm(next.evento.inicioMs) + " " + (next.evento.titulo || w.semTitulo || "")
+        + (next.agendada ? " — " + (w.gravar || "gravar") + " ✓" : ""));
+    }
+    return lines.filter(Boolean).join("\n");
+  }
+
+  return { DRAG_THRESHOLD_PX, isDrag, gesture, panel, formatElapsed, elapsedMs, badge, whoLabel, tail, controls,
+    badgePx, chatPrompt, mdLite, tooltip };
 });

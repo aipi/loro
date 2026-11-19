@@ -197,10 +197,10 @@ that is already under review updates it (see `brain_propose_change`).
 | `brain_delete_inbox` | `name` | `()` | delete an unprocessed queue item |
 | `brain_set_auto_context` | `value: bool` | `()` | post-creation toggle (Settings) for autoContext — global config + local `.loro/settings.json` (ADR-0005 §3) |
 | `brain_set_agent` | `agent` | `()` | post-creation edit (Settings → IA e terminal) of the active acervo's AI agent command; blank falls back to the default (ADR-0020) |
-| `chat_send` | `{prompt, model, effort, permission, fresh}` | `()` | one chat turn: runs the acervo's agent non-interactively in the acervo dir with an explicit `--permission-mode` (print mode cannot ask, so without one every write is denied); streams `chat-delta`/`chat-tool`/`chat-tool-result` and ends with `chat-done` (ADR-0021) |
-| `chat_cancel` | — | `()` | kill the running turn |
-| `chat_reset` | — | `()` | drop the session id — the next turn starts a new conversation |
-| `chat_status` | — | `{running,hasSession,agent}` | lets the UI recover its state after a window reload |
+| `chat_send` | `{prompt, model, effort, permission, fresh, channel?}` | `()` | one chat turn: runs the acervo's agent non-interactively in the acervo dir with an explicit `--permission-mode` (print mode cannot ask, so without one every write is denied); streams `chat-delta`/`chat-tool`/`chat-tool-result` and ends with `chat-done` (ADR-0021). ADR-0041 §8: `channel: "bubble"` is the recording bubble's own conversation (own process slot, own `--resume` session, events `bubble-chat-*`). ADR-0042: the permission mode and `--disallowedTools` come from «Permissões do Claude» (`permission` is honored only in «restrito») |
+| `chat_cancel` | `channel?` | `()` | kill the running turn |
+| `chat_reset` | `channel?` | `()` | drop the session id — the next turn starts a new conversation |
+| `chat_status` | `channel?` | `{running,hasSession,agent}` | lets the UI recover its state after a window reload |
 | `chat_handoff` | — | `"<agent> --resume <id>"` | the line that resumes this conversation in the embedded terminal, where the agent CAN ask interactively (ADR-0021) |
 | `brain_new_tool` / `brain_delete_tool` | `nome, conteudo` / `rel` | rel / `()` | create (imported skill content) or delete a custom habilidade — any `.claude/commands/*.md` outside the 11 built-in skills (ADR-0005) |
 | `brain_annotations_get` | `rel` | `{doc, anotacoes[]}` | read a document's annotation sidecar `<doc>.anotacoes.json` (empty if none); highlights/comments anchored by text-quote (ADR-0007). The sidecar is the MACHINE's file: no directory listing ever returns it (`SIDECAR_SUFFIX`) |
@@ -271,6 +271,9 @@ Brainstorming world + the fila → contexto flow (ADR-0001 §7):
 | `brain_meeting_resume` | `id` | `()` / err | open a NEW capture segment (`system-2.wav`, … and `mic-2.wav`, … when the sidecar records the mic). Its window offsets restart at zero and its place on the meeting timeline comes from the segment's own anchor, with the pause discounted on both tracks alike (ADR-0022 §19, ADR-0025). The pause it closes is added to `manifest.pausedMs`; `brain_meeting_start` persists `manifest.startedEpochMs` (ADR-0038 §3) |
 | `bubble_expand` | `expanded: bool` | `{right, bottom}` / err | ADR-0041 §2: grow the bubble window into the panel (340×520) toward the side of its screen with more room, clamped to the visible area, or shrink it back to where the icon sat. Returns the corner the icon is in, so the panel draws its header there |
 | `bubble_set_visible` / `bubble_get_visible` | `visible: bool` / — | bool | ADR-0041 §1: show or hide the bubble and remember it (`balao.visivel` in `~/.loro/config.json`, the person's preference; absent = shown). Emits `bubble-visible`. The tray's «Mostrar / ocultar balão» goes through the same path |
+| `bubble_get_size` / `bubble_set_size` | — / `size (32\|48\|64)` | size | ADR-0041 §8: the icon size (`balao.tamanho`, default 32 = a quarter of the 64 pt area; anything else reads as 32). Set resizes the collapsed window in place and emits `bubble-size` |
+| `bubble_panel_height` | `height (pt)` | height | ADR-0041 §8: the open panel grows with its chat, away from the icon, between the base 520 pt and 70% of the screen; no-op while collapsed |
+| `agent_perms_get` / `agent_perms_set` | — / `perms {modo, bloqueio[], bloquearNoChat}` | `AgentPerms` | ADR-0042: «Permissões do Claude» in `~/.loro/config.json` (`permissoesClaude`; absent = livre + the owner's 14-tool deny list, chat unblocked). Cleaned on save and again at spawn |
 | `agenda_read` | `date (YYYY-MM-DD)` | text \| null / err | ADR-0041 §4: the day file the EXTERNAL agent wrote, `<acervo>/.loro/agenda/<date>.json`, as raw text (parsed and validated in the pure `agenda.js`). `null` = not written. The date is digits-only (no path can be built from it); > 512 KB is refused (`err.agenda_too_large`) |
 | `agenda_schedule_get` / `agenda_schedule_set` | — / `schedule {versao, eventos{id: {tema, data}}}` | `Schedule` / err | ADR-0041 §4: what the person toggled «gravar» on, `<acervo>/.loro/agenda/agendadas.json`, written write-then-rename. A tema with a separator is refused (`err.agenda_bad_schedule`); a corrupted file reads as empty. `.loro/agenda/` is git-ignored (BR-8) |
 | `brain_rename_brainstorm` | `slug, nome` | `{slug, rel}` | rename a brainstorming (folder + meta) |
@@ -326,6 +329,8 @@ description or a review comment — the log lines carry counts, review numbers a
 | `bubble-state` | `{rec, meeting, startedAt, pausedMs, pauseStart, titulo, tema, destino, temas[], linhas[{who, text}], agenda{status, eventos[]}, prompt, aviso, lang, canRecord}` | ADR-0041 §3: main window → bubble. The bubble is a REMOTE; this is everything it paints |
 | `bubble-cmd` | `{cmd, …}` | ADR-0041 §3: bubble → main window: `hello`, `start {tema, nova}`, `pause`, `resume`, `stop`, `new {tema, nova}`, `open`, `set-tema`, `schedule {id, on, tema}`, `extend`, `switch {id}`, `keep`, `record-suggested {id}`, `dismiss` |
 | `bubble-visible` | `bool` | ADR-0041 §1: the bubble was shown/hidden (Settings or tray) |
+| `bubble-size` | `32\|48\|64` | ADR-0041 §8: the bubble's icon size changed |
+| `bubble-chat-delta` / `-tool` / `-tool-result` / `-done` | as `chat-*` | ADR-0041 §8: the bubble chat's stream, on its own channel |
 | `model-download-progress` | `{model, downloaded, total}` | model download progress in bytes (ADR-0006) |
 | `model-download-done` | `string` | a model finished downloading and was installed (ADR-0006) |
 | `voice-install-progress` | `{part, downloaded, total}` | one cloned-voice piece downloading, in bytes (ADR-0036). Paints the **same** bar as `model-download-progress`: the pieces are offered as rows of the model manager, so the screen has one way to draw "something large to download" |
@@ -342,8 +347,8 @@ Path resolution: `LORO_HOME` (exported by `loro.sh`) or a sensible default;
   main window: it sends `bubble-cmd` and paints `bubble-state`; the meeting, the
   agenda and every decision stay in `app.js`, through the ordinary meeting path
   (`startMeetingWith` without the modal, `pauseMeeting`, `stopMeeting`). The
-  backend's `loro-tick` (15 s) makes the main window re-read
-  `.loro/agenda/<today>.json` and ask the pure `agenda.js` for
+  backend's `loro-tick` (15 s) makes the main window re-read today's AND
+  tomorrow's `.loro/agenda/<day>.json` (ADR-0041 §8; either may be missing) and ask the pure `agenda.js` for
   `iniciar | encerrar | trocar | avisar-fim | perguntar-troca | sugerir | nada`.
   A scheduled meeting starts with `quiet: true` (closes without tab or analysis
   offer); a recording the person started is never cut — the bubble asks.

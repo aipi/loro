@@ -2020,19 +2020,27 @@ fn start_cycle(app: &AppHandle, base: &Path, def: &LoopDef, now: &Now) -> Result
     cmd.current_dir(&dir);
     cmd.args(&base_args);
     if claude {
-        // an unattended cycle never gets "bypassPermissions" (§4.9). The model and
-        // the effort are the loop's own (§4.16), re-checked HERE and not only on
-        // save: the definition is a document a hand or a pacote can rewrite.
+        // ADR-0042 amends §4.9/§4.18: the mode and the tool lock come from the
+        // person's «Permissões do Claude». «restrito» is the ADR-0029 model exactly
+        // (acceptEdits, never Bash — `cycle_tool_flags`); «livre» (the default) runs
+        // free, and in BOTH the deny list of tools that act on other people rides
+        // along — nobody is watching a cycle. The model and the effort are the
+        // loop's own (§4.16), re-checked HERE: the definition is a document a hand
+        // or a pacote can rewrite.
+        let perms = crate::agent_perms::read();
+        let surface = crate::agent_perms::Surface::Loop;
         cmd.args(crate::chat::claude_args(
             &safe_cli_value(&def.modelo),
             &safe_cli_value(&def.esforco),
-            "acceptEdits",
+            crate::agent_perms::permission_mode(&perms, surface, ""),
             None,
         ));
-        // §4.18 — o que a pessoa concedeu, o que ela recusou, e o que nunca é de um
-        // ciclo. Uma função pura, porque isto é o limite do que um trabalho sem ninguém
-        // olhando alcança — e ele merece teste, não um comentário.
-        cmd.args(cycle_tool_flags(&policy.permite, &policy.recusa));
+        cmd.args(crate::agent_perms::tool_flags(
+            &perms,
+            surface,
+            &policy.permite,
+            &policy.recusa,
+        ));
         cmd.stdin(Stdio::piped());
     } else {
         cmd.arg(&prompt);

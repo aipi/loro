@@ -85,6 +85,10 @@ pub struct LoroConfig {
     // by v0.19, is simply not read (and dropped on the next write).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub balao: Option<crate::bubble::BubbleCfg>,
+    // ADR-0042 — what Loro's agent runs may do without asking. The PERSON's,
+    // never the acervo's (a teammate's commit must not widen it). Absent = livre.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permissoes_claude: Option<crate::agent_perms::AgentPerms>,
 }
 
 impl Default for LoroConfig {
@@ -94,6 +98,7 @@ impl Default for LoroConfig {
             active: String::new(),
             ui_lang: default_ui_lang(),
             balao: None,
+            permissoes_claude: None,
         }
     }
 }

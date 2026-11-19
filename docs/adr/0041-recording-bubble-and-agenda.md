@@ -26,7 +26,7 @@ A new window, label `bubble`, created in `setup` by `bubble.rs` (not in `tauri.c
 
 Window: transparent, undecorated, no system shadow (the shadow is CSS, around the icon only), not resizable, `always_on_top`, `skip_taskbar`, `visible_on_all_workspaces`, `focused(false)` (showing it never takes the keyboard from the call), `accept_first_mouse(true)` (the first click acts instead of only activating Loro). On macOS the NSWindow additionally gets `collectionBehavior = canJoinAllSpaces | stationary | ignoresCycle | fullScreenAuxiliary` and `level = kCGStatusWindowLevel (25)` through `objc2` (already in the tree via Tauri), so it shows on every Space and over a fullscreen app.
 
-Position: collapsed it is 84×84 pt (the 64 pt icon plus room for its badges). Where it sits is the person's preference, in `~/.loro/config.json`:
+Position: collapsed, the window is the icon plus 6 pt on each side (44×44 pt at the default 32 pt icon, §8). Where it sits is the person's preference, in `~/.loro/config.json`:
 
 ```json
 "balao": { "visivel": true, "tela": "<screen name>", "posicoes": { "<screen name>": { "fx": 1.0, "fy": 0.7 } } }
@@ -36,7 +36,7 @@ One spot **per screen**, stored as a fraction of the room the bubble can move in
 
 ### §2 Collapsed: the app icon, a steady badge, no animation
 
-The icon is the colorful app icon (`icons/128x128@2x.png`, copied to `src/loro-icon.png` because `frontendDist` is `src/`), not the monochrome tray template. Idle: the icon only. Recording: a **steady** red dot on its top-right corner and the elapsed time (`m:ss`, `h:mm:ss` after an hour) in a small pill under it. Paused: a **steady** grey pause badge, the clock frozen. Starting/stopping: a neutral badge. **Nothing animates** — no keyframes, no transitions, no class toggled on a timer; the 1 s timer only rewrites the clock's digits. The smoke test measures it (two reads 1.3 s apart must be identical) and was shown to go red when a blink was added.
+The icon is the colorful app icon (`icons/128x128@2x.png`, copied to `src/loro-icon.png` because `frontendDist` is `src/`), not the monochrome tray template. Idle: the icon only. Recording: a **steady** red dot on its top-right corner (the elapsed time lives in the panel header and the tooltip since §8 — under the icon, at 32 pt, there is no room for it). Paused: a **steady** grey pause badge, the clock frozen. Starting/stopping: a neutral badge. **The icon and its badge never animate** — no keyframes, no transitions, no class toggled on a timer (the only transition in the window is the panel opening/closing, §8); the 1 s timer only rewrites the clock's digits. The smoke test measures it (two reads 1.3 s apart must be identical) and was shown to go red when a blink was added.
 
 Gestures (`bubble-core.js::gesture`, pure): press → move beyond **4 px** (Euclidean) → `startDragging()` once, and the system owns the drag (it follows the cursor across screens); a release that never crossed 4 px is a **click**; a release after a drag does nothing. 4 px keeps a trackpad click (1–3 px of jitter) a click. A click on the icon **only toggles the panel** — it never records (owner's refinement).
 
@@ -69,7 +69,7 @@ Only timed events, no attendee names. Reading (`agenda_read`, raw text; parsing 
 - missing file → «agenda não atualizada»; bad JSON, `versao ≠ 1`, `eventos` not an array or an unreadable `geradoEm` → the whole file is ignored (same note);
 - `geradoEm` older than **2 h** → the same quiet note, **but the events still count** (a file written at 07:00 still holds the person's meetings at 10:00; only a later change is missed) — an implementer's call;
 - an instant **without an offset is refused**, never read in the machine's timezone; a malformed event (no id, end ≤ start, bad instant) is dropped alone; a repeated id keeps the first; `titulo` missing shows «(sem título)»; `comConvidados` missing = false;
-- the panel lists today's events that have not ended (`fim` exclusive).
+- the panel lists today's AND tomorrow's events (§8).
 
 Scheduling: the «gravar» switch writes `<acervo>/.loro/agenda/agendadas.json`:
 
@@ -107,6 +107,16 @@ The icon is set once and never swapped (the blink thread and the dim frame are g
 
 ADR-0039/0040: the raw sidecar microphone, its in-process echo cancellation and the separate `você`/`sistema` tracks.
 
+## §8 Refinements after the owner's first build (2026-11-18)
+
+The owner tested the first build («ficou top!») and asked for five changes, all on the same PR:
+
+1. **Size.** The icon is **32 pt by default** — a quarter of the 64 pt icon's area — with **médio 48** and **grande 64** in Settings → Captura («tamanho do balão»); stored as `balao.tamanho` (anything else reads as 32). The collapsed window is the icon + 6 pt per side; the badge scales with the icon (30%, never under 9 pt). The 256 px PNG keeps it crisp at 2× up to 64 pt. The drag threshold (4 px) is a distance, so it is unchanged at 32 pt. `bubble_get_size` / `bubble_set_size` (resizes the collapsed window in place and emits `bubble-size`).
+2. **Panel design.** A native-feeling card: translucent material (`backdrop-filter: saturate(180%) blur(24px)`, a solid fallback where unsupported), 14 px radius, system font, light and dark via `prefers-color-scheme`. Header: state (red dot + «gravando»), title · idea, elapsed time. One prominent red primary action (Gravar or Encerrar); the rest are ghost buttons. The destination is an inline chip row (the current idea first, up to four) with «outra…»/«+ nova ideia…». Two tabs, **Gravação** and **Agenda**. Opening/closing is a 140 ms fade+scale from the icon's corner (none under `prefers-reduced-motion`), the only transition in the window. Contrast is MEASURED in the smoke (WCAG, against the opaque material): every text checked is ≥ 4.5:1 in both themes (lowest: 5.4 for white on the red button). Red TEXT uses a lighter red in dark mode (#ff7b72), because the button red on the dark material read at ~2.6:1.
+3. **Agenda — follow every next event.** The external agent now ALSO writes **tomorrow's** file, same contract, `.loro/agenda/<tomorrow>.json`. Loro reads both (either may be missing; merged by id, today's first; the «agenda não atualizada» note follows the most recently generated valid file). The Agenda tab groups **Hoje** / **Amanhã** and collapses today's ended events under **«Já passaram (N)»**; the one under way is highlighted. A row opens in place: time range, duration, live status («começa em 25 min» / «agora»), with/without guests, the destination idea for THAT event, «Gravar quando começar», and «Gravar agora» while it is happening (recorded like a scheduled one — titled, stopped at its end, closed quietly). A schedule entry carries the EVENT's day (`data`), so an event of tomorrow scheduled tonight survives the pruning and starts tomorrow (tested across midnight).
+4. **Collapsed hint.** The icon's tooltip says the state and the next event: «Próxima: 09:30 Daily — gravar ✓» (✓ when it is scheduled).
+5. **Mini chat** (owner request A). A composer at the bottom of the card asks the acervo's agent anything, through the SAME path the main chat uses (`chat_send`, the acervo's own CLI in the acervo as cwd — no new credential, BR-9) but on its **own channel** (`channel: "bubble"`: its own process slot, its own `--resume` session, its own `bubble-chat-*` events), so a question asked over a call never lands in the main window's conversation. Context goes as **file references**, never pasted: the living meeting file (when recording) and the two agenda files, prefixed as `@path` lines. The answer streams in, rendered as escaped markdown-lite (bold, code, lists, fences) with a copy button; «pensando…»/«usando X…» while it runs, **Parar** kills the process, **nova conversa** resets the session; Enter sends, Shift+Enter breaks the line, Esc collapses. The card grows with the conversation up to **70% of the screen height** (`bubble_panel_height`, growing away from the icon). What the agent may do without asking is ADR-0042.
+
 ## Explicitly NOT done
 
 - Loro still does not read the calendar, does not know who attends, and does not write the agenda file.
@@ -122,3 +132,4 @@ ADR-0039/0040: the raw sidecar microphone, its in-process echo cancellation and 
 - That clicking the bubble while another app is frontmost registers on the FIRST click (`acceptFirstMouse`), and that click-outside collapses (window blur).
 - A scheduled meeting starting and stopping on time **with the main window closed to the tray for hours** (the backend tick is not a webview timer, but App Nap may still delay a background process).
 - `pmset -g assertions` showing the `caffeinate` assertion during a recording and its release when it stops.
+- The translucent material over real windows (the smoke renders over a blank page), the tooltip of a non-key window (WKWebView may only show `title` tooltips while Loro is active), and the panel growing with a long chat answer.

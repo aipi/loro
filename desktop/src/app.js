@@ -1768,13 +1768,23 @@ function bubbleState() {
     linhas: bubble.linhas.slice(-12),
     agenda: {
       status: agenda.parsed.status,
-      eventos: LAG.upcoming(agenda.parsed.eventos, now).map((e) => ({
+      // TODOS os de hoje e amanhã (os passados também: o balão os recolhe em
+      // «Já passaram (N)»); o balão agrupa e calcula o «começa em» ao pintar
+      eventos: agenda.parsed.eventos.map((e) => ({
         id: e.id, titulo: e.titulo, inicioMs: e.inicioMs, fimMs: e.fimMs,
         comConvidados: e.comConvidados, agendada: Object.prototype.hasOwnProperty.call(sched, e.id),
+        tema: (sched[e.id] && sched[e.id].tema) || "",
       })),
     },
     prompt: agenda.prompt,
     aviso: bubble.aviso,
+    // o contexto do chat do balão, como REFERÊNCIA de arquivo (relativa ao acervo,
+    // onde o agente roda): a reunião em andamento e os dois arquivos da agenda
+    chatCtx: [
+      meeting.active && meeting.livingRel ? meeting.livingRel : "",
+      ".loro/agenda/" + LAG.dayKey(new Date(now)) + ".json",
+      ".loro/agenda/" + LAG.tomorrowKey(now) + ".json",
+    ].filter(Boolean),
   };
 }
 // Um envio por rajada: uma janela de 18 s escreve várias falas de uma vez.
@@ -1819,10 +1829,15 @@ function agendaTemaFor(ev) {
 async function agendaLoad() {
   const dia = LAG.dayKey(new Date());
   if (dia !== agenda.dia) { agenda.dia = dia; agenda.tratados = []; agenda.prompt = null; }
-  let text = null;
-  try { text = await invoke("agenda_read", { date: dia }); }
-  catch (e) { clog("agenda_read error: " + e); }
-  agenda.parsed = LAG.parseAgenda(text, Date.now());
+  // O agente escreve HOJE e AMANHÃ (refinamento do dono: seguir todos os
+  // próximos, e agendar à noite a reunião da manhã seguinte). Qualquer um pode faltar.
+  const now = Date.now();
+  const read = async (date) => {
+    try { return await invoke("agenda_read", { date }); }
+    catch (e) { clog("agenda_read error: " + e); return null; }
+  };
+  const [hoje, amanha] = await Promise.all([read(dia), read(LAG.tomorrowKey(now))]);
+  agenda.parsed = LAG.mergeDays([LAG.parseAgenda(hoje, now), LAG.parseAgenda(amanha, now)]);
   try { agenda.agendadas = LAG.pruneSchedule(await invoke("agenda_schedule_get"), dia); }
   catch (e) { clog("agenda_schedule_get error: " + e); }
   try { bubbleTemas = (await invoke("brain_list_brainstorms")) || []; } catch (_) {}
@@ -1905,7 +1920,10 @@ async function agendaTick() {
 
 async function agendaSchedule(id, on, tema) {
   const s = LAG.pruneSchedule(agenda.agendadas, agenda.dia || LAG.dayKey(new Date()));
-  if (on) s.eventos[id] = { tema: tema || settings.bubbleTema || "", data: agenda.dia };
+  const ev = agendaEvent(id);
+  // o DIA DO EVENTO, não o de hoje: marcado às 23h, o de amanhã sobrevive à poda
+  const data = ev ? LAG.dayKey(new Date(ev.inicioMs)) : agenda.dia;
+  if (on) s.eventos[id] = { tema: tema || settings.bubbleTema || "", data };
   else delete s.eventos[id];
   try { agenda.agendadas = await invoke("agenda_schedule_set", { schedule: s }); bubble.aviso = ""; }
   catch (e) { bubble.aviso = tErr(String(e)); clog("agenda_schedule_set error: " + e); }
@@ -1976,6 +1994,15 @@ async function onBubbleCmd(p) {
         break;
       }
       case "keep": agenda.prompt = null; break;
+      case "record-now": {
+        // «Gravar agora» num evento que está acontecendo: como uma agendada —
+        // título do evento, encerra no fim dele, fecha calada
+        const ev = agendaEvent(c.id);
+        if (!ev) break;
+        if (recNow() !== "idle") { bubble.aviso = "já há uma gravação em andamento"; break; }
+        await agendaStart(ev, String(c.tema || "") || agendaTemaFor(ev));
+        break;
+      }
       case "record-suggested": {
         agenda.prompt = null;
         const ev = agendaEvent(c.id);
@@ -2414,6 +2441,7 @@ async function openCfg() {
   cfgEnvSeen = false; // os checks de rede rodam de novo nesta visita, quando a seção aparecer
   cfgPluginsSeen = false; cfgLoopsSeen = false;
   paintBubbleSetting();
+  paintAgentPerms();
   document.querySelectorAll(".cfgsec").forEach((s) => (s.hidden = false));
   $("cfgPop").scrollTop = 0;
   markCfgNav("proj");
@@ -2790,8 +2818,46 @@ async function setBubbleVisible(visible) {
   catch (e) { toast(tErr(String(e))); paintBubbleSetting(); }
 }
 async function paintBubbleSetting() {
-  if (!el.optBubble) return;
-  try { el.optBubble.checked = !!(await invoke("bubble_get_visible")); } catch (_) {}
+  if (el.optBubble) { try { el.optBubble.checked = !!(await invoke("bubble_get_visible")); } catch (_) {} }
+  const sz = $("optBubbleSize");
+  if (sz) { try { sz.value = String((await invoke("bubble_get_size")) || 32); } catch (_) {} }
+}
+// ADR-0042 — «Permissões do Claude». Mora no config global (é da pessoa) e o
+// backend a lê em cada turno; a tela só mostra e grava.
+let agentPerms = null;
+async function paintAgentPerms() {
+  try { agentPerms = await invoke("agent_perms_get"); } catch (_) { return; }
+  if (!agentPerms) return;
+  document.querySelectorAll("[data-agentperm]").forEach((b) =>
+    b.classList.toggle("on", b.dataset.agentperm === agentPerms.modo));
+  const ta = $("agentDenylist"); if (ta && document.activeElement !== ta) ta.value = (agentPerms.bloqueio || []).join("\n");
+  const cb = $("agentBlockChat"); if (cb) cb.checked = !!agentPerms.bloquearNoChat;
+  // o chat do painel só escolhe o modo quando o geral é «restrito»
+  const seg = $("chatPermSeg"); if (seg) seg.closest(".field").hidden = agentPerms.modo !== "restrito";
+}
+async function saveAgentPerms(patch) {
+  const next = Object.assign({}, agentPerms || {}, patch);
+  try { agentPerms = await invoke("agent_perms_set", { perms: next }); }
+  catch (e) { toast(tErr(String(e))); }
+  paintAgentPerms();
+}
+document.querySelectorAll("[data-agentperm]").forEach((b) =>
+  b.addEventListener("click", () => saveAgentPerms({ modo: b.dataset.agentperm })));
+{
+  const ta = $("agentDenylist");
+  if (ta) ta.addEventListener("change", () => saveAgentPerms({
+    bloqueio: ta.value.split(/[\n,]+/).map((x) => x.trim()).filter(Boolean),
+  }));
+  const cb = $("agentBlockChat");
+  if (cb) cb.addEventListener("change", () => saveAgentPerms({ bloquearNoChat: cb.checked }));
+}
+// ADR-0041 — o tamanho do ícone: pequeno 32 (padrão) · médio 48 · grande 64
+{
+  const sz = $("optBubbleSize");
+  if (sz) sz.addEventListener("change", async () => {
+    try { sz.value = String(await invoke("bubble_set_size", { size: Number(sz.value) })); }
+    catch (e) { toast(tErr(String(e))); paintBubbleSetting(); }
+  });
 }
 if (el.optBubble) el.optBubble.addEventListener("change", (e) => setBubbleVisible(e.target.checked));
 listen("bubble-visible", (e) => { if (el.optBubble) el.optBubble.checked = !!(e && e.payload); });

@@ -192,3 +192,79 @@ test("ADR-0041 — todo texto do balão tem par em inglês", () => {
   const faltando = [...ids].filter((k) => !Object.prototype.hasOwnProperty.call(EN, k));
   assert.deepStrictEqual(faltando, [], "msgids do balão sem par em inglês");
 });
+
+// ---- refinamentos do dono (2026-11-18, depois do primeiro build) ---------------
+
+test("ADR-0041 §2 — o tamanho: 32 pt por padrão (1/4 da área), 48 e 64 nas Configurações", () => {
+  assert.match(HTML, /--icon: 32px/, "o padrão do CSS é o pequeno");
+  assert.match(JS, /invoke\("bubble_get_size"\)/);
+  assert.match(JS, /listen\("bubble-size"/);
+  const idx = read("index.html");
+  for (const v of ["32", "48", "64"]) assert.match(idx, new RegExp(`id="optBubbleSize"[\\s\\S]{0,400}value="${v}"`));
+  assert.match(APP, /invoke\("bubble_set_size", \{ size:/);
+  // o selo acompanha o ícone, mas nunca some de tão pequeno
+  assert.strictEqual(BC.badgePx(32), 10);
+  assert.strictEqual(BC.badgePx(48), 14);
+  assert.strictEqual(BC.badgePx(64), 19);
+  assert.strictEqual(BC.badgePx(10), 9);
+  // o arrasto continua valendo no ícone pequeno: o limiar é de distância, não de tamanho
+  const g = BC.gesture();
+  g.down(16, 16);
+  assert.strictEqual(g.move(19, 16), "none");
+  assert.strictEqual(g.up(19, 16), "click");
+});
+
+test("ADR-0041 §2 — o recolhido diz a próxima reunião no tooltip, com ✓ quando vai gravar", () => {
+  const hh = () => "09:30";
+  assert.strictEqual(BC.tooltip("Loro", { evento: { inicioMs: 0, titulo: "Daily" }, agendada: true }, hh),
+    "Loro\nPróxima: 09:30 Daily — gravar ✓");
+  assert.strictEqual(BC.tooltip("gravando · 1:05", { evento: { inicioMs: 0, titulo: "1:1" }, agendada: false }, hh,
+    { proxima: "Next", gravar: "record" }), "gravando · 1:05\nNext: 09:30 1:1");
+  assert.strictEqual(BC.tooltip("Loro", null, hh), "Loro");
+  assert.match(JS, /\$\("icon"\)\.title = /);
+});
+
+test("ADR-0041 §3 — o painel abre e fecha a partir do ícone, curto e sem repetição", () => {
+  assert.match(HTML, /transition: opacity 140ms ease-out, transform 140ms ease-out/);
+  assert.match(HTML, /prefers-reduced-motion: reduce/);
+  // a ÚNICA transição é a do painel: o ícone e o selo nunca transitam (o smoke
+  // desliga transições para medir o estado final, então a regra mora aqui)
+  const comTransicao = HTML.split("\n").filter((l) => /transition\s*:/.test(l));
+  assert.ok(comTransicao.length > 0);
+  for (const l of comTransicao) assert.match(l, /#panel|^\s*transition: opacity/, "transição fora do painel: " + l.trim());
+  assert.match(HTML, /backdrop-filter: saturate\(180%\) blur\(24px\)/);
+  assert.match(HTML, /prefers-color-scheme: dark/);
+  assert.match(HTML, /border-radius: 14px/);
+  // a agenda é uma aba com hoje, amanhã e os que já passaram recolhidos
+  for (const id of ["tabBtnRec", "tabBtnAgenda", "tabRec", "tabAgenda", "bPassados", "bTemaChips"]) {
+    assert.match(HTML, new RegExp(`id="${id}"`));
+  }
+  assert.match(JS, /LAG\.group\(/);
+  assert.match(JS, /send\("record-now"/);
+  assert.match(APP, /case "record-now"/);
+});
+
+test("ADR-0041 §3 — o chat do balão: canal próprio, contexto por referência, Enter envia", () => {
+  assert.match(JS, /invoke\("chat_send", \{ input: \{ prompt: BC\.chatPrompt\(q, st\.chatCtx \|\| \[\]\), channel: "bubble"/);
+  assert.match(JS, /invoke\("chat_cancel", \{ channel: "bubble" \}\)/);
+  assert.match(JS, /invoke\("chat_reset", \{ channel: "bubble" \}\)/);
+  assert.match(JS, /listen\("bubble-chat-delta"/);
+  assert.match(JS, /e\.key === "Enter" && !e\.shiftKey/);
+  assert.match(JS, /invoke\("bubble_panel_height"/);
+  // o contexto é a reunião em andamento e os DOIS arquivos da agenda, como caminho
+  assert.match(APP, /chatCtx: \[\s*meeting\.active && meeting\.livingRel/);
+  const p = BC.chatPrompt("o que o Rick pediu?", ["brainstorming/x/meetings/y/reuniao.md", ".loro/agenda/2026-11-18.json", "/etc/passwd", "../fora.md"]);
+  assert.match(p, /@brainstorming\/x\/meetings\/y\/reuniao\.md/);
+  assert.match(p, /@\.loro\/agenda\/2026-11-18\.json/);
+  assert.doesNotMatch(p, /passwd|fora\.md/, "só caminho relativo dentro do acervo");
+  assert.ok(p.endsWith("o que o Rick pediu?"));
+  assert.strictEqual(BC.chatPrompt("  oi  ", []), "oi");
+});
+
+test("ADR-0041 §3 — a resposta é escapada antes de ganhar formatação", () => {
+  const h = BC.mdLite("**sim** <img src=x onerror=alert(1)>\n- um\n- `dois`\n```\n<b>x</b>\n```");
+  assert.doesNotMatch(h, /<img|<b>/);
+  assert.match(h, /<strong>sim<\/strong> &lt;img/);
+  assert.match(h, /<ul><li>um<\/li><li><code>dois<\/code><\/li><\/ul>/);
+  assert.match(h, /<pre><code>&lt;b&gt;x&lt;\/b&gt;<\/code><\/pre>/);
+});

@@ -16,8 +16,29 @@ use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, Webview
 use crate::config::{read_loro_config, write_loro_config};
 
 pub const LABEL: &str = "bubble";
-/// The collapsed window: the 64 pt icon plus room for its shadow and its badges.
-pub const COLLAPSED: (f64, f64) = (84.0, 84.0);
+/// The icon sizes the person can pick (owner, 2026-11-18: «1/4 do tamanho» —
+/// a quarter of the AREA of the 64 pt icon is 32 pt, the default).
+pub const SIZES: [u32; 3] = [32, 48, 64];
+pub const DEFAULT_SIZE: u32 = 32;
+/// Room around the icon inside the collapsed window: its shadow and the
+/// recording badge that sits on its corner.
+const ICON_PAD: f64 = 6.0;
+
+/// The size a stored value means: anything that is not one of SIZES reads as
+/// the default, never as an icon too small to grab or too big to ignore.
+pub fn normalize_size(px: u32) -> u32 {
+    if SIZES.contains(&px) {
+        px
+    } else {
+        DEFAULT_SIZE
+    }
+}
+
+/// The collapsed window for an icon size.
+pub fn collapsed_for(size: u32) -> (f64, f64) {
+    let s = normalize_size(size) as f64 + 2.0 * ICON_PAD;
+    (s, s)
+}
 /// The panel the bubble grows into.
 pub const EXPANDED: (f64, f64) = (340.0, 520.0);
 /// The distance kept from the edge of the screen when the bubble is placed there.
@@ -37,10 +58,16 @@ pub struct BubbleCfg {
     pub tela: Option<String>,
     #[serde(default)]
     pub posicoes: BTreeMap<String, Spot>,
+    // the icon size in pt: 32 (pequeno), 48 (médio) or 64 (grande)
+    #[serde(default = "default_size")]
+    pub tamanho: u32,
 }
 
 fn yes() -> bool {
     true
+}
+fn default_size() -> u32 {
+    DEFAULT_SIZE
 }
 
 impl Default for BubbleCfg {
@@ -49,6 +76,7 @@ impl Default for BubbleCfg {
             visivel: true,
             tela: None,
             posicoes: BTreeMap::new(),
+            tamanho: DEFAULT_SIZE,
         }
     }
 }
@@ -264,7 +292,10 @@ fn window_rect(w: &tauri::WebviewWindow) -> Option<Rect> {
 pub fn create(app: &AppHandle) -> tauri::Result<()> {
     let w = tauri::WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App("bubble.html".into()))
         .title("Loro")
-        .inner_size(COLLAPSED.0, COLLAPSED.1)
+        .inner_size(
+            collapsed_for(read_cfg().tamanho).0,
+            collapsed_for(read_cfg().tamanho).1,
+        )
         .decorations(false)
         .transparent(true)
         .shadow(false)
@@ -303,7 +334,7 @@ fn place_collapsed(w: &tauri::WebviewWindow) {
         .or_else(|| list.iter().position(|s| cfg.posicoes.contains_key(&s.name)))
         .unwrap_or(0);
     let s = &list[idx];
-    let size = phys(COLLAPSED, s.scale);
+    let size = phys(collapsed_for(cfg.tamanho), s.scale);
     let (x, y) = match cfg.posicoes.get(&s.name) {
         Some(spot) => origin_of(*spot, size, s.area),
         None => default_origin(size, s.area),
@@ -385,7 +416,7 @@ pub fn bubble_expand(app: AppHandle, expanded: bool) -> Result<Anchor, String> {
     let w = app.get_webview_window(LABEL).ok_or("err.bubble_missing")?;
     let scale = w.scale_factor().map_err(|e| e.to_string())?;
     let rect = window_rect(&w).ok_or("err.bubble_missing")?;
-    let collapsed = phys(COLLAPSED, scale);
+    let collapsed = phys(collapsed_for(read_cfg().tamanho), scale);
     let panel = phys(EXPANDED, scale);
     if !expanded {
         let (was, at, from, anchor) = with_rt(|r| {
@@ -400,7 +431,15 @@ pub fn bubble_expand(app: AppHandle, expanded: bool) -> Result<Anchor, String> {
         });
         let _ = w.set_size(PhysicalSize::new(collapsed.0 as u32, collapsed.1 as u32));
         if was {
-            let (x, y) = collapsed_origin((rect.x, rect.y), at, from, anchor, panel, collapsed);
+            // the panel's CURRENT size: the chat may have grown it (§3)
+            let (x, y) = collapsed_origin(
+                (rect.x, rect.y),
+                at,
+                from,
+                anchor,
+                (rect.w, rect.h),
+                collapsed,
+            );
             let _ = w.set_position(PhysicalPosition::new(x.round() as i32, y.round() as i32));
         }
         clamp_into_view(&app);
@@ -465,6 +504,52 @@ pub fn collapsed_origin(
     (x, y)
 }
 
+/// The panel's new height when its content grows (the chat): never shorter than
+/// the base panel, never taller than 70% of the screen, growing AWAY from the
+/// icon (an icon at the bottom grows the panel upward) and kept on-screen.
+pub fn grown_frame(frame: Rect, anchor: Anchor, want_h: f64, area: Rect) -> Rect {
+    let max_h = (area.h * 0.7).max(EXPANDED.1.min(area.h));
+    let h = want_h.clamp(EXPANDED.1.min(max_h), max_h);
+    let y = if anchor.bottom {
+        frame.bottom() - h
+    } else {
+        frame.y
+    };
+    let (x, y) = clamp_origin(frame.x, y, (frame.w, h), area);
+    Rect {
+        x,
+        y,
+        w: frame.w,
+        h,
+    }
+}
+
+/// ADR-0041 §3 — the bubble asks for a taller (or back to the base) panel when
+/// its chat grows. `height` in pt. No-op while collapsed.
+#[tauri::command]
+pub fn bubble_panel_height(app: AppHandle, height: f64) -> Result<f64, String> {
+    let w = app.get_webview_window(LABEL).ok_or("err.bubble_missing")?;
+    let Some(anchor) = with_rt(|r| if r.expanded { r.anchor } else { None }) else {
+        return Ok(0.0);
+    };
+    let scale = w.scale_factor().map_err(|e| e.to_string())?;
+    let rect = window_rect(&w).ok_or("err.bubble_missing")?;
+    let list = screens(&w);
+    let areas: Vec<Rect> = list.iter().map(|s| s.area).collect();
+    let i = screen_for(rect.x + rect.w / 2.0, rect.y + rect.h / 2.0, &areas)
+        .ok_or("err.bubble_missing")?;
+    // pt → px for the geometry, px → pt for the answer
+    let area = areas[i];
+    let f = grown_frame(rect, anchor, height * scale, area);
+    with_rt(|r| r.expanded_at = Some((f.x.round(), f.y.round())));
+    let _ = w.set_size(PhysicalSize::new(f.w as u32, f.h as u32));
+    let _ = w.set_position(PhysicalPosition::new(
+        f.x.round() as i32,
+        f.y.round() as i32,
+    ));
+    Ok(f.h / scale)
+}
+
 /// Show or hide the bubble, and remember it (Settings, the tray item).
 #[tauri::command]
 pub fn bubble_set_visible(app: AppHandle, visible: bool) -> Result<bool, String> {
@@ -474,6 +559,33 @@ pub fn bubble_set_visible(app: AppHandle, visible: bool) -> Result<bool, String>
 #[tauri::command]
 pub fn bubble_get_visible() -> bool {
     read_cfg().visivel
+}
+
+/// The icon size (32/48/64 pt). The bubble window reads it on load and on
+/// `bubble-size`.
+#[tauri::command]
+pub fn bubble_get_size() -> u32 {
+    normalize_size(read_cfg().tamanho)
+}
+
+/// Change the icon size: persisted, the collapsed window resized in place
+/// (keeping its top-left), and the bubble told to redraw.
+#[tauri::command]
+pub fn bubble_set_size(app: AppHandle, size: u32) -> Result<u32, String> {
+    let size = normalize_size(size);
+    let mut cfg = read_cfg();
+    cfg.tamanho = size;
+    write_cfg(&cfg)?;
+    if let Some(w) = app.get_webview_window(LABEL) {
+        if !with_rt(|r| r.expanded) {
+            let scale = w.scale_factor().unwrap_or(1.0);
+            let c = phys(collapsed_for(size), scale);
+            let _ = w.set_size(PhysicalSize::new(c.0 as u32, c.1 as u32));
+            clamp_into_view(&app);
+        }
+    }
+    let _ = app.emit("bubble-size", size);
+    Ok(size)
 }
 
 pub fn set_visible(app: &AppHandle, visible: bool) -> Result<bool, String> {
@@ -590,6 +702,24 @@ mod tests {
         // `visivel` absent = shown
         let bare: BubbleCfg = serde_json::from_str("{}").unwrap();
         assert!(bare.visivel);
+        assert_eq!(bare.tamanho, 32, "absent size = pequeno (32 pt)");
+    }
+
+    #[test]
+    fn adr0041_the_size_is_one_of_three_and_defaults_to_32() {
+        assert_eq!(DEFAULT_SIZE, 32);
+        for s in [32, 48, 64] {
+            assert_eq!(normalize_size(s), s);
+        }
+        for bad in [0, 16, 33, 100, u32::MAX] {
+            assert_eq!(normalize_size(bad), 32, "{bad}");
+        }
+        // the window is the icon plus its padding on each side
+        assert_eq!(collapsed_for(32), (44.0, 44.0));
+        assert_eq!(collapsed_for(64), (76.0, 76.0));
+        assert_eq!(collapsed_for(7), (44.0, 44.0));
+        // 32 pt is a quarter of the 64 pt icon's area
+        assert_eq!(32 * 32 * 4, 64 * 64);
     }
 
     #[test]
@@ -751,6 +881,43 @@ mod tests {
             ),
             (40.0, 60.0)
         );
+    }
+
+    #[test]
+    fn adr0041_the_chat_grows_the_panel_away_from_the_icon_up_to_70_percent() {
+        let top = Anchor {
+            right: false,
+            bottom: false,
+        };
+        let bottom = Anchor {
+            right: true,
+            bottom: true,
+        };
+        let f = Rect {
+            x: 100.0,
+            y: 100.0,
+            w: 340.0,
+            h: 520.0,
+        };
+        // grows down from a top icon
+        let g = grown_frame(f, top, 580.0, SCREEN);
+        assert_eq!((g.x, g.y, g.h), (100.0, 100.0, 580.0));
+        // capped at 70% of the screen (850 * 0.7 = 595), and back up when clamped
+        let g = grown_frame(f, top, 2000.0, SCREEN);
+        assert_eq!(g.h, 595.0);
+        assert!(g.bottom() <= SCREEN.bottom());
+        // never shorter than the base panel
+        assert_eq!(grown_frame(f, top, 100.0, SCREEN).h, 520.0);
+        // an icon at the bottom: the panel grows UP, its bottom edge stays
+        let low = Rect {
+            x: 900.0,
+            y: 300.0,
+            w: 340.0,
+            h: 520.0,
+        };
+        let g = grown_frame(low, bottom, 590.0, SCREEN);
+        assert_eq!(g.bottom(), low.bottom());
+        assert_eq!(g.h, 590.0);
     }
 
     #[test]

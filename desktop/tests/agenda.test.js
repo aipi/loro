@@ -105,6 +105,93 @@ test("ADR-0041 §4 — o agendado de dias passados é podado", () => {
   assert.deepStrictEqual(AG.pruneSchedule(null, "2026-11-18"), { versao: 1, eventos: {} });
 });
 
+// ---- hoje E amanhã (refinamento do dono: «seguir TODOS os próximos») --------
+
+const TOM = (hhmm) => Date.parse(`2026-11-19T${hhmm}:00-03:00`);
+const evTom = (id, ini, fim, comConvidados = true) =>
+  ({ id, titulo: "Amanhã " + id, inicio: `2026-11-19T${ini}:00-03:00`, fim: `2026-11-19T${fim}:00-03:00`, comConvidados });
+
+test("ADR-0041 §4 — o arquivo de amanhã é o dia LOCAL seguinte, inclusive na virada do mês e do ano", () => {
+  assert.strictEqual(AG.tomorrowKey(new Date(2026, 10, 18, 23, 30).getTime()), "2026-11-19");
+  assert.strictEqual(AG.tomorrowKey(new Date(2026, 10, 30, 8, 0).getTime()), "2026-12-01");
+  assert.strictEqual(AG.tomorrowKey(new Date(2026, 11, 31, 22, 0).getTime()), "2027-01-01");
+});
+
+test("ADR-0041 §4 — os dois arquivos viram uma agenda só, e qualquer um pode faltar", () => {
+  const now = T("20:00");
+  const hoje = AG.parseAgenda(file([ev("a", "10:00", "10:30")], "2026-11-18T19:00:00-03:00"), now);
+  const amanha = AG.parseAgenda(file([evTom("b", "09:30", "09:45"), ev("a", "10:00", "10:30")], "2026-11-18T19:00:00-03:00"), now);
+  const m = AG.mergeDays([hoje, amanha]);
+  assert.strictEqual(m.status, "ok");
+  assert.deepStrictEqual(m.eventos.map((e) => e.id), ["a", "b"], "id repetido entre os dois: um só");
+  // só o de amanhã (à noite o de hoje pode não existir)
+  const so = AG.mergeDays([AG.parseAgenda(null, now), AG.parseAgenda(file([evTom("b", "09:30", "09:45")], "2026-11-18T19:00:00-03:00"), now)]);
+  assert.strictEqual(so.status, "ok");
+  assert.deepStrictEqual(so.eventos.map((e) => e.id), ["b"]);
+  // nenhum dos dois
+  assert.strictEqual(AG.mergeDays([AG.parseAgenda(null, now), AG.parseAgenda(null, now)]).status, "missing");
+  assert.strictEqual(AG.mergeDays([AG.parseAgenda("{x", now), AG.parseAgenda(null, now)]).status, "invalid");
+  // a nota segue o arquivo gerado por ÚLTIMO
+  const velho = AG.parseAgenda(file([], "2026-11-18T07:00:00-03:00"), now);
+  const novo = AG.parseAgenda(file([], "2026-11-18T19:30:00-03:00"), now);
+  assert.strictEqual(velho.status, "stale");
+  assert.strictEqual(AG.mergeDays([velho, novo]).status, "ok");
+});
+
+test("ADR-0041 §4 — o painel agrupa: já passaram (hoje), hoje, amanhã", () => {
+  const evs = AG.mergeDays([
+    AG.parseAgenda(file([ev("cedo", "08:00", "08:30"), ev("agora", "13:45", "14:30"), ev("tarde", "17:00", "17:30")]), T("14:00")),
+    AG.parseAgenda(file([evTom("daily", "09:30", "09:45"), { id: "depois", titulo: "x", inicio: "2026-11-21T10:00:00-03:00", fim: "2026-11-21T11:00:00-03:00" }]), T("14:00")),
+  ]).eventos;
+  const g = AG.group(evs, T("14:00"));
+  assert.deepStrictEqual(g.passados.map((e) => e.id), ["cedo"]);
+  assert.deepStrictEqual(g.hoje.map((e) => e.id), ["agora", "tarde"]);
+  assert.deepStrictEqual(g.amanha.map((e) => e.id), ["daily"]);
+  // à noite, hoje vazio e amanhã cheio — o caso em que o dono viu a lista vazia
+  const noite = AG.group(evs, T("23:00"));
+  assert.deepStrictEqual(noite.hoje, []);
+  assert.deepStrictEqual(noite.passados.map((e) => e.id), ["cedo", "agora", "tarde"]);
+  assert.deepStrictEqual(noite.amanha.map((e) => e.id), ["daily"]);
+});
+
+test("ADR-0041 §4 — o estado ao vivo de cada evento: agora, começa em N min, passou", () => {
+  const e = { inicioMs: T("10:00"), fimMs: T("10:45") };
+  assert.deepStrictEqual(AG.statusOf(e, T("09:35")), { kind: "em", minutos: 25 });
+  assert.deepStrictEqual(AG.statusOf(e, T("09:59") + 30000), { kind: "em", minutos: 1 });
+  assert.deepStrictEqual(AG.statusOf(e, T("10:00")), { kind: "agora" });
+  assert.deepStrictEqual(AG.statusOf(e, T("10:45")), { kind: "passou" });
+  assert.strictEqual(AG.durationMin(e), 45);
+});
+
+test("ADR-0041 §4 — a próxima reunião (para o balão recolhido), mesmo que seja amanhã", () => {
+  const evs = [{ id: "x", inicioMs: T("10:00"), fimMs: T("11:00") }, { id: "y", inicioMs: TOM("09:30"), fimMs: TOM("09:45") }];
+  assert.deepStrictEqual(AG.nextEvent(evs, { y: { tema: "t" } }, T("10:30")), { evento: evs[1], agendada: true });
+  assert.deepStrictEqual(AG.nextEvent(evs, {}, T("09:00")), { evento: evs[0], agendada: false });
+  assert.strictEqual(AG.nextEvent(evs, {}, TOM("10:00")), null);
+});
+
+test("ADR-0041 §4 — agendar hoje à noite um evento de amanhã sobrevive à poda e grava amanhã", () => {
+  // o agendamento carrega o DIA DO EVENTO, não o de quando foi marcado
+  const s = { versao: 1, eventos: { daily: { tema: "frota", data: "2026-11-19" }, velho: { tema: "x", data: "2026-11-17" } } };
+  const hojeNoite = AG.pruneSchedule(s, "2026-11-18");
+  assert.deepStrictEqual(Object.keys(hojeNoite.eventos), ["daily"]);
+  const amanhaCedo = AG.pruneSchedule(hojeNoite, "2026-11-19");
+  assert.deepStrictEqual(Object.keys(amanhaCedo.eventos), ["daily"], "no dia dele continua lá");
+  const evs = [{ id: "daily", titulo: "Daily", inicioMs: TOM("09:30"), fimMs: TOM("09:45"), comConvidados: true }];
+  const est = { rec: "idle", atual: null, tratados: [], avisoFimDado: false, ultimoTema: "" };
+  assert.deepStrictEqual(AG.decide({ nowMs: T("23:00"), eventos: evs, agendadas: amanhaCedo.eventos, estado: est }), { acao: "nada" });
+  const d = AG.decide({ nowMs: TOM("09:30"), eventos: evs, agendadas: amanhaCedo.eventos, estado: est });
+  assert.strictEqual(d.acao, "iniciar");
+  assert.strictEqual(d.tema, "frota");
+});
+
+test("ADR-0041 §4 — o app lê os DOIS arquivos e agenda com o dia do evento", () => {
+  const load = fnSource("agendaLoad");
+  assert.match(load, /LAG\.tomorrowKey\(/);
+  assert.match(load, /LAG\.mergeDays\(/);
+  assert.match(fnSource("agendaSchedule"), /LAG\.dayKey\(new Date\(ev\.inicioMs\)\)/);
+});
+
 // ---- a decisão ------------------------------------------------------------
 
 const EVS = AG.parseAgenda(file([

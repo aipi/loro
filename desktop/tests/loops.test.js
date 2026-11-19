@@ -418,11 +418,16 @@ test("BR-9/§4.9 — a superfície dos loops nunca oferece bypassPermissions", (
   const block = APP.slice(from);
   assert.ok(!/bypassPermissions/.test(block), "a permissão de um ciclo não é escolha de tela");
   assert.ok(!/permission:/.test(block), "e não é enviada pelo frontend");
-  // no Rust o comentário NOMEIA a recusa (é o porquê); o código é que não pode
-  // conter a palavra — por isso a leitura ignora comentários.
-  const rust = RUST.slice(RUST.indexOf("fn start_cycle")).replace(/\/\/[^\n]*/g, "");
-  assert.match(rust, /"acceptEdits"/, "o backend passa acceptEdits, e só");
-  assert.ok(!/bypassPermissions/.test(rust), "nenhum caminho de código pede tudo sem perguntar");
+  // ADR-0042 emenda o §4.9: o modo do ciclo não é mais fixo no loops.rs — vem das
+  // «Permissões do Claude» da PESSOA (livre por padrão; restrito = o modelo antigo).
+  // O que continua valendo é que a TELA dos loops não escolhe o modo, e que o
+  // ciclo passa pelo construtor único, testado em agent_perms.rs.
+  const from2 = RUST.indexOf("fn start_cycle");
+  const to2 = RUST.indexOf("\nfn ", from2 + 10);
+  const rust = RUST.slice(from2, to2 > 0 ? to2 : undefined).replace(/\/\/[^\n]*/g, "");
+  assert.match(rust, /agent_perms::permission_mode\(&perms, surface, ""\)/);
+  assert.match(rust, /agent_perms::Surface::Loop/);
+  assert.ok(!/bypassPermissions|"acceptEdits"/.test(rust), "o ciclo não escreve o modo à mão");
 });
 
 // O que um ciclo escreve é material — e material passa pela porta de sempre.
@@ -573,7 +578,7 @@ test("a concessão é do projeto, não do loop — e um pacote não tem caminho 
   // o destino de um pacote é montado pelo Loro, então .loro/ é inalcançável
   assert.match(RUST, /não existe caminho de um pacote até aquele arquivo/);
   // o turno do ciclo carrega as duas listas, montadas por uma função pura e testada
-  assert.match(RUST, /cmd\.args\(cycle_tool_flags\(/);
+  assert.match(RUST, /cmd\.args\(crate::agent_perms::tool_flags\(\s*&perms,\s*surface,\s*&policy\.permite,\s*&policy\.recusa,?\s*\)\)/);
   assert.match(RUST, /let allowed = clean_tools\(&policy\.permite\)/);
 });
 
@@ -616,7 +621,11 @@ test("o clamp dos freios não descarta o que os ciclos podem usar", () => {
 test("um ciclo nunca recebe Bash, e isso é mecanismo e não texto", () => {
   assert.match(RUST, /pub const NEVER_FOR_A_CYCLE: \[&str; 1\] = \["Bash"\]/);
   assert.match(RUST, /pub fn cycle_tool_flags/);
-  assert.match(RUST, /cmd\.args\(cycle_tool_flags\(&policy\.permite, &policy\.recusa\)\)/);
+  // ADR-0042: no modo «restrito» o ciclo passa por cycle_tool_flags (Bash sempre
+  // recusado); a escolha entre os dois modos é do construtor único
+  const perms = fs.readFileSync(path.join(__dirname, "..", "src-tauri", "src", "agent_perms.rs"), "utf8");
+  assert.match(perms, /out = crate::loops::cycle_tool_flags\(permite, &all\);/);
+  assert.match(RUST, /cmd\.args\(crate::agent_perms::tool_flags\(/);
   // a bandeira de recusa NUNCA fica de fora: ela não depende de a pessoa ter recusado algo
   assert.match(RUST, /out\.push\("--disallowedTools"\.into\(\)\);/);
   assert.ok(!/if !refused\.is_empty\(\)/.test(RUST), "a recusa voltou a ser condicional");
