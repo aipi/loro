@@ -240,16 +240,22 @@ você grava as reuniões sem abrir a janela do Loro.
 
 No painel:
 
-- Aba **Gravação**: **onde salvar** (a ideia; a última usada já vem marcada,
-  **outra…** abre a lista, **+ nova ideia…** cria uma na hora); **Gravar**, e
+- Aba **Gravação**: **onde salvar** — um campo com a ideia atual; clicar abre
+  uma lista com busca (digite parte do nome; ↑/↓ e Enter escolhem, Esc fecha), com
+  as **Recentes** em cima e todas as outras em ordem alfabética, e **+ nova ideia
+  «…»** quando o que você digitou não existe; **Gravar**, e
   durante a gravação **Encerrar**, **Pausar / Retomar** e **Nova gravação**
   (encerra a atual e começa outra); **agora**: as últimas falas, marcadas
   **você** e **sistema**.
 - Aba **Agenda**: as reuniões de **Hoje** e de **Amanhã** (veja abaixo).
+- Aba **Tarefas**: as suas tarefas do Google (veja *Tarefas no balão*).
 - **Pergunte ao Claude…**, embaixo: um chat curto com o agente do projeto. Ele
   recebe como referência a reunião em andamento e a agenda, e responde ali
   mesmo; **Enter** envia, **Shift+Enter** quebra a linha, **Parar** interrompe,
-  **nova conversa** recomeça. O cartão cresce com a conversa. Ex.: «o que o Rick
+  **nova conversa** recomeça. O cartão cresce com a conversa. Digite **/** para
+  ver as suas skills e comandos (os mesmos do Claude Code no projeto), filtrando
+  enquanto digita; **Tab** ou **Enter** completa, e depois do espaço vêm os
+  argumentos. Ex.: «o que o Rick
   pediu agora?», «resume os últimos 10 min».
 - **Abrir no Loro** abre a janela principal na reunião em andamento.
 
@@ -279,6 +285,10 @@ ou «agora», se tem convidados, e a ideia onde ela vai ser salva.
   hora de início o Loro começa a gravar sozinho — também com a janela fechada —
   com o título do evento, e no fim encerra.
 - **Gravar agora** grava na hora a reunião que está acontecendo.
+- Se o agente escrever o link da chamada (`"link"`) e o da agenda
+  (`"linkAgenda"`), aparecem **Entrar** (na reunião em andamento e na próxima)
+  e **Abrir na agenda** — sempre no navegador. Quando uma gravação agendada
+  começa, o balão oferece **Entrar na reunião**.
 - Dois minutos antes do fim o balão pergunta **«termina em 2 min — estender?»**;
   **+15 min** empurra o fim.
 - Reuniões **emendadas**: no fim de uma, a outra começa.
@@ -298,6 +308,20 @@ ou «agora», se tem convidados, e a ideia onde ela vai ser salva.
 
 O arquivo da agenda e o que você marcou para gravar ficam em `.loro/agenda/`,
 que **nunca é versionado**.
+
+### Tarefas no balão
+
+Como a agenda, as tarefas vêm de um arquivo que o seu agente escreve —
+`.loro/agenda/tarefas.json` (as abertas e as concluídas nos últimos 7 dias). A
+aba **Tarefas** separa **Atrasadas**, **Hoje**, **Próximas** e **Sem prazo**, com
+as **Concluídas** recolhidas, e mostra no título quantas estão atrasadas ou para
+hoje. Clicar numa tarefa mostra as notas (links abrem no navegador) e **Abrir no
+Google**.
+
+Marcar uma tarefa como feita não mexe no Google — o Loro não tem acesso a ele:
+ele anota o pedido em `.loro/agenda/tarefas-acoes.json`, e o agente conclui de
+fato. Até lá a tarefa aparece **concluindo…**. Sem o arquivo, ou com ele mais
+velho que 2 horas, a aba diz **tarefas não atualizadas**.
 
 ## Modo intérprete (sua voz sai em inglês)
 

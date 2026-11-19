@@ -71,6 +71,8 @@ mod read_aloud;
 // por um agente externo, e o Mac acordado enquanto qualquer gravação roda
 // (herdado da ADR-0038, que o balão substitui).
 mod agenda;
+// ADR-0041 §11 — os comandos «/» do chat do balão: as skills que o CLI carrega.
+mod skills;
 // ADR-0042 — «Permissões do Claude»: one setting, one flag builder for every run.
 mod agent_perms;
 mod bubble;
@@ -5142,6 +5144,9 @@ pub fn run() {
             agenda_read,
             agenda_schedule_get,
             agenda_schedule_set,
+            tarefas_read,
+            tarefas_acao,
+            skills::skills_list,
             interpreter_devices,
             interpreter_voices,
             interpreter_translate,

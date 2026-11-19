@@ -8,6 +8,7 @@ const { listen, emit } = TAURI.event;
 const invoke = TAURI.core.invoke;
 const BC = window.LoroBubble;
 const LAG = window.LoroAgenda;
+const LTF = window.LoroTarefas;
 const I18N = window.LoroI18n;
 const t = (s, args) => (I18N ? I18N.t(s, args) : s);
 const $ = (id) => document.getElementById(id);
@@ -109,14 +110,22 @@ window.addEventListener("blur", () => setOpen(BC.panel(open, "blur")));
 // ---- tabs ------------------------------------------------------------------------
 function setTab(name) {
   tab = name;
-  $("tabBtnRec").setAttribute("aria-selected", String(name === "rec"));
-  $("tabBtnAgenda").setAttribute("aria-selected", String(name === "agenda"));
-  $("tabRec").hidden = name !== "rec";
-  $("tabAgenda").hidden = name !== "agenda";
+  for (const [btn, pane, key] of [["tabBtnRec", "tabRec", "rec"], ["tabBtnAgenda", "tabAgenda", "agenda"], ["tabBtnTarefas", "tabTarefas", "tarefas"]]) {
+    $(btn).setAttribute("aria-selected", String(name === key));
+    $(pane).hidden = name !== key;
+  }
   paint();
 }
 $("tabBtnRec").addEventListener("click", () => setTab("rec"));
 $("tabBtnAgenda").addEventListener("click", () => setTab("agenda"));
+$("tabBtnTarefas").addEventListener("click", () => setTab("tarefas"));
+
+// Links leave through the backend, which opens http(s) only in the default
+// browser (brain_open_link) — never inside this webview.
+function openLink(url) {
+  if (!url || !/^https?:\/\//i.test(url)) return;
+  invoke("brain_open_link", { url }).catch(() => {});
+}
 
 // ---- destination: ONE compact field that opens a searchable list ----------------
 // Owner (2026-11-18): chips did not scale («e se tiver uma lista grande?»). The
@@ -344,12 +353,14 @@ function liveText(e, now) {
   if (s.minutos < 60) return t("começa em %1 min", [s.minutos]);
   return t("começa às %1", [hhmm(e.inicioMs)]);
 }
+let nextId = "";
 function eventRow(e, now) {
   const li = document.createElement("li");
   const s = LAG.statusOf(e, now);
   li.className = "ev" + (s.kind === "agora" ? " now" : "") + (openEv === e.id ? " open" : "");
   li.dataset.ev = e.id;
   const head = document.createElement("button");
+  head.className = "evhead";
   head.setAttribute("aria-expanded", String(openEv === e.id));
   const h = document.createElement("span"); h.className = "hora"; h.textContent = hhmm(e.inicioMs);
   const tit = document.createElement("span"); tit.className = "tit";
@@ -358,7 +369,17 @@ function eventRow(e, now) {
   if (s.kind === "agora") { const m = document.createElement("span"); m.className = "mark"; m.textContent = t("agora"); head.appendChild(m); }
   if (e.agendada) { const m = document.createElement("span"); m.className = "mark"; m.textContent = "● " + t("gravar"); head.appendChild(m); }
   head.addEventListener("click", () => { openEv = openEv === e.id ? "" : e.id; paintAgenda(); });
-  li.appendChild(head);
+  const row = document.createElement("div");
+  row.className = "evrow";
+  row.appendChild(head);
+  // «Entrar» à vista no que está acontecendo e no próximo a começar
+  if (e.link && (s.kind === "agora" || e.id === nextId)) {
+    const j = document.createElement("button");
+    j.className = "btn primary join"; j.textContent = t("Entrar");
+    j.addEventListener("click", () => openLink(e.link));
+    row.appendChild(j);
+  }
+  li.appendChild(row);
   if (openEv !== e.id) return li;
 
   const det = document.createElement("div");
@@ -368,6 +389,18 @@ function eventRow(e, now) {
   meta.textContent = `${hhmm(e.inicioMs)}–${hhmm(e.fimMs)} · ${t("%1 min", [LAG.durationMin(e)])} · ${liveText(e, now)} · `
     + (e.comConvidados ? t("com convidados") : t("sem convidados"));
   det.appendChild(meta);
+  if (e.link || e.linkAgenda) {
+    const links = document.createElement("div"); links.className = "row";
+    if (e.link && s.kind !== "passou") {
+      const j = document.createElement("button"); j.className = "btn ghost"; j.textContent = t("Entrar");
+      j.addEventListener("click", () => openLink(e.link)); links.appendChild(j);
+    }
+    if (e.linkAgenda) {
+      const a = document.createElement("button"); a.className = "btn link"; a.textContent = t("Abrir na agenda");
+      a.addEventListener("click", () => openLink(e.linkAgenda)); links.appendChild(a);
+    }
+    det.appendChild(links);
+  }
   if (s.kind !== "passou") {
     // the destination for THIS event: the same picker as the Gravação tab
     const host = document.createElement("div");
@@ -405,6 +438,8 @@ function paintAgenda() {
   const now = Date.now();
   const ag = st.agenda || { status: "missing", eventos: [] };
   const g = LAG.group(ag.eventos || [], now);
+  const nx = (ag.eventos || []).filter((e) => e.inicioMs > now).sort((a, b) => a.inicioMs - b.inicioMs)[0];
+  nextId = nx ? nx.id : "";
   const ul = $("bAgenda");
   ul.textContent = "";
   const section = (title, list) => {
@@ -448,6 +483,13 @@ function paintPrompt() {
     txt.textContent = t("Começou: %1 — trocar para ela?", [titulo]);
     btn("Trocar", "switch", true);
     btn("Continuar", "keep");
+  } else if (p.kind === "join") {
+    txt.textContent = t("Gravando: %1", [titulo]);
+    const b = document.createElement("button");
+    b.className = "btn primary"; b.textContent = t("Entrar na reunião");
+    b.addEventListener("click", () => { openLink(p.link); send("dismiss"); });
+    acts.appendChild(b);
+    btn("ok", "dismiss");
   } else if (p.kind === "suggest") {
     txt.textContent = t("Gravar %1?", [titulo]);
     btn("Gravar", "record-suggested", true);
@@ -462,12 +504,102 @@ function paintPrompt() {
   }
 }
 
+// ---- tarefas (ADR-0041 §10): o arquivo do agente; concluir grava uma AÇÃO -----
+let openTk = "";
+function prazoText(p, hoje) {
+  if (p === hoje) return t("hoje");
+  const [y, m, d] = p.split("-").map(Number);
+  const dt = new Date(y, m - 1, d);
+  return dt.toLocaleDateString(lang === "en" ? "en-US" : "pt-BR", { day: "numeric", month: "short" });
+}
+function taskRow(tk, hoje, pend) {
+  const st2 = LTF.effective(tk, pend);
+  const li = document.createElement("li");
+  li.className = "tk" + (st2.done ? " done" : "") + (openTk === tk.id ? " open" : "");
+  li.dataset.tk = tk.id;
+  const row = document.createElement("div"); row.className = "tkrow";
+  const cb = document.createElement("input");
+  cb.type = "checkbox"; cb.checked = st2.done;
+  cb.setAttribute("aria-label", st2.done ? t("reabrir") : t("concluir"));
+  cb.addEventListener("change", () => send("tarefa", { id: tk.id, acao: cb.checked ? "concluir" : "reabrir" }));
+  const tit = document.createElement("button");
+  tit.className = "tkt"; tit.textContent = tk.titulo || t("(sem título)");
+  tit.setAttribute("aria-expanded", String(openTk === tk.id));
+  tit.addEventListener("click", () => { openTk = openTk === tk.id ? "" : tk.id; paintTarefas(); });
+  row.append(cb, tit);
+  if (st2.pendente) {
+    const pd = document.createElement("span"); pd.className = "pend";
+    pd.textContent = st2.pendente === "concluir" ? t("concluindo…") : t("reabrindo…");
+    row.appendChild(pd);
+  } else if (tk.prazo && tk.status !== "completed") {
+    const pz = document.createElement("span");
+    pz.className = "prazo" + (tk.prazo < hoje ? " late" : "");
+    pz.textContent = prazoText(tk.prazo, hoje);
+    row.appendChild(pz);
+  }
+  li.appendChild(row);
+  if (openTk === tk.id) {
+    if (tk.notas) {
+      const n = document.createElement("div"); n.className = "notas";
+      // texto puro (as quebras ficam pelo CSS) e só http(s) vira link
+      for (const seg of LTF.linkify(tk.notas)) {
+        if (seg.url) {
+          const a = document.createElement("button"); a.className = "lnk"; a.textContent = seg.url;
+          a.addEventListener("click", () => openLink(seg.url)); n.appendChild(a);
+        } else n.appendChild(document.createTextNode(seg.text));
+      }
+      li.appendChild(n);
+    }
+    if (tk.link) {
+      const acts = document.createElement("div"); acts.className = "acts";
+      const g = document.createElement("button"); g.className = "btn link"; g.textContent = t("Abrir no Google");
+      g.addEventListener("click", () => openLink(tk.link)); acts.appendChild(g);
+      li.appendChild(acts);
+    }
+  }
+  return li;
+}
+function paintTarefas() {
+  const tf = st.tarefas || { status: "missing", lista: [], pendentes: [] };
+  const now = Date.now(), hoje = LAG.dayKey(new Date(now));
+  const g = LTF.group(tf.lista || [], now, tf.pendentes || []);
+  const ul = $("bTarefas");
+  ul.textContent = "";
+  const section = (title, list) => {
+    if (!list.length) return;
+    const h = document.createElement("li"); h.className = "grp"; h.textContent = title; ul.appendChild(h);
+    for (const tk of list) ul.appendChild(taskRow(tk, hoje, tf.pendentes || []));
+  };
+  section(t("Atrasadas"), g.atrasadas);
+  section(t("Hoje"), g.hoje);
+  section(t("Próximas"), g.proximas);
+  section(t("Sem prazo"), g.semPrazo);
+  const done = $("bConcluidas");
+  done.hidden = !g.concluidas.length;
+  done.querySelector("summary").textContent = t("Concluídas (%1)", [g.concluidas.length]);
+  const dul = done.querySelector("ul"); dul.textContent = "";
+  for (const tk of g.concluidas) dul.appendChild(taskRow(tk, hoje, tf.pendentes || []));
+  const nota = $("bTarefasNota");
+  if (tf.status !== "ok") nota.textContent = t("tarefas não atualizadas");
+  else if (!g.atrasadas.length && !g.hoje.length && !g.proximas.length && !g.semPrazo.length) nota.textContent = t("nenhuma tarefa aberta");
+  else nota.textContent = "";
+}
+function paintTarefasBadge() {
+  const tf = st.tarefas || { lista: [], pendentes: [] };
+  const n = LTF ? LTF.badgeCount(tf.lista || [], Date.now(), tf.pendentes || []) : 0;
+  const b = $("bTarefasBadge");
+  b.hidden = !n; b.textContent = n ? String(n) : "";
+  $("tabBtnTarefas").setAttribute("aria-label", n ? t("Tarefas") + " · " + t("%1 para hoje ou atrasadas", [n]) : t("Tarefas"));
+}
+
 function paint() {
   const b = paintBadge();
   if (!open) return;
   paintHead(b);
+  paintTarefasBadge();
   if (tab === "rec") { paintTemas(); paintControls(); paintTail(); }
-  else { paintAgenda(); $("bAviso").textContent = st.aviso ? t(st.aviso) : ""; }
+  else if (tab === "agenda") { paintAgenda(); $("bAviso").textContent = st.aviso ? t(st.aviso) : ""; }
+  else paintTarefas();
 }
 
 listen("bubble-state", (e) => {
@@ -546,8 +678,9 @@ listen("bubble-chat-done", (e) => {
   const p = (e && e.payload) || {};
   chat.busy = false;
   if (p.ok) chat.hasSession = true;
-  else if (chat.cur) {
-    if (!chat.buf) chat.cur.remove();
+  // um turno que terminou sem texto não deixa uma bolha vazia na conversa
+  if (chat.cur && !chat.buf) chat.cur.remove();
+  if (!p.ok && chat.cur) {
     addMsg("err", I18N ? I18N.tErr(p.error || "err.chat_agent_failed") + (p.detail ? ": " + String(p.detail).slice(0, 200) : "") : String(p.error));
   }
   chat.cur = null;
@@ -569,8 +702,61 @@ function autosize() {
   ta.style.height = "auto";
   ta.style.height = Math.min(ta.scrollHeight, 96) + "px";
 }
-$("bChatIn").addEventListener("input", autosize);
+// «/» abre a lista de skills e comandos (ADR-0041 §11), como no terminal do
+// Claude Code: filtra enquanto digita, ↑/↓ movem, Tab/Enter completam, Esc fecha.
+// A lista vem do backend (skills_list), que a guarda por 60 s.
+const slash = { list: [], at: 0, items: [], active: 0, open: false };
+async function slashLoad() {
+  if (Date.now() - slash.at < 60000 && slash.list.length) return;
+  try { slash.list = (await invoke("skills_list")) || []; slash.at = Date.now(); } catch (_) {}
+}
+function slashClose() { slash.open = false; $("bSlash").hidden = true; }
+function slashRender() {
+  const ul = $("bSlash");
+  ul.textContent = "";
+  slash.items.forEach((it, i) => {
+    const li = document.createElement("li");
+    li.setAttribute("role", "option");
+    li.setAttribute("aria-selected", String(i === slash.active));
+    const n = document.createElement("span"); n.className = "sn"; n.textContent = "/" + it.name;
+    const d = document.createElement("span"); d.className = "sd"; d.textContent = it.description || "";
+    li.append(n, d);
+    li.addEventListener("mousedown", (e) => { e.preventDefault(); slashPick(i); });
+    ul.appendChild(li);
+    if (i === slash.active) li.scrollIntoView({ block: "nearest" });
+  });
+  ul.hidden = !slash.items.length;
+  slash.open = !!slash.items.length;
+}
+async function slashUpdate() {
+  const q = BC.slashQuery($("bChatIn").value);
+  if (q == null) { slashClose(); return; }
+  await slashLoad();
+  slash.items = BC.slashItems(slash.list, q, FZ ? FZ.filter : undefined);
+  slash.active = 0;
+  slashRender();
+}
+function slashPick(i) {
+  const it = slash.items[i];
+  if (!it) return;
+  const ta = $("bChatIn");
+  ta.value = BC.slashComplete(it.name);
+  slashClose();
+  ta.focus();
+  ta.setSelectionRange(ta.value.length, ta.value.length);
+  autosize();
+}
+$("bChatIn").addEventListener("input", () => { autosize(); slashUpdate(); });
 $("bChatIn").addEventListener("keydown", (e) => {
+  if (slash.open) {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      slash.active = BC.pickerKey(slash.active, e.key, slash.items.length).index;
+      slashRender(); return;
+    }
+    if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) { e.preventDefault(); slashPick(slash.active); return; }
+    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); slashClose(); return; }
+  }
   // Enter sends, Shift+Enter breaks the line (Esc is the document's: collapse)
   if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); chatSend(); }
 });
@@ -582,7 +768,7 @@ setInterval(() => {
   const b = paintBadge();
   if (!open) return;
   $("bTime").textContent = b.time || "";
-  if (tab === "agenda" && ++ticks % 30 === 0) paintAgenda();
+  if (++ticks % 30 === 0) { if (tab === "agenda") paintAgenda(); paintTarefasBadge(); }
 }, 1000);
 
 // Ask the main window for the current state: it may have started before us.

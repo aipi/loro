@@ -112,10 +112,46 @@ ADR-0039/0040: the raw sidecar microphone, its in-process echo cancellation and 
 The owner tested the first build («ficou top!») and asked for five changes, all on the same PR:
 
 1. **Size.** The icon is **32 pt by default** — a quarter of the 64 pt icon's area — with **médio 48** and **grande 64** in Settings → Captura («tamanho do balão»); stored as `balao.tamanho` (anything else reads as 32). The collapsed window is the icon + 6 pt per side; the badge scales with the icon (30%, never under 9 pt). The 256 px PNG keeps it crisp at 2× up to 64 pt. The drag threshold (4 px) is a distance, so it is unchanged at 32 pt. `bubble_get_size` / `bubble_set_size` (resizes the collapsed window in place and emits `bubble-size`).
-2. **Panel design.** A native-feeling card: translucent material (`backdrop-filter: saturate(180%) blur(24px)`, a solid fallback where unsupported), 14 px radius, system font, light and dark via `prefers-color-scheme`. Header: state (red dot + «gravando»), title · idea, elapsed time. One prominent red primary action (Gravar or Encerrar); the rest are ghost buttons. The destination is an inline chip row (the current idea first, up to four) with «outra…»/«+ nova ideia…». Two tabs, **Gravação** and **Agenda**. Opening/closing is a 140 ms fade+scale from the icon's corner (none under `prefers-reduced-motion`), the only transition in the window. Contrast is MEASURED in the smoke (WCAG, against the opaque material): every text checked is ≥ 4.5:1 in both themes (lowest: 5.4 for white on the red button). Red TEXT uses a lighter red in dark mode (#ff7b72), because the button red on the dark material read at ~2.6:1.
+2. **Panel design.** A native-feeling card: an **opaque** surface per theme (the first build used a translucent blurred material; on a real Mac the text of the windows behind bled through the words — owner: «atrapalhando bastante» — so `backdrop-filter` is gone and the card is solid, with a 1 px border and a soft shadow), 14 px radius, system font, light and dark via `prefers-color-scheme`. Header: state (red dot + «gravando»), title · idea, elapsed time. One prominent red primary action (Gravar or Encerrar); the rest are ghost buttons. The destination is ONE compact field showing the current idea; clicking it opens a searchable list (type-to-filter with `fuzzy.js`; ↑/↓/Enter/Esc — Esc closes the list, not the panel): **Recentes** (the last 5 chosen, most recent first, kept in the main window's settings) and then every idea alphabetically, 8 rows visible and scrolling, plus «+ nova ideia «texto»» when no idea has exactly that name (created with `brain_create_brainstorm` before recording or scheduling into it). A first version used chips, which did not scale («e se tiver uma lista grande?»). The SAME component is the per-event destination in the Agenda. No native `title` tooltips inside the panel (one overlapped the Record button); the collapsed icon keeps its hint. Two tabs, **Gravação** and **Agenda**. Opening/closing is a 140 ms fade+scale from the icon's corner (none under `prefers-reduced-motion`), the only transition in the window. Contrast is MEASURED in the smoke (WCAG, against the panel's own opaque background, which the smoke also asserts has alpha 1 and no backdrop filter): every text checked is ≥ 4.5:1 in both themes (lowest: 5.4 for white on the red button). Red TEXT uses a lighter red in dark mode (#ff7b72), because the button red on the dark material read at ~2.6:1.
 3. **Agenda — follow every next event.** The external agent now ALSO writes **tomorrow's** file, same contract, `.loro/agenda/<tomorrow>.json`. Loro reads both (either may be missing; merged by id, today's first; the «agenda não atualizada» note follows the most recently generated valid file). The Agenda tab groups **Hoje** / **Amanhã** and collapses today's ended events under **«Já passaram (N)»**; the one under way is highlighted. A row opens in place: time range, duration, live status («começa em 25 min» / «agora»), with/without guests, the destination idea for THAT event, «Gravar quando começar», and «Gravar agora» while it is happening (recorded like a scheduled one — titled, stopped at its end, closed quietly). A schedule entry carries the EVENT's day (`data`), so an event of tomorrow scheduled tonight survives the pruning and starts tomorrow (tested across midnight).
 4. **Collapsed hint.** The icon's tooltip says the state and the next event: «Próxima: 09:30 Daily — gravar ✓» (✓ when it is scheduled).
 5. **Mini chat** (owner request A). A composer at the bottom of the card asks the acervo's agent anything, through the SAME path the main chat uses (`chat_send`, the acervo's own CLI in the acervo as cwd — no new credential, BR-9) but on its **own channel** (`channel: "bubble"`: its own process slot, its own `--resume` session, its own `bubble-chat-*` events), so a question asked over a call never lands in the main window's conversation. Context goes as **file references**, never pasted: the living meeting file (when recording) and the two agenda files, prefixed as `@path` lines. The answer streams in, rendered as escaped markdown-lite (bold, code, lists, fences) with a copy button; «pensando…»/«usando X…» while it runs, **Parar** kills the process, **nova conversa** resets the session; Enter sends, Shift+Enter breaks the line, Esc collapses. The card grows with the conversation up to **70% of the screen height** (`bubble_panel_height`, growing away from the icon). What the agent may do without asking is ADR-0042.
+
+## §9 Agenda event links
+
+The agenda contract gains two **optional** fields per event, `versao` unchanged (absence tolerated):
+
+```json
+{"id":"…","titulo":"…","inicio":"…","fim":"…","comConvidados":true,
+ "link":"<video call URL — Meet/Zoom/Teams, if any>",
+ "linkAgenda":"<Google Calendar event page URL>"}
+```
+
+Only `http(s)` URLs are kept (`safeUrl`: scheme checked, no whitespace, ≤ 2048 chars); anything else is dropped without dropping the event. URLs open in the **default browser** through the existing `brain_open_link` command, which checks the scheme again — never inside a webview. The Agenda tab shows a red **Entrar** on the event in progress and on the next one to start (when they have a link), **Entrar** and **Abrir na agenda** in the opened detail, and when a scheduled recording starts on an event with a link the bubble asks **«Gravando: <título>» — Entrar na reunião**.
+
+## §10 Tarefas (the owner's Google Tasks, through a file)
+
+A third tab, **Tarefas**. Loro still never touches Google (BR-9): the agent writes `<acervo>/.loro/agenda/tarefas.json`:
+
+```json
+{"versao":1,"geradoEm":"<ISO with offset>","tarefas":[{"id":"<task id>","titulo":"…",
+ "prazo":"YYYY-MM-DD"|null,"notas":"<plain text or empty>","status":"needsAction"|"completed",
+ "concluidaEm":"<ISO>"|null,"link":"<webViewLink or null>"}]}
+```
+
+(open tasks plus those completed in the last 7 days). Parsed in the pure `src/tarefas.js`: a malformed task is dropped alone, a non-calendar `prazo` reads as «sem prazo», a non-http(s) link as none; the same stale rule (missing or older than 2 h → quiet «tarefas não atualizadas»). Groups by the LOCAL day: **Atrasadas / Hoje / Próximas / Sem prazo**, plus **Concluídas (N)** folded. A row is a checkbox, the title and a due-date chip; clicking opens the notes as plain text (line breaks kept; `http(s)` URLs become buttons that open in the browser — never HTML) and **Abrir no Google**. The tab shows a badge with overdue + today.
+
+Completing (or reopening) cannot write Google, so Loro APPENDS an action to `<acervo>/.loro/agenda/tarefas-acoes.json`:
+
+```json
+{"acoes":[{"id":"<task id>","acao":"concluir"|"reabrir","em":"<ISO with the local offset>"}]}
+```
+
+(write-then-rename; a corrupted file starts over; the agent consumes and clears it). The task shows **«concluindo…»** in place until a later `tarefas.json` reflects it; then (or if the task left the file) the pending action is dropped (`reconcile`). `.loro/agenda/` is already git-ignored.
+
+## §11 Slash commands in the bubble chat
+
+Typing `/` in the bubble composer opens a completion list of the owner's skills and commands, as in Claude Code's terminal: each row is `/name` + a one-line description, filtered as he types (`fuzzy.js`), ↑/↓ to move, Tab/Enter to complete to `/name ` (the space is where arguments go), Esc closes the list. `skills_list` (Rust, `skills.rs`) discovers what the CLI would load for the acervo — project `.claude/skills/*/SKILL.md` and `.claude/commands/*.md`, user `~/.claude/skills` and `~/.claude/commands`, plugin skills under `~/.claude/plugins/**/skills` shown as `plugin:skill` (the plugin's name from its `.claude-plugin/plugin.json`) — reading ONLY the frontmatter `name`/`description` (plain, quoted, block or wrapped values; missing name → folder/file name), precedence project > user > plugin, names restricted to plain tokens, cached 60 s. No CLI built-ins are listed: the ones that exist are interactive and do nothing in `-p` mode. A message that starts with `/` is sent to `claude -p` UNCHANGED (no context header in front), so the CLI resolves it. Not done: the same popover in the main window's chat composer (left for a follow-up).
 
 ## Explicitly NOT done
 

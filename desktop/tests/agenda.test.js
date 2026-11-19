@@ -34,6 +34,7 @@ test("ADR-0041 §4 — o contrato do arquivo é lido como o agente o escreve", (
   assert.deepStrictEqual(a.eventos.map((e) => e.id), ["b", "a"]);
   assert.deepStrictEqual(a.eventos[1], {
     id: "a", titulo: "Reunião a", inicioMs: T("10:00"), fimMs: T("10:30"), comConvidados: true,
+    link: null, linkAgenda: null,
   });
   assert.strictEqual(a.eventos[0].comConvidados, false);
 });
@@ -347,4 +348,33 @@ test("ADR-0041 §5 — o dia gravado da ADR-0038 saiu inteiro", () => {
     assert.ok(!html.includes(gone), "index.html ainda tem " + gone);
   }
   assert.match(html, /<script src="agenda.js"><\/script>/);
+});
+
+// ---- §9 · os links opcionais do evento -----------------------------------------
+test("ADR-0041 §9 — link e linkAgenda são opcionais e só http(s) passa", () => {
+  const evs = AG.parseAgenda(file([
+    Object.assign(ev("meet", "10:00", "10:30"), { link: "https://meet.google.com/abc-defg-hij", linkAgenda: "https://calendar.google.com/calendar/event?eid=x" }),
+    Object.assign(ev("zoom", "11:00", "11:30"), { link: "http://zoom.us/j/1" }),
+    Object.assign(ev("js", "12:00", "12:30"), { link: "javascript:alert(1)", linkAgenda: "file:///etc/passwd" }),
+    Object.assign(ev("rel", "13:00", "13:30"), { link: "/meet/abc", linkAgenda: 42 }),
+    Object.assign(ev("esp", "14:00", "14:30"), { link: "https://x.com/a b" }),
+    ev("sem", "15:00", "15:30"),
+  ]), T("09:00")).eventos;
+  const by = (id) => evs.find((e) => e.id === id);
+  assert.strictEqual(by("meet").link, "https://meet.google.com/abc-defg-hij");
+  assert.match(by("meet").linkAgenda, /^https:\/\/calendar\.google\.com/);
+  assert.strictEqual(by("zoom").link, "http://zoom.us/j/1");
+  for (const id of ["js", "rel", "esp", "sem"]) {
+    assert.strictEqual(by(id).link, null, id);
+    assert.strictEqual(by(id).linkAgenda, null, id);
+  }
+  assert.strictEqual(evs.length, 6, "um link ruim não derruba o evento");
+});
+
+test("ADR-0041 §9 — os links abrem no navegador pelo caminho que valida o esquema, nunca no webview", () => {
+  const B = fs.readFileSync(path.join(SRC, "bubble.js"), "utf8");
+  assert.match(B, /invoke\("brain_open_link", \{ url/);
+  assert.doesNotMatch(B, /window\.open\(|location\.href\s*=/);
+  // ao começar uma agendada com link, o balão oferece entrar
+  assert.match(fnSource("agendaStart"), /kind: "join"/);
 });

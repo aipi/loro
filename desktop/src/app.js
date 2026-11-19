@@ -18,6 +18,7 @@ const R = window.LoroRefs || {};
 const LM = window.LoroMeeting || {};
 const LP = window.LoroLoops || {};   // ADR-0029: ritmo, estado e histórico de um loop
 const LAG = window.LoroAgenda || {}; // ADR-0041: a agenda do dia e o agendador
+const LTF = window.LoroTarefas || {}; // ADR-0041 §10: as tarefas que o agente escreve
 // ADR-0029 — o ESTADO dos loops é declarado aqui, no topo, junto do módulo que o
 // interpreta. Declarado no fim do arquivo (onde vivem os pintores) ele ficava na
 // zona morta do `const`: `brainRefresh()` roda no boot, chama `refreshLoops`, e a
@@ -240,6 +241,9 @@ const agenda = {
 };
 // ADR-0041 §3 — o que o balão mostra: as últimas falas (com quem falou) e um aviso.
 const bubble = { linhas: [], aviso: "", pushTimer: null };
+// ADR-0041 §10 — as tarefas: o arquivo lido, e as ações que o Loro gravou e o
+// agente ainda não refletiu (mostradas como «concluindo…» até o próximo arquivo)
+const tarefas = { parsed: { status: "missing", geradoEmMs: null, tarefas: [] }, pendentes: [] };
 
 // ---- configurações persistidas (localStorage) ----
 const SETTINGS_KEY = "loro-settings";
@@ -1777,11 +1781,13 @@ function bubbleState() {
       eventos: agenda.parsed.eventos.map((e) => ({
         id: e.id, titulo: e.titulo, inicioMs: e.inicioMs, fimMs: e.fimMs,
         comConvidados: e.comConvidados, agendada: Object.prototype.hasOwnProperty.call(sched, e.id),
+        link: e.link || null, linkAgenda: e.linkAgenda || null,
         tema: (sched[e.id] && sched[e.id].tema) || "",
       })),
     },
     prompt: agenda.prompt,
     aviso: bubble.aviso,
+    tarefas: { status: tarefas.parsed.status, lista: tarefas.parsed.tarefas, pendentes: tarefas.pendentes },
     // o contexto do chat do balão, como REFERÊNCIA de arquivo (relativa ao acervo,
     // onde o agente roda): a reunião em andamento e os dois arquivos da agenda
     chatCtx: [
@@ -1845,6 +1851,28 @@ async function agendaLoad() {
   try { agenda.agendadas = LAG.pruneSchedule(await invoke("agenda_schedule_get"), dia); }
   catch (e) { clog("agenda_schedule_get error: " + e); }
   try { bubbleTemas = (await invoke("brain_list_brainstorms")) || []; } catch (_) {}
+  // ADR-0041 §10 — as tarefas, no mesmo tique: o arquivo é do agente
+  let tt = null;
+  try { tt = await invoke("tarefas_read"); } catch (e) { clog("tarefas_read error: " + e); }
+  if (LTF.parseTarefas) {
+    tarefas.parsed = LTF.parseTarefas(tt, now);
+    tarefas.pendentes = LTF.reconcile(tarefas.pendentes, tarefas.parsed.tarefas);
+  }
+}
+
+// ISO-8601 com o fuso LOCAL (o agente lê a hora em que a pessoa clicou)
+function isoLocal(d) {
+  const p = (n) => String(Math.abs(n)).padStart(2, "0");
+  const off = -d.getTimezoneOffset();
+  return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) + "T" + p(d.getHours()) + ":" + p(d.getMinutes())
+    + ":" + p(d.getSeconds()) + (off >= 0 ? "+" : "-") + p(Math.trunc(off / 60)) + ":" + p(off % 60);
+}
+async function tarefaAcao(id, acao) {
+  if (!id || !/^(concluir|reabrir)$/.test(acao)) return;
+  try {
+    await invoke("tarefas_acao", { id, acao, em: isoLocal(new Date()) });
+    tarefas.pendentes = tarefas.pendentes.filter((p) => p.id !== id).concat([{ id, acao }]);
+  } catch (e) { bubble.aviso = tErr(String(e)); clog("tarefas_acao error: " + e); }
 }
 
 // Uma agendada começa sem modal e CALADA (ADR-0041 §5).
@@ -1855,6 +1883,8 @@ async function agendaStart(ev, tema) {
   if (meeting.active && meeting.phase === "recording") {
     agenda.atual = { tipo: "agendada", eventId: ev.id, fimMs: ev.fimMs, extraMs: 0, meetingId: meeting.id };
     agenda.avisoFimDado = false;
+    // ADR-0041 §9: a gravação começou e a reunião tem link — o balão oferece entrar
+    if (ev.link) agenda.prompt = { kind: "join", eventId: ev.id, titulo: ev.titulo, link: ev.link };
     return true;
   }
   // startMeetingWith já disse por quê na janela principal; o balão diz onde olhar
@@ -2017,6 +2047,7 @@ async function onBubbleCmd(p) {
         break;
       }
       case "keep": agenda.prompt = null; break;
+      case "tarefa": await tarefaAcao(String(c.id || ""), String(c.acao || "")); break;
       case "record-now": {
         // «Gravar agora» num evento que está acontecendo: como uma agendada —
         // título do evento, encerra no fim dele, fecha calada

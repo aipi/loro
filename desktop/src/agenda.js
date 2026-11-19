@@ -40,6 +40,17 @@
     return Number.isFinite(ms) ? ms : null;
   }
 
+  // An http(s) URL, or null. Optional fields from the agent are DATA: anything
+  // else (javascript:, file:, a relative path, a non-string) is dropped, never
+  // opened. The backend checks the scheme again before opening (brain_open_link).
+  function safeUrl(u) {
+    if (typeof u !== "string") return null;
+    const v = u.trim();
+    if (!/^https?:\/\/[^\s]+$/i.test(v) || v.length > 2048) return null;
+    try { const p = new URL(v); return p.protocol === "http:" || p.protocol === "https:" ? v : null; }
+    catch (_) { return null; }
+  }
+
   function parseEvent(e) {
     if (!e || typeof e !== "object" || Array.isArray(e)) return null;
     if (typeof e.id !== "string" || !e.id.trim()) return null;
@@ -50,6 +61,9 @@
       titulo: typeof e.titulo === "string" ? e.titulo.trim() : "",
       inicioMs, fimMs,
       comConvidados: e.comConvidados === true,
+      // optional (ADR-0041 §9): the call link and the calendar page
+      link: safeUrl(e.link),
+      linkAgenda: safeUrl(e.linkAgenda),
     };
   }
 
@@ -213,7 +227,7 @@
 
   return {
     STALE_MS, END_WARN_MS, EXTEND_MS, SUGGEST_MS,
-    dayKey, tomorrowKey, parseInstant, parseAgenda, mergeDays, group, statusOf, durationMin, nextEvent,
+    safeUrl, dayKey, tomorrowKey, parseInstant, parseAgenda, mergeDays, group, statusOf, durationMin, nextEvent,
     upcoming, pruneSchedule, decide,
   };
 });

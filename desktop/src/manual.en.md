@@ -241,15 +241,21 @@ record meetings without opening Loro's window.
 
 In the panel:
 
-- **Recording** tab: **save to** (the idea; the last one used comes selected,
-  **other…** opens the list, **+ new idea…** creates one); **Record**, and while
+- **Recording** tab: **save to** — a field with the current idea; clicking it
+  opens a searchable list (type part of the name; ↑/↓ and Enter pick, Esc closes),
+  with the **Recent** ones on top and all the others alphabetically, and **+ new
+  idea «…»** when what you typed does not exist; **Record**, and while
   recording **Stop**, **Pause / Resume** and **New recording**; **now**: the
   latest lines, marked **you** and **system**.
 - **Agenda** tab: **Today**'s and **Tomorrow**'s meetings (see below).
+- **Tasks** tab: your Google tasks (see *Tasks in the bubble*).
 - **Ask Claude…**, at the bottom: a short chat with the project's agent. It gets
   the meeting in progress and the agenda as references and answers right there;
   **Enter** sends, **Shift+Enter** breaks the line, **Stop** interrupts, **new
-  conversation** starts over. The card grows with the conversation.
+  conversation** starts over. The card grows with the conversation. Type **/** to
+  see your skills and commands (the same Claude Code has in the project),
+  filtered as you type; **Tab** or **Enter** completes, and arguments go after
+  the space.
 - **Open in Loro** opens the main window on the meeting in progress.
 
 To hide the bubble: **Settings → Capture → show the recording bubble**, or
@@ -277,6 +283,10 @@ min» or «now», whether it has guests, and the idea it will be saved in.
   start Loro records on its own — with the window closed too —
   titled with the event, and stops at its end.
 - **Record now** records the meeting that is happening right away.
+- If the agent writes the call link (`"link"`) and the calendar page
+  (`"linkAgenda"`), you get **Join** (on the meeting under way and the next one)
+  and **Open in calendar** — always in the browser. When a scheduled recording
+  starts, the bubble offers **Join the meeting**.
 - Two minutes before the end the bubble asks **«ends in 2 min — extend?»**;
   **+15 min** pushes the end.
 - **Back-to-back** meetings: when one ends, the next one starts.
@@ -296,6 +306,20 @@ min» or «now», whether it has guests, and the idea it will be saved in.
 
 The agenda file and what you scheduled live in `.loro/agenda/`, which is
 **never versioned**.
+
+### Tasks in the bubble
+
+Like the agenda, tasks come from a file your agent writes —
+`.loro/agenda/tarefas.json` (open ones and those completed in the last 7 days).
+The **Tasks** tab splits **Overdue**, **Today**, **Upcoming** and **No due date**,
+with **Completed** folded, and its title shows how many are overdue or due today.
+Clicking a task shows its notes (links open in the browser) and **Open in
+Google**.
+
+Checking a task does not touch Google — Loro has no access to it: it writes the
+request to `.loro/agenda/tarefas-acoes.json` and the agent completes it for real.
+Until then the task shows **completing…**. Without the file, or with one older
+than 2 hours, the tab says **tasks not up to date**.
 
 ## Interpreter mode (your voice goes out in English)
 

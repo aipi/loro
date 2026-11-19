@@ -153,6 +153,95 @@ pub fn agenda_schedule_set(schedule: Schedule) -> Result<Schedule, String> {
     write_schedule(&acervo_base()?, schedule)
 }
 
+// ---- ADR-0041 §10 · the owner's tasks (the agent writes, Loro reads) ---------
+
+const TASKS_FILE: &str = "tarefas.json";
+const TASK_ACTIONS_FILE: &str = "tarefas-acoes.json";
+const MAX_ACTIONS: usize = 1000;
+
+/// `.loro/agenda/tarefas.json` as text (parsed in the pure `src/tarefas.js`),
+/// or None when the agent has not written it.
+pub fn read_tasks(base: &Path) -> Result<Option<String>, String> {
+    let p = agenda_dir(base).join(TASKS_FILE);
+    let Ok(meta) = std::fs::metadata(&p) else {
+        return Ok(None);
+    };
+    if !meta.is_file() {
+        return Ok(None);
+    }
+    if meta.len() > MAX_AGENDA_BYTES {
+        return Err("err.agenda_too_large".into());
+    }
+    std::fs::read_to_string(&p)
+        .map(Some)
+        .map_err(|_| "err.agenda_unreadable".to_string())
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+pub struct TaskActions {
+    #[serde(default)]
+    pub acoes: Vec<TaskAction>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct TaskAction {
+    pub id: String,
+    /// "concluir" | "reabrir"
+    pub acao: String,
+    /// ISO-8601 with offset, from the frontend (which knows the timezone)
+    pub em: String,
+}
+
+/// APPEND one action to `tarefas-acoes.json` — the agent consumes and clears
+/// it. Loro never writes Google (BR-9). Write-then-rename: the agent may be
+/// reading the file at this very moment. A corrupted file starts over rather
+/// than blocking the person's click.
+pub fn append_task_action(base: &Path, a: TaskAction) -> Result<usize, String> {
+    let id = a.id.trim();
+    if id.is_empty() || id.len() > 1024 || !matches!(a.acao.as_str(), "concluir" | "reabrir") {
+        return Err("err.agenda_bad_task_action".into());
+    }
+    let em = a.em.trim();
+    if em.is_empty()
+        || em.len() > 40
+        || !em
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | ':' | '.' | '+'))
+    {
+        return Err("err.agenda_bad_task_action".into());
+    }
+    let dir = agenda_dir(base);
+    std::fs::create_dir_all(&dir).map_err(|e| crate::paths::folder_write_error(&e))?;
+    let path = dir.join(TASK_ACTIONS_FILE);
+    let mut all: TaskActions = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default();
+    if all.acoes.len() >= MAX_ACTIONS {
+        return Err("err.agenda_too_large".into());
+    }
+    all.acoes.push(TaskAction {
+        id: id.to_string(),
+        acao: a.acao,
+        em: em.to_string(),
+    });
+    let tmp = dir.join(".tarefas-acoes.json.tmp");
+    let body = serde_json::to_string_pretty(&all).map_err(|e| e.to_string())?;
+    std::fs::write(&tmp, body).map_err(|e| crate::paths::folder_write_error(&e))?;
+    std::fs::rename(&tmp, &path).map_err(|e| crate::paths::folder_write_error(&e))?;
+    Ok(all.acoes.len())
+}
+
+#[tauri::command]
+pub fn tarefas_read() -> Result<Option<String>, String> {
+    read_tasks(&acervo_base()?)
+}
+
+#[tauri::command]
+pub fn tarefas_acao(id: String, acao: String, em: String) -> Result<usize, String> {
+    append_task_action(&acervo_base()?, TaskAction { id, acao, em })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -243,6 +332,44 @@ mod tests {
         // a corrupted file reads as empty, never as an error that blocks recording
         std::fs::write(base.join(".loro/agenda/agendadas.json"), "{oops").unwrap();
         assert_eq!(read_schedule(&base).eventos.len(), 0);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn adr0041_task_actions_are_appended_in_the_documented_shape() {
+        let base = tmp("acoes");
+        assert_eq!(read_tasks(&base).unwrap(), None);
+        let a = |id: &str, acao: &str| TaskAction {
+            id: id.into(),
+            acao: acao.into(),
+            em: "2026-11-18T10:00:00-03:00".into(),
+        };
+        assert_eq!(append_task_action(&base, a("t1", "concluir")).unwrap(), 1);
+        assert_eq!(append_task_action(&base, a("t2", "reabrir")).unwrap(), 2);
+        let txt = std::fs::read_to_string(base.join(".loro/agenda/tarefas-acoes.json")).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&txt).unwrap();
+        assert_eq!(v["acoes"][0]["id"], "t1");
+        assert_eq!(v["acoes"][0]["acao"], "concluir");
+        assert_eq!(v["acoes"][1]["acao"], "reabrir");
+        assert_eq!(v["acoes"][1]["em"], "2026-11-18T10:00:00-03:00");
+        // a corrupted file (the agent mid-write) starts over instead of failing
+        std::fs::write(base.join(".loro/agenda/tarefas-acoes.json"), "{oops").unwrap();
+        assert_eq!(append_task_action(&base, a("t3", "concluir")).unwrap(), 1);
+        // only the two verbs, a real id, and a plain timestamp
+        for bad in [
+            a("", "concluir"),
+            a("t", "apagar"),
+            TaskAction {
+                id: "t".into(),
+                acao: "concluir".into(),
+                em: "x; rm".into(),
+            },
+        ] {
+            assert_eq!(
+                append_task_action(&base, bad).unwrap_err(),
+                "err.agenda_bad_task_action"
+            );
+        }
         let _ = std::fs::remove_dir_all(&base);
     }
 

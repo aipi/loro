@@ -129,7 +129,8 @@
       .ev { border-radius: 8px; }
       .ev.now { background: var(--now); }
       .ev.open { background: var(--chip); }
-      .ev > button { width: 100%; display: flex; align-items: center; gap: 8px; border: 0; background: transparent;
+      .ev .evrow { display: flex; align-items: center; gap: 4px; padding-right: 4px; }
+      .ev .evhead { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; border: 0; background: transparent;
         padding: 6px 6px; text-align: left; border-radius: 8px; cursor: default; }
       .ev .hora { font: 12px ui-monospace, "SF Mono", Menlo, monospace; font-variant-numeric: tabular-nums; color: var(--muted); flex: none; }
       .ev.now .hora { color: var(--rec-text); font-weight: 600; }
@@ -158,6 +159,36 @@
       #bChatIn { resize: none; min-height: 32px; max-height: 96px; font-size: 12.5px; line-height: 1.35; }
       #bChatSend, #bChatStop { flex: none; }
       #chatBar { display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: var(--muted); min-height: 16px; }
+      /* entrar na reunião, e as tarefas */
+      .ev .join { flex: none; padding: 2px 9px; font-size: 11px; }
+      .tabbadge { display: inline-block; min-width: 16px; margin-left: 5px; padding: 0 5px; border-radius: 8px;
+        background: var(--rec); color: #fff; font-size: 10px; font-weight: 700; line-height: 16px; }
+      .tabbadge[hidden] { display: none; }
+      #bTarefas, #bConcluidas ul { list-style: none; display: flex; flex-direction: column; gap: 2px; }
+      .tk { border-radius: 8px; }
+      .tk.open { background: var(--chip); }
+      .tk .tkrow { display: flex; align-items: center; gap: 8px; padding: 5px 6px; }
+      .tk .tkrow input { flex: none; }
+      .tk .tkt { flex: 1; min-width: 0; border: 0; background: transparent; text-align: left; padding: 0; cursor: default;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .tk.done .tkt { text-decoration: line-through; color: var(--muted); }
+      .tk .prazo { flex: none; font-size: 11px; padding: 1px 7px; border-radius: 999px; background: var(--chip); color: var(--muted); }
+      .tk .prazo.late { background: var(--now); color: var(--rec-text); font-weight: 600; }
+      .tk .pend { flex: none; font-size: 11px; color: var(--muted); }
+      .tk .notas { padding: 0 8px 8px 30px; font-size: 12px; white-space: pre-wrap; word-break: break-word; user-select: text; }
+      .tk .notas .lnk { border: 0; background: none; padding: 0; color: var(--accent); text-decoration: underline; cursor: default; font: inherit; }
+      .tk .acts { padding: 0 8px 8px 30px; }
+      #bConcluidas summary { font-size: 11px; font-weight: 600; color: var(--muted); padding: 6px 2px; cursor: default; }
+      #bTarefasNota { font-size: 12px; color: var(--muted); }
+      #bTarefasNota:empty { display: none; }
+      /* «/» no chat: os comandos e skills, como no terminal do Claude Code */
+      #bSlash { list-style: none; max-height: 224px; overflow-y: auto; border: 1px solid var(--line); border-radius: 8px;
+        background: var(--bg-solid); padding: 4px; }
+      #bSlash[hidden] { display: none; }
+      #bSlash li { padding: 4px 8px; border-radius: 6px; cursor: default; display: flex; flex-direction: column; }
+      #bSlash li[aria-selected="true"] { background: var(--accent); color: var(--bg-solid); }
+      #bSlash .sn { font: 600 12px ui-monospace, "SF Mono", Menlo, monospace; }
+      #bSlash .sd { font-size: 11px; opacity: 0.8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       #foot { flex: none; display: flex; justify-content: flex-end; padding: 0 10px 8px; }
     </style>
   </head>
@@ -178,6 +209,7 @@
         <div class="tabs" role="tablist">
           <button role="tab" id="tabBtnRec" aria-selected="true" aria-controls="tabRec" data-i18n>Gravação</button>
           <button role="tab" id="tabBtnAgenda" aria-selected="false" aria-controls="tabAgenda" data-i18n>Agenda</button>
+          <button role="tab" id="tabBtnTarefas" aria-selected="false" aria-controls="tabTarefas"><span data-i18n>Tarefas</span><span class="tabbadge" id="bTarefasBadge" hidden></span></button>
         </div>
         <div class="tab" id="tabRec" role="tabpanel" aria-labelledby="tabBtnRec">
           <div>
@@ -202,8 +234,14 @@
           <ul id="bAgenda"></ul>
           <details id="bPassados" hidden><summary></summary><ul></ul></details>
         </div>
+        <div class="tab" id="tabTarefas" role="tabpanel" aria-labelledby="tabBtnTarefas" hidden>
+          <div id="bTarefasNota"></div>
+          <ul id="bTarefas"></ul>
+          <details id="bConcluidas" hidden><summary></summary><ul></ul></details>
+        </div>
         <div id="chat">
           <div id="bChatLog" aria-live="polite"></div>
+          <ul id="bSlash" role="listbox" hidden></ul>
           <div class="composer">
             <textarea id="bChatIn" rows="1" spellcheck="false" data-i18n-placeholder="Pergunte ao Claude…"></textarea>
             <button class="btn ghost" id="bChatSend" data-i18n>Enviar</button>
@@ -221,6 +259,7 @@
     <script src="i18n.js"></script>
     <script src="fuzzy.js"></script>
     <script src="agenda.js"></script>
+    <script src="tarefas.js"></script>
     <script src="bubble-core.js"></script>
     <script src="bubble.js"></script>
   </body>

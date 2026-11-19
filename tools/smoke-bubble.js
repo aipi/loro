@@ -34,7 +34,7 @@ const html = fs.readFileSync(path.join(REAL_SRC, "bubble.html"), "utf8");
 
 const STUB = `
 <script>
-window.__SMOKE__ = { errors: [], calls: {}, handlers: {}, sent: [], expand: [], drags: 0, chat: [], heights: [] };
+window.__SMOKE__ = { errors: [], calls: {}, handlers: {}, sent: [], expand: [], drags: 0, chat: [], heights: [], opened: [] };
 window.__SMOKE__.fire = (name, payload) => {
   for (const fn of window.__SMOKE__.handlers[name] || []) fn({ payload });
 };
@@ -45,6 +45,12 @@ window.__TAURI__ = {
     invoke: (cmd, args) => {
       window.__SMOKE__.calls[cmd] = (window.__SMOKE__.calls[cmd] || 0) + 1;
       if (cmd === "bubble_get_size") return Promise.resolve(32);
+      if (cmd === "brain_open_link") { window.__SMOKE__.opened.push(args && args.url); return Promise.resolve(null); }
+      if (cmd === "skills_list") return Promise.resolve([
+        { name: "consulta", description: "Responde o que era esperado", source: "project" },
+        { name: "review", description: "Confronta um contrato com o Figma", source: "user" },
+        { name: "turbi-design:torque", description: "Torque 2", source: "plugin" },
+      ]);
       if (cmd === "chat_send") { window.__SMOKE__.chat.push(args && args.input); return Promise.resolve(null); }
       if (cmd === "bubble_panel_height") { window.__SMOKE__.heights.push(args && args.height); return Promise.resolve(args && args.height); }
       if (cmd === "bubble_expand") {
@@ -95,7 +101,8 @@ const DRIVER = `
   const tomorrow = (() => { const d = new Date(NOW); return new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1, 9, 30).getTime(); })();
   const EVENTOS = [
     { id: "cedo", titulo: "Café com o time", inicioMs: at(-180), fimMs: at(-150), comConvidados: true, agendada: false, tema: "" },
-    { id: "agora", titulo: "Semanal de custos", inicioMs: at(-10), fimMs: at(20), comConvidados: true, agendada: true, tema: "frota-2026" },
+    { id: "agora", titulo: "Semanal de custos", inicioMs: at(-10), fimMs: at(20), comConvidados: true, agendada: true, tema: "frota-2026",
+      link: "https://meet.google.com/abc-defg-hij", linkAgenda: "https://calendar.google.com/calendar/event?eid=x" },
     { id: "logo", titulo: "1:1 com a equipe", inicioMs: at(25), fimMs: at(55), comConvidados: true, agendada: false, tema: "" },
     { id: "daily", titulo: "Daily", inicioMs: tomorrow, fimMs: tomorrow + 15 * 60000, comConvidados: true, agendada: true, tema: "vendas" },
   ].filter((e) => new Date(e.inicioMs).getDate() === new Date(NOW).getDate() || e.id === "daily");
@@ -105,6 +112,16 @@ const DRIVER = `
     temas: [{ slug: "frota-2026", nome: "frota 2026" }, { slug: "vendas", nome: "vendas" }],
     linhas: [], agenda: { status: "ok", eventos: EVENTOS }, prompt: null, aviso: "",
     chatCtx: ["brainstorming/frota-2026/meetings/x/reuniao.md", ".loro/agenda/2026-11-18.json"],
+    tarefas: { status: "ok", pendentes: [], lista: (() => {
+      const k = (d) => { const x = new Date(NOW); x.setDate(x.getDate() + d); return x.getFullYear() + "-" + String(x.getMonth() + 1).padStart(2, "0") + "-" + String(x.getDate()).padStart(2, "0"); };
+      return [
+        { id: "t1", titulo: "Enviar proposta", prazo: k(-2), notas: "ver https://docs.example.com/p\\nsegunda linha", status: "needsAction", concluidaEmMs: null, link: "https://tasks.google.com/t1" },
+        { id: "t2", titulo: "Revisar orçamento", prazo: k(0), notas: "", status: "needsAction", concluidaEmMs: null, link: null },
+        { id: "t3", titulo: "Planejar Q1", prazo: k(5), notas: "", status: "needsAction", concluidaEmMs: null, link: null },
+        { id: "t4", titulo: "Ideias soltas", prazo: null, notas: "", status: "needsAction", concluidaEmMs: null, link: null },
+        { id: "t5", titulo: "Fechar mês", prazo: k(-3), notas: "", status: "completed", concluidaEmMs: NOW - 86400000, link: null },
+      ];
+    })() },
   };
   const state = (over) => S.fire("bubble-state", Object.assign({}, BASE, over || {}));
   await wait(300);
@@ -299,7 +316,7 @@ const DRIVER = `
       if (past.open) throw new Error("os que passaram nascem abertos");
     }
     // abrir um evento mostra os detalhes e as ações
-    q('.ev[data-ev="logo"] > button').click();
+    q('.ev[data-ev="logo"] .evhead').click();
     await wait(40);
     const det = q('.ev[data-ev="logo"] .det');
     if (!det) throw new Error("o evento não abre");
@@ -312,7 +329,7 @@ const DRIVER = `
     let c = lastSent();
     if (c.cmd !== "schedule" || c.id !== "logo" || c.on !== true || c.tema !== "vendas") throw new Error("agendar mandou " + JSON.stringify(c));
     // o que está acontecendo agora pode ser gravado na hora
-    q('.ev[data-ev="agora"] > button').click();
+    q('.ev[data-ev="agora"] .evhead').click();
     await wait(40);
     const now2 = [...q('.ev[data-ev="agora"] .det').querySelectorAll("button")].find((b) => /Gravar agora/.test(b.textContent));
     if (!now2) throw new Error("sem «Gravar agora» no que está acontecendo");
@@ -329,6 +346,95 @@ const DRIVER = `
     state();
   });
 
+  await step("agenda-links", async () => {
+    q("#tabBtnAgenda").click();
+    await wait(50);
+    const row = q('.ev[data-ev="agora"]');
+    const j = [...row.querySelectorAll(".evrow button")].find((b) => /Entrar/.test(b.textContent));
+    if (!j) throw new Error("sem «Entrar» no evento em andamento");
+    j.click(); await wait(20);
+    if (S.opened.pop() !== "https://meet.google.com/abc-defg-hij") throw new Error("Entrar não abriu o link no navegador");
+    if (!q('.ev[data-ev="agora"] .det')) row.querySelector(".evhead").click();
+    await wait(30);
+    const det = q('.ev[data-ev="agora"] .det');
+    const ag = [...det.querySelectorAll("button")].find((b) => /Abrir na agenda/.test(b.textContent));
+    if (!ag) throw new Error("sem «Abrir na agenda» no detalhe");
+    ag.click(); await wait(20);
+    if (!/calendar\.google\.com/.test(S.opened.pop())) throw new Error("Abrir na agenda não abriu");
+    if (q('.ev[data-ev="logo"] .evrow .join')) throw new Error("«Entrar» num evento sem link");
+    // começou uma agendada com link: o balão oferece entrar
+    state({ rec: "recording", meeting: true, startedAt: NOW, prompt: { kind: "join", eventId: "agora", titulo: "Semanal de custos", link: "https://meet.google.com/abc-defg-hij" } });
+    await wait(40);
+    const b = [...q("#bPromptActs").querySelectorAll("button")].find((x) => /Entrar na reunião/.test(x.textContent));
+    if (!b) throw new Error("sem «Entrar na reunião» ao começar a gravação");
+    b.click(); await wait(20);
+    if (S.opened.pop() !== "https://meet.google.com/abc-defg-hij") throw new Error("Entrar na reunião não abriu");
+    state();
+  });
+
+  await step("tarefas", async () => {
+    const badge = q("#bTarefasBadge");
+    if (badge.hidden || badge.textContent !== "2") throw new Error("o selo da aba não conta atrasadas + hoje: " + badge.textContent);
+    q("#tabBtnTarefas").click();
+    await wait(50);
+    const txt = q("#bTarefas").textContent;
+    for (const w of ["Atrasadas", "Hoje", "Próximas", "Sem prazo", "Enviar proposta", "Revisar orçamento", "Planejar Q1", "Ideias soltas"]) {
+      if (!txt.includes(w)) throw new Error("falta «" + w + "» nas tarefas");
+    }
+    const done = q("#bConcluidas");
+    if (done.hidden || done.open || !done.querySelector("summary").textContent.includes("Concluídas (1)")) throw new Error("concluídas não estão recolhidas");
+    if (!q('.tk[data-tk="t1"] .prazo.late')) throw new Error("a atrasada não se distingue");
+    // abrir mostra as notas em texto, com o link clicável e a quebra de linha
+    q('.tk[data-tk="t1"] .tkt').click(); await wait(30);
+    const notas = q('.tk[data-tk="t1"] .notas');
+    if (!notas || getComputedStyle(notas).whiteSpace !== "pre-wrap") throw new Error("as notas não preservam a quebra de linha");
+    notas.querySelector(".lnk").click(); await wait(20);
+    if (S.opened.pop() !== "https://docs.example.com/p") throw new Error("o link das notas não abriu no navegador");
+    const g = [...q('.tk[data-tk="t1"]').querySelectorAll("button")].find((b) => /Abrir no Google/.test(b.textContent));
+    g.click(); await wait(20);
+    if (S.opened.pop() !== "https://tasks.google.com/t1") throw new Error("Abrir no Google não abriu");
+    // concluir: grava a AÇÃO e mostra «concluindo…» até o arquivo refletir
+    q('.tk[data-tk="t2"] input').click(); await wait(20);
+    const c = lastSent();
+    if (c.cmd !== "tarefa" || c.id !== "t2" || c.acao !== "concluir") throw new Error("concluir mandou " + JSON.stringify(c));
+    state({ tarefas: Object.assign({}, BASE.tarefas, { pendentes: [{ id: "t2", acao: "concluir" }] }) });
+    await wait(40);
+    if (!/concluindo…/.test(q('.tk[data-tk="t2"]').textContent)) throw new Error("sem «concluindo…»");
+    if (q("#bTarefasBadge").textContent !== "1") throw new Error("o selo não desconta a que está concluindo");
+    state({ tarefas: { status: "missing", lista: [], pendentes: [] } });
+    await wait(30);
+    if (!/tarefas não atualizadas/.test(q("#bTarefasNota").textContent)) throw new Error("sem o aviso de tarefas não atualizadas");
+    state();
+  });
+
+  await step("chat-slash", async () => {
+    q("#tabBtnRec").click();
+    const ta = q("#bChatIn");
+    ta.value = "/"; ta.dispatchEvent(new Event("input")); await wait(60);
+    const ul = q("#bSlash");
+    if (!vis(ul) || ul.querySelectorAll("li").length !== 3) throw new Error("«/» não abriu a lista de skills");
+    if (!ul.textContent.includes("/consulta") || !/Responde o que era esperado/.test(ul.textContent)) throw new Error("linha sem nome e descrição");
+    ta.value = "/torq"; ta.dispatchEvent(new Event("input")); await wait(40);
+    if (!/turbi-design:torque/.test(ul.querySelector("li").textContent)) throw new Error("o filtro não achou o skill do plugin");
+    ta.value = "/"; ta.dispatchEvent(new Event("input")); await wait(40);
+    ta.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })); await wait(10);
+    ta.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true })); await wait(20);
+    if (ta.value !== "/review ") throw new Error("Tab completou para «" + ta.value + "»");
+    if (vis(ul)) throw new Error("a lista não fechou ao completar");
+    const n = S.chat.length;
+    ta.value = "/review contrato da reserva"; ta.dispatchEvent(new Event("input")); await wait(20);
+    if (vis(ul)) throw new Error("a lista reabriu nos argumentos");
+    ta.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); await wait(30);
+    if (S.chat.length !== n + 1 || S.chat[n].prompt !== "/review contrato da reserva") throw new Error("o comando não foi cru: " + JSON.stringify(S.chat[n]));
+    // Esc com a lista aberta fecha só a lista
+    S.fire("bubble-chat-done", { ok: true }); await wait(20);
+    ta.value = "/c"; ta.dispatchEvent(new Event("input")); await wait(40);
+    ta.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); await wait(20);
+    if (vis(ul)) throw new Error("Esc não fechou a lista");
+    if (!document.body.classList.contains("open")) throw new Error("Esc da lista fechou o painel");
+    ta.value = "";
+  });
+
   await step("chat", async () => {
     q("#tabBtnRec").click();
     const ta = q("#bChatIn");
@@ -343,7 +449,7 @@ const DRIVER = `
     await wait(30);
     S.fire("bubble-chat-done", { ok: true });
     await wait(120);
-    const a = q("#bChatLog .msg.a");
+    const a = [...document.querySelectorAll("#bChatLog .msg.a")].pop();
     if (!a || !a.querySelector("strong") || !a.querySelector("li")) throw new Error("resposta sem formatação: " + (a && a.innerHTML));
     if (!a.querySelector(".copy")) throw new Error("sem copiar");
     if (!vis(q("#bChatNova"))) throw new Error("sem «nova conversa»");
