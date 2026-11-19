@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- O Adalto (ORIGIN.md): papagaio-verdadeiro, no passo de gângster e de cara
+       fechada. Desenhado numa grade de 100, ampliado para 1024. -->
+  <defs>
+    <clipPath id="head"><circle cx="60" cy="29" r="15"/></clipPath>
+  </defs>
+
+  <!-- fundo arredondado -->
+  <rect x="0" y="0" width="1024" height="1024" rx="232" fill="#2C2822"/>
+
+  <g transform="scale(10.24) translate(50 50) scale(.86) translate(-46 -54)">
+    <!-- cauda (verde, ponta azul) -->
+    <path d="M36 62 L9 90 Q6 95 12 94 L46 76 Z" fill="#1F7F3B"/>
+    <path d="M30 72 L9 90 Q6 95 12 94 L36 81 Z" fill="#2D6BE0"/>
+    <!-- pernas, no meio do passo -->
+    <g fill="none" stroke="#B7BCC6" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M44 76 L39 91 H49"/>
+      <path d="M55 73 L63 87 H73"/>
+    </g>
+    <!-- corpo, peito para a frente -->
+    <ellipse cx="47" cy="54" rx="17" ry="25" transform="rotate(-22 47 54)" fill="#2FA84F"/>
+    <!-- asa, com o vermelho do ombro -->
+    <path d="M37 40 Q29 62 47 71 Q54 57 47 41 Z" fill="#1F7F3B"/>
+    <path d="M37 40 Q34 47 35 53 Q43 51 47 41 Z" fill="#E5484D"/>
+    <!-- cabeça: cara amarela, testa azul -->
+    <circle cx="60" cy="29" r="15" fill="#2FA84F"/>
+    <g clip-path="url(#head)">
+      <circle cx="65" cy="29.5" r="12" fill="#F7C500"/>
+      <ellipse cx="69" cy="17" rx="10" ry="6.5" fill="#3B82F6"/>
+    </g>
+    <!-- bico em gancho -->
+    <path d="M71 20 C84 18 90 30 84 40 C81 44 76 44 74 41 C78 37 77 31 71 30 Z" fill="#EFE6CF"/>
+    <!-- olho de bravo: pálpebra caída e sobrancelha inclinada -->
+    <circle cx="63" cy="27" r="5.6" fill="#FFFFFF"/>
+    <circle cx="64.4" cy="28.6" r="2.5" fill="#1B1B1F"/>
+    <g transform="rotate(20 63 27)">
+      <rect x="55" y="19" width="16" height="7.2" fill="#F7C500"/>
+      <path d="M56 26.2 H70.5" stroke="#1B1B1F" stroke-width="2.6" stroke-linecap="round"/>
+    </g>
+  </g>
+</svg>

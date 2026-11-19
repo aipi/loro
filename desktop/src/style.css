@@ -1621,6 +1621,8 @@ body { background: var(--paper); color: var(--ink); }
 }
 .projbtn:hover { background: color-mix(in srgb, var(--ink) 5%, transparent); }
 .projlogo { border-radius: 8px; flex: none; }
+/* o logo no tema escuro: fundo escuro e bico claro, no lugar do quadrado creme */
+:root[data-theme="dark"] img[src="parrot.png"] { content: url("parrot-dark.png"); }
 .projname { font: 650 14px var(--sans); max-width: 180px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .projbtn .swcaret { margin: 0; color: var(--muted); font-size: 11px; }
 .apphead .switchmenu { left: 6px; right: auto; min-width: 240px; top: calc(100% + 2px); }
