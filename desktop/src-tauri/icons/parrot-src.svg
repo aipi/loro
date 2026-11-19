@@ -1,42 +1,41 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- O Adalto (ORIGIN.md): papagaio-verdadeiro, no passo de gângster e de cara
+       fechada. Desenhado numa grade de 100, ampliado para 1024. -->
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#22C1AE"/>
-      <stop offset="1" stop-color="#0E7C9B"/>
-    </linearGradient>
+    <clipPath id="head"><circle cx="60" cy="29" r="15"/></clipPath>
   </defs>
 
   <!-- fundo arredondado -->
-  <rect x="0" y="0" width="1024" height="1024" rx="232" fill="url(#bg)"/>
+  <rect x="0" y="0" width="1024" height="1024" rx="232" fill="#F6EFE0"/>
 
-  <!-- crista (penas) -->
-  <g fill="#F7B500">
-    <path d="M470 150 C 405 205, 405 300, 470 330 C 470 260, 500 205, 540 175 Z"/>
-    <path d="M545 128 C 500 195, 512 300, 585 320 C 585 250, 605 195, 620 168 Z"/>
-    <path d="M628 140 C 605 210, 625 300, 690 315 C 690 250, 690 195, 675 170 Z"/>
+  <g transform="scale(10.24) translate(50 50) scale(.86) translate(-46 -54)">
+    <!-- cauda (verde, ponta azul) -->
+    <path d="M36 62 L9 90 Q6 95 12 94 L46 76 Z" fill="#1F7F3B"/>
+    <path d="M30 72 L9 90 Q6 95 12 94 L36 81 Z" fill="#2D6BE0"/>
+    <!-- pernas, no meio do passo -->
+    <g fill="none" stroke="#8A8F98" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M44 76 L39 91 H49"/>
+      <path d="M55 73 L63 87 H73"/>
+    </g>
+    <!-- corpo, peito para a frente -->
+    <ellipse cx="47" cy="54" rx="17" ry="25" transform="rotate(-22 47 54)" fill="#2FA84F"/>
+    <!-- asa, com o vermelho do ombro -->
+    <path d="M37 40 Q29 62 47 71 Q54 57 47 41 Z" fill="#1F7F3B"/>
+    <path d="M37 40 Q34 47 35 53 Q43 51 47 41 Z" fill="#E5484D"/>
+    <!-- cabeça: cara amarela, testa azul -->
+    <circle cx="60" cy="29" r="15" fill="#2FA84F"/>
+    <g clip-path="url(#head)">
+      <circle cx="65" cy="29.5" r="12" fill="#F7C500"/>
+      <ellipse cx="69" cy="17" rx="10" ry="6.5" fill="#3B82F6"/>
+    </g>
+    <!-- bico em gancho -->
+    <path d="M71 20 C84 18 90 30 84 40 C81 44 76 44 74 41 C78 37 77 31 71 30 Z" fill="#2A2A30"/>
+    <!-- olho de bravo: pálpebra caída e sobrancelha inclinada -->
+    <circle cx="63" cy="27" r="5.6" fill="#FFFFFF"/>
+    <circle cx="64.4" cy="28.6" r="2.5" fill="#1B1B1F"/>
+    <g transform="rotate(20 63 27)">
+      <rect x="55" y="19" width="16" height="7.2" fill="#F7C500"/>
+      <path d="M56 26.2 H70.5" stroke="#1B1B1F" stroke-width="2.6" stroke-linecap="round"/>
+    </g>
   </g>
-
-  <!-- asa (traço verde) -->
-  <path d="M250 690 C 210 820, 300 905, 470 875 C 405 800, 388 705, 430 630 C 360 620, 295 640, 250 690 Z" fill="#17A05F"/>
-
-  <!-- cabeça -->
-  <circle cx="520" cy="540" r="300" fill="#E5484D"/>
-
-  <!-- face clara -->
-  <ellipse cx="640" cy="520" rx="150" ry="175" fill="#FBF6EC"/>
-
-  <!-- olho -->
-  <circle cx="640" cy="486" r="54" fill="#1A1A1A"/>
-  <circle cx="659" cy="470" r="17" fill="#FFFFFF"/>
-
-  <!-- bico superior (com gancho) -->
-  <path d="M735 470
-           C 900 458, 940 560, 890 645
-           C 862 692, 792 700, 762 660
-           C 812 648, 820 596, 792 572
-           C 756 542, 705 548, 690 578 Z"
-        fill="#F7B500"/>
-  <!-- bico inferior -->
-  <path d="M720 628 C 780 672, 852 668, 884 642 C 856 704, 772 716, 720 672 Z"
-        fill="#D98A00"/>
 </svg>

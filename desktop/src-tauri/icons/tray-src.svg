@@ -1,15 +1,23 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 44 44">
-  <!-- silhueta do Loro p/ barra de menu (template: só o alpha importa) -->
-  <g fill="#000000">
-    <!-- crista -->
-    <path d="M14 13 C12 6 16 1.5 22 1 L22 4.5 C18 5 15.8 8.5 16.5 13 Z" />
-    <path d="M23.5 11 C24 4.5 28.5 1 33 1.5 L32 5 C28.5 5.2 26 7.5 25.8 11.5 Z" />
-    <!-- cabeça com olho vazado (evenodd) -->
-    <path fill-rule="evenodd" d="M4 27 a15 15 0 1 0 30 0 a15 15 0 1 0 -30 0
-             M24.5 18.6 a3 3 0 1 1 0 6 a3 3 0 1 1 0 -6 Z" />
-    <!-- bico em gancho -->
-    <path d="M31.5 20.5 C39.5 18.5 44 24 42 29.5 C40.2 34.5 34 35.8 30.8 32.5
-             C35 30.5 35.2 25.5 31 23.5 C28.8 22.5 26.6 23.4 25.4 24.6
-             C26.2 21.6 28.4 20.9 31.5 20.5 Z" />
-  </g>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="3 10 90 90">
+  <!-- silhueta do Adalto p/ barra de menu (template: só o alpha importa).
+       Branco na máscara = tinta; preto = vazado (olho, asa, contorno do bico). -->
+  <defs>
+    <mask id="m" maskUnits="userSpaceOnUse" x="0" y="0" width="100" height="100">
+      <g fill="#fff">
+        <path d="M36 62 L9 90 Q6 95 12 94 L46 76 Z"/>
+        <ellipse cx="47" cy="54" rx="17" ry="25" transform="rotate(-22 47 54)"/>
+        <circle cx="60" cy="29" r="15"/>
+      </g>
+      <g fill="none" stroke="#fff" stroke-width="7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M44 76 L39 91 H49"/>
+        <path d="M55 73 L63 87 H73"/>
+      </g>
+      <path d="M71 20 C84 18 90 30 84 40 C81 44 76 44 74 41 C78 37 77 31 71 30 Z" fill="#fff" stroke="#000" stroke-width="3.5" stroke-linejoin="round"/>
+      <!-- olho de bravo: meia-lua inclinada -->
+      <path d="M57 26 A6 6 0 0 0 69 26 Z" fill="#000" transform="rotate(20 63 26)"/>
+      <!-- asa -->
+      <path d="M36 45 Q33 62 47 68" fill="none" stroke="#000" stroke-width="4.5" stroke-linecap="round"/>
+    </mask>
+  </defs>
+  <rect x="0" y="0" width="100" height="100" fill="#000000" mask="url(#m)"/>
 </svg>
