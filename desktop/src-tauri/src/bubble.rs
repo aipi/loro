@@ -632,7 +632,26 @@ pub fn on_main_focus(app: &AppHandle, focused: bool) {
         return;
     };
     if steps_aside(&cfg, focused) {
-        let _ = w.hide();
+        // A click on the bubble activates the app, and macOS may hand the
+        // focus to the main window for an instant before the bubble takes it:
+        // hiding right away swallowed the click (owner, 2026-11-19: «deixou de
+        // abrir»). So wait, and hide only if the main window REALLY kept the
+        // focus and the person is not using the bubble.
+        let app = app.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(350));
+            let main_has_it = app
+                .get_webview_window("main")
+                .and_then(|m| m.is_focused().ok())
+                .unwrap_or(false);
+            let Some(w) = app.get_webview_window(LABEL) else {
+                return;
+            };
+            let in_use = w.is_focused().unwrap_or(false) || with_rt(|r| r.expanded);
+            if main_has_it && !in_use && with_rt(|r| r.main_focused) {
+                let _ = w.hide();
+            }
+        });
     } else if !w.is_visible().unwrap_or(true) {
         let _ = w.show();
         let _ = w.set_always_on_top(true);
