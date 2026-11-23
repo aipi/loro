@@ -863,7 +863,7 @@ const DRIVER = `
     if (!q("#pmWrap").hidden) throw new Error("o sucesso tem de fechar a folha");
   });
   // ADR-0032 — o aviso de versão nova. Três superfícies do MESMO fato, e a do
-  // cabeçalho some abaixo de 1015px (DESIGN §2 regra 9): é por isso que o passo
+  // cabeçalho some abaixo de 1200px (DESIGN §2 regra 9): é por isso que o passo
   // mede também o ponto do ⚙, que é o que sobra numa janela estreita.
   await step("atualizacao-disponivel", async () => {
     await window.refreshUpdate(false);

@@ -2663,7 +2663,7 @@ function paintUpdate() {
     tag.title = h.title;
     tag.classList.toggle("upd", h.mark);
   }
-  // o ⚙ da lateral: a etiqueta some abaixo de 1015px (DESIGN §2, regra 9), e
+  // o ⚙ da lateral: a etiqueta some abaixo de 1200px (DESIGN §2, regra 9), e
   // este ponto é o que sobra do aviso nas janelas estreitas.
   const dot = $("cfgUpdDot");
   if (dot) dot.hidden = !(st && st.available);
@@ -3049,7 +3049,11 @@ function paintInterpControl() {
   const on = !!interp.on;
   el.interpBtn.setAttribute("aria-pressed", on ? "true" : "false");
   el.interpBtn.classList.toggle("on", on);
-  el.interpLabel.textContent = t(on ? "Parar intérprete" : "Intérprete");
+  const label = t(on ? "Parar intérprete" : "Intérprete");
+  el.interpLabel.textContent = label;
+  // abaixo de 1100px o rótulo sai do cabeçalho (só o ícone fica, style.css): o
+  // nome acessível não pode depender do texto visível
+  el.interpBtn.setAttribute("aria-label", label);
   el.interpBtn.title = t(on
     ? "parar de enviar sua voz traduzida"
     : "enviar sua voz em inglês pelo dispositivo escolhido");
@@ -13305,12 +13309,18 @@ function paintLoopChrome() {
       // marcas agora, e nenhuma pode cobrir a outra (DESIGN.md §2 regra 8): o que a
       // marca precisa dizer é «algo está rodando AGORA»; a fila é a contagem da aba
       // ⟳ Loops, que fica ao lado.
-      pill.textContent = counts.running
-        ? `⟳ ${counts.running} ${t("rodando")}`
-        : `⟳ ${counts.queued} ${t("esperando")}`;
+      // A palavra é um <span> próprio: abaixo de 1100px ela sai e fica «⟳ 12»
+      // (style.css, regra 9) — a frase inteira segue no title e no aria-label.
+      const n = counts.running ? counts.running : counts.queued;
+      const word = document.createElement("span");
+      word.className = "hlword";
+      word.textContent = " " + t(counts.running ? "rodando" : "esperando");
+      pill.textContent = `⟳ ${n}`;
+      pill.appendChild(word);
       pill.title = counts.queued
         ? `${t("loops")} · ${counts.running} ${t("rodando")} · ${counts.queued} ${t("esperando a vez")}`
         : `${t("loops")} · ${counts.running} ${t("rodando")}`;
+      pill.setAttribute("aria-label", pill.title);
     }
   }
   const n = on ? counts.running + counts.queued : 0;

@@ -3154,9 +3154,9 @@ test("R64 — o rascunho aparece no cabeçalho, como o desenho previu", () => {
 
   // rule 9 · ele é o PRIMEIRO a ceder largura, e nenhum rótulo é cortado
   const CSS = fs.readFileSync(path.join(SRC, "style.css"), "utf8");
-  const narrow = CSS.slice(CSS.indexOf("@media (max-width: 1015px)"));
+  const narrow = CSS.slice(CSS.indexOf("@media (max-width: 1400px)"));
   assert.match(narrow.slice(0, narrow.indexOf("\n}")), /\.headbranch \.mono, \.headbranch \.rvchipcaret \{ display: none; \}/,
-    "abaixo de 1015px fica só o glifo — o nome continua no título e na folha");
+    "abaixo de 1400px fica só o glifo — o nome continua no título e na folha");
   assert.match(CSS, /\.headbranch \{ width: auto; flex: 0 1 auto;/,
     "no cabeçalho ele é uma pílula da linha, não um campo de largura cheia");
   assert.match(CSS, /\.headbranch \{[^}]*white-space: nowrap/,

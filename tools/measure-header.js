@@ -80,10 +80,12 @@ dr.hidden = ${!c.draft};
 if (${!!c.draft}) dr.innerHTML = '<span class="mono">' + ${JSON.stringify(c.draft)} + '</span><span class="rvchipcaret">\\u2304</span>';
 const rec = document.getElementById("headRec");
 rec.hidden = ${!c.rec};
-if (${!!c.rec}) rec.textContent = "\\u25cf gravando \\u00b7 12:34";
+// what the app writes (dot, the word for recording, the clock) in the case language
+if (${!!c.rec}) rec.textContent = ${JSON.stringify(c.lang === "en" ? "● recording · 12:34" : "● gravando · 12:34")};
 const lp = document.getElementById("headLoops");
 lp.hidden = ${!c.loops};
-if (${!!c.loops}) lp.textContent = ${JSON.stringify(c.lang === "en" ? "\u27f3 12 running" : "\u27f3 12 rodando")};
+// paintLoopChrome markup: the word is its own span, so it can cede width
+if (${!!c.loops}) lp.innerHTML = ${JSON.stringify(c.lang === "en" ? "⟳ 12<span class=\"hlword\"> running</span>" : "⟳ 12<span class=\"hlword\"> rodando</span>")};
 document.getElementById("recLabel").textContent = ${JSON.stringify(c.lang === "en" ? "Record" : "Gravar")};
 if (${c.lang === "en"}) {
   const rot = ${JSON.stringify(ROTULOS_EN)};

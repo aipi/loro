@@ -3095,48 +3095,66 @@ details.chatstep pre {
    `justify-content: flex-end` mantém o bloco colado na borda; o `margin-left: auto`
    (que o cabeçalho de Configurações usa, no flex) tem de sair, porque uma margem
    auto ANULA o stretch e devolveria o bloco ao tamanho do conteúdo. */
-#appHead > .headright { justify-self: stretch; justify-content: flex-end; min-width: 0; margin-left: 0; }
+/* O PISO DA TRILHA É O CONTEÚDO. Este bloco tinha `min-width: 0`, e com ele a
+   trilha encolhia abaixo da soma dos controles; como ele alinha ao FIM, o que não
+   cabia saía pelo INÍCIO, por baixo da nav. Medido (2026-11-23, harness com o texto
+   real nos dois idiomas): a 1280px — a largura PADRÃO — em inglês e gravando, a
+   direita pedia ~545px numa trilha de ~430 e a pílula «● recording» cobria 118px
+   da aba «Review» (a captura do dono); 80 de 96 combinações de tools/measure-header
+   falhavam. Sem o zero, o piso automático é o conteúdo: quando a direita passa da
+   sua metade ela EMPURRA a nav para a esquerda, que é o que o grid de três trilhas
+   prometia. Quem cede largura são os blocos abaixo, na ordem da regra 9. */
+#appHead > .headright { justify-self: stretch; justify-content: flex-end; margin-left: 0; }
+/* R64 · o chip do rascunho é o PRIMEIRO a ceder: abaixo daqui fica só o glifo, e o
+   nome continua no título e na folha que ele abre. Ele é um endereço, não um rótulo.
+   1400, não 1015: com o piso acima o nome inteiro (até 190px) entra no piso da
+   trilha, e a 1280px gravando ele empurrava a nav para fora do lugar. */
+@media (max-width: 1400px) {
+  .headbranch .mono, .headbranch .rvchipcaret { display: none; }
+  .headbranch { padding: 6px 8px; }
+}
 /* O nome do projeto é prosa e cede primeiro: capá-lo mais cedo estreita a trilha
    da esquerda e mantém a pílula no eixo por mais tempo. */
-@media (max-width: 1140px) {
+@media (max-width: 1300px) {
   .projname { max-width: 110px; }
 }
-/* 1015px, não 900: MEDIDO (rodada 3) com os quatro destinos, os DOIS contadores
-   da nav e a gravação em curso, o cabeçalho pede 1015px. Este bloco valia a
-   partir de 900, e entre 901 e 1015 o déficit inteiro caía no único item
-   encolhível do flex — o pill de gravação, cortado a 35px dos 151px que pede —
-   enquanto a etiqueta da versão (decoração) e o ar entre os blocos mantinham os
-   seus pixels. A ordem da regra 9 é a inversa, e é esta:
+/* PROSA, DECORAÇÃO, AR — a ordem da regra 9 (DESIGN.md §2):
      1. PROSA — o nome do projeto elide para 70px (o texto inteiro segue no title
         e no menu de troca);
      2. DECORAÇÃO — a etiqueta da versão e o ponto de estado saem (o ● do botão
-        diz o mesmo);
+        diz o mesmo; uma versão nova acende o ponto do ⚙, que não some);
      3. AR — o vão entre os blocos e o preenchimento dos dois controles da
         direita fecham, sem tocar nos rótulos.
-   Nenhum controle encolhe e nenhum rótulo é cortado. Resultado medido: 844px numa
-   janela de 860 (o piso do tauri.conf). Vem DEPOIS do bloco de 1140 porque as
-   duas regras têm a mesma especificidade e a última é que vale. */
-@media (max-width: 1015px) {
+   1200, não 1015: medido com o Intérprete (ADR-0035) e as duas pílulas no
+   cabeçalho, o déficit começa antes de 1200 — e prosa e decoração têm de ceder
+   ANTES de qualquer rótulo de controle (bloco de 1100, abaixo). */
+@media (max-width: 1200px) {
   .apphead { gap: 10px; }
-  /* O PISO É DO BLOCO, não do rótulo. `.apphead .switch` era `flex: 0 1 auto` com
-     `min-width: 0`, então depois que a decoração e o ar acabaram todo o déficit
-     restante caía no .projname — medido até uma tira de 7px, com o cabeçalho
-     sabendo em que projeto você está e não dizendo. O max-width abaixo é o teto do
-     rótulo; este min-width é o piso do bloco que o carrega (logo + 70px + caret). */
+  /* O PISO É DO BLOCO, não do rótulo: depois que a decoração e o ar acabaram, o
+     déficit restante caía no .projname — medido até uma tira de 7px. O max-width
+     é o teto do rótulo; este min-width é o piso do bloco (logo + 70px + caret). */
   .apphead .switch { min-width: 118px; }
   .projname { max-width: 70px; }
   .destnav { gap: 0; }
-  /* R64 · o chip do rascunho é o PRIMEIRO a ceder: abaixo daqui fica só o glifo,
-     e o nome continua no título e na folha que ele abre. Nenhum rótulo é cortado
-     porque este não é um rótulo — é um endereço, e ele tem outra casa. */
-  .headbranch .mono, .headbranch .rvchipcaret { display: none; }
-  .headbranch { padding: 6px 8px; }
-  /* o ar dos dois controles da direita, não os seus rótulos */
   .apphead .recbtn { padding: 8px 13px; }
   .apphead .aibtn { padding: 6px 10px; }
-  /* decoração: a etiqueta da versão e o ponto (aria-hidden, e o ● já diz) */
   .localtag { display: none; }
   .apphead .dot { display: none; }
+}
+/* Só depois de prosa, decoração e ar: o Intérprete fica no ícone (o nome está no
+   aria-label e no title, paintInterpControl) e a pílula dos loops fica no número
+   («⟳ 12»; a frase inteira está no title). Medido: sem isto, gravando e com
+   ciclos rodando, faltavam até 142px entre 1016 e 1100. */
+@media (max-width: 1100px) {
+  #interpLabel { display: none; }
+  .hlword { display: none; }
+}
+/* Abaixo de 1000 a prosa cede o resto: o projeto fica no logo + ⌄ (o nome está no
+   title e no menu). Medido: sem isto, gravando e com loops, a 860px (o piso do
+   tauri.conf) o corpo rolava 98px de lado — proibido por DESIGN.md §7. */
+@media (max-width: 1000px) {
+  .apphead .switch { min-width: 0; }
+  .projname { display: none; }
 }
 
 /* O modo edição ocupa a coluna inteira (ADR-0008). `#bDocWrap` alinha os filhos
