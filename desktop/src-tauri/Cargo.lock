@@ -552,7 +552,7 @@ dependencies = [
 
 [[package]]
 name = "desktop"
-version = "0.20.1"
+version = "0.21.0"
 dependencies = [
  "objc2",
  "portable-pty",
