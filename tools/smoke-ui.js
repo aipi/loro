@@ -213,6 +213,11 @@ const ANSWERS = {
   term_status: { open: false, agentRunning: false, justLaunched: false },
   term_agent: "claude",
   chat_status: { running: false, hasSession: false, agent: "claude" },
+  // ADR-0043 — the CLI's own command list (initialize) and the terminal route
+  agent_commands: [
+    { name: "compact", description: "Clear history but keep a summary", argumentHint: "<instructions>" },
+    { name: "context", description: "Context usage", argumentHint: "" },
+  ],
   env_doctor: (() => { const c = { ok: false, detail: "", hint: "", fixable: false };
     return { git: c, gh: c, ghAuth: c, gitIdentity: { ...c, fixable: true }, remote: c,
              versioningEnabled: false, offline: false, account: "" }; })(),
@@ -260,6 +265,9 @@ window.__TAURI__ = {
       if (cmd === "brain_list_dir") {
         const rel = (args && args.rel) || "";
         return Promise.resolve(window.__SMOKE__.dirs[rel] || []);
+      }
+      if (cmd === "chat_send" || cmd === "chat_answer" || cmd === "term_input") {
+        (window.__SMOKE__[cmd] = window.__SMOKE__[cmd] || []).push(args);
       }
       if (cmd in ANSWERS) return Promise.resolve(ANSWERS[cmd]);
       return Promise.resolve(null);
@@ -1267,6 +1275,53 @@ const DRIVER = `
       }
     }
     if (fora.length) throw new Error("destinos fora do eixo: " + fora.join(" · "));
+  });
+
+  // ADR-0043 — the main chat: «/» lists the CLI's commands, a listed command goes
+  // UNCHANGED (not wrapped in /loro-ask), the agent's question is answered with a
+  // click, and /login goes to the terminal instead of the chat.
+  await step("chat-comandos-e-perguntas", async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    q("#ptabChat").click(); await wait(60);
+    const ta = q("#chatInput"), ul = q("#chatSlash");
+    ta.value = "/"; ta.dispatchEvent(new Event("input")); await wait(80);
+    if (!vis(ul) || ul.querySelectorAll("li").length !== 2) throw new Error("«/» não listou os comandos do CLI");
+    if (!/<instructions>/.test(ul.textContent)) throw new Error("sem a dica de argumento");
+    ta.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })); await wait(10);
+    ta.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); await wait(30);
+    if (ta.value !== "/context ") throw new Error("Enter completou para «" + ta.value + "»");
+    const n = (S.chat_send || []).length;
+    ta.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); await wait(60);
+    const sent = (S.chat_send || [])[n];
+    if (!sent || sent.input.prompt !== "/context") throw new Error("o comando não foi cru: " + JSON.stringify(sent && sent.input.prompt));
+    S.fire("chat-ask", { requestId: "q1", kind: "question", tool: "AskUserQuestion", description: "", canRemember: false,
+      input: { questions: [{ question: "Qual formato?", header: "Formato", multiSelect: false,
+        options: [{ label: "Resumo", description: "curto" }, { label: "Detalhado", description: "longo" }] }] } });
+    await wait(40);
+    const box = [...document.querySelectorAll("#chatThread .agentask")].pop();
+    if (!vis(box)) throw new Error("a pergunta não apareceu no chat");
+    if (box.scrollWidth > box.clientWidth + 1) throw new Error("a pergunta transborda: " + box.scrollWidth + " > " + box.clientWidth);
+    box.querySelectorAll(".askopt")[0].click(); await wait(30);
+    const a = (S.chat_answer || []).pop();
+    if (!a || a.input.requestId !== "q1" || a.input.answers["Qual formato?"] !== "Resumo") throw new Error("resposta errada: " + JSON.stringify(a));
+    S.fire("chat-delta", "Segue o resumo."); await wait(30);
+    const after = [...q("#chatThread").children];
+    if (after.indexOf(box) > after.findIndex((x) => x.classList.contains("chatans") && /Segue o resumo/.test(x.textContent))) throw new Error("a resposta caiu ACIMA da pergunta");
+    S.fire("chat-done", { ok: true }); await wait(30);
+    const m = (S.chat_send || []).length, tn = (S.term_input || []).length;
+    ta.value = "/login"; ta.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); await wait(120);
+    if ((S.chat_send || []).length !== m) throw new Error("/login foi mandado ao chat");
+    if (!q("#chatThread").textContent.includes("/login abre no Terminal")) throw new Error("o chat não disse para onde o /login foi");
+    // /model with an argument sets THIS chat's model (the label of its control);
+    // bare, it opens the chat's own picker — neither reaches the CLI
+    const k = (S.chat_send || []).length;
+    ta.value = "/model opus"; ta.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); await wait(60);
+    if (!/^opus · /.test(q("#chatModel").textContent)) throw new Error("/model opus não trocou o modelo do chat: " + q("#chatModel").textContent);
+    ta.value = "/model"; ta.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); await wait(60);
+    if (!document.querySelector("#bMenu [data-model]")) throw new Error("/model sozinho não abriu o seletor do chat");
+    if ((S.chat_send || []).length !== k) throw new Error("/model foi mandado ao CLI");
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); await wait(30);
+    ta.value = "/model sonnet"; ta.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); await wait(40);
   });
 
   await step("language-switch", async () => {

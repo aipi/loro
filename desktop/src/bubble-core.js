@@ -202,28 +202,6 @@
     return [slug].concat((list || []).filter((x) => x !== slug)).slice(0, max || 5);
   }
 
-  // ---- slash commands in the chat composer (like Claude Code's terminal) ------
-  // The query while the person is typing the command NAME: the text starts with
-  // "/" and has no whitespace yet. Anything else → null (the popover closes).
-  function slashQuery(text) {
-    const m = /^\/(\S*)$/.exec(String(text || ""));
-    return m ? m[1] : null;
-  }
-  // The rows: every skill/command when the query is empty (in the order the
-  // backend lists them), else the fuzzy matches on the name. Capped.
-  function slashItems(list, q, filter, max) {
-    const items = list || [];
-    const cap = max || 50;
-    if (!q) return items.slice(0, cap);
-    const f = filter || ((qq, xs, key) => xs.filter((x) => key(x).toLowerCase().includes(qq.toLowerCase())));
-    return f(q, items, (x) => x.name).slice(0, cap);
-  }
-  // Completing replaces what was typed with "/name " — the space is where the
-  // arguments go. The text is sent unchanged: the CLI resolves the command.
-  function slashComplete(name) {
-    return "/" + String(name || "").replace(/^\//, "") + " ";
-  }
-
   return { DRAG_THRESHOLD_PX, isDrag, gesture, panel, formatElapsed, elapsedMs, badge, whoLabel, tail, controls,
-    badgePx, chatPrompt, mdLite, tooltip, pickerItems, pickerKey, noteRecent, slashQuery, slashItems, slashComplete };
+    badgePx, chatPrompt, mdLite, tooltip, pickerItems, pickerKey, noteRecent };
 });

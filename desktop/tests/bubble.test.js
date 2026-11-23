@@ -342,38 +342,15 @@ test("ADR-0041 §8 — o MESMO seletor no Gravação e no detalhe do evento; nad
   assert.match(JS, /if \(openPicker\) \{ openPicker\.close\(\); return; \}/);
 });
 
-// ---- §11 · «/» no chat do balão -------------------------------------------------
-const SKILLS = [
-  { name: "consulta", description: "Responde o que era esperado", source: "project" },
-  { name: "interview", description: "Entrevista", source: "user" },
-  { name: "review", description: "Confronta com o Figma", source: "user" },
-  { name: "turbi-design:torque", description: "Torque 2", source: "plugin" },
-];
-
-test("ADR-0041 §11 — a lista abre só enquanto se digita o NOME do comando", () => {
-  assert.strictEqual(BC.slashQuery("/"), "");
-  assert.strictEqual(BC.slashQuery("/rev"), "rev");
-  assert.strictEqual(BC.slashQuery("/review "), null, "depois do espaço vêm os argumentos");
-  assert.strictEqual(BC.slashQuery("oi /x"), null);
-  assert.strictEqual(BC.slashQuery(""), null);
-});
-
-test("ADR-0041 §11 — sem filtro, todas na ordem do backend; com filtro, o fuzzy decide", () => {
-  assert.deepStrictEqual(BC.slashItems(SKILLS, "").map((x) => x.name), SKILLS.map((x) => x.name));
-  assert.deepStrictEqual(BC.slashItems(SKILLS, "rev", FZ.filter).map((x) => x.name), ["review"]);
-  // o começo do nome e o pedaço depois do «:» do plugin contam como fronteira
-  assert.strictEqual(BC.slashItems(SKILLS, "torq", FZ.filter)[0].name, "turbi-design:torque");
-  assert.strictEqual(BC.slashItems(SKILLS, "i", FZ.filter)[0].name, "interview", "fronteira no começo ganha");
-  assert.strictEqual(BC.slashItems(Array.from({ length: 80 }, (_, i) => ({ name: "s" + i })), "").length, 50);
-});
-
-test("ADR-0041 §11 — completar deixa «/nome » e o envio vai cru para o CLI", () => {
-  assert.strictEqual(BC.slashComplete("review"), "/review ");
-  assert.strictEqual(BC.slashComplete("/review"), "/review ");
+// ---- §11 · «/» no chat do balão (a lógica mora em agentask.js, ADR-0043) -------
+test("ADR-0041 §11 / ADR-0043 — o «/» do balão é o do módulo comum, com a lista do PRÓPRIO CLI", () => {
   assert.strictEqual(BC.chatPrompt("/review contrato x", ["a/b.md"]), "/review contrato x", "sem cabeçalho de contexto");
-  assert.match(JS, /invoke\("skills_list"\)/);
-  assert.match(JS, /e\.key === "Tab" \|\| \(e\.key === "Enter" && !e\.shiftKey\)/);
-  assert.match(fs.readFileSync(path.join(ROOT, "src", "lib.rs"), "utf8"), /skills::skills_list/);
+  assert.match(HTML, /<script src="agentask\.js"><\/script>/);
+  assert.match(JS, /AA\.attachSlash\(\{ input: \$\("bChatIn"\), list: \$\("bSlash"\)/);
+  assert.match(JS, /invoke\("agent_commands"\)/);
+  assert.match(LIB, /chat::agent_commands/);
+  // as cópias antigas saíram do bubble-core: uma implementação só
+  assert.strictEqual(BC.slashItems, undefined);
 });
 
 test("ADR-0041 §16 — um trecho marcado no balão vira anotação da reunião (grifo, comentário ou tarefa)", () => {

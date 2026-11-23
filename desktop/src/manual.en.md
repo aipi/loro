@@ -79,6 +79,26 @@ process is local and the account is yours.
 
 - Type your question and send (Enter; Shift+Enter for a new line). The answer
   streams into the chat itself.
+- **Type `/`** to see **Claude's commands**, as in the terminal: the built-in
+  commands that work in the chat (`/compact`, `/context`, `/model`, `/clear`…) and
+  every skill of the project and yours, each with its description. It filters as
+  you type; ↑/↓ choose, Tab or Enter complete and Esc closes. The list is Claude's
+  own, not a copy kept by Loro.
+- An **interactive** command — one that opens a picker or a screen in the terminal
+  (`/login`, `/config`, `/mcp`, `/advisor`, `/status`, `/resume`…) — is not sent as
+  a question: Loro opens the **Terminal** tab and types it into the Claude there.
+  With an argument (`/config autoCompact=false`), the ones that accept it run in the
+  chat itself.
+- **`/model`** and **`/effort`** change the model and effort of **this chat**, as in
+  the terminal they change that conversation's: `/model opus` or `/effort high`
+  switch right away; on their own, they open the chat's picker.
+- When the agent **stops and asks** — to choose among options, or whether it may
+  run a command or write a file — the question appears in the conversation. Click
+  an option (or press its number; on a single one-choice question the click already
+  answers), type your own answer, or **Skip**. For a permission: **Allow**,
+  **Always allow in this conversation** or **Deny** — and when denying you can say
+  what it should do instead. In **Free** mode (the default) it does not ask for
+  permission; questions with options always appear.
 - The **chips** above the field are the most-used AI skills. Clicking one arms
   it; sending with no text runs it with its default instruction, and `×` unsets it.
 - **Drag a file from Finder/Explorer into the chat** (image, audio, PDF, anything):
@@ -94,7 +114,8 @@ process is local and the account is yours.
 - The ↑ becomes **■** while answering — click it to stop the turn.
 - Every step the agent took (a tool it used) **opens**: click it to see the
   request and the response. A failed step opens on its own.
-- If the agent **was not allowed to finish**, an amber block appears:
+- If the agent **was not allowed to finish** (a tool on the deny list, for
+  example), an amber block appears:
   **Allow everything and retry** — which switches what the chat may do to
   *everything, without asking*, and holds for the next times too — or
   **Continue in the terminal**, where it can ask you step by step. Nothing was
@@ -253,9 +274,13 @@ In the panel:
   the meeting in progress and the agenda as references and answers right there;
   **Enter** sends, **Shift+Enter** breaks the line, **Stop** interrupts, **new
   conversation** starts over. The card grows with the conversation. Type **/** to
-  see your skills and commands (the same Claude Code has in the project),
-  filtered as you type; **Tab** or **Enter** completes, and arguments go after
-  the space.
+  see Claude's commands — the built-ins that work in the chat (`/compact`,
+  `/context`…) and your skills —, filtered as you type; **Tab** or **Enter**
+  completes, and arguments go after the space. A command that only exists in the
+  terminal (`/login`, `/config`, `/mcp`…) opens the Terminal in Loro's window, and
+  `/model` / `/effort` change the bubble's model. When Claude asks
+  something with options, or asks for permission, the question appears in the
+  bubble and you answer right there, as in the window's chat.
 - **Open in Loro** opens the main window on the meeting in progress.
 
 To hide the bubble: **Settings → Capture → show the recording bubble**, or

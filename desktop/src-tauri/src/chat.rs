@@ -25,13 +25,14 @@
 // BR-8: nada de conteúdo nos logs. Só tipo de evento, contagem e código de saída.
 
 use std::io::{BufRead, BufReader, Write};
-use std::process::{Child, Stdio};
+use std::process::{Child, ChildStdin, Stdio};
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 use tracing::info;
 
+use crate::chat_protocol::{self as proto, ControlLine};
 use crate::config::{active_acervo, read_loro_config};
 use crate::proc::command;
 
@@ -52,6 +53,12 @@ pub struct ChatState {
     /// existe lá e o turno morre sem stdout, para sempre. Trocar de projeto
     /// portanto encerra a conversa em vez de arrastá-la.
     session_dir: Option<String>,
+    /// ADR-0043 — the turn's stdin stays OPEN until its `result` line: it is the
+    /// channel the person's answers travel on. Dropping it is what ends the turn.
+    stdin: Option<ChildStdin>,
+    /// The questions waiting for the person: request id → (the tool's input, the
+    /// CLI's permission suggestions). The answer must echo the input back.
+    pending: std::collections::HashMap<String, (serde_json::Value, serde_json::Value)>,
 }
 
 static CHAT: Mutex<Option<ChatState>> = Mutex::new(None);
@@ -285,6 +292,30 @@ pub(crate) fn claude_args(
     args
 }
 
+/// ADR-0043 — the CHAT's turn: the same arguments, made two-way. The prompt and the
+/// person's answers go in as stream-json, and `stdio` routes every question to
+/// Loro — without it AskUserQuestion is not offered to the model at all (measured
+/// 2026-11-23). A loop cycle keeps `claude_args`: nobody is there to answer.
+pub(crate) fn claude_chat_args(
+    model: &str,
+    effort: &str,
+    permission: &str,
+    resume: Option<&str>,
+) -> Vec<String> {
+    let mut args = claude_args(model, effort, permission, resume);
+    args.splice(
+        1..1,
+        [
+            "--input-format",
+            "stream-json",
+            "--permission-prompt-tool",
+            "stdio",
+        ]
+        .map(String::from),
+    );
+    args
+}
+
 /// A negação, casada com o NOME da ferramenta que a causou. O primeiro nome ganha:
 /// um turno pode negar várias vezes, e a que a pessoa precisa resolver é a primeira.
 /// Separada de `handle_stream_line` para poder ser testada: aquela função precisa de
@@ -356,6 +387,11 @@ pub(crate) fn handle_stream_line(
         }
         // input completo de cada ferramenta que o agente chamou neste turno
         Some("assistant") => {
+            // ADR-0043 — a built-in command (/context, /cost…) answers here, once,
+            // with no deltas; read only from deltas its reply was blank.
+            if let Some(text) = proto::synthetic_text(&v) {
+                let _ = app.emit(&format!("{ch}-delta"), text);
+            }
             for b in v
                 .get("message")
                 .and_then(|m| m.get("content"))
@@ -476,6 +512,8 @@ fn status_of(channel: &str) -> ChatStatus {
 fn kill_current_child(channel: &str) {
     let child = with_state_of(channel, |st| {
         st.turn += 1; // o turno em curso deixa de ser o dono do slot
+        st.stdin = None;
+        st.pending.clear();
         st.child.take()
     });
     if let Some(mut c) = child {
@@ -530,6 +568,183 @@ pub(crate) fn agent_command(bin: &str) -> Result<std::process::Command, String> 
     Ok(command(exe))
 }
 
+/// A control request from the CLI (ADR-0043). A question is parked with what the
+/// answer must echo back and handed to the UI; anything Loro does not implement is
+/// refused on the spot, because the CLI blocks until every request is answered.
+fn on_control(
+    app: &AppHandle,
+    channel: &str,
+    ch: &str,
+    turn: u64,
+    ctl: ControlLine,
+    raw: Option<&serde_json::Value>,
+) {
+    match ctl {
+        ControlLine::Ask(ask) => {
+            let suggestions = raw
+                .and_then(|v| v.pointer("/request/permission_suggestions"))
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            with_state_of(channel, |st| {
+                if st.turn == turn {
+                    st.pending
+                        .insert(ask.request_id.clone(), (ask.input.clone(), suggestions));
+                }
+            });
+            // BR-8: the kind and the tool's NAME, never its input
+            info!(kind = %ask.kind, tool = %ask.tool, "chat asks the person");
+            let _ = app.emit(&format!("{ch}-ask"), ask);
+        }
+        ControlLine::Unsupported { request_id } => {
+            info!("chat control request not supported, refused");
+            write_line(channel, turn, &proto::unsupported_line(&request_id));
+        }
+    }
+}
+
+/// One line on the running turn's stdin — only if that turn is still the slot's.
+fn write_line(channel: &str, turn: u64, line: &str) -> bool {
+    with_state_of(channel, |st| {
+        if st.turn != turn {
+            return false;
+        }
+        match st.stdin.as_mut() {
+            Some(w) => w
+                .write_all(format!("{line}\n").as_bytes())
+                .and_then(|_| w.flush())
+                .is_ok(),
+            None => false,
+        }
+    })
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatAnswerInput {
+    #[serde(default)]
+    pub channel: String,
+    #[serde(flatten)]
+    pub answer: proto::ChatAnswer,
+}
+
+/// ADR-0043 — the person's answer to a question the agent asked mid-turn.
+#[tauri::command]
+pub fn chat_answer(input: ChatAnswerInput) -> Result<(), String> {
+    let ch = input.channel.clone();
+    let a = input.answer;
+    let (turn, parked) = with_state_of(&ch, |st| (st.turn, st.pending.remove(&a.request_id)));
+    // a question from a turn that already ended (or was cancelled) has no one to answer
+    let (tool_input, suggestions) = parked.ok_or("err.chat_question_expired")?;
+    let line = proto::answer_line(&a, &tool_input, &suggestions);
+    if !write_line(&ch, turn, &line) {
+        return Err("err.chat_question_expired".into());
+    }
+    info!(allow = a.allow, remember = a.remember, "chat answer sent");
+    Ok(())
+}
+
+/// What the composer's «/» lists: the agent's OWN answer to `initialize` — the
+/// built-ins that work in the chat (/compact, /context, /model…) and every skill
+/// and command it loads for this project, with the CLI's descriptions (ADR-0043,
+/// amending ADR-0041 §11, whose «no built-in works in -p» was measured false).
+/// One spawn per project per 5 minutes; no turn is started, so no token is spent.
+/// Async + spawn_blocking: a process on the main thread is the 18 s freeze of
+/// ADR-0022 §28.
+#[tauri::command]
+pub async fn agent_commands() -> Vec<proto::AgentCommand> {
+    let agent = crate::active_agent();
+    let dir = active_acervo(&read_loro_config()).map(|a| a.dir.clone());
+    let key = format!("{agent}|{}", dir.clone().unwrap_or_default());
+    if let Ok(g) = COMMANDS.lock() {
+        if let Some((at, k, list)) = g.as_ref() {
+            if *k == key && at.elapsed() < COMMANDS_TTL {
+                return list.clone();
+            }
+        }
+    }
+    let list = if agent_is_claude(&agent) {
+        let bin = agent
+            .split_whitespace()
+            .next()
+            .unwrap_or("claude")
+            .to_string();
+        tauri::async_runtime::spawn_blocking(move || probe_commands(&bin, dir.as_deref()))
+            .await
+            .ok()
+            .flatten()
+    } else {
+        None
+    };
+    // another agent (or a probe that failed): the skills on disk, as before
+    let list = match list {
+        Some(l) if !l.is_empty() => l,
+        _ => crate::skills::skills_list()
+            .await
+            .into_iter()
+            .map(|s| proto::AgentCommand {
+                name: s.name,
+                description: s.description,
+                argument_hint: String::new(),
+            })
+            .collect(),
+    };
+    if let Ok(mut g) = COMMANDS.lock() {
+        *g = Some((std::time::Instant::now(), key, list.clone()));
+    }
+    list
+}
+
+type CommandCache = Option<(std::time::Instant, String, Vec<proto::AgentCommand>)>;
+static COMMANDS: Mutex<CommandCache> = Mutex::new(None);
+const COMMANDS_TTL: std::time::Duration = std::time::Duration::from_secs(300);
+/// Measured: the reply to `initialize` arrives in ~1–2 s. Past this the list falls
+/// back to the skills on disk instead of leaving the «/» popover empty.
+const COMMANDS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(12);
+
+fn probe_commands(bin: &str, dir: Option<&str>) -> Option<Vec<proto::AgentCommand>> {
+    let mut cmd = agent_command(bin).ok()?;
+    if let Some(d) = dir {
+        cmd.current_dir(d);
+    }
+    cmd.args([
+        "-p",
+        "--input-format",
+        "stream-json",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+    ]);
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    let mut child = cmd.spawn().ok()?;
+    let mut stdin = child.stdin.take()?;
+    let stdout = child.stdout.take()?;
+    let id = "loro-commands";
+    let _ = writeln!(stdin, "{}", proto::initialize_line(id)).and_then(|_| stdin.flush());
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            let found = serde_json::from_str::<serde_json::Value>(&line)
+                .ok()
+                .and_then(|v| proto::commands_from_initialize(&v, id));
+            if let Some(list) = found {
+                let _ = tx.send(list);
+                return;
+            }
+        }
+    });
+    let list = rx.recv_timeout(COMMANDS_TIMEOUT).ok();
+    drop(stdin);
+    let _ = child.kill();
+    let _ = child.wait();
+    info!(
+        count = list.as_ref().map(|l| l.len()),
+        "agent commands listed"
+    );
+    list
+}
+
 #[tauri::command]
 pub fn chat_send(app: AppHandle, input: ChatSendInput) -> Result<(), String> {
     let prompt = input.prompt.trim().to_string();
@@ -578,7 +793,7 @@ pub fn chat_send(app: AppHandle, input: ChatSendInput) -> Result<(), String> {
         } else {
             crate::agent_perms::Surface::Chat
         };
-        cmd.args(claude_args(
+        cmd.args(claude_chat_args(
             &input.model,
             &input.effort,
             crate::agent_perms::permission_mode(&perms, surface, &input.permission),
@@ -586,7 +801,8 @@ pub fn chat_send(app: AppHandle, input: ChatSendInput) -> Result<(), String> {
         ));
         cmd.args(crate::agent_perms::tool_flags(&perms, surface, &[], &[]));
         // O prompt vai por stdin: um argumento gigante estoura o limite de
-        // argv e obriga a escapar aspas na mão.
+        // argv e obriga a escapar aspas na mão. ADR-0043: como uma linha
+        // stream-json, e o stdin fica aberto para as respostas da pessoa.
         cmd.stdin(Stdio::piped());
     } else {
         cmd.arg(&prompt);
@@ -596,11 +812,14 @@ pub fn chat_send(app: AppHandle, input: ChatSendInput) -> Result<(), String> {
     cmd.stderr(Stdio::piped());
 
     let mut child = cmd.spawn().map_err(|e| format!("err.agent_spawn:{e}"))?;
+    let mut turn_stdin = None;
     if claude {
         if let Some(mut stdin) = child.stdin.take() {
-            let _ = stdin.write_all(prompt.as_bytes());
-            // fechar o stdin é o que sinaliza fim do prompt para o CLI
-            drop(stdin);
+            let line = proto::user_message_line(&prompt) + "\n";
+            let _ = stdin.write_all(line.as_bytes()).and_then(|_| stdin.flush());
+            // ADR-0043: NOT closed here — the CLI stops at the first question
+            // and reads the answer from this pipe. The `result` line closes it.
+            turn_stdin = Some(stdin);
         }
     }
     let stdout = child.stdout.take().ok_or("err.agent_spawn")?;
@@ -627,6 +846,8 @@ pub fn chat_send(app: AppHandle, input: ChatSendInput) -> Result<(), String> {
     let my_turn = with_state_of(&channel, |st| {
         st.turn += 1;
         st.child = Some(child);
+        st.stdin = turn_stdin;
+        st.pending.clear();
         st.turn
     });
 
@@ -642,8 +863,27 @@ pub fn chat_send(app: AppHandle, input: ChatSendInput) -> Result<(), String> {
         for line in BufReader::new(stdout).lines().map_while(Result::ok) {
             lines += 1;
             if claude {
+                let parsed = serde_json::from_str::<serde_json::Value>(&line).ok();
+                if let Some(ctl) = parsed.as_ref().and_then(proto::control_line) {
+                    on_control(&app, &channel, ch, my_turn, ctl, parsed.as_ref());
+                    continue;
+                }
+                let is_result = parsed
+                    .as_ref()
+                    .and_then(|v| v.get("type"))
+                    .and_then(|t| t.as_str())
+                    == Some("result");
                 if let Some(id) = handle_stream_line(&app, &line, &mut done, ch, None) {
                     session = Some(id);
+                }
+                if is_result {
+                    // end of the turn: closing stdin lets the CLI exit
+                    with_state_of(&channel, |st| {
+                        if st.turn == my_turn {
+                            st.stdin = None;
+                            st.pending.clear();
+                        }
+                    });
                 }
             } else {
                 // agente sem modo estruturado: o stdout É a resposta
@@ -822,6 +1062,102 @@ mod tests {
     }
 
     use super::*;
+
+    // ADR-0043 — without `--permission-prompt-tool stdio` the CLI never offers
+    // AskUserQuestion to the model (measured 2026-11-23: it answered «the tool
+    // isn't available»), and without stream-json input there is no channel for
+    // the person's answer.
+    #[test]
+    fn adr0043_the_turn_is_two_way() {
+        let a = claude_chat_args("", "", "", None);
+        let pair = |flag: &str, val: &str| a.windows(2).any(|w| w[0] == flag && w[1] == val);
+        assert!(pair("--input-format", "stream-json"), "{a:?}");
+        assert!(pair("--permission-prompt-tool", "stdio"), "{a:?}");
+        assert!(pair("--output-format", "stream-json"), "{a:?}");
+    }
+
+    // ADR-0043 — END TO END against the installed CLI: the argv `claude_args`
+    // builds and the lines `chat_protocol` writes, with no stand-in. Ignored by
+    // default (it needs the person's logged-in `claude` and spends a few cents):
+    //   cargo test --lib adr0043_live -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn adr0043_live_the_person_answers_the_agents_question() {
+        let dir = std::env::temp_dir().join("loro-adr0043-live");
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut cmd = agent_command("claude").expect("claude installed");
+        cmd.current_dir(&dir)
+            .args(claude_chat_args("haiku", "", "", None))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        let mut child = cmd.spawn().unwrap();
+        let mut stdin = child.stdin.take().unwrap();
+        let prompt = "Use the AskUserQuestion tool to ask me which fruit I prefer, \
+                      options Mango and Pear. Then reply with ONLY the fruit I picked.";
+        writeln!(stdin, "{}", proto::user_message_line(prompt)).unwrap();
+        stdin.flush().unwrap();
+        let mut stdin = Some(stdin);
+        let (mut asked, mut reply) = (false, String::new());
+        for line in BufReader::new(child.stdout.take().unwrap())
+            .lines()
+            .map_while(Result::ok)
+        {
+            let v: serde_json::Value = match serde_json::from_str(&line) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            if let Some(ControlLine::Ask(ask)) = proto::control_line(&v) {
+                asked = true;
+                let q = ask.input["questions"][0]["question"]
+                    .as_str()
+                    .unwrap()
+                    .to_string();
+                let a = proto::ChatAnswer {
+                    request_id: ask.request_id.clone(),
+                    allow: true,
+                    answers: Some(serde_json::json!({ q: "Pear" })),
+                    ..Default::default()
+                };
+                let w = stdin.as_mut().unwrap();
+                writeln!(
+                    w,
+                    "{}",
+                    proto::answer_line(&a, &ask.input, &serde_json::Value::Null)
+                )
+                .unwrap();
+                w.flush().unwrap();
+            }
+            if v["type"] == "result" {
+                reply = v["result"].as_str().unwrap_or("").to_string();
+                stdin = None; // end of turn: closing stdin lets the CLI exit
+            }
+        }
+        drop(stdin);
+        let _ = child.wait();
+        assert!(
+            asked,
+            "the CLI never asked — AskUserQuestion was not offered"
+        );
+        assert!(
+            reply.contains("Pear"),
+            "the answer did not reach the model: {reply:?}"
+        );
+    }
+
+    // ADR-0043 — the «/» list is the CLI's own: built-ins that work in the chat,
+    // and NOT the ones that only exist in the terminal. Live, like the one above.
+    #[test]
+    #[ignore]
+    fn adr0043_live_the_command_list_comes_from_the_cli() {
+        let t0 = std::time::Instant::now();
+        let list = probe_commands("claude", None).expect("initialize answered");
+        let has = |n: &str| list.iter().any(|c| c.name == n);
+        assert!(has("compact") && has("context"), "built-ins missing");
+        assert!(!has("login"), "/login only exists in the terminal");
+        assert!(t0.elapsed() < COMMANDS_TIMEOUT);
+        eprintln!("{} commands in {:?}", list.len(), t0.elapsed());
+    }
 
     #[test]
     fn claude_args_are_non_interactive_and_streaming() {

@@ -3473,6 +3473,16 @@ mod tests {
         assert!(com.contains("--permission-mode acceptEdits"));
     }
 
+    // ADR-0043 — the chat became two-way; a cycle must NOT. Nobody is watching a
+    // cycle: a question routed to a host would wait forever, and the prompt is
+    // written as plain text, which stream-json input would reject.
+    #[test]
+    fn adr0043_a_cycle_never_waits_for_a_person() {
+        let a = crate::chat::claude_args("opus", "", "acceptEdits", None).join(" ");
+        assert!(!a.contains("--permission-prompt-tool"), "{a}");
+        assert!(!a.contains("--input-format"), "{a}");
+    }
+
     // §3.10 D3 — a loop whose output sits inside its own input feeds itself. The
     // prompt says so, and §3.8 lists the acts a loop never performs.
     // O CICLO QUE LEU TUDO E NÃO ESCREVEU NADA (acervo do dono, 2026-08-18): quatro
