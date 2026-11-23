@@ -661,16 +661,24 @@ test("F12 — o quarto destino não quebra a linha do cabeçalho nem empurra a j
     "o pill de gravação conta na largura do bloco da direita");
   // e o que cede é PROSA (um nome já elidido, com o texto inteiro no title e no
   // menu de troca), nunca um controle — a ordem que a própria regra 9 fixa
-  const flow = /@media \(max-width: 1140px\) \{([\s\S]*?)\n\}/.exec(CSS);
+  const flow = /@media \(max-width: (\d+)px\) \{\n  \.projname \{ max-width: 110px/.exec(CSS);
   assert.ok(flow, "a prosa cede antes, para manter o eixo por mais tempo");
-  assert.match(flow[1], /\.projname \{ max-width: 110px/);
+  // O DEFEITO DE 2026-11-23: com `min-width: 0` a trilha da direita encolhia abaixo
+  // dos seus controles e, alinhada ao fim, o excesso saía pelo INÍCIO, por baixo da
+  // nav — a 1280px, em inglês e gravando, «● recording» cobria 118px da aba
+  // «Review» (captura do dono). O piso da trilha é o conteúdo; quem cede são os
+  // blocos de largura, na ordem da regra 9 (tools/measure-header.js: 96 de 96).
+  const rightBlk = /#appHead > \.headright \{([^}]*)\}/.exec(CSS);
+  assert.ok(rightBlk, "o bloco da direita é preso à trilha");
+  assert.doesNotMatch(rightBlk[1], /min-width:\s*0/,
+    "sem piso, o bloco da direita transborda POR BAIXO da nav em vez de empurrá-la");
 
   // MEDIDO com a gravação em curso, que é o pior caso e já era defeito com TRÊS
   // destinos (932px pedidos numa janela de 860). O piso só fecha porque o
   // cabeçalho cede mais em 900 — e essa regra tem de vir DEPOIS da de 1140:
   // mesma especificidade, ganha a última. Escrita antes, a de 110px vencia e a
   // medição continuava em 888px.
-  const i1140 = CSS.indexOf("@media (max-width: 1140px)");
+  const i1140 = flow.index;
   const yield900 = CSS.indexOf(".projname { max-width: 70px");
   assert.ok(yield900 > i1140, "a regra que cede mais vem depois, ou a de 1140 vence");
   // MIGRADA (rodada 3): a asserção era `min-width: 0` no .headrec, para o corpo
