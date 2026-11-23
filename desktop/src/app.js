@@ -2076,6 +2076,10 @@ async function onBubbleCmd(p) {
       case "chat-model":
         if (AGENT_MODELS.includes(c.model)) { chatPrefs.model = c.model; persistChatPrefs(); }
         break;
+      // ADR-0043 · a command that only exists in the terminal (/login…), typed in
+      // the bubble: this window owns the terminal, so it runs here
+      case "chat-effort": setChatEffortCli(String(c.effort || "")); break;
+      case "terminal-command": await bubbleOpenMain(); await runTerminalCommand("bubble", String(c.command || "")); break;
       case "record-now": {
         // «Gravar agora» num evento que está acontecendo: como uma agendada —
         // título do evento, encerra no fim dele, fecha calada
@@ -11659,7 +11663,13 @@ async function termRunAgent(cmd) {
     const st = await invoke("term_status").catch(() => null);
     if (st && st.open && st.agentRunning) {
       await new Promise((r) => setTimeout(r, tries === 0 ? 0 : 800)); // settle a fresh TUI
-      await invoke("term_input", { data: line + "\n" }).catch(() => {});
+      // The TEXT, then Enter as its own "\r". Measured 2026-11-23 against the
+      // Claude TUI over a pty: "/cost\n" in one write stays typed in the prompt and
+      // is never sent (the owner's screenshot: «claude '/login'» parked there);
+      // "/cost" then "\r" runs it.
+      await invoke("term_input", { data: line }).catch(() => {});
+      await new Promise((r) => setTimeout(r, 120));
+      await invoke("term_input", { data: "\r" }).catch(() => {});
       scheduleActionRefresh(); // the skill writes files the sidebar must show
       return true;
     }
@@ -12616,9 +12626,25 @@ async function sendChat() {
   // ancorada no que o projeto já sabe (/loro-ask), como na paleta.
   let prompt = text;
   let shown = text;
+  const route = chatArmed ? null : LoroAgentAsk.classify(text, agentCmds);
   if (chatArmed) {
     shown = `${chatArmed.label}${text ? " — " + text : ""}`;
     prompt = await chatSkillPrompt(chatArmed, text);
+  } else if (route.kind === "terminal") {
+    // ADR-0043 · /login, /doctor… only exist in the terminal: run it there, in
+    // this conversation, instead of sending it as a question
+    chatPush("chatmsg", esc(text));
+    chatPush("chatnote", esc(t("%1 abre no Terminal", ["/" + route.name])));
+    inp.value = "";
+    return runTerminalCommand("", text);
+  } else if (route.kind === "setting") {
+    // ADR-0043 · /model and /effort change THIS chat's model, as in the terminal
+    chatPush("chatmsg", esc(text));
+    inp.value = "";
+    return applyChatSetting(route);
+  } else if (route.kind === "command") {
+    // a «/command» goes to the CLI UNCHANGED: wrapped in /loro-ask it was a question
+    prompt = text;
   } else {
     prompt = LoroBrainstorm.brainAskCmd(text, null) || text;
   }
@@ -12687,7 +12713,7 @@ async function chatSkillPrompt(entry, extra) {
   const line = [base, alvo, extra].filter(Boolean).join(" ");
   return LoroPresets.agentInvocation(await currentChatAgent(), line);
 }
-function chatStop() { invoke("chat_cancel").catch(() => {}); }
+function chatStop() { invoke("chat_cancel").catch(() => {}); expireChatAsks(); }
 
 listen("chat-delta", (e) => { chatBuf += e.payload || ""; chatPaint(); });
 listen("chat-tool", (e) => {
@@ -12697,6 +12723,72 @@ listen("chat-tool", (e) => {
   chatStep(e.payload || {});
 });
 listen("chat-tool-result", (e) => chatStepResult(e.payload || {}));
+// ADR-0043 · the agent stops and asks the person: options, or a permission.
+// What follows the answer is a new paragraph, below the question.
+listen("chat-ask", (e) => {
+  const ask = (e && e.payload) || {};
+  const th = $("chatThread");
+  if (!th || !ask.requestId) return;
+  chatTurn = null; chatBuf = "";
+  const box = LoroAgentAsk.renderAsk(ask, {
+    t, primaryClass: "btn sm solid",
+    onAnswer: (a) => invoke("chat_answer", { input: Object.assign({ channel: "", requestId: ask.requestId }, a) })
+      .catch((err) => chatPush("chatfail", esc(tErr(String(err))))),
+  });
+  th.appendChild(box);
+  chatThinking(chatBusy);
+  th.scrollTop = th.scrollHeight;
+  announce(ask.kind === "question" ? t("esperando sua resposta") : t("esperando sua permissão"));
+  if (box.focusFirst) box.focusFirst();
+});
+// a question still open when the turn ended (or was stopped) has no one to answer
+function expireChatAsks() {
+  const th = $("chatThread");
+  if (!th) return;
+  th.querySelectorAll(".agentask:not(.answered)").forEach((b) => {
+    b.classList.add("answered");
+    b.querySelectorAll("button, input").forEach((n) => { n.disabled = true; });
+  });
+}
+// ADR-0043 · a terminal-only command (/login, /doctor…) runs in the embedded
+// terminal — which already IS the agent's TUI. So the command itself is typed
+// into it, as a skill is (termRunAgent). Typing «claude '/login'» there was
+// typing a shell line into Claude's prompt (owner's screenshot, 2026-11-23).
+async function runTerminalCommand(_channel, command) {
+  settings.aiPanelTab = LoroShell.setPanelTab("term"); persistSettings();
+  await termRunAgent(String(command || "").trim());
+}
+// ADR-0043 · «/model x» / «/effort y» set the chat's own control (what Loro
+// passes as --model/--effort every turn); bare, they open its menu — the chat's
+// picker, as the bare command opens the terminal's.
+function chatSettingValue(name, arg) {
+  const a = String(arg || "").trim().toLowerCase();
+  if (!a) return null;
+  if (name === "model") return AGENT_MODELS.find((m) => m === a) || null;
+  const hit = EFFORT_LEVELS.find((x) => x.cli === a || x.label === a || t(x.label).toLowerCase() === a);
+  return hit ? hit.label : null;
+}
+function applyChatSetting(route) {
+  if (!route.arg) { $("chatModel").click(); return; }
+  const v = chatSettingValue(route.name, route.arg);
+  if (!v) {
+    const opts = route.name === "model" ? AGENT_MODELS.join(", ") : EFFORT_LEVELS.map((x) => x.cli).join(", ");
+    chatPush("chatnote", esc(t("opções: %1", [opts])));
+    return;
+  }
+  if (route.name === "model") chatPrefs.model = v; else chatPrefs.effort = v;
+  persistChatPrefs();
+  chatPush("chatnote", esc(route.name === "model" ? t("modelo do chat: %1", [v]) : t("esforço do chat: %1", [t(v)])));
+}
+// the bubble's «/effort x» (its model comes through "chat-model")
+function setChatEffortCli(cli) {
+  const hit = EFFORT_LEVELS.find((x) => x.cli === cli);
+  if (hit) { chatPrefs.effort = hit.label; persistChatPrefs(); }
+}
+// The agent's own command list (built-ins + skills, ADR-0043). Loaded up front:
+// where a «/x» goes is decided at send time, popover open or not.
+let agentCmds = [];
+const loadAgentCmds = () => invoke("agent_commands").then((l) => (agentCmds = l || [])).catch(() => agentCmds);
 // B13 · A saída de um agente que não está autenticado é a saída de um PROCESSO,
 // não uma resposta: "Not logged in · Please run /login" ia para dentro da bolha
 // da resposta, em inglês, numa UI em pt-BR, sem dizer o que falhou nem como sair.
@@ -12711,6 +12803,7 @@ function agentAuthFailure(text) {
 listen("chat-done", (e) => {
   const p = (e && e.payload) || {};
   setChatBusy(false);
+  expireChatAsks();
   if (agentAuthFailure(p.detail || chatBuf)) return chatAuthBlock();
   if (p.ok) {
     // uma habilidade escreve arquivos NOVOS; as assinaturas de cache não os
@@ -12839,6 +12932,12 @@ function chatPermissionBlock() {
 }
 
 $("chatSend").addEventListener("click", sendChat);
+LoroAgentAsk.attachSlash({
+  input: $("chatInput"), list: $("chatSlash"), load: loadAgentCmds,
+  filter: window.LoroFuzzy ? LoroFuzzy.filter : undefined,
+  onChange: () => $("chatInput").dispatchEvent(new Event("input")),
+});
+loadAgentCmds();
 $("chatInput").addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); }
 });

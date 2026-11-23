@@ -703,7 +703,7 @@ function chatScrollToEnd() { const log = $("bChatLog"); log.scrollTop = log.scro
 function addMsg(kind, text) {
   const d = document.createElement("div");
   d.className = "msg " + kind;
-  if (kind === "q" || kind === "err") d.textContent = text;
+  if (kind === "q" || kind === "err" || kind === "sys") d.textContent = text;
   $("bChatLog").appendChild(d);
   return d;
 }
@@ -766,12 +766,46 @@ function fitChat() {
     invoke("bubble_panel_height", { height: BASE_PANEL_H + extra }).catch(() => {});
   }, 80);
 }
+// ADR-0043 — the agent's own command list (built-ins + skills, from the CLI's
+// `initialize`), loaded once up front: deciding where a «/x» goes must not wait
+// for the person to have opened the popover.
+const AA = window.LoroAgentAsk;
+let agentCmds = [];
+const loadAgentCmds = () => invoke("agent_commands").then((l) => (agentCmds = l || [])).catch(() => agentCmds);
+loadAgentCmds();
+const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+function bubbleSetting(route) {
+  const a = route.arg.toLowerCase();
+  if (route.name === "model") {
+    const list = st.chatModelos || [];
+    if (!a) { modelOpen = true; paintChatModel(); }
+    else if (list.includes(a)) {
+      pickedModel = a; send("chat-model", { model: a }); paintChatModel();
+      addMsg("sys", t("modelo do chat: %1", [a]));
+    } else addMsg("sys", t("opções: %1", [list.join(", ")]));
+  } else if (EFFORTS.includes(a)) {
+    send("chat-effort", { effort: a });
+    addMsg("sys", t("esforço do chat: %1", [a]));
+  } else addMsg("sys", t("opções: %1", [EFFORTS.join(", ")]));
+  paintChatBar(); chatScrollToEnd(); fitChat();
+}
 async function chatSend() {
   const ta = $("bChatIn");
   const q = ta.value.trim();
   if (!q || chat.busy) return;
   ta.value = ""; autosize();
   addMsg("q", q);
+  const route = AA.classify(q, agentCmds);
+  // /model and /effort change THIS chat's model (ADR-0043): bare, the picker opens
+  if (route.kind === "setting") { bubbleSetting(route); return; }
+  // an interactive or terminal-only command (/login, /config, /mcp…) runs in the
+  // main window's terminal — the chat would read it as a question
+  if (route.kind === "terminal") {
+    addMsg("sys", t("%1 abre no Terminal do Loro", ["/" + AA.commandName(q)]));
+    send("terminal-command", { command: q });
+    paintChatBar(); chatScrollToEnd(); fitChat();
+    return;
+  }
   chat.cur = addMsg("a", ""); chat.buf = "";
   chat.busy = true; paintChatBar(); chatScrollToEnd(); fitChat();
   try {
@@ -783,7 +817,9 @@ async function chatSend() {
   }
 }
 listen("bubble-chat-delta", (e) => {
-  if (!chat.cur) return;
+  if (!chat.busy) return;
+  // after a question the answer continues in a NEW bubble, below the question
+  if (!chat.cur) { chat.cur = addMsg("a", ""); chat.buf = ""; }
   chat.buf += String((e && e.payload) || "");
   renderAnswer(chat.cur, chat.buf);
   chatScrollToEnd(); fitChat();
@@ -792,13 +828,43 @@ listen("bubble-chat-tool", (e) => {
   const p = (e && e.payload) || {};
   if (chat.busy) $("bChatState").textContent = t("usando %1…", [p.name || "?"]);
 });
+// ADR-0043 — the agent stops and asks: options to choose, or a permission.
+listen("bubble-chat-ask", (e) => {
+  const ask = (e && e.payload) || {};
+  if (!chat.busy || !ask.requestId) return;
+  if (chat.cur && !chat.buf) chat.cur.remove();
+  chat.cur = null; chat.buf = "";
+  const box = AA.renderAsk(ask, {
+    t, btnClass: "btn ghost", primaryClass: "btn ghost askprimary",
+    onAnswer: (a) => {
+      invoke("chat_answer", { input: Object.assign({ channel: "bubble", requestId: ask.requestId }, a) })
+        .catch((err) => addMsg("err", I18N ? I18N.tErr(String(err)) : String(err)));
+      $("bChatState").textContent = t("pensando…");
+      fitChat();
+    },
+  });
+  $("bChatLog").appendChild(box);
+  $("bChatState").textContent = ask.kind === "question" ? t("esperando sua resposta") : t("esperando sua permissão");
+  chatScrollToEnd(); fitChat();
+  if (box.focusFirst) box.focusFirst();
+});
+// a question left unanswered when the turn ended has no one to answer it anymore
+function expireAsks() {
+  $("bChatLog").querySelectorAll(".agentask:not(.answered)").forEach((b) => {
+    b.classList.add("answered");
+    b.querySelectorAll("button, input").forEach((n) => { n.disabled = true; });
+  });
+}
 listen("bubble-chat-done", (e) => {
   const p = (e && e.payload) || {};
   chat.busy = false;
+  expireAsks();
   if (p.ok) chat.hasSession = true;
   // um turno que terminou sem texto não deixa uma bolha vazia na conversa
   if (chat.cur && !chat.buf) chat.cur.remove();
-  if (!p.ok && chat.cur) {
+  // after a question chat.cur may be empty; the failure is still the turn's.
+  // A cancelled turn ends ok (no child left to reap), so it never lands here.
+  if (!p.ok) {
     addMsg("err", I18N ? I18N.tErr(p.error || "err.chat_agent_failed") + (p.detail ? ": " + String(p.detail).slice(0, 200) : "") : String(p.error));
   }
   chat.cur = null;
@@ -807,7 +873,7 @@ listen("bubble-chat-done", (e) => {
 $("bChatSend").addEventListener("click", chatSend);
 $("bChatStop").addEventListener("click", () => {
   invoke("chat_cancel", { channel: "bubble" }).catch(() => {});
-  chat.busy = false; chat.cur = null; paintChatBar();
+  chat.busy = false; chat.cur = null; expireAsks(); paintChatBar();
 });
 $("bChatNova").addEventListener("click", () => {
   invoke("chat_reset", { channel: "bubble" }).catch(() => {});
@@ -820,61 +886,13 @@ function autosize() {
   ta.style.height = "auto";
   ta.style.height = Math.min(ta.scrollHeight, 96) + "px";
 }
-// «/» abre a lista de skills e comandos (ADR-0041 §11), como no terminal do
+// «/» abre a lista de comandos (ADR-0041 §11, ADR-0043), como no terminal do
 // Claude Code: filtra enquanto digita, ↑/↓ movem, Tab/Enter completam, Esc fecha.
-// A lista vem do backend (skills_list), que a guarda por 60 s.
-const slash = { list: [], at: 0, items: [], active: 0, open: false };
-async function slashLoad() {
-  if (Date.now() - slash.at < 60000 && slash.list.length) return;
-  try { slash.list = (await invoke("skills_list")) || []; slash.at = Date.now(); } catch (_) {}
-}
-function slashClose() { slash.open = false; $("bSlash").hidden = true; }
-function slashRender() {
-  const ul = $("bSlash");
-  ul.textContent = "";
-  slash.items.forEach((it, i) => {
-    const li = document.createElement("li");
-    li.setAttribute("role", "option");
-    li.setAttribute("aria-selected", String(i === slash.active));
-    const n = document.createElement("span"); n.className = "sn"; n.textContent = "/" + it.name;
-    const d = document.createElement("span"); d.className = "sd"; d.textContent = it.description || "";
-    li.append(n, d);
-    li.addEventListener("mousedown", (e) => { e.preventDefault(); slashPick(i); });
-    ul.appendChild(li);
-    if (i === slash.active) li.scrollIntoView({ block: "nearest" });
-  });
-  ul.hidden = !slash.items.length;
-  slash.open = !!slash.items.length;
-}
-async function slashUpdate() {
-  const q = BC.slashQuery($("bChatIn").value);
-  if (q == null) { slashClose(); return; }
-  await slashLoad();
-  slash.items = BC.slashItems(slash.list, q, FZ ? FZ.filter : undefined);
-  slash.active = 0;
-  slashRender();
-}
-function slashPick(i) {
-  const it = slash.items[i];
-  if (!it) return;
-  const ta = $("bChatIn");
-  ta.value = BC.slashComplete(it.name);
-  slashClose();
-  ta.focus();
-  ta.setSelectionRange(ta.value.length, ta.value.length);
-  autosize();
-}
-$("bChatIn").addEventListener("input", () => { autosize(); slashUpdate(); });
+// A lista é a do PRÓPRIO CLI (agent_commands): os comandos internos que
+// funcionam no chat (/compact, /context, /model…) e as skills do projeto.
+AA.attachSlash({ input: $("bChatIn"), list: $("bSlash"), load: loadAgentCmds, filter: FZ ? FZ.filter : undefined, onChange: autosize });
+$("bChatIn").addEventListener("input", autosize);
 $("bChatIn").addEventListener("keydown", (e) => {
-  if (slash.open) {
-    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-      e.preventDefault();
-      slash.active = BC.pickerKey(slash.active, e.key, slash.items.length).index;
-      slashRender(); return;
-    }
-    if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) { e.preventDefault(); slashPick(slash.active); return; }
-    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); slashClose(); return; }
-  }
   // Enter sends, Shift+Enter breaks the line (Esc is the document's: collapse)
   if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); chatSend(); }
 });

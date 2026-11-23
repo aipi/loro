@@ -792,6 +792,8 @@
           <div class="composer">
             <div id="chatChips" class="chips"></div>
             <div id="chatArmed" class="armed" hidden></div>
+            <!-- ADR-0043 · «/» lista os comandos do PRÓPRIO agente, como no terminal -->
+            <ul id="chatSlash" class="chatslash" role="listbox" hidden></ul>
             <div class="composerbox">
               <textarea id="chatInput" rows="1" placeholder="instrução opcional — ou só envie…" data-i18n-attrs="placeholder"></textarea>
               <button id="chatSend" class="sendbtn" aria-label="Enviar" data-i18n-attrs="aria-label">↑</button>
@@ -1226,6 +1228,7 @@
     <script src="annotate.js"></script>
     <script src="meeting.js"></script>
     <script src="brainstorm.js"></script>
+    <script src="agentask.js"></script>
     <script src="presets.js"></script>
     <script src="modelui.js"></script>
     <script src="loops.js"></script>

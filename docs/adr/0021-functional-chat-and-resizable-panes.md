@@ -167,3 +167,13 @@ matching `tool_result`. In the UI a step is a `<details>`: closed it is just the
 tool name, open it shows the request and the response. Both sides are capped at
 2000 chars in the backend — a conversation is not a file viewer, and a tool
 result can be megabytes. A failed step opens itself.
+
+## Amendment (2026-11-23) — the turn is two-way (ADR-0043)
+
+§1's «non-interactively» and §2's «print mode cannot stop and ask» no longer hold
+for the chat: the turn runs with `--input-format stream-json
+--permission-prompt-tool stdio`, so the CLI asks the PERSON (questions with
+options, permissions) mid-turn and the chat answers with `chat_answer`. The prompt
+is a stream-json line and stdin stays open until the `result` line. The amber
+block of §2 remains for what is still refused without asking. Loop cycles keep the
+one-way arguments. See ADR-0043.

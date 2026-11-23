@@ -1927,6 +1927,8 @@ body { background: var(--paper); color: var(--ink); }
    in it (647 vs 297, measured). A bubble is not a horizontal scroller: the token
    breaks, and the thread is allowed to be narrower than its widest child. */
 .chatthread { flex: 1; min-width: 0; min-height: 80px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
+/* ADR-0043 · uma linha do app, não do agente: «/login abre no Terminal» */
+.chatnote { font: 11.5px/1.5 var(--sans); color: var(--ink3); }
 .chatmsg { align-self: flex-end; max-width: 90%; min-width: 0; overflow-wrap: anywhere; background: var(--paper); border: 1px solid var(--line); border-radius: 12px; padding: 8px 12px; font: 13px/1.5 var(--sans); color: var(--ink); }
 .chatans { font: 13px/1.6 var(--sans); color: var(--ink2); min-width: 0; overflow-wrap: anywhere; }
 .chatans .src { display: block; font: 11px var(--mono); color: var(--teal); margin-top: 4px; }
@@ -2620,6 +2622,52 @@ body.resizing #mainRow * { pointer-events: none; }
 .chatperm span { font: 11.5px/1.5 var(--sans); color: var(--ink3); }
 .chatperm .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
 .sendbtn.stop { background: var(--ink); color: var(--paper); }
+/* ADR-0043 · o que o agente pergunta no meio do turno: opções a escolher, ou uma
+   permissão. Mesma moldura do .chatperm, em teal (é a IA perguntando, não um erro). */
+.agentask {
+  display: flex; flex-direction: column; gap: 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  border-radius: 12px; padding: 12px 14px;
+}
+.agentask .askhead { font: 600 10.5px var(--mono); color: var(--ink3); text-transform: uppercase; letter-spacing: .04em; }
+.agentask .asktext, .agentask .asktitle { font: 600 12.5px var(--sans); color: var(--ink); }
+.agentask .askq { display: flex; flex-direction: column; gap: 6px; }
+.agentask .askwhat {
+  font: 11px/1.5 var(--mono); padding: 6px 8px; border-radius: 6px; word-break: break-all;
+  background: color-mix(in srgb, var(--ink) 4%, transparent); max-height: 96px; overflow: auto;
+}
+.agentask .askopts { display: flex; flex-direction: column; gap: 5px; }
+.agentask .askopt {
+  display: grid; grid-template-columns: 18px 1fr; column-gap: 6px; text-align: left; cursor: pointer;
+  border: 1px solid var(--line-control); border-radius: 9px; background: var(--paper); color: var(--ink);
+  padding: 7px 10px; font: 12.5px/1.4 var(--sans);
+}
+.agentask .askopt:hover { border-color: var(--accent); }
+.agentask .askopt[aria-checked="true"], .agentask .askopt[aria-pressed="true"] {
+  border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--paper));
+}
+.agentask .asknum { font: 11px/1.6 var(--mono); color: var(--ink3); }
+.agentask .askdesc { grid-column: 2; font: 11.5px/1.45 var(--sans); color: var(--ink3); }
+.agentask .askother {
+  font: 12px var(--sans); color: var(--ink); background: var(--paper);
+  border: 1px solid var(--line-control); border-radius: 8px; padding: 6px 9px;
+}
+.agentask .askrow { display: flex; gap: 8px; flex-wrap: wrap; }
+.agentask .askdone { font: 11.5px var(--sans); color: var(--ink3); }
+/* respondida: fica só a escolha, como o terminal deixa a linha respondida */
+.agentask.answered .askopt:not([aria-checked="true"]):not([aria-pressed="true"]),
+.agentask.answered .askother, .agentask.answered .askrow { display: none; }
+.chatslash {
+  list-style: none; margin: 0; padding: 4px; max-height: 240px; overflow-y: auto;
+  border: 1px solid var(--line-control); border-radius: 10px; background: var(--paper);
+}
+.chatslash[hidden] { display: none; }
+.chatslash li { display: flex; flex-direction: column; gap: 1px; padding: 5px 8px; border-radius: 7px; cursor: pointer; }
+.chatslash li[aria-selected="true"] { background: var(--accent); color: var(--on-accent); }
+.chatslash .sn { font: 600 12px var(--mono); }
+.chatslash .sh { font-weight: 400; opacity: .65; }
+.chatslash .sd { font: 11px var(--sans); opacity: .8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .composerbox textarea:disabled { opacity: .6; }
 
 /* =====================================================================

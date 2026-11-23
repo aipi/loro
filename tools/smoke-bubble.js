@@ -34,7 +34,7 @@ const html = fs.readFileSync(path.join(REAL_SRC, "bubble.html"), "utf8");
 
 const STUB = `
 <script>
-window.__SMOKE__ = { errors: [], calls: {}, handlers: {}, sent: [], expand: [], drags: 0, chat: [], heights: [], opened: [] };
+window.__SMOKE__ = { errors: [], calls: {}, handlers: {}, sent: [], expand: [], drags: 0, chat: [], heights: [], opened: [], answers: [] };
 window.__SMOKE__.fire = (name, payload) => {
   for (const fn of window.__SMOKE__.handlers[name] || []) fn({ payload });
 };
@@ -46,11 +46,13 @@ window.__TAURI__ = {
       window.__SMOKE__.calls[cmd] = (window.__SMOKE__.calls[cmd] || 0) + 1;
       if (cmd === "bubble_get_size") return Promise.resolve(32);
       if (cmd === "brain_open_link") { window.__SMOKE__.opened.push(args && args.url); return Promise.resolve(null); }
-      if (cmd === "skills_list") return Promise.resolve([
-        { name: "consulta", description: "Responde o que era esperado", source: "project" },
-        { name: "review", description: "Confronta um contrato com o Figma", source: "user" },
-        { name: "turbi-design:torque", description: "Torque 2", source: "plugin" },
+      // ADR-0043 — the list is the CLI's own answer to \`initialize\` (same shape)
+      if (cmd === "agent_commands") return Promise.resolve([
+        { name: "consulta", description: "Responde o que era esperado", argumentHint: "" },
+        { name: "review", description: "Confronta um contrato com o Figma", argumentHint: "" },
+        { name: "turbi-design:torque", description: "Torque 2", argumentHint: "" },
       ]);
+      if (cmd === "chat_answer") { window.__SMOKE__.answers.push(args && args.input); return Promise.resolve(null); }
       if (cmd === "chat_send") { window.__SMOKE__.chat.push(args && args.input); return Promise.resolve(null); }
       if (cmd === "bubble_panel_height") { window.__SMOKE__.heights.push(args && args.height); return Promise.resolve(args && args.height); }
       if (cmd === "bubble_expand") {
@@ -438,6 +440,45 @@ const DRIVER = `
     if (vis(ul)) throw new Error("Esc não fechou a lista");
     if (!document.body.classList.contains("open")) throw new Error("Esc da lista fechou o painel");
     ta.value = "";
+  });
+
+  // ADR-0043 — the agent asks mid-turn: the options are buttons, one click on a
+  // single question answers it, and what comes back is question → label.
+  await step("chat-pergunta", async () => {
+    q("#tabBtnRec").click();
+    const ta = q("#bChatIn");
+    ta.value = "qual cor?"; ta.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); await wait(30);
+    S.fire("bubble-chat-ask", { requestId: "r1", kind: "question", tool: "AskUserQuestion", description: "", canRemember: false,
+      input: { questions: [{ question: "Qual cor?", header: "Cor", multiSelect: false,
+        options: [{ label: "Vermelho", description: "a do alerta" }, { label: "Azul", description: "a calma" }] }] } });
+    await wait(40);
+    const box = q("#bChatLog .agentask");
+    if (!vis(box)) throw new Error("a pergunta não apareceu");
+    const opts = box.querySelectorAll(".askopt");
+    if (opts.length !== 2 || !/Azul/.test(opts[1].textContent) || !/a calma/.test(opts[1].textContent)) throw new Error("opções sem rótulo e descrição");
+    // the parent's 340px: nothing in the question may push the panel sideways
+    if (box.scrollWidth > box.clientWidth + 1) throw new Error("a pergunta transborda: " + box.scrollWidth + " > " + box.clientWidth);
+    opts[1].click(); await wait(30);
+    const a = S.answers[S.answers.length - 1];
+    if (!a || a.requestId !== "r1" || a.channel !== "bubble" || !a.allow || a.answers["Qual cor?"] !== "Azul") throw new Error("resposta errada: " + JSON.stringify(a));
+    if (!box.classList.contains("answered")) throw new Error("a pergunta respondida continua aberta");
+    // a permission: Allow / Deny, with what would run
+    S.fire("bubble-chat-ask", { requestId: "r2", kind: "permission", tool: "Write", description: "x.md", canRemember: true,
+      input: { file_path: "/acervo/notas/x.md", content: "oi" } });
+    await wait(40);
+    const perm = [...document.querySelectorAll("#bChatLog .agentask.perm")].pop();
+    if (!perm || !perm.textContent.includes("/acervo/notas/x.md")) throw new Error("a permissão não diz o que seria escrito");
+    const btns = [...perm.querySelectorAll("button")].map((b) => b.textContent);
+    if (btns.length !== 3) throw new Error("botões da permissão: " + JSON.stringify(btns));
+    S.fire("bubble-chat-done", { ok: true }); await wait(30);
+    if (!perm.classList.contains("answered")) throw new Error("o fim do turno não fechou a pergunta pendente");
+    // a terminal-only command does not go to the chat: the main window runs it
+    const nChat = S.chat.length, nSent = S.sent.length;
+    ta.value = "/login"; ta.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); await wait(30);
+    if (S.chat.length !== nChat) throw new Error("/login foi mandado ao chat");
+    const sent = S.sent.slice(nSent).find((x) => x.cmd === "terminal-command");
+    if (!sent || sent.command !== "/login") throw new Error("/login não foi para o terminal: " + JSON.stringify(S.sent.slice(nSent)));
+    q("#bChatNova").click(); await wait(20);
   });
 
   await step("chat", async () => {

@@ -80,6 +80,25 @@ Loro: o processo é local e a conta é sua.
 
 - Escreva a pergunta e envie (Enter; Shift+Enter quebra linha). A resposta vai
   aparecendo aos poucos, no próprio chat.
+- **Digite `/`** para ver os **comandos do Claude**, como no terminal: os comandos
+  internos que funcionam no chat (`/compact`, `/context`, `/model`, `/clear`…) e
+  todas as habilidades do projeto e suas, cada uma com a descrição. Filtra enquanto
+  você digita; ↑/↓ escolhem, Tab ou Enter completam e Esc fecha. A lista é a do
+  próprio Claude, não uma cópia do Loro.
+- Um comando **interativo** — que no terminal abre um seletor ou uma tela
+  (`/login`, `/config`, `/mcp`, `/advisor`, `/status`, `/resume`…) — não vira
+  pergunta: o Loro abre a aba **Terminal** e digita o comando no Claude de lá.
+  Com argumento (`/config autoCompact=false`), os que aceitam rodam no próprio chat.
+- **`/model`** e **`/effort`** mudam o modelo e o esforço **deste chat**, como no
+  terminal mudam os daquela conversa: `/model opus` ou `/effort high` trocam na
+  hora; sozinhos, abrem o seletor do chat.
+- Quando o agente **para e pergunta** — escolher entre opções, ou se pode rodar um
+  comando ou escrever um arquivo — a pergunta aparece na conversa. Clique numa
+  opção (ou aperte o número dela; numa pergunta só com uma escolha, o clique já
+  responde), escreva a sua própria resposta, ou **Pular**. Num pedido de
+  permissão: **Permitir**, **Permitir sempre nesta conversa** ou **Negar** — e, ao
+  negar, dá para dizer o que ele deve fazer em vez disso. No modo **Livre** (o
+  padrão) ele não pede permissão; as perguntas com opções aparecem sempre.
 - Os **chips** acima do campo são as habilidades de IA mais usadas. Clicar arma a ação;
   enviar sem texto roda com a instrução padrão, e o `×` desarma.
 - **Arraste um arquivo do Finder/Explorador para dentro do chat** (imagem, áudio,
@@ -95,7 +114,8 @@ Loro: o processo é local e a conta é sua.
 - O ↑ vira **■** enquanto responde — clique para parar o turno.
 - Cada passo do agente (uma ferramenta que ele usou) **abre**: clique para ver o
   que foi pedido e o que voltou. Um passo que falhou já abre sozinho.
-- Se o agente **não teve permissão** para concluir, aparece um bloco âmbar:
+- Se o agente **não teve permissão** para concluir (uma ferramenta na lista de
+  bloqueio, por exemplo), aparece um bloco âmbar:
   **Liberar tudo e repetir** — que muda o que o chat pode fazer para *tudo, sem
   perguntar*, e vale das próximas vezes também — ou **Continuar no terminal**,
   onde ele pode pedir permissão passo a passo. Nada foi alterado até você
@@ -253,9 +273,13 @@ No painel:
   recebe como referência a reunião em andamento e a agenda, e responde ali
   mesmo; **Enter** envia, **Shift+Enter** quebra a linha, **Parar** interrompe,
   **nova conversa** recomeça. O cartão cresce com a conversa. Digite **/** para
-  ver as suas skills e comandos (os mesmos do Claude Code no projeto), filtrando
-  enquanto digita; **Tab** ou **Enter** completa, e depois do espaço vêm os
-  argumentos. Ex.: «o que o Rick
+  ver os comandos do Claude — os internos que funcionam no chat (`/compact`,
+  `/context`…) e as suas skills —, filtrando enquanto digita; **Tab** ou **Enter**
+  completa, e depois do espaço vêm os argumentos. Um comando que só existe no
+  terminal (`/login`, `/config`, `/mcp`…) abre o Terminal na janela do Loro, e
+  `/model` / `/effort` mudam o modelo do balão. Quando o Claude pergunta
+  algo com opções, ou pede permissão, a pergunta aparece no balão e você responde
+  ali mesmo, como no chat da janela. Ex.: «o que o Rick
   pediu agora?», «resume os últimos 10 min».
 - **Abrir no Loro** abre a janela principal na reunião em andamento.
 

@@ -36,6 +36,7 @@ use templates::*;
 mod presets;
 use presets::*;
 mod chat;
+mod chat_protocol;
 // Pure unified-diff parsing (ADR-0027). NOT glob-imported: the types cross into
 // this file in two signatures only, and a glob would pull Row/Hunk into a
 // 6000-line namespace for nothing.
@@ -5179,6 +5180,8 @@ pub fn run() {
             chat::chat_reset,
             chat::chat_status,
             chat::chat_handoff,
+            chat::chat_answer,
+            chat::agent_commands,
             brain_list_templates,
             brain_duplicate_template,
             brain_set_active,
